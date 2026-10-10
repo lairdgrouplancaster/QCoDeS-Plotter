@@ -320,6 +320,24 @@ def start_qplot(environment: Path, temporary: Path, env: dict[str, str]) -> None
     print('Installed qplot command displayed its MainWindow, entered Qt, and shut down cleanly.', flush=True)
 
 
+def fresh_checkout(repository: Path, destination: Path) -> Path:
+    """Copy only the tested commit through Git, including under standard-user Windows."""
+    trusted_git = ['git', '-c', f'safe.directory={repository.resolve()}']
+    revision = subprocess.check_output(
+        [*trusted_git, 'rev-parse', 'HEAD'], cwd=repository, text=True,
+    ).strip()
+    validator.run(['git', 'init', str(destination)])
+    # -c propagates to upload-pack, whose source checkout belongs to the
+    # hosted administrator while this child runs under a disposable account.
+    validator.run([*trusted_git, 'fetch', '--depth', '1', str(repository.resolve()), revision],
+                  cwd=destination)
+    validator.run(['git', 'checkout', '--detach', 'FETCH_HEAD'], cwd=destination)
+    assert subprocess.check_output(
+        ['git', 'rev-parse', 'HEAD'], cwd=destination, text=True,
+    ).strip() == revision
+    return destination
+
+
 def accept_installation(repository: Path, artifacts: dict[str, Path],
                         temporary: Path, *, editable: bool, public_pypi: bool = False) -> None:
     assert not temporary.resolve().is_relative_to(repository.resolve())
@@ -332,16 +350,7 @@ def accept_installation(repository: Path, artifacts: dict[str, Path],
         if public_pypi:
             # Fetch only the tested revision into a new checkout outside the
             # runner's original checkout, without reusing its working files.
-            app = temporary / 'fresh-checkout'
-            revision = subprocess.check_output(
-                ['git', 'rev-parse', 'HEAD'], cwd=repository, text=True,
-            ).strip()
-            validator.run(['git', 'init', str(app)])
-            validator.run(['git', 'fetch', '--depth', '1', str(repository), revision], cwd=app)
-            validator.run(['git', 'checkout', '--detach', 'FETCH_HEAD'], cwd=app)
-            assert subprocess.check_output(
-                ['git', 'rev-parse', 'HEAD'], cwd=app, text=True,
-            ).strip() == revision
+            app = fresh_checkout(repository, temporary / 'fresh-checkout')
         else:
             sdist = artifacts['qplotter_sdist']
             validator.validate_sdist(sdist, source_inventory)

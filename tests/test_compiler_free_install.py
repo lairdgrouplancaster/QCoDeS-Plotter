@@ -182,6 +182,23 @@ def test_python_edit_changes_import_without_another_install(tmp_path):
     assert acceptance.EDIT_AFTER in (package / '_version.py').read_text()
 
 
+def test_fresh_checkout_uses_committed_revision_and_ignores_working_files(tmp_path):
+    repository = tmp_path / 'original'
+    repository.mkdir()
+    subprocess.run(['git', 'init', str(repository)], check=True)
+    committed = repository / 'application.py'
+    committed.write_text('committed Python code\n')
+    subprocess.run(['git', 'add', 'application.py'], cwd=repository, check=True)
+    subprocess.run(['git', '-c', 'user.name=Acceptance fixture', '-c',
+                    'user.email=fixture@example.invalid', 'commit', '-m', 'fixture'],
+                   cwd=repository, check=True)
+    committed.write_text('stale uncommitted Python code\n')
+    (repository / 'stale-native.so').touch()
+    fresh = acceptance.fresh_checkout(repository, tmp_path / 'fresh')
+    assert (fresh / 'application.py').read_text() == 'committed Python code\n'
+    assert not (fresh / 'stale-native.so').exists()
+
+
 def test_only_rejected_pip_rust_version_probes_are_allowed(tmp_path):
     log = tmp_path / 'compiler.log'
     baseline = 'self-test\n'
