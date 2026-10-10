@@ -38,10 +38,10 @@ python -m pip install --only-binary=:all: qplotter==1.6.0b3
 
 The earlier `native-and-app/v1.6.0b2` candidate did not pass its complete hosted
 validation, so neither package was uploaded. Its tag remains unchanged. The
-next candidate removes an unnecessary CPU workload from a concurrent snapshot
-test: the existing commit barrier and additional count assertion prove snapshot
-consistency while preserving the reader's four-second deadline. Every platform
-must validate the new candidate before publication.
+next candidate replaces unnecessary CPU workloads in snapshot and POSIX lock
+tests with explicit commit/probe barriers and snapshot/lock assertions. Both
+tests preserve their four-second reader deadlines. Every platform must validate
+the new candidate before publication.
 
 The application installs its native dependency and all runtime dependencies
 automatically as wheels. Native PyPI releases contain **only wheels**. Without
