@@ -46,11 +46,12 @@ def audit(event, arguments):
         if event == 'subprocess.Popen':
             argv = arguments[1]
             if isinstance(argv, (str, bytes)):
-                targets += shlex.split(os.fsdecode(argv))
+                argv = shlex.split(os.fsdecode(argv), posix=os.name != 'nt')
             else:
-                targets += list(argv)
+                argv = list(argv)
+            targets += argv
     elif event == 'os.system':
-        targets = shlex.split(os.fsdecode(arguments[0]))
+        targets = shlex.split(os.fsdecode(arguments[0]), posix=os.name != 'nt')
     elif event == 'os.spawn':
         targets = [arguments[1]]
     else:
@@ -66,9 +67,8 @@ def audit(event, arguments):
                 # pip probes rustc for its HTTP user-agent whenever the tool
                 # appears on PATH. Fail that probe too; it is not a build.
                 version_probe = (event == 'subprocess.Popen' and name == 'rustc'
-                                 and not isinstance(arguments[1], (str, bytes))
-                                 and len(arguments[1]) == 2
-                                 and arguments[1][1] == '--version')
+                                 and len(argv) == 2
+                                 and os.fsdecode(argv[1]).strip('"') == '--version')
                 log.write('audit blocked optional version probe rustc\\n' if version_probe
                           else 'audit blocked ' + os.fsdecode(target) + '\\n')
             raise RuntimeError('Compiler invocation forbidden during acceptance: ' + os.fsdecode(target))

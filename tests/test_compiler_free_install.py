@@ -165,6 +165,44 @@ def test_windows_compiler_filter_removes_runneradmin_private_paths(tmp_path, mon
     ) == [str(usable)]
 
 
+def test_audit_rejects_windows_command_lines_with_backslashes_and_spaces(tmp_path):
+    environment = tmp_path / 'venv'
+    venv.EnvBuilder(with_pip=False).create(environment)
+    python = validator.environment_python(environment)
+    env, log = acceptance.compiler_free_environment(tmp_path)
+    acceptance.install_compiler_audit_guard(python, env)
+    # Simulate Windows's string argv in a disposable interpreter even when
+    # this regression test itself runs on POSIX. Never install the audit hook
+    # into pytest's process, where hooks cannot be removed.
+    code = r'''
+import os
+from pathlib import PureWindowsPath
+from types import SimpleNamespace
+import _qplot_ci_compiler_guard as guard
+
+guard.os = SimpleNamespace(name='nt', fsdecode=os.fsdecode,
+                           PathLike=os.PathLike, environ=os.environ)
+guard.Path = PureWindowsPath
+for command in (r'C:\toolchain\cl.exe /c extension.c',
+                r'"C:\Program Files\LLVM\bin\clang.exe" -c extension.c'):
+    try:
+        guard.audit('subprocess.Popen', (None, command, None, {}))
+    except RuntimeError as error:
+        assert 'Compiler invocation forbidden' in str(error)
+    else:
+        raise AssertionError('Windows absolute compiler path was accepted: ' + command)
+try:
+    guard.audit('subprocess.Popen', (None, 'rustc --version', None, {}))
+except RuntimeError:
+    pass
+else:
+    raise AssertionError('The optional Windows rustc probe did not fail')
+'''
+    subprocess.run([str(python), '-I', '-c', code], env=env, check=True)
+    assert len(log.read_text().splitlines()) == 3
+    assert log.read_text().endswith('audit blocked optional version probe rustc\n')
+
+
 def test_python_edit_changes_import_without_another_install(tmp_path):
     source = tmp_path / 'application'
     package = source / 'src/qplot'
