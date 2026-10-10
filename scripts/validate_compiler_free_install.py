@@ -111,6 +111,10 @@ def audit(event, arguments):
                           else 'audit blocked ' + os.fsdecode(target) + '\\n')
             raise RuntimeError('Compiler invocation forbidden during acceptance: ' + os.fsdecode(target))
 
+# Load parser dependencies while normal paths are available. Build isolation
+# and our negative control subsequently remove module search paths.
+if os.name == 'nt':
+    windows_command_line_api()
 sys.addaudithook(audit)
 '''
     directory = Path(site_packages)
