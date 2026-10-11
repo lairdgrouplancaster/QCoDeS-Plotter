@@ -8,13 +8,14 @@ from PyQt6 import (
 
 from qplot.datahandling.parameter_data import numeric_isfinite
 
+from ._mixed_plots import MixedPlotMixin
 from ._native_transforms import NativePlotDataItem
 from ._plot1d_snap import Plot1DSnapMixin, _line_snap_data
-from ._plot1d_traces import Plot1DTraceMixin
+from ._plot_data_viewbox import coordinate_viewbox
 from ._plotWin import plotWidget
 
 
-class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
+class plot1d(Plot1DSnapMixin, MixedPlotMixin, plotWidget):
     """
     Plot window for 1d Line plots.
     Inherits and wraps several functions from qplot.windows._plotWin.plotWidget.
@@ -71,7 +72,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
         line = self.__dict__.get("line")
         get_viewbox = getattr(line, "getViewBox", None)
         viewbox = get_viewbox() if callable(get_viewbox) else None
-        return viewbox if viewbox is not None else super()._marquee_viewbox()
+        return coordinate_viewbox(viewbox) if viewbox is not None else super()._marquee_viewbox()
 
 
     def _marquee_zoom_viewbox(self, axis: Literal["x", "y"]) -> Any:
@@ -274,6 +275,7 @@ class plot1d(Plot1DSnapMixin, Plot1DTraceMixin, plotWidget):
                     ):
                 return
             self.refresh_secondary_lines()
+            self.refresh_secondary_heatmaps()
             if not self._refresh_publication_source_is_current(
                     plot_worker,
                     clear_display=clear_display,

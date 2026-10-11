@@ -13,6 +13,7 @@ from PyQt6 import (
 )
 
 from qplot import config
+from qplot.configuration.fonts import configured_stylesheet
 from qplot.datahandling.database import (
     DatabaseDetailWorker as DatabaseDetailWorker,
 )
@@ -534,13 +535,11 @@ class MainWindow(
         self._retired_service_reaper_timer.timeout.connect(
             self._reap_retired_trusted_read_services
         )
-        self._next_plot_x = 0
-        self._next_plot_y = 0
         self.localLastFile = None
         self.startup_database_path = startup_database_path
         
         # Set GUI color and style from user choice in qplot.configuration.themes
-        self.setStyleSheet(self.config.theme.main)
+        self.setStyleSheet(configured_stylesheet(self.config))
         
         #widgets
         self.l = qtw.QVBoxLayout()
@@ -576,8 +575,6 @@ class MainWindow(
         # Get user's window dimensions to control new window position
         primary_screen = cast(QtGui.QScreen, qtw.QApplication.primaryScreen())
         self.screenrect = primary_screen.availableGeometry()
-        self._next_plot_x = self.screenrect.left()
-        self._next_plot_y = self.screenrect.top()
         
         # Try to bring window to top 
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowType.WindowStaysOnTopHint)
@@ -1411,7 +1408,7 @@ class MainWindow(
         sync_theme_actions()
         
         # Update all windows.
-        self.setStyleSheet(self.config.theme.main)
+        self.setStyleSheet(configured_stylesheet(self.config))
         for win in self.windows:
             win.update_theme(self.config)
         self.show_status(f"Theme changed to {theme}.", 2000)
@@ -1503,7 +1500,7 @@ class MainWindow(
                 run_list.apply_configured_column_widths()
             if hasattr(run_list, "apply_configured_column_visibility"):
                 run_list.apply_configured_column_visibility()
-        self.setStyleSheet(self.config.theme.main)
+        self.setStyleSheet(configured_stylesheet(self.config))
         for win in self.windows:
             win.update_theme(self.config)
             apply_major_ticks = getattr(

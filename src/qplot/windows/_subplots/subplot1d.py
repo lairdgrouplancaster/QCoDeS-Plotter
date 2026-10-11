@@ -5,6 +5,7 @@ from PyQt6 import QtCore
 from PyQt6.QtGui import QColor
 
 from .._native_transforms import NativePlotDataItem
+from .._plot_drop_axes import DroppedAxisMapping
 from .._plot_refresh import plot_refresh_required
 from .._refresh_interval import refresh_interval_value, set_refresh_interval
 
@@ -69,7 +70,7 @@ class subplot1d(NativePlotDataItem):
     """
     Class for handling secondary line plots on plot1d
     """
-    def __init__(self, parent, from_win, *args, **kargs):
+    def __init__(self, parent, from_win, *args, axis_order=None, **kargs):
         super().__init__(*args, **kargs)
         
         self.label = from_win.label
@@ -78,6 +79,10 @@ class subplot1d(NativePlotDataItem):
         
         self.parent = parent
         self.from_win = from_win
+        self._dropped_axis_mapping = (
+            DroppedAxisMapping(parent, from_win, axis_order)
+            if axis_order is not None else None
+        )
         self._source_consumer_registered = False
         self._source_interval_signal = None
         self._source_interval_slot = None
@@ -109,7 +114,6 @@ class subplot1d(NativePlotDataItem):
         Fetches data from source window and updates view on parent window
 
         """
-        parent = self.parent
         from_win = self.from_win
 
         self._disconnect_pending_update()
@@ -117,16 +121,7 @@ class subplot1d(NativePlotDataItem):
         # Update live state
         self.running = plot_refresh_required(from_win)
         
-        # Get which data is on which axis
-        parent_options = parent.axis_options
-        from_win_options = from_win.axis_options
-
-        self.choose_from = _subplot_axis_order(
-            parent_options,
-            from_win_options,
-            source_is_cut=hasattr(from_win, "sweep_id"),
-            shared_parameter=_subplot_shared_parameter(parent),
-            )
+        self.choose_from = self.source_axis_order()
         if self.choose_from is None:
             self.setData(x=[], y=[])
             return
@@ -138,6 +133,17 @@ class subplot1d(NativePlotDataItem):
             return
 
         self.call_update()
+
+
+    def source_axis_order(self):
+        if self._dropped_axis_mapping is not None:
+            return self._dropped_axis_mapping.axis_order()
+        return _subplot_axis_order(
+            self.parent.axis_options,
+            self.from_win.axis_options,
+            source_is_cut=hasattr(self.from_win, "sweep_id"),
+            shared_parameter=_subplot_shared_parameter(self.parent),
+            )
 
 
     @QtCore.pyqtSlot()
@@ -152,12 +158,7 @@ class subplot1d(NativePlotDataItem):
         """Clear old cut data until the changed axes publish replacement data."""
 
         self._disconnect_pending_update()
-        self.choose_from = _subplot_axis_order(
-            self.parent.axis_options,
-            self.from_win.axis_options,
-            source_is_cut=hasattr(self.from_win, "sweep_id"),
-            shared_parameter=_subplot_shared_parameter(self.parent),
-            )
+        self.choose_from = self.source_axis_order()
         self.setData(x=[], y=[])
 
 

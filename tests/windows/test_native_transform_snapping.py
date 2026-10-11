@@ -9,6 +9,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._plot1d_snap import _line_snap_data
+from qplot.windows._plot_data_viewbox import coordinate_viewbox
 from tests.windows.test_native_transform_labels import (
     SUPPORTED_CONTROLS,
     click_control,
@@ -42,14 +43,14 @@ def assert_snap(window, owner, key, physical_x, physical_y, view_x, view_y, inde
     assert f"snapped to point {index})" in window.trace_label.text()
     nearest = window._nearest_trace_point(scene_pos)
     assert nearest.label == key
-    assert nearest.viewbox is owner
+    assert coordinate_viewbox(nearest.viewbox) is coordinate_viewbox(owner)
     assert nearest.point_number == index + 1
     assert nearest.x_value == pytest.approx(physical_x[index])
     assert nearest.y_value == pytest.approx(physical_y[index])
     assert nearest.x_view_value == pytest.approx(view_x[index])
     assert nearest.y_view_value == pytest.approx(view_y[index])
-    assert window._snap_marker_view is owner
-    assert window.snap_marker.parentItem() is owner.childGroup
+    assert coordinate_viewbox(window._snap_marker_view) is coordinate_viewbox(owner)
+    assert window.snap_marker.parentItem() is window._snap_marker_view.childGroup
     np.testing.assert_allclose(window.snap_marker.getData(), [[view_x[index]], [view_y[index]]])
 
 
@@ -206,7 +207,7 @@ def test_native_snap_uses_full_samples_with_clipping_and_downsampling(
         physical_x, physical_y = processed_samples(count, controls)
         view_x, view_y = np.log10(physical_x), physical_y
         owner = line.getViewBox()
-        assert owner is window._trace_axis_viewbox(window._trace_styles[key])
+        assert coordinate_viewbox(owner) is window._trace_axis_viewbox(window._trace_styles[key])
         full_display_x = None
         for start, stop in ((0, len(view_x) - 1), (9, 18)):
             set_sample_range(owner, view_x, view_y, start, stop)

@@ -19,6 +19,7 @@ from qplot.windows._preferences import (
 )
 from qplot.windows._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
+    CONFIRM_INCOMPATIBLE_AXES_KEY,
     CONFIRM_QUIT_KEY,
 )
 
@@ -27,15 +28,19 @@ class FakeConfig:
     def __init__(self):
         self.defaults = {
             "user_preference.theme": "light",
+            "user_preference.font_size": 10,
             COLORBAR_WIDTH_KEY: 15,
             AXIS_TICK_WIDTH_KEY: 2.0,
             AXIS_MAJOR_TICK_COUNT_KEY: 3,
             "GUI.preview_size": 200,
+            "user_preference.plot_tile_rows": 2,
+            "user_preference.plot_tile_columns": 2,
             MOUSE_MODE_KEY: "pan",
             COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
             "file.default_load_path": "",
             "user_preference.default_refresh_rate": 1.0,
             CONFIRM_CLOSE_ALL_KEY: True,
+            CONFIRM_INCOMPATIBLE_AXES_KEY: True,
             CONFIRM_QUIT_KEY: True,
             "runtime_settings.max_threads": 4,
             "runtime_settings.max_full_heatmap_points": 2_000_000,

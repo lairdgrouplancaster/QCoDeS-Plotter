@@ -4,6 +4,10 @@ from dataclasses import asdict, dataclass
 from string import Template
 
 import pyqtgraph as pg
+from PyQt6 import QtGui
+from PyQt6 import QtWidgets as qtw
+
+from ..fonts import FONT_SIZE_KEY
 
 
 @dataclass(frozen=True)
@@ -542,11 +546,15 @@ class PlotTheme:
 
         width = plot_win.config.get("user_preference.axis_tick_width")
         pen = pg.mkPen(cls.plot_foreground, width=width)
+        font = QtGui.QFont(qtw.QApplication.font())
+        font.setPointSize(plot_win.config.get(FONT_SIZE_KEY))
 
         def style_axis(axis):
             axis.setPen(pen)
             axis.setTickPen(pen)
             axis.setTextPen(pen)
+            axis.setTickFont(font)
+            axis.label.setFont(font)
             # pyqtgraph otherwise halves the opacity at each successive tick
             # level. Keep minor and subminor ticks visibly at the selected
             # line weight rather than blending them into the heatmap.

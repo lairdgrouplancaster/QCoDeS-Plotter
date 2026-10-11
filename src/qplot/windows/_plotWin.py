@@ -7,6 +7,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.configuration.fonts import configured_stylesheet
 from qplot.tools import (
     unpack_param,
 )
@@ -37,6 +38,7 @@ from ._plot_feedback import PlotWindowFeedbackMixin
 from ._plot_marquee import PlotMarqueeMixin
 from ._plot_refresh import PlotRefreshMixin
 from ._plot_state import PlotStateOverlay
+from ._plot_tiling import plot_tile_size
 from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
     AXIS_MAJOR_TICK_COUNT_KEY,
@@ -551,10 +553,7 @@ class plotWidget(
             self.plot.getAxis('right').setStyle(showValues=False)
             
             screenrect = qtw.QApplication.primaryScreen().availableGeometry()
-            sizeFrac = self.config.get("GUI.plot_frame_fraction")
-    
-            initial_width = int(sizeFrac * screenrect.width())
-            initial_height = int(sizeFrac * screenrect.height())
+            initial_width, initial_height = plot_tile_size(self.config, screenrect)
             self.resize(initial_width, initial_height)
             
             w = qtw.QFrame()
@@ -789,13 +788,11 @@ class plotWidget(
         operation_kind = getattr(self, "operation_kind", None)
         if operation_kind == "plot1d":
             return (
-                f"Cannot add {parameter_name}; line traces need the same "
-                "independent variable."
+                f"Cannot add {parameter_name}; plots support 1D or 2D measurements."
             )
         if operation_kind == "plot2d":
             return (
-                f"Cannot add {parameter_name}; heatmaps need the same two "
-                "independent variables."
+                f"Cannot add {parameter_name}; plots support 1D or 2D measurements."
             )
         return "Drop previews onto a compatible line plot or heatmap."
 
@@ -1481,7 +1478,7 @@ class plotWidget(
         """
         self.config = config
         
-        self.setStyleSheet(self.config.theme.main)
+        self.setStyleSheet(configured_stylesheet(self.config))
         self.config.theme.style_plotItem(self)
 
 
@@ -1834,7 +1831,10 @@ class plotWidget(
     
         # get x, y values.
         try:
-            viewbox_getter = getattr(self, "_primary_heatmap_viewbox", None)
+            viewbox_getter = (
+                getattr(self, "_primary_heatmap_viewbox", None)
+                if getattr(self, "operation_kind", None) == "plot2d" else None
+            )
         except RuntimeError:
             viewbox_getter = None
         coordinate_viewbox = (
@@ -1862,7 +1862,7 @@ class plotWidget(
                 self,
                 "_primary_heatmap_semantic_axes",
                 None,
-            )
+            ) if getattr(self, "operation_kind", None) == "plot2d" else None
         except RuntimeError:
             semantic_axes_getter = None
         semantic_x, semantic_y = (

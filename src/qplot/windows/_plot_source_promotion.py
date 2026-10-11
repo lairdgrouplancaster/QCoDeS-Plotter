@@ -1,0 +1,173 @@
+"""Promote the bottom remaining dataset when a plot's source is removed."""
+
+from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any
+
+from PyQt6 import QtWidgets as qtw
+
+from ._plot_drop_axes import DropAxisPlan
+from ._refresh_interval import refresh_interval_value
+
+
+@dataclass
+class _DatasetAppearance:
+    kind: str
+    key: Any
+    source: Any
+    plan: DropAxisPlan
+    style: Any = None
+    opacity: float = 1.0
+    visible: bool = True
+
+
+def _remaining_datasets(owner, selected):
+    datasets = []
+    for kind, key in owner._plot_item_order:
+        if (kind, key) in selected:
+            continue
+        if kind == "trace":
+            item = owner.lines[key]
+            style = deepcopy(owner._ensure_trace_styles()[key])
+            order = item.source_axis_order() or ("x", "y")
+            plan = DropAxisPlan(order, style.x_axis, style.y_axis, ())
+            datasets.append(_DatasetAppearance(kind, key, item.from_win, plan, style))
+        else:
+            item = owner.heatmaps[key]
+            sides = owner._heatmap_axis_sides(item)
+            plan = DropAxisPlan(item.source_axis_order() or ("x", "y"), sides[0], sides[1], ())
+            datasets.append(_DatasetAppearance(
+                kind, key, item.from_win, plan,
+                opacity=owner._heatmap_opacity(item), visible=owner._heatmap_is_visible(item),
+            ))
+    return datasets
+
+
+def _copy_operations(source, target):
+    options = {target.list_options.item(index).operation_row.label: target.list_options.item(index)
+               for index in range(target.list_options.count())}
+    for index in range(source.list_order.count()):
+        row = source.list_order.item(index)
+        if row.isHidden():
+            continue
+        option = options[row.label]
+        option.input.setChecked(True)
+        old_input, new_input = row.input, option.operation_row.input
+        if isinstance(old_input, qtw.QLineEdit):
+            new_input.setText(old_input.text())
+        elif isinstance(old_input, qtw.QComboBox):
+            new_input.setCurrentText(old_input.currentText())
+        elif isinstance(old_input, qtw.QCheckBox):
+            new_input.setChecked(old_input.isChecked())
+    target._apply_generation = source._apply_generation
+
+
+def _copy_view(owner, replacement):
+    for axis in ("x", "y", "x2", "y2"):
+        if not replacement._axis_scale_axis_is_used(axis):
+            continue
+        old = owner._axis_scale_viewbox(axis)
+        new = replacement._axis_scale_viewbox(axis)
+        dimension = 0 if axis in ("x", "x2") else 1
+        replacement._axis_scale_log_toggled(axis, owner._axis_scale_log_mode(axis))
+        new.setRange(**{"xRange" if dimension == 0 else "yRange": old.viewRange()[dimension]}, padding=0)
+        new.enableAutoRange(dimension, old.state["autoRange"][dimension])
+        dimension_name = "x" if dimension == 0 else "y"
+        new.setAutoVisible(**{dimension_name: old.state["autoVisibleOnly"][dimension]})
+        new.setAutoPan(**{dimension_name: old.state["autoPan"][dimension]})
+        new.setMouseEnabled(**{"x" if dimension == 0 else "y": old.state["mouseEnabled"][dimension]})
+        if dimension == 0:
+            new.invertX(old.state["xInverted"])
+        else:
+            new.invertY(old.state["yInverted"])
+    replacement._axis_scale_custom_auto_axes = set(owner._axis_scale_custom_auto_axes)
+
+
+def _copy_window_layout(owner, replacement):
+    for window in (owner, replacement):
+        for widget_type in (qtw.QDockWidget, qtw.QToolBar):
+            for widget in window.findChildren(widget_type):
+                widget.setObjectName(f"{widget_type.__name__}:{widget.windowTitle()}")
+    replacement.restoreState(owner.saveState())
+    replacement.setGeometry(owner.geometry())
+
+
+def promote_plot_source(main: Any, owner: Any, selected: list[tuple[str, Any]]) -> Any:
+    """Rebuild the source-specific controls and release the old plot owner.
+
+    Construct the replacement before closing the old owner, so every surviving
+    dataset stays retained and a construction failure leaves the plot intact.
+    Rebuilding also supports a change between trace and heatmap source types.
+    """
+    datasets = _remaining_datasets(owner, selected)
+    primary = datasets[-1]
+    source = primary.source
+    dialog = owner.__dict__.get("_plot_appearance_dialog")
+    show_dialog = dialog is not None and dialog.isVisible()
+    dialog_geometry = dialog.saveGeometry() if show_dialog else None
+    previous_windows = set(main.windows)
+    next_position = main._next_plot_x, main._next_plot_y
+    replacement = None
+    try:
+        main.openWin(type(source), source._dataset_key, source.param,
+                     refrate=refresh_interval_value(owner.spinBox), show=True)
+        replacement = next(win for win in main.windows if win not in previous_windows)
+        _copy_window_layout(owner, replacement)
+        _copy_operations(source.oper_widget, replacement.oper_widget)
+        order = primary.plan.axis_order
+        for dimension, source_axis in zip(("x", "y"), order, strict=True):
+            combo = replacement.axis_dropdown[dimension]
+            blocked = combo.blockSignals(True)
+            combo.setCurrentText(source.axis_options[source_axis])
+            combo.blockSignals(blocked)
+        replacement._axis_selection = replacement.axis_options
+        remapped_order: list[tuple[str, Any]] = []
+        for dataset in reversed(datasets):
+            if dataset is primary:
+                key = replacement.label if dataset.kind == "trace" else replacement._primary_heatmap_key
+                item = replacement.line if dataset.kind == "trace" else replacement
+            else:
+                key = dataset.key
+                if dataset.kind == "trace":
+                    replacement.add_preview_trace(dataset.source, dataset.plan)
+                    item = replacement.lines[key]
+                else:
+                    replacement.add_heatmap(dataset.source, axis_plan=dataset.plan)
+                    item = replacement.heatmaps[key]
+            if dataset.kind == "trace":
+                replacement._ensure_trace_styles()[key] = dataset.style
+                replacement._apply_trace_style(key, item)
+            else:
+                replacement._set_layer_axes(item, dataset.plan.x_side, dataset.plan.y_side)
+                replacement._set_layer_opacity(item, dataset.opacity)
+                replacement._set_layer_visibility(item, dataset.visible)
+            remapped_order.insert(0, (dataset.kind, key))
+        replacement._plot_item_order = remapped_order
+        replacement._sync_plot_item_order()
+        for name in ("subtractMeanCheck", "phasemapCheck", "fftCheck", "derivativeCheck"):
+            getattr(replacement.plot.ctrl, name).setChecked(getattr(owner.plot.ctrl, name).isChecked())
+        if "_colorbar_colormap_name" in owner.__dict__:
+            replacement._colorbar_colormap_name = owner._colorbar_colormap_name
+            bar = replacement.__dict__.get("bar")
+            if bar is not None:
+                bar.setColorMap(replacement._colorbar_colormap())
+        replacement._colorbar_manual_levels = owner.__dict__.get("_colorbar_manual_levels")
+        replacement._sync_heatmap_colorbar_items(rescale=True)
+        _copy_view(owner, replacement)
+        replacement.refreshWindow(force=True)
+    except Exception:
+        for win in list(main.windows):
+            if win not in previous_windows:
+                win.close()
+                win.deleteLater()
+        raise
+    finally:
+        main._next_plot_x, main._next_plot_y = next_position
+    owner.close()
+    if owner._merged_trace_users <= 0:
+        owner.deleteLater()
+    replacement.show()
+    if show_dialog:
+        replacement.open_plot_appearance_dialog()
+        replacement._plot_appearance_dialog.restoreGeometry(dialog_geometry)
+    return replacement

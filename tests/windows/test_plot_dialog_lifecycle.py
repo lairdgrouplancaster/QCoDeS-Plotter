@@ -87,8 +87,8 @@ def dialog_plot(tmp_path, monkeypatch, request, qapplication):
 def test_plot_close_closes_owned_editor(dialog_plot, editor):
     window, plot, app, _guids = dialog_plot
     if editor == "appearance":
-        plot.heatmap_appearance_action.trigger()
-        dialog = plot._heatmap_appearance_dialog
+        plot.appearance_action.trigger()
+        dialog = plot._plot_appearance_dialog
     elif editor == "color_scale":
         plot.colorbar_scale_action.trigger()
         dialog = plot.colorbar_scale_dialog
@@ -148,7 +148,7 @@ def test_cut_close_closes_axis_scale_editor(dialog_plot):
 @pytest.mark.parametrize("close_action", ["database", "application"])
 def test_database_or_application_close_closes_plot_editors(dialog_plot, close_action):
     window, plot, app, _guids = dialog_plot
-    plot.heatmap_appearance_action.trigger()
+    plot.appearance_action.trigger()
     plot.colorbar_scale_action.trigger()
     plot.open_axis_scale_dialog("Bottom")
     dialogs = [plot._heatmap_appearance_dialog, plot.colorbar_scale_dialog, plot._axis_scale_dialog]

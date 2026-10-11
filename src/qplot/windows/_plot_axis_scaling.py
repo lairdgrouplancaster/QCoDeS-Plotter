@@ -742,6 +742,9 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             # at a large offset. Tick-label precision is insufficient here.
             ui.minText.setText(f"{data_range[0]:.17g}")
             ui.maxText.setText(f"{data_range[1]:.17g}")
+            self.__dict__.setdefault("_axis_scale_displayed_range_text", {})[axis] = (
+                ui.minText.text(), ui.maxText.text(),
+            )
 
             auto_range = (
                 True
@@ -1032,6 +1035,13 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         viewbox = self._axis_scale_viewbox(axis)
         previous_view_values = list(viewbox.viewRange()[axis_number])
         previous_values = np.asarray(self.view_to_data(axis, previous_view_values))
+        # Layout changes can alter linked-axis coordinate conversion by a few
+        # ulps. Rejected edits must restore the exact text last shown, and a
+        # duplicate editingFinished must leave the current Auto mode intact.
+        previous_text = self.__dict__.get("_axis_scale_displayed_range_text", {}).get(
+            axis, tuple(f"{value:.17g}" for value in previous_values),
+        )
+        previous_values = np.asarray([float(value) for value in previous_text])
         try:
             values = [float(ui.minText.text()), float(ui.maxText.text())]
         except ValueError:
@@ -1042,8 +1052,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                 or not all(isfinite(value) for value in values)
                 or values[0] >= values[1]
                 ):
-            ui.minText.setText(f"{previous_values[0]:.17g}")
-            ui.maxText.setText(f"{previous_values[1]:.17g}")
+            ui.minText.setText(previous_text[0])
+            ui.maxText.setText(previous_text[1])
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status(
@@ -1053,8 +1063,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             return
 
         if self._axis_scale_log_mode(axis) and any(value <= 0 for value in values):
-            ui.minText.setText(f"{previous_values[0]:.17g}")
-            ui.maxText.setText(f"{previous_values[1]:.17g}")
+            ui.minText.setText(previous_text[0])
+            ui.maxText.setText(previous_text[1])
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status(
@@ -1070,8 +1080,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             return
         view_values = [float(value) for value in self.data_to_view(axis, values)]
         if not _manual_axis_view_limits_are_usable(viewbox, axis_number, view_values):
-            ui.minText.setText(f"{previous_values[0]:.17g}")
-            ui.maxText.setText(f"{previous_values[1]:.17g}")
+            ui.minText.setText(previous_text[0])
+            ui.maxText.setText(previous_text[1])
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status("These axis limits exceed the supported plot range.", 5000)
@@ -1258,15 +1268,16 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
     def _axis_scale_log_is_supported(self, axis: _AxisName) -> bool:
         """Return whether this axis contains data items that support log mode."""
 
-        if getattr(self, "operation_kind", None) == "plot2d":
-            return False
+        supports_log = False
         for _viewbox, items in self._axis_scale_bound_item_groups(axis):
             candidates = items
             if candidates is None:
                 candidates = list(getattr(self.plot, "dataItems", []))
-            if any(callable(getattr(item, "setLogMode", None)) for item in candidates):
-                return True
-        return False
+            for item in candidates:
+                if not callable(getattr(item, "setLogMode", None)):
+                    return False
+                supports_log = True
+        return supports_log
 
     def _axis_scale_log_mode(self, axis: _AxisName) -> bool:
         """Return the current log state from the displayed axis item."""
@@ -1299,7 +1310,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
     def _axis_scale_log_toggled(self, axis: _AxisName, checked: bool) -> None:
         """Apply a tab's log state to its ticks and assigned line traces."""
 
-        if not self._axis_scale_log_is_supported(axis):
+        if checked and not self._axis_scale_log_is_supported(axis):
             self._sync_axis_scale_controls(axis)
             return
 
@@ -1404,8 +1415,9 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         tabs.setStyleSheet(
             "QTabBar::tab { min-width: 57px; padding-left: 8px; "
             "padding-right: 8px; } "
-            "QTabBar::tab:selected { background: palette(highlight); "
-            "color: palette(highlighted-text); font-weight: 600; }"
+            "QTabBar::tab:selected:enabled { background: palette(highlight); "
+            "color: palette(highlighted-text); font-weight: 600; } "
+            "QTabBar::tab:disabled { color: palette(mid); }"
         )
         tab_tooltips = {
             "x": "Bottom horizontal axis",

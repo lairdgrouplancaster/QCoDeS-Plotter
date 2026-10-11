@@ -59,13 +59,12 @@ def run_preview_payload_from_mime(mime_data):
 
 
 def preview_drop_is_compatible(target_axes, payload):
+    """Check plot dimensionality; physical-axis compatibility is handled on drop."""
     axes = tuple(str(axis) for axis in (payload.get("axes") or []))
     target_axes = tuple(str(axis) for axis in target_axes)
     if not axes and payload.get("axes_pending") is True:
         # Pending thumbnails have a run/parameter identity but no rendered
-        # axes yet. The add action loads and checks the actual parameter
-        # before adding any trace or heatmap.
+        # axes yet. The add action loads the actual parameter before choosing
+        # axes and requesting approval for any remaining incompatibility.
         return len(target_axes) in (1, 2)
-    if len(axes) == len(target_axes) == 2:
-        return len(set(axes)) == 2 and set(axes) == set(target_axes)
-    return bool(axes) and axes == target_axes
+    return len(target_axes) in (1, 2) and len(axes) in (1, 2) and len(set(axes)) == len(axes)

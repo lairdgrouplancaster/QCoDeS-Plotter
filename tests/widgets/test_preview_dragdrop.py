@@ -111,8 +111,8 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
             "axes": ["x"],
             })
         self.assertTrue(preview_drop_is_compatible(("x",), payload))
-        self.assertFalse(preview_drop_is_compatible(("y",), payload))
-        self.assertFalse(preview_drop_is_compatible(("x", "y"), payload))
+        self.assertTrue(preview_drop_is_compatible(("y",), payload))
+        self.assertTrue(preview_drop_is_compatible(("x", "y"), payload))
         self.assertIsNone(run_preview_payload_from_mime(QtCore.QMimeData()))
 
         heatmap_payload = run_preview_payload_from_mime(
@@ -128,11 +128,11 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
         self.assertTrue(
             preview_drop_is_compatible(("bias", "gate"), heatmap_payload)
             )
-        self.assertFalse(
+        self.assertTrue(
             preview_drop_is_compatible(("gate", "field"), heatmap_payload)
             )
 
-    def test_heatmap_drop_target_accepts_same_axes_in_either_order(self):
+    def test_heatmap_drop_target_accepts_different_axes_in_either_order(self):
         target = type(
             "Target",
             (),
@@ -154,9 +154,9 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
         self.assertTrue(
             plotWidget.accepts_preview_trace_drop(target, reversed_order)
             )
-        self.assertFalse(plotWidget.accepts_preview_trace_drop(target, mismatched))
+        self.assertTrue(plotWidget.accepts_preview_trace_drop(target, mismatched))
 
-    def test_incompatible_preview_drop_shows_reason_on_target_plot(self):
+    def test_wrong_dimension_preview_drop_shows_reason_on_target_plot(self):
         messages = []
         target = type(
             "Target",
@@ -188,7 +188,7 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
                 return QtCore.QEvent.Type.Drop
 
             def mimeData(self):
-                return make_run_preview_mime("source-guid", "signal", ["bias"])
+                return make_run_preview_mime("source-guid", "signal", ["gate", "bias", "field"])
 
             def ignore(self):
                 self.ignored = True
@@ -198,7 +198,7 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
         self.assertTrue(plotWidget._handle_preview_drag_drop(target, event))
         self.assertTrue(event.ignored)
         self.assertEqual(messages, [(
-            "Cannot add signal; line traces need the same independent variable.",
+            "Cannot add signal; plots support 1D or 2D measurements.",
             5000,
         )])
 

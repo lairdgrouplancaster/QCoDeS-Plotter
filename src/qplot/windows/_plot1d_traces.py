@@ -518,6 +518,8 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
 
     def initMenu(self) -> None:
         super().initMenu()
+        if callable(getattr(self, "open_plot_appearance_dialog", None)):
+            return
         view_menu = None
         menu_bar = self.menuBar()
         if menu_bar is None:
@@ -582,14 +584,18 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         """
         super().initAxes()
 
-        self.axes_dock.hide()
-        self.axes_dock.toggleViewAction().setVisible(False)
+        if getattr(self, "operation_kind", "plot1d") == "plot1d":
+            self.axes_dock.hide()
+            self.axes_dock.toggleViewAction().setVisible(False)
         
         # Keep the legacy picker widgets only as an internal bridge for
         # preview drops and hidden-source construction. Trace Appearance is
         # the sole visible trace-control surface.
         self.lines = {}
-        self._register_main_line()
+        self.line = self.__dict__.get("line")
+        self.mergable = self.__dict__.get("mergable") or []
+        if self.line is not None:
+            self._register_main_line()
         self.option_boxes = []
         self._trace_controls = {}
         self.box_count = 1
@@ -619,18 +625,17 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         self.scrollWidget.setLayout(self.box_layout)
         
         # Main line controller
-        main_line = picker_1d(self, self.config, [self.label])
-        main_line.option_box.setCurrentIndex(0)
-        main_line.option_box.setDisabled(True)
-        main_line.del_box.setDisabled(True)
-        main_line.axis_side.setDisabled(True)
-        main_line.color_box.selectedColor.connect(
-            self._set_main_line_color
-            )
-        self._trace_controls[self.label] = main_line
-        self.box_layout.addWidget(main_line)
-        main_line.adjustSize()
-        self._apply_trace_style(self.label, self.line)
+        if self.line is not None:
+            main_line = picker_1d(self, self.config, [self.label])
+            main_line.option_box.setCurrentIndex(0)
+            main_line.option_box.setDisabled(True)
+            main_line.del_box.setDisabled(True)
+            main_line.axis_side.setDisabled(True)
+            main_line.color_box.selectedColor.connect(self._set_main_line_color)
+            self._trace_controls[self.label] = main_line
+            self.box_layout.addWidget(main_line)
+            main_line.adjustSize()
+            self._apply_trace_style(self.label, self.line)
         
         # Force to top
         self.box_layout.addStretch()
@@ -805,7 +810,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     
     
     @QtCore.pyqtSlot(str)
-    def add_line(self, label: str, trace_key: Any = None) -> None:
+    def add_line(self, label: str, trace_key: Any = None, *, axis_plan: Any = None) -> None:
         """
         Produces a secondary plot based on user selection in dropdown menus
         
@@ -854,7 +859,10 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         self.make_ds.emit(win._dataset_key)
         trace_key = self._window_trace_key(win)
         try:
-            subplot = subplot1d(self, win)
+            subplot = subplot1d(
+                self, win,
+                axis_order=None if axis_plan is None else axis_plan.axis_order,
+            )
         except Exception:
             self.remove_dataset.emit(win._dataset_key)
             self.mergable.append(win)
@@ -909,12 +917,39 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         style.y_axis = "Right" if selected_box.axis_side.currentText().lower() == "right" else "Left"
         if self.plot_axes_swapped():
             self._transpose_trace_axis_style(style)
+        if axis_plan is not None:
+            style.x_axis = axis_plan.x_side
+            style.y_axis = axis_plan.y_side
         self._ensure_trace_controls()[trace_key] = selected_box
         self._apply_trace_style(trace_key, subplot)
         self._install_trace_appearance_click_handler(trace_key, subplot)
         install_axis_handler = getattr(self, "_install_axis_scale_trace_handler", None)
         if callable(install_axis_handler):
             install_axis_handler(subplot)
+
+    def add_preview_trace(self, source: Any, axis_plan: Any) -> bool:
+        """Add an approved drop using the selected physical axes."""
+        if self._has_trace_window(source):
+            return False
+        key = self._window_trace_key(source)
+        if source not in self.mergable:
+            self.mergable.append(source)
+        selected = next((box for box in self.option_boxes if box.isEnabled()), None)
+        if selected is None:
+            self.add_option_box()
+            selected = self.option_boxes[-1]
+        combo = selected.option_box
+        blocked = combo.blockSignals(True)
+        try:
+            combo.clear()
+            combo.addItem(source.label, key)
+            combo.setCurrentIndex(0)
+            combo.setEnabled(False)
+            selected.del_box.setEnabled(True)
+        finally:
+            combo.blockSignals(blocked)
+        self.add_line(source.label, key, axis_plan=axis_plan)
+        return key in self.lines
         
     
     @QtCore.pyqtSlot(bool)
@@ -1412,6 +1447,8 @@ class _TraceAppearanceDialog(qtw.QDialog):
         trace_actions.addWidget(self.remove_trace_button)
         trace_layout.addLayout(trace_actions)
         body.addWidget(trace_group, 5)
+        self.appearance_body = body
+        self.items_layout = trace_layout
 
         panel = qtw.QWidget(self)
         panel_layout = qtw.QVBoxLayout(panel)
@@ -1534,6 +1571,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         panel_layout.addStretch()
 
         body.addWidget(panel, 4)
+        self.trace_controls_panel = panel
 
         buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close, self)
         buttons.rejected.connect(self.close)
@@ -2034,6 +2072,16 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.refresh_available_traces()
 
     def _sync_plot_order_from_rows(self) -> None:
+        combined = self.owner.__dict__.get("_plot_item_order")
+        sync_combined = getattr(self.owner, "_sync_plot_item_order", None)
+        if isinstance(combined, list) and callable(sync_combined):
+            trace_keys = iter(self.owner.lines)
+            self.owner.__dict__["_plot_item_order"] = [
+                ("trace", next(trace_keys)) if kind == "trace" else (kind, key)
+                for kind, key in combined
+            ]
+            sync_combined()
+            return
         row_count = len(self.owner.lines)
         for row, (label, line) in enumerate(self.owner.lines.items()):
             style = self.owner._trace_styles.setdefault(

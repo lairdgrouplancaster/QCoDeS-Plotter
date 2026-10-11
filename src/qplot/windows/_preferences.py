@@ -9,10 +9,14 @@ from PyQt6 import (
     QtWidgets as qtw,
 )
 
+from qplot.configuration.fonts import FONT_SIZE_KEY
+
 from ._commands import create_action
 from ._config_persistence import persist_config_values
+from ._plot_tiling import PLOT_TILE_COLUMNS_KEY, PLOT_TILE_ROWS_KEY
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
+    CONFIRM_INCOMPATIBLE_AXES_KEY,
     CONFIRM_QUIT_KEY,
 )
 
@@ -44,15 +48,19 @@ AXIS_MAJOR_TICK_COUNT_KEY = "user_preference.axis_major_tick_count"
 
 PREFERENCE_KEYS = (
     "user_preference.theme",
+    FONT_SIZE_KEY,
     COLORBAR_WIDTH_KEY,
     AXIS_TICK_WIDTH_KEY,
     AXIS_MAJOR_TICK_COUNT_KEY,
     "GUI.preview_size",
+    PLOT_TILE_ROWS_KEY,
+    PLOT_TILE_COLUMNS_KEY,
     MOUSE_MODE_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
     "file.default_load_path",
     "user_preference.default_refresh_rate",
     CONFIRM_CLOSE_ALL_KEY,
+    CONFIRM_INCOMPATIBLE_AXES_KEY,
     CONFIRM_QUIT_KEY,
     "runtime_settings.max_threads",
     "runtime_settings.max_full_heatmap_points",
@@ -153,6 +161,16 @@ class PreferencesDialog(qtw.QDialog):
             self.themeCombo.addItem(label, value)
         self._add_row(form, "&Theme:", self.themeCombo)
 
+        self.fontSizeSpin = qtw.QSpinBox(tab)
+        self.fontSizeSpin.setObjectName("fontSizePreferenceSpin")
+        self.fontSizeSpin.setAccessibleName("Font size")
+        self.fontSizeSpin.setRange(6, 36)
+        self.fontSizeSpin.setSuffix(" pt")
+        self.fontSizeSpin.setToolTip(
+            "Font size for windows, plot axis labels and tick numbers, and colour scales"
+            )
+        self._add_row(form, "&Font size:", self.fontSizeSpin)
+
         self.colorbarWidthSpin = qtw.QSpinBox(tab)
         self.colorbarWidthSpin.setObjectName("colorbarWidthPreferenceSpin")
         self.colorbarWidthSpin.setAccessibleName("Color scale width")
@@ -193,6 +211,25 @@ class PreferencesDialog(qtw.QDialog):
         self.previewSizeSpin.setSingleStep(50)
         self.previewSizeSpin.setSuffix(" px")
         self._add_row(form, "&Preview size:", self.previewSizeSpin)
+
+        self.plotTileRowsSpin = qtw.QSpinBox(tab)
+        self.plotTileRowsSpin.setObjectName("plotTileRowsPreferenceSpin")
+        self.plotTileRowsSpin.setAccessibleName("Plot window tile rows")
+        self.plotTileRowsSpin.setRange(1, 10)
+        self.plotTileRowsSpin.setToolTip(
+            "Rows in the screen grid used to size and place newly opened plots"
+            )
+        self._add_row(form, "Plot window tile &rows:", self.plotTileRowsSpin)
+
+        self.plotTileColumnsSpin = qtw.QSpinBox(tab)
+        self.plotTileColumnsSpin.setObjectName("plotTileColumnsPreferenceSpin")
+        self.plotTileColumnsSpin.setAccessibleName("Plot window tile columns")
+        self.plotTileColumnsSpin.setRange(1, 10)
+        self.plotTileColumnsSpin.setToolTip(
+            "Columns in the screen grid; plots fill left to right, then top "
+            "to bottom, wrapping after the last cell. Existing plots stay in place."
+            )
+        self._add_row(form, "Plot window tile &columns:", self.plotTileColumnsSpin)
 
         self.refreshRateSpin = qtw.QDoubleSpinBox(tab)
         self.refreshRateSpin.setObjectName("refreshRatePreferenceSpin")
@@ -297,6 +334,15 @@ class PreferencesDialog(qtw.QDialog):
         self.confirmQuitCheck.setObjectName("confirmQuitPreferenceCheck")
         self.confirmQuitCheck.setAccessibleName("Confirm before quit")
         layout.addWidget(self.confirmQuitCheck)
+
+        self.confirmIncompatibleAxesCheck = qtw.QCheckBox(
+            "Warn before adding data with incompatible axes", tab,
+        )
+        self.confirmIncompatibleAxesCheck.setObjectName("confirmIncompatibleAxesPreferenceCheck")
+        self.confirmIncompatibleAxesCheck.setAccessibleName(
+            "Warn before adding data with incompatible axes"
+        )
+        layout.addWidget(self.confirmIncompatibleAxesCheck)
 
         layout.addStretch(1)
         return tab
@@ -423,16 +469,20 @@ class PreferencesDialog(qtw.QDialog):
         """Return the controls in the same order as their preference keys."""
         return (
             self.themeCombo,
+            self.fontSizeSpin,
             self.colorbarWidthSpin,
             self.axisTickWidthSpin,
             self.axisMajorTickCountSpin,
             self.previewSizeSpin,
+            self.plotTileRowsSpin,
+            self.plotTileColumnsSpin,
             self.mouseModeCombo,
             self.copyPlotImageResolutionCombo,
             self.defaultLoadPathEdit,
             self.refreshRateSpin,
             self.confirmCloseAllCheck,
             self.confirmQuitCheck,
+            self.confirmIncompatibleAxesCheck,
             self.maxThreadsSpin,
             self.maxFullHeatmapPointsSpin,
             self.maxHeatmapGridCellsSpin,
@@ -451,6 +501,7 @@ class PreferencesDialog(qtw.QDialog):
         try:
             theme_index = self.themeCombo.findData(values["user_preference.theme"])
             self.themeCombo.setCurrentIndex(max(theme_index, 0))
+            self.fontSizeSpin.setValue(int(values[FONT_SIZE_KEY]))
 
             self.colorbarWidthSpin.setValue(int(values[COLORBAR_WIDTH_KEY]))
             self.axisTickWidthSpin.setValue(float(values[AXIS_TICK_WIDTH_KEY]))
@@ -459,6 +510,8 @@ class PreferencesDialog(qtw.QDialog):
                 )
 
             self.previewSizeSpin.setValue(int(values["GUI.preview_size"]))
+            self.plotTileRowsSpin.setValue(int(values[PLOT_TILE_ROWS_KEY]))
+            self.plotTileColumnsSpin.setValue(int(values[PLOT_TILE_COLUMNS_KEY]))
             mouse_mode_index = self.mouseModeCombo.findData(values[MOUSE_MODE_KEY])
             self.mouseModeCombo.setCurrentIndex(max(mouse_mode_index, 0))
             copy_resolution_index = self.copyPlotImageResolutionCombo.findData(
@@ -477,6 +530,9 @@ class PreferencesDialog(qtw.QDialog):
             self.confirmQuitCheck.setChecked(
                 bool(values[CONFIRM_QUIT_KEY])
                 )
+            self.confirmIncompatibleAxesCheck.setChecked(
+                bool(values[CONFIRM_INCOMPATIBLE_AXES_KEY])
+            )
             self.maxThreadsSpin.setValue(
                 int(values["runtime_settings.max_threads"])
                 )
@@ -510,10 +566,13 @@ class PreferencesDialog(qtw.QDialog):
         """
         values = {
             "user_preference.theme": self.themeCombo.currentData(),
+            FONT_SIZE_KEY: int(self.fontSizeSpin.value()),
             COLORBAR_WIDTH_KEY: int(self.colorbarWidthSpin.value()),
             AXIS_TICK_WIDTH_KEY: float(self.axisTickWidthSpin.value()),
             AXIS_MAJOR_TICK_COUNT_KEY: int(self.axisMajorTickCountSpin.value()),
             "GUI.preview_size": int(self.previewSizeSpin.value()),
+            PLOT_TILE_ROWS_KEY: int(self.plotTileRowsSpin.value()),
+            PLOT_TILE_COLUMNS_KEY: int(self.plotTileColumnsSpin.value()),
             MOUSE_MODE_KEY: self.mouseModeCombo.currentData(),
             COPY_PLOT_IMAGE_RESOLUTION_KEY: (
                 self.copyPlotImageResolutionCombo.currentData()
@@ -522,6 +581,7 @@ class PreferencesDialog(qtw.QDialog):
             "user_preference.default_refresh_rate": self.refreshRateSpin.value(),
             CONFIRM_CLOSE_ALL_KEY: self.confirmCloseAllCheck.isChecked(),
             CONFIRM_QUIT_KEY: self.confirmQuitCheck.isChecked(),
+            CONFIRM_INCOMPATIBLE_AXES_KEY: self.confirmIncompatibleAxesCheck.isChecked(),
             "runtime_settings.max_threads": int(self.maxThreadsSpin.value()),
             "runtime_settings.max_full_heatmap_points": int(
                 self.maxFullHeatmapPointsSpin.value()

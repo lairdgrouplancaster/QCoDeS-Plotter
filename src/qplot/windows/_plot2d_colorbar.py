@@ -362,7 +362,8 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         return scale
 
     def _set_colorbar_scaled_label(self, bar, scale):
-        param = self.__dict__.get("display_param", self.__dict__.get("param"))
+        provider = getattr(self, "_colorbar_display_parameter", None)
+        param = provider() if callable(provider) else self.__dict__.get("display_param", self.__dict__.get("param"))
         if param is None or not hasattr(bar, "setLabel"):
             return
 

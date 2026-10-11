@@ -33,7 +33,13 @@ class PlotWindowFeedbackMixin(_PlotWindowFeedbackBase):
         if self.visible:
             status_bar = self.statusBar()
             if status_bar is not None:
+                if not status_bar.property("qplotCollapseWhenEmpty"):
+                    status_bar.setProperty("qplotCollapseWhenEmpty", True)
+                    status_bar.messageChanged.connect(
+                        lambda text: status_bar.setVisible(bool(text))
+                        )
                 status_bar.showMessage(message, timeout)
+                status_bar.setVisible(bool(status_bar.currentMessage()))
 
 
     def show_plot_state(

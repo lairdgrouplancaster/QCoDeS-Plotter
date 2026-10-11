@@ -12,6 +12,7 @@ from PyQt6.QtTest import QTest
 
 from qplot.datahandling.readonly import sqlite_read_only_connection
 from qplot.windows import main as main_window
+from qplot.windows._plot_data_viewbox import coordinate_viewbox
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_plot_integration import (
     build_line_database,
@@ -285,7 +286,7 @@ def test_plot_csv_keeps_traces_across_all_axes_with_active_overlays(
             ("Top", "Right"), ("Bottom", "Left"),
         )):
             owner = _assign_trace_axes(window, trace_key, x_axis, y_axis)
-            assert trace.getViewBox() is owner
+            assert coordinate_viewbox(trace.getViewBox()) is owner
             window.set_marquee_rect(QtCore.QRectF(20, 25, 30, 40))
             window._show_snap_marker(47, 57, owner)
             assert window.marquee_handles.isVisible()

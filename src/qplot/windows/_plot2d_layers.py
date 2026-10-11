@@ -1,7 +1,7 @@
 """Secondary heatmap layers for :mod:`qplot.windows.plot2d`.
 
 The primary heatmap remains owned by ``plot2d``.  This module supplies the
-renderers and source-window lifecycle needed to place additional compatible
+renderers and source-window lifecycle needed to place additional
 heatmaps in the same view, plus lightweight controls for opacity and removal.
 All layers attached to one host deliberately share its colour map and levels.
 """
@@ -26,6 +26,7 @@ from ._colorbar import (
     _colorbar_colormap_preview,
 )
 from ._plot_appearance import ReorderAppearanceTable, configure_appearance_table
+from ._plot_drop_axes import DroppedAxisMapping, displayed_axis_parameter
 from ._plot_refresh import plot_refresh_required
 from ._refresh_interval import refresh_interval_value, set_refresh_interval
 
@@ -158,9 +159,14 @@ class HeatmapLayer:
         *,
         opacity: float = DEFAULT_OVERLAY_OPACITY,
         z_value: float = _FIRST_OVERLAY_Z_VALUE,
+        axis_order: tuple[str, str] | None = None,
     ) -> None:
         self.parent = parent
         self.from_win = from_win
+        self._dropped_axis_mapping = (
+            DroppedAxisMapping(parent, from_win, axis_order)
+            if axis_order is not None else None
+        )
         try:
             source_state = from_win.__dict__
         except (AttributeError, RuntimeError):
@@ -258,11 +264,9 @@ class HeatmapLayer:
         self._disconnect_pending_end_wait()
         self.running = plot_refresh_required(self.from_win)
 
-        axis_order, compatibility_error = _heatmap_layer_compatibility(
-            self.parent,
-            self.from_win,
-        )
+        axis_order = self.source_axis_order()
         if axis_order is None:
+            _order, compatibility_error = _heatmap_layer_compatibility(self.parent, self.from_win)
             self._report_compatibility_error(compatibility_error)
             self._clear_data()
             if sync_colorbar:
@@ -540,6 +544,11 @@ class HeatmapLayer:
         is_checked = getattr(checkbox, "isChecked", None)
         return bool(is_checked()) if callable(is_checked) else False
 
+    def source_axis_order(self) -> tuple[str, str] | None:
+        if self._dropped_axis_mapping is not None:
+            return self._dropped_axis_mapping.axis_order()
+        return _heatmap_layer_compatibility(self.parent, self.from_win)[0]
+
     def _report_compatibility_error(self, error: str | None) -> None:
         if not error or error == self.compatibility_error:
             return
@@ -558,6 +567,8 @@ class Plot2DLayerMixin:
         """Add Heatmap Appearance to the standard View menu."""
 
         super().initMenu()
+        if callable(getattr(self, "open_plot_appearance_dialog", None)):
+            return
         menu_bar = self.menuBar()
         if menu_bar is None:
             return
@@ -783,7 +794,8 @@ class Plot2DLayerMixin:
         if not isinstance(heatmaps, dict):
             heatmaps = {}
             self.__dict__["heatmaps"] = heatmaps
-        heatmaps.setdefault(primary_key, self)
+        if getattr(self, "operation_kind", "plot2d") == "plot2d":
+            heatmaps.setdefault(primary_key, self)
         self.__dict__.setdefault("_primary_heatmap_opacity", 1.0)
         self.__dict__.setdefault("_primary_heatmap_visible", True)
         self.__dict__.setdefault("_heatmap_appearance_dialog", None)
@@ -791,10 +803,8 @@ class Plot2DLayerMixin:
         if not isinstance(assignments, dict):
             assignments = {}
             self.__dict__["_heatmap_axis_assignments"] = assignments
-        assignments.setdefault(
-            primary_key,
-            {"x": "Bottom", "y": "Left"},
-        )
+        if primary_key in heatmaps:
+            assignments.setdefault(primary_key, {"x": "Bottom", "y": "Left"})
         renderer_viewboxes = self.__dict__.get("_heatmap_renderer_viewboxes")
         if not isinstance(renderer_viewboxes, dict):
             renderer_viewboxes = {}
@@ -827,8 +837,8 @@ class Plot2DLayerMixin:
                 return True
         return False
 
-    def add_heatmap(self, from_win: Any) -> bool:
-        """Add a compatible source heatmap as a translucent plot layer."""
+    def add_heatmap(self, from_win: Any, *, axis_plan: Any = None) -> bool:
+        """Add a heatmap using matching axes or an approved drop assignment."""
 
         if not isinstance(self.__dict__.get("heatmaps"), dict):
             self._init_heatmap_layers()
@@ -839,7 +849,7 @@ class Plot2DLayerMixin:
             self,
             from_win,
         )
-        if compatibility_error is not None:
+        if axis_plan is None and compatibility_error is not None:
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status(
@@ -874,11 +884,12 @@ class Plot2DLayerMixin:
                 from_win,
                 opacity=DEFAULT_OVERLAY_OPACITY,
                 z_value=z_value,
+                axis_order=None if axis_plan is None else axis_plan.axis_order,
             )
             self.heatmaps[trace_key] = layer
             self._heatmap_axis_assignments[trace_key] = {
-                "x": "Bottom",
-                "y": "Left",
+                "x": "Bottom" if axis_plan is None else axis_plan.x_side,
+                "y": "Left" if axis_plan is None else axis_plan.y_side,
             }
             self._install_heatmap_double_click_handlers(layer, trace_key)
             self._apply_heatmap_axis_assignment(layer, auto_range=False)
@@ -983,11 +994,8 @@ class Plot2DLayerMixin:
                 or getattr(source, "visible", True)
             ):
                 continue
-            axis_order, compatibility_error = _heatmap_layer_compatibility(
-                self,
-                source,
-            )
-            if axis_order is None or compatibility_error is not None:
+            axis_order = candidate.source_axis_order()
+            if axis_order is None:
                 continue
 
             view_box = self._heatmap_axis_viewbox(candidate)
@@ -1467,23 +1475,31 @@ class Plot2DLayerMixin:
             return
         layers = list(self.__dict__.get("heatmaps", {}).values())
         for side, display_axis, selected_side in (
+            ("bottom", "x", "Bottom"),
+            ("left", "y", "Left"),
             ("top", "x", "Top"),
             ("right", "y", "Right"),
         ):
-            used = any(
-                selected_side in self._heatmap_axis_sides(layer)
-                for layer in layers
-            )
+            assigned = [layer for layer in layers
+                        if selected_side in self._heatmap_axis_sides(layer)]
+            used = bool(assigned)
             axis = plot.getAxis(side)
             axis.setStyle(showValues=used)
             if not used:
                 axis.setLabel(text="", units="")
                 continue
-            parameter = self._heatmap_axis_parameter(display_axis)
+            layer = assigned[0]
+            source = self if layer is self else layer.from_win
+            order = ("x", "y") if layer is self else layer.source_axis_order()
+            source_axis = display_axis if order is None else order[0 if display_axis == "x" else 1]
+            parameter = (
+                self._heatmap_axis_parameter(display_axis) if layer is self
+                else displayed_axis_parameter(source, source_axis)
+            )
             label = getattr(parameter, "label", None) or getattr(
                 parameter,
                 "name",
-                getattr(self, "axis_options", {}).get(display_axis, ""),
+                getattr(source, "axis_options", {}).get(source_axis, ""),
             )
             unit = getattr(parameter, "unit", "") or ""
             axis.setLabel(text=str(label), units=str(unit))
@@ -1611,7 +1627,7 @@ class _HeatmapTableWidget(ReorderAppearanceTable):
 
     _REORDER_MIME_TYPE = "application/x-qplot-heatmap-reorder"
 
-    def __init__(self, dialog: _HeatmapAppearanceDialog) -> None:
+    def __init__(self, dialog: _HeatmapAppearanceControls) -> None:
         super().__init__(dialog, mime_type=self._REORDER_MIME_TYPE)
 
 
@@ -1654,20 +1670,21 @@ class _OpacitySpinBox(qtw.QSpinBox):
         return self.sizeHint()
 
 
-class _HeatmapAppearanceDialog(qtw.QDialog):
+class _HeatmapAppearanceControls(qtw.QWidget):
     """Edit heatmap layers using the same interaction model as traces."""
 
     _COL_ID = 0
     _COL_PREVIEW = 1
     _COL_MEASUREMENT = 2
 
-    def __init__(self, owner: Plot2DLayerMixin) -> None:
+    def __init__(self, owner: Plot2DLayerMixin, *, table: qtw.QTableWidget | None = None) -> None:
         super().__init__(cast(qtw.QWidget, owner))
         self.owner = owner
         self._building = False
         self.setWindowTitle("Heatmap Appearance")
-        self.resize(780, 360)
-        self.setMinimumSize(700, 300)
+        if table is None:
+            self.resize(780, 360)
+            self.setMinimumSize(700, 300)
         self.setStyleSheet(
             self.styleSheet()
             + """
@@ -1699,17 +1716,13 @@ class _HeatmapAppearanceDialog(qtw.QDialog):
         heatmap_layout.setContentsMargins(8, 8, 8, 8)
         heatmap_layout.setSpacing(6)
 
-        self.table = _HeatmapTableWidget(self)
-        configure_appearance_table(
-            self.table,
-            self,
-            object_name="heatmapAppearanceTable",
-            item_name="heatmap",
-        )
-        self.table.itemSelectionChanged.connect(
-            self._sync_controls_from_selection
-        )
-        heatmap_layout.addWidget(self.table)
+        self.table = _HeatmapTableWidget(self) if table is None else table
+        if table is None:
+            configure_appearance_table(
+                self.table, self, object_name="heatmapAppearanceTable", item_name="heatmap",
+            )
+            self.table.itemSelectionChanged.connect(self._sync_controls_from_selection)
+            heatmap_layout.addWidget(self.table)
 
         actions = qtw.QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
@@ -1733,7 +1746,10 @@ class _HeatmapAppearanceDialog(qtw.QDialog):
         actions.addWidget(self.add_heatmap_button)
         actions.addWidget(self.remove_heatmap_button)
         heatmap_layout.addLayout(actions)
-        body.addWidget(heatmap_group, 5)
+        if table is None:
+            body.addWidget(heatmap_group, 5)
+        else:
+            heatmap_group.hide()
 
         panel = qtw.QWidget(self)
         panel_layout = qtw.QVBoxLayout(panel)
@@ -1818,12 +1834,10 @@ class _HeatmapAppearanceDialog(qtw.QDialog):
         panel_layout.addStretch()
         body.addWidget(panel, 4)
 
-        buttons = qtw.QDialogButtonBox(
-            qtw.QDialogButtonBox.StandardButton.Close,
-            self,
-        )
-        buttons.rejected.connect(self.close)
-        main.addWidget(buttons)
+        if table is None:
+            buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close, self)
+            buttons.rejected.connect(self.close)
+            main.addWidget(buttons)
 
         self.opacity_slider.valueChanged.connect(self.opacity.setValue)
         self.opacity.valueChanged.connect(self.opacity_slider.setValue)
@@ -2195,3 +2209,7 @@ class _HeatmapAppearanceDialog(qtw.QDialog):
                 self.x_axis.currentText(),
                 self.y_axis.currentText(),
             )
+
+
+class _HeatmapAppearanceDialog(_HeatmapAppearanceControls, qtw.QDialog):
+    """Standalone heatmap editor for hosts without mixed-plot controls."""

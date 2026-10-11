@@ -15,8 +15,7 @@ from qplot.tools.heatmap_geometry import (
 
 from . import _colorbar
 from ._commands import command_spec, create_action
-from ._plot2d_colorbar import Plot2DColorbarMixin
-from ._plot2d_layers import Plot2DLayerMixin
+from ._mixed_plots import MixedPlotMixin
 from ._plot2d_sweeps import Plot2DSweepMixin
 from ._plot_axis_scaling import _install_flush_axis_draw_specs
 from ._plotWin import plotWidget
@@ -28,8 +27,7 @@ _HEATMAP_VIEW_RELOAD_MIN_FRACTION = 0.95
 
 class plot2d(
         Plot2DSweepMixin,
-        Plot2DColorbarMixin,
-        Plot2DLayerMixin,
+        MixedPlotMixin,
         plotWidget,
         ):
     """
@@ -43,6 +41,7 @@ class plot2d(
         
     """
     operation_kind = "plot2d"
+    get_mergables = QtCore.pyqtSignal()
     open_subplot = QtCore.pyqtSignal([object, object, tuple])
     sweep_moved = QtCore.pyqtSignal([int, float])
     close_sweeps_requested = QtCore.pyqtSignal([object, object])
@@ -266,11 +265,7 @@ class plot2d(
         super().initRefresh(refresh)
         
         self.toolbarRef.addSeparator()
-        self.toolbarRef.addWidget(qtw.QLabel("On refresh:  "))
-        
-        self.toolbarRef.addWidget(qtw.QLabel("Re-Map Colors "))
-        
-        self.relevel_refresh = qtw.QCheckBox()
+        self.relevel_refresh = qtw.QCheckBox("Autoscale colors on refresh")
         self.relevel_refresh.setToolTip("Autoscale the heatmap colour range on each refresh")
         self.relevel_refresh.toggled.connect(self._colorbar_auto_refresh_changed)
         self.toolbarRef.addWidget(self.relevel_refresh)
@@ -371,6 +366,7 @@ class plot2d(
                 return
             self._update_large_heatmap_state(plot_worker)
             self.refresh_secondary_heatmaps()
+            self.refresh_secondary_lines()
             if not self._refresh_publication_source_is_current(
                     plot_worker,
                     clear_display=clear_display,
