@@ -894,4 +894,3 @@ def test_removed_source_can_be_added_again(mixed_plot, monkeypatch, add_method):
     assert renderer.from_win is not target
     assert replacement._plot_appearance_dialog.table.rowCount() == 2
     _assert_scene_data_order(replacement)
-
