@@ -2697,7 +2697,7 @@ class PlotActionsMixin:
                         ),
                     shared_parameter=_subplot_shared_parameter(win),
                     )
-                if (getattr(item, "operation_kind", None) in {"plot1d", "sweeper"}
+                if (getattr(item, "operation_kind", item.__class__.__name__) in {"plot1d", "sweeper"}
                         and compatible is not None and not _plot_has_trace_window(win, item)):
                     wins.append(item)
             except (AttributeError, RuntimeError):

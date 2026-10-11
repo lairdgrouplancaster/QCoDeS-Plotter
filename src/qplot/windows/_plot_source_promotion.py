@@ -106,7 +106,7 @@ def promote_plot_source(main: Any, owner: Any, selected: list[tuple[str, Any]]) 
     show_dialog = dialog is not None and dialog.isVisible()
     dialog_geometry = dialog.saveGeometry() if show_dialog else None
     previous_windows = set(main.windows)
-    next_position = main._next_plot_x, main._next_plot_y
+    next_position = main._plot_tile_grid, main._next_plot_tile
     replacement = None
     try:
         main.openWin(type(source), source._dataset_key, source.param,
@@ -162,7 +162,7 @@ def promote_plot_source(main: Any, owner: Any, selected: list[tuple[str, Any]]) 
                 win.deleteLater()
         raise
     finally:
-        main._next_plot_x, main._next_plot_y = next_position
+        main._plot_tile_grid, main._next_plot_tile = next_position
     owner.close()
     if owner._merged_trace_users <= 0:
         owner.deleteLater()

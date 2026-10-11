@@ -10,6 +10,8 @@ from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.graphicsItems.ViewBox import axisCtrlTemplate_generic
 
+from ._plot_data_viewbox import coordinate_viewbox
+
 _AxisName = Literal["x", "y", "x2", "y2"]
 _AXIS_MENU_ITEMS: tuple[tuple[_AxisName, str], ...] = (
     ("x", "X axis"),
@@ -98,6 +100,7 @@ def _manual_axis_view_limits_are_usable(
 
 def _disable_native_axis_auto(viewbox: Any, axis_constant: int) -> None:
     """Let qPlot replace pending native auto bounds without applying them."""
+    viewbox = coordinate_viewbox(viewbox)
     pending = viewbox._autoRangeNeedsUpdate
     viewbox._autoRangeNeedsUpdate = False
     try:
@@ -367,6 +370,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             if not state["autoVisibleOnly"][number]:
                 continue
             for bounds_viewbox, _items in self._axis_scale_bound_item_groups(axis):
+                bounds_viewbox = coordinate_viewbox(bounds_viewbox)
                 # The containing ViewBox identifies the perpendicular axis of
                 # these assigned items, independently of the tab's owner.
                 if number == 0:
@@ -1149,7 +1153,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         bound_groups = self._axis_scale_bound_item_groups(axis)
         if not _manual_axis_view_limits_are_usable(viewbox, axis_number, limits):
             if viewbox.autoRangeEnabled()[axis_number] is not False or any(
-                bounds_viewbox.autoRangeEnabled()[axis_number] is not False
+                coordinate_viewbox(bounds_viewbox).autoRangeEnabled()[axis_number] is not False
                 for bounds_viewbox, _items in bound_groups
             ):
                 # Initial/native Auto must not retry the rejected geometry on
@@ -1164,7 +1168,11 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                 self._sync_axis_scale_controls(axis)
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
-                show_status("Automatic axis limits exceed the supported plot range.", 5000)
+                fft_error = self.__dict__.get("_qplot_native_fft_error_text")
+                show_status(
+                    fft_error or "Automatic axis limits exceed the supported plot range.",
+                    0 if fft_error else 5000,
+                )
             return
         self._axis_scale_programmatic_change_depth = (
             self.__dict__.get("_axis_scale_programmatic_change_depth", 0) + 1

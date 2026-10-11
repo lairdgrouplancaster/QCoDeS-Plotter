@@ -66,6 +66,8 @@ def mixed_plot(request, tmp_path, monkeypatch):
     window.config.config["user_preference"]["confirm_close_all"] = False
     exceptions = []
     monkeypatch.setattr(sys, "excepthook", lambda *args: exceptions.append(args))
+    # Surface unexpected static error dialogs instead of blocking headless runs.
+    monkeypatch.setattr(qtw.QMessageBox, "critical", lambda *args: exceptions.append(args))
     try:
         window.close_database(status=False)
         assert window.load_file(str(path))
@@ -493,9 +495,11 @@ def test_source_removal_mirrors_unused_bottom_and_left_axes(mixed_plot, monkeypa
     row = next(row for row in range(dialog.table.rowCount()) if dialog._is_primary(*dialog._row_entry(row)))
     dialog.table.clearSelection()
     dialog.table.selectRow(row)
+    next_position = window._plot_tile_grid, window._next_plot_tile
     dialog.remove_item_button.click()
     replacement = next(plot for plot in window.windows if plot is not target and plot.isVisible())
     _wait_for(lambda: not replacement.worker.running)
+    assert (window._plot_tile_grid, window._next_plot_tile) == next_position
     _assert_axis_mirrors(replacement, "bottom", "top", (100, 200))
     _assert_axis_mirrors(replacement, "left", "right", (300, 400))
     assert replacement.plot.getAxis("top").style["showValues"]
@@ -795,6 +799,7 @@ def test_removing_source_promotes_bottom_remaining_dataset(
         # Repeating removal promotes the final dataset and releases the
         # newly replaced source too, including another dimension change.
         current_source_key = replacement._dataset_key
+        new_dialog.table.clearSelection()
         new_dialog.table.selectRow(next(row for row in range(2)
                                         if new_dialog._is_primary(*new_dialog._row_entry(row))))
         new_dialog.remove_item_button.click()
@@ -825,6 +830,7 @@ def test_failed_promotion_keeps_original_plot_and_dataset_ownership(mixed_plot, 
         open_window(*args, **kwargs)
         raise RuntimeError("Source construction failed")
     monkeypatch.setattr(window, "openWin", fail_after_construction)
+    dialog.table.clearSelection()
     dialog.table.selectRow(next(row for row in range(2) if dialog._row_entry(row) == original_entry))
     dialog.remove_item_button.click()
     assert len(errors) == 1
@@ -846,6 +852,7 @@ def test_source_promotion_cancels_pending_old_refresh(mixed_plot, monkeypatch):
     source = _added(target, runs["other_line"]).from_win
     target.open_plot_appearance_dialog()
     dialog = target._plot_appearance_dialog
+    dialog.table.clearSelection()
     dialog.table.selectRow(next(row for row in range(2) if dialog._row_entry(row) == original_entry))
     source.refreshWindow(force=True)
     target.refreshWindow(force=True)
@@ -873,6 +880,7 @@ def test_removed_source_can_be_added_again(mixed_plot, monkeypatch, add_method):
     _added(target, runs["other_line"])
     target.open_plot_appearance_dialog()
     dialog = target._plot_appearance_dialog
+    dialog.table.clearSelection()
     dialog.table.selectRow(next(row for row in range(2) if dialog._row_entry(row) == original_entry))
     dialog.remove_item_button.click()
     assert errors == []

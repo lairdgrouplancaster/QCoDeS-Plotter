@@ -325,9 +325,10 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
     def _axis_scale_bound_item_groups(self, axis):
         groups: dict[Any, list[Any]] = {}
         for viewbox, items in super()._axis_scale_bound_item_groups(axis):
-            owner = coordinate_viewbox(viewbox)
+            if isinstance(viewbox, PlotDataViewBox):
+                viewbox.sync_view()
             if items is not None:
-                groups.setdefault(owner, []).extend(items)
+                groups.setdefault(viewbox, []).extend(items)
         dimension = self._axis_scale_dimension(axis)
         side = {"x": "Bottom", "x2": "Top", "y": "Left", "y2": "Right"}[axis]
         # The base implementation chooses traces when that registry exists.
@@ -336,8 +337,11 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
             for layer in self.__dict__.get("heatmaps", {}).values():
                 x_side, y_side = self._heatmap_axis_sides(layer)
                 if (x_side if dimension == "x" else y_side) == side:
-                    viewbox = self._heatmap_axis_viewbox(layer)
-                    groups.setdefault(viewbox, []).extend(self._heatmap_render_items(layer))
+                    for item in self._heatmap_render_items(layer):
+                        viewbox = item.getViewBox() or self._heatmap_axis_viewbox(layer)
+                        if isinstance(viewbox, PlotDataViewBox):
+                            viewbox.sync_view()
+                        groups.setdefault(viewbox, []).append(item)
         return list(groups.items())
 
     def _axis_scale_axis_is_used(self, axis):

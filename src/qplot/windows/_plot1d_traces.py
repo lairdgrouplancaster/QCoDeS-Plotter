@@ -882,9 +882,6 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         # has been constructed successfully.
         self.add_option_box()
         self.lines[trace_key] = subplot
-        sync_transforms = getattr(self, "_sync_native_trace_transforms", None)
-        if callable(sync_transforms):
-            sync_transforms(subplot)
         
         # Connect box options to line
         selected_box = None
@@ -921,6 +918,9 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             style.x_axis = axis_plan.x_side
             style.y_axis = axis_plan.y_side
         self._ensure_trace_controls()[trace_key] = selected_box
+        sync_transforms = getattr(self, "_sync_native_trace_transforms", None)
+        if callable(sync_transforms):
+            sync_transforms(subplot)
         self._apply_trace_style(trace_key, subplot)
         self._install_trace_appearance_click_handler(trace_key, subplot)
         install_axis_handler = getattr(self, "_install_axis_scale_trace_handler", None)
