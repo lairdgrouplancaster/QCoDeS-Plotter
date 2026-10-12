@@ -19,7 +19,7 @@ import os
 import threading
 import time
 from collections.abc import Callable, Generator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import IntEnum, StrEnum
 from typing import Any, Generic, TypeVar, cast
 
@@ -422,6 +422,7 @@ class TrustedLiveReadService:
         self._closing_supervisor: TrustedLiveReaderSupervisor | None = None
         self._retained_supervisors: list[TrustedLiveReaderSupervisor] = []
         self._adapter: TrustedMetadataQueryAdapter | None = None
+        self._refresh_status_retry_pending = False
         # Accessed only by the dispatcher; never owned by a GUI dataset.
         self._plot_prefix_cache: dict[tuple, Any] = {}
         self._retired_plot_steps: list[Generator[None, None, Any]] = []
@@ -604,6 +605,12 @@ class TrustedLiveReadService:
                 deadline,
             ),
         )
+
+    def retry_refresh_statuses(self) -> None:
+        """Retain status reconciliation when a refresh worker did not finish."""
+
+        with self._condition:
+            self._refresh_status_retry_pending = True
 
     def submit_basic_page(
         self,
@@ -1478,6 +1485,15 @@ class TrustedLiveReadService:
             self._coalesced.pop(operation.coalesce_key, None)
         self._operations.pop(operation.operation_id, None)
         now = time.monotonic()
+        if (
+            operation.kind is TrustedReadOperation.REFRESH
+            and error is None
+            and self._refresh_status_retry_pending
+        ):
+            # The previous header may have accepted the writer's final commit
+            # before a watched status failed. Reconcile those statuses even
+            # when SQLite's data_version has not changed again.
+            result = replace(cast(TrustedRefreshResult, result), data_version_changed=True)
         for request_id in tuple(operation.subscribers):
             state = self._requests.get(request_id)
             if state is None or state.done.is_set():
@@ -1755,6 +1771,15 @@ class TrustedLiveReadService:
     ) -> None:
         if state.done.is_set():
             return
+        if error is not None and state.identity.operation in {
+            TrustedReadOperation.CHEAP_RUN,
+            TrustedReadOperation.EXPENSIVE_RUN,
+        }:
+            self._refresh_status_retry_pending = True
+        elif error is None and state.identity.operation is TrustedReadOperation.REFRESH:
+            # Clear only when a successful header reaches a live subscriber.
+            # Queue expiry, cancellation and failed refreshes must retain it.
+            self._refresh_status_retry_pending = False
         state.result = result
         state.error = error
         state.done.set()

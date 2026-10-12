@@ -170,6 +170,9 @@ class _FakeTrustedService:
     ) -> _FakeTrustedRequest:
         return self._submit("refresh", accepted_run_id, deadline=deadline)
 
+    def retry_refresh_statuses(self) -> None:
+        pass
+
     def submit_basic_page(
         self,
         after_run_id: int,
