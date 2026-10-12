@@ -108,11 +108,12 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
             self.controls_stack.setCurrentWidget(self.trace_controls_panel)
             super()._sync_controls_from_selection()
         self.remove_item_button.setEnabled(self._can_remove_items(selected))
+        self.remove_item_button.setToolTip(self.owner.plot_item_removal_error(selected) or "")
 
     def _can_remove_items(self, selected):
         entries = set(self.owner._plot_item_order)
         selected = set(selected)
-        return bool(selected) and selected < entries
+        return bool(selected) and selected < entries and not self.owner.plot_item_removal_error(selected)
 
     def _is_primary(self, kind: str, key: Any) -> bool:
         if kind == "trace":

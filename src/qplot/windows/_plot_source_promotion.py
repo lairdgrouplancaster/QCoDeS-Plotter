@@ -1,4 +1,4 @@
-"""Promote the bottom remaining dataset when a plot's source is removed."""
+"""Promote the bottom eligible dataset when a plot's source is removed."""
 
 from copy import deepcopy
 from dataclasses import dataclass
@@ -100,7 +100,12 @@ def promote_plot_source(main: Any, owner: Any, selected: list[tuple[str, Any]]) 
     Rebuilding also supports a change between trace and heatmap source types.
     """
     datasets = _remaining_datasets(owner, selected)
-    primary = datasets[-1]
+    # Cuts have their own linked controls and cannot host a mixed plot. Keep
+    # their overlays in place while choosing the bottom eligible full source.
+    primary = next((dataset for dataset in reversed(datasets)
+                    if dataset.source.operation_kind in {"plot1d", "plot2d"}), None)
+    if primary is None:
+        raise ValueError("Keep a full line or heatmap dataset in this plot; cuts cannot be its primary source.")
     source = primary.source
     dialog = owner.__dict__.get("_plot_appearance_dialog")
     show_dialog = dialog is not None and dialog.isVisible()

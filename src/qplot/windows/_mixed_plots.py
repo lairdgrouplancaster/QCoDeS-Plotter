@@ -99,6 +99,10 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
         entries = set(self._plot_item_order)
         if not set(selected) or not set(selected) < entries:
             return self
+        removal_error = self.plot_item_removal_error(selected)
+        if removal_error:
+            self.show_status(removal_error, 5000)
+            return self
         primary_selected = any(
             (self.lines.get(key) is self.__dict__.get("line") if kind == "trace"
              else self.heatmaps.get(key) is self)
@@ -112,6 +116,25 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
             else:
                 self.remove_heatmap(trace_key=key)
         return self
+
+    def plot_item_removal_error(self, selected):
+        """Cuts may remain overlays, but cannot own a mixed plot's controls."""
+        selected = set(selected)
+        primary_selected = any(
+            (self.lines.get(key) is self.__dict__.get("line") if kind == "trace"
+             else self.heatmaps.get(key) is self)
+            for kind, key in selected
+        )
+        if primary_selected:
+            for kind, key in self._plot_item_order:
+                if (kind, key) in selected:
+                    continue
+                item = self.lines[key] if kind == "trace" else self.heatmaps[key]
+                source = item.from_win
+                if source.operation_kind in {"plot1d", "plot2d"}:
+                    return None
+            return "Keep a full line or heatmap dataset in this plot; cuts cannot be its primary source."
+        return None
 
     def _add_plot_overlay(self, item, viewbox=None):
         if viewbox is None:
