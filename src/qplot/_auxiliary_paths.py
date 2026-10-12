@@ -28,6 +28,10 @@ def _read_header(filename):
         return b""
     if not stat.S_ISREG(before.st_mode):
         raise OSError("The auxiliary destination is not a regular file.")
+    # SHM has no distinctive header. An innocently named log or settings file
+    # can alias it, so no multiply-linked destination is safe to modify.
+    if before.st_nlink != 1:
+        raise OSError("The auxiliary destination has multiple hard links.")
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
     flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     flags |= getattr(os, "O_CLOEXEC", 0)
