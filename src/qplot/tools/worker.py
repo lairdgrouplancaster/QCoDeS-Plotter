@@ -2507,18 +2507,32 @@ class loader(QtCore.QRunnable):
         # arbitrary offset (for example, a GHz carrier), and can therefore
         # hide a genuine sub-Hz serpentine reversal.
         finite_values = values[np.isfinite(values)]
-        origin = finite_values[0]
-        centred_values = finite_values - origin
+        # Normalize before subtraction: opposite finite extremes otherwise
+        # become inf, and isclose(inf, inf) can hide different coordinates.
+        magnitude = float(np.max(np.abs(finite_values)))
+        exponent = math.frexp(magnitude)[1] - 1 if magnitude else 0
+        coordinate_scale = math.ldexp(1.0, max(-1022, min(1023, exponent)))
+        normalized_values = finite_values / coordinate_scale
+        origin = normalized_values[0]
+        centred_values = normalized_values - origin
         span = float(np.max(np.abs(centred_values)))
-        if not np.isfinite(span) or span == 0:
-            span = 1.0
+        if span == 0:
+            # The old zero-span fallback compares differences in original
+            # units. Do not make its absolute tolerance grow with the offset.
+            with np.errstate(over="ignore", invalid="ignore"):
+                return bool(np.all(np.isclose(
+                    param_data[valid], expected[valid], rtol=0., atol=1e-12,
+                )))
 
-        return bool(np.all(np.isclose(
-            (param_data[valid] - origin) / span,
-            (expected[valid] - origin) / span,
-            rtol=1e-10,
-            atol=1e-12,
-            )))
+        # A wildly different actual sample can overflow division by a tiny
+        # representative scale; it then correctly fails this finite reference.
+        with np.errstate(over="ignore", invalid="ignore"):
+            return bool(np.all(np.isclose(
+                (param_data[valid] / coordinate_scale - origin) / span,
+                (expected[valid] / coordinate_scale - origin) / span,
+                rtol=1e-10,
+                atol=1e-12,
+                )))
 
 
     def _shaped_data_grid(self, data, depvarData, axis_dimension, valid):

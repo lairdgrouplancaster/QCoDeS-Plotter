@@ -419,10 +419,23 @@ All Python commands use the project venv; Matplotlib cache is
   and missing holes. At X scale `1e308`, raw origin subtraction overflows;
   `isclose(inf, inf)` accepts a false match and moves signal 6 from `9e307`
   to `1e308` in a three-column grid.
-- Final safety owns normalized-coordinate comparison and real regression;
-  final measurement will independently review. Existing tolerance/cancellation
-  behavior must be retained. Round 8 measurement checks otherwise passed
-  **432 tests, 3 skips**; UI/lifecycle completed with **409 tests passed**.
+- Fixed with binary-normalized comparison, retaining existing tolerance and
+  cancellation behavior. **166 focused tests passed**, including 19 new
+  scale/axis/direction/tolerance cases. Final measurement independently approved
+  with **90 tests passed**. Ordinary two-million-coordinate performance unchanged.
+- Round 8 measurement checks otherwise passed **432 tests, 3 skips**;
+  UI/lifecycle completed with **409 tests passed**.
+
+### BH-021 — Extreme heatmap display reports success with an infinite transform
+
+- Actual UI follow-up to BH-017: correct reduced 2x2 data and finite centres
+  `±5e307` reach Qt, but image scale becomes infinite, view stays at its default
+  range, renderers remain marked visible, and "Loaded" replaces any warning.
+  There is no crash, but the application implies that an unusable plot succeeded.
+- A focused primary/overlay display-range guard is being added by final
+  measurement, retaining correct raw grid/axes and CSV behavior. Explicit
+  unsupported display status must survive normal completion callbacks. Semantic
+  bin geometry should remain usable; no unrelated axis rebasing redesign.
 
 ### Integrated suite result
 
