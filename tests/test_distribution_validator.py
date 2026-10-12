@@ -425,6 +425,26 @@ def test_validator_accepts_both_split_wheels(tmp_path):
     }
 
 
+@pytest.mark.parametrize("override", [
+    {}, {"version": "wrong"}, {"commit": "invalid"}, {"dirty": True},
+    {"released": "false"}, {"pull_request": "invalid"},
+])
+def test_generated_build_provenance_is_validated_without_source_file(tmp_path, override):
+    app = _split_wheel(tmp_path)
+    info = dict(version="1.6.0b3", commit="a" * 40, dirty=False,
+                released=False, pull_request="83")
+    info.update(override)
+    with zipfile.ZipFile(app, "a") as archive:
+        archive.writestr("qplot/_build_info.json", json.dumps(info))
+    if override:
+        with pytest.raises(AssertionError):
+            validate_wheel(app, PACKAGING_SOURCE)
+    else:
+        assert validate_wheel(app, PACKAGING_SOURCE) == {
+            "qplot/__init__.py", "qplot/_build_info.json",
+        }
+
+
 @pytest.mark.parametrize("extra_file", [
     "qplot/datahandling/_trusted_vfs_native.abi3.so",
     "qplot_native/__init__.py",

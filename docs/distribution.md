@@ -29,11 +29,11 @@ virtual environment with:
 python -m pip install --only-binary=:all: qplotter
 ```
 
-The current development target is application beta `1.6.0b4`, retaining the
-exact native dependency `1.0.0`. Its application-only release will use the
-`v1.6.0b4` tag after validation and approval. Preparing a PR does not publish it.
+The current development target is the unreleased application beta `1.6.0b3`,
+with exact native dependency `1.0.0`. Existing candidate tags do not establish
+that publication succeeded. Preparing a PR does not publish either package.
 
-The first split application release is the beta `1.6.0b3`, with exact native
+The first prepared split application release is beta `1.6.0b3`, with exact native
 dependency `1.0.0`. Once published, install that prerelease explicitly:
 
 ```console

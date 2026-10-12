@@ -8,7 +8,7 @@ release workflow and its validation gates. See `docs/distribution.md`.
 
 ## Unreleased
 
-## 1.6.0b4 - Unreleased
+## 1.6.0b3 - Unreleased
 
 ### Added
 
@@ -22,26 +22,6 @@ release workflow and its validation gates. See `docs/distribution.md`.
   font-size preference to graph text.
 - Add Help -> About qPlot with the running version, source commit and local
   changes, plus commit and PR provenance in CI-built application packages.
-
-### Changed
-
-- Consolidate plot feedback and loading progress in the refresh toolbar, with
-  accurate initial point counts and stable cursor readouts.
-- Clarify refresh controls and incompatible-axis confirmations.
-
-### Fixed
-
-- Preserve coordinate ownership, drawing order, native transforms, and specific
-  FFT validation messages when combining or replacing plot sources.
-- Stabilize GUI test waits and release plot windows and background workers
-  during teardown.
-
-This application beta retains the exact `qplotter-native==1.0.0` dependency.
-
-## 1.6.0b3
-
-### Added
-
 - Split pure-Python application distribution `qplotter` from native reader
   distribution `qplotter-native`, retaining the qPlot name, `qplot` imports and
   commands. Ordinary and editable application installation use prebuilt native
@@ -52,6 +32,9 @@ This application beta retains the exact `qplotter-native==1.0.0` dependency.
 
 ### Changed
 
+- Consolidate plot feedback and loading progress in the refresh toolbar, with
+  accurate initial point counts and stable cursor readouts.
+- Clarify refresh controls and incompatible-axis confirmations.
 - Load and refresh explicit plots through the trusted, physically read-only
   reader without copying the whole database. Small runs can open while a large
   run is loading, including with a single processing thread.
@@ -62,6 +45,13 @@ This application beta retains the exact `qplotter-native==1.0.0` dependency.
 - Clarify full-resolution and downsampled heatmap dimensions, explaining when
   exact source dimensions are not retained during downsampling. Right-align
   resolution information while keeping cursor coordinates left-aligned.
+
+### Fixed
+
+- Preserve coordinate ownership, drawing order, native transforms, and specific
+  FFT validation messages when combining or replacing plot sources.
+- Stabilize GUI test waits and release plot windows and background workers
+  during teardown.
 
 ## 1.6.0b1 - 2026-09-28
 

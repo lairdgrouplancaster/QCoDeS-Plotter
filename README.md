@@ -103,9 +103,9 @@ source builds, and release validation.
 ## Install
 
 Install qPlot inside a supported Python virtual environment. This checkout
-prepares application beta `1.6.0b4`, retaining native `1.0.0`. The installation
-examples below target `1.6.0b3`; use validated local artifacts to try the next
-beta before publication, as described in [Distribution](docs/distribution.md).
+prepares the unreleased application beta `1.6.0b3`, with native `1.0.0`.
+The installation examples below work after publication; until then, use
+validated local artifacts as described in [Distribution](docs/distribution.md).
 
 ### Prelude
 #### Windows
