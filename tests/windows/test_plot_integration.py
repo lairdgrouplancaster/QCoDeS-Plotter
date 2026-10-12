@@ -72,7 +72,10 @@ def wait_for(predicate, timeout=12):
         app.processEvents()
         if predicate():
             app.processEvents()
-            return
+            # A queued refresh can replace the publication during this drain.
+            # Return only while the state the caller will inspect still holds.
+            if predicate():
+                return
         time.sleep(0.03)
     raise AssertionError("Timed out waiting for GUI integration state")
 
