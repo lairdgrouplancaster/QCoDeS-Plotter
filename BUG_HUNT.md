@@ -17,10 +17,10 @@
 
 | Investigator | Initial coverage | State |
 | --- | --- | --- |
-| Database subchat | Native VFS, read-only/live database access, cancellation, services and scheduling | In progress |
-| Measurement subchat | Extraction, dimensional interpretation, rendering, numeric operations and transforms | In progress |
-| UI/lifecycle subchat | Windows, mixed plots, refresh, removal, shutdown, worker lifetime | In progress |
-| Coordinator | Settings, entry points, diagnostics, synthetic generation, packaging and integration | In progress |
+| Database subchat | Native VFS, read-only/live database access, cancellation, services and scheduling | Initial audit complete |
+| Measurement subchat | Extraction, dimensional interpretation, rendering, numeric operations and transforms | Initial audit complete; final numeric follow-up |
+| UI/lifecycle subchat | Windows, mixed plots, refresh, removal, shutdown, worker lifetime | Initial audit complete |
+| Coordinator | Settings, entry points, diagnostics, synthetic generation, packaging and integration | Initial audit complete; integration running |
 
 Parallel edits use explicit disjoint file ownership. Coordinator owns this log
 and integration commits. Substantive fixes require review by a different subchat.
@@ -59,22 +59,95 @@ All Python commands use the project venv; Matplotlib cache is
   (250,000 cells), all finite; aggregation 2.449 s, preview 1.682 s. Synthetic
   temporary database only. This is a local observation, not a portable limit.
 
-## In-progress confirmed repairs
+### BH-002 — Final live run status lost after a transient refresh failure
 
-- Live metadata refresh: accepting the writer's final `data_version` before a
-  watched status failure can permanently suppress retries. Initial six failing
-  cases repaired; independent measurement review found an additional BASIC_PAGE
-  failure/cancellation gap, now being covered before approval.
-- Trusted previews: Boolean NPY rejection, distinct uint64 coordinates merging,
-  duplicate-cell cancellation residual loss, and finite-extreme overflow. Focused
-  numeric/image and real QCoDeS roundtrip regressions in progress; cache renderer
-  version updated. Independent review pending.
-- Plot refresh: zero-delay pending callbacks repeatedly repost while a replacement
-  worker runs. One-callback regression and 111 related tests passed; database
-  subchat approved completion-path scheduling and cancellation behavior.
-- Mixed source removal: a surviving heatmap cut is not a constructible full plot
-  source; current action raises TypeError. Guard/eligible source selection and
-  integration regressions in progress.
+- Reproduction: the header accepts the writer's final `data_version`, then a
+  watched status times out; later refreshes see no change and never retry status.
+  Six initial regression variants failed before repair. Review exposed the same
+  problem for failed BASIC_PAGE and cancellation between requests.
+- Fix: thread-safe service retry marker plus worker failure/cancellation re-arm;
+  next header requests status reconciliation even without another writer commit.
+  Successful refresh restores the unchanged-version fast path.
+- Tests: `tests/test_bug_hunt_database_refresh.py` covers both cheap/expensive
+  failure, failed version probe/queued deadline, page failure and cancellation.
+  Service/worker/new regression batch: **89 passed**.
+- Independent review: measurement subchat requested the cycle-failure repair and
+  approved the revised implementation.
+
+### BH-003 — Trusted previews reject or misrepresent valid numeric arrays
+
+- Reproductions: Boolean NPY coordinate/signal arrays yielded unsupported images;
+  adjacent uint64 coordinates at `2**63` collapsed; repeated cell values
+  `[1e308, 1e-100, -1e308]` lost their mean residual; finite extreme coordinates
+  overflowed line scaling and crossing-zero heatmap colors. Review also exposed
+  1D integer conversion and mixed int/float normalization loss.
+- Fix: retain integer coordinates through grouping/rendering, accept numeric NPY
+  booleans, use existing accurate finite mean, normalize before pixel scaling,
+  and subtract mixed large numeric values exactly. Renderer cache version v7.
+  Follow-up keeps repeated integer-containing cell means exact until color
+  normalization; covers both integer and half-integer means at `2**63` and `2**52`.
+- Tests: `tests/test_bug_hunt_measurement_previews.py` compares decoded image
+  pixels to equivalent well-conditioned measurements, including real QCoDeS
+  roundtrips with unchanged protected database state. **70 focused tests passed**.
+- Independent review: UI subchat approved after extending integer coverage.
+- Performance: 131,072-cell preview median baseline 0.4294 s, fixed 0.4246 s
+  (four runs each); singleton mean shortcut avoids per-cell allocation overhead.
+
+### BH-004 — Pending refresh spins the GUI event loop
+
+- Reproduction: queued callback encounters a replacement worker still running;
+  original code reposted on every event-loop turn (25 callbacks in 25 turns).
+- Fix: retain pending request/force state for existing worker completion to
+  schedule; do not repeatedly post zero-delay callbacks.
+- Test: `tests/test_bug_hunt_ui_refresh.py`; regression plus plot/lifecycle suites:
+  **111 passed, 19 subtests passed**.
+- Independent review: database subchat verified completion/error/cancel behavior.
+
+### BH-005 — Removing a mixed plot source crashes when a cut remains
+
+- Reproduction: open a heatmap cut, add it as a trace, then remove the primary
+  heatmap. Source promotion constructs a cut with ordinary plot arguments,
+  raising TypeError (`float(dict)`).
+- Fix: promote the bottom eligible full line/heatmap source while preserving cut
+  overlays and order. If only cuts would remain, disable removal with an
+  explanatory tooltip/status message; cut removal itself still works.
+- Tests: `tests/test_bug_hunt_ui_cuts.py` covers disabled removal without changed
+  ownership, full line/heatmap promotion, live cut updates, closed cut retention,
+  and final source release. **3 passed**.
+- Independent review: database subchat reviewed and reran the integration cases.
+
+## Packaging and wider coverage
+
+- Built application sdist/pure-Python wheel; `twine check` passed both.
+- Built native universal macOS cp311-abi3 wheel; `lipo` confirmed ARM64 and x86_64.
+  Payload inspection found only runtime package/binary and distribution metadata.
+  Installed reader passes exact native/SQLite/APSW version and source-ID checks.
+  Native source unchanged; build was an audit, not an installation or release.
+- Database safety/read-scope/live service/protocol/readonly batch: **212 passed,
+  1 Windows-only skip**. Supervisor/partial-frame/packaging/compiler-free batch:
+  **106 passed, 2 Windows-only skips**.
+- Broader UI mixed drops/promotions/cut swaps/preferences/commands/SVG/CSV batch:
+  **126 passed**. Fresh integrated full-suite run in progress.
+- Additional axes/annotations/settings/export integration batch: **237 passed**.
+- Ruff, whitespace checks and mypy (**88 source files**) passed.
+- Native wheel, application wheel and application sdist all passed `twine check`.
+
+## Independent review rounds
+
+- Round 1: rotated domain ownership. Database subchat freshly reviewed UI,
+  lifecycle, export safety, configuration and launcher cleanup: no new findings.
+  UI subchat caught the integer-mean threshold gap in BH-003, now corrected and
+  independently approved. Remaining database and packaging reviews in progress.
+  This round is **not clean**; clean-round count remains **0**.
+
+## Git and publication checkpoint
+
+- Focused commits: `af1d031` (settings), `3264ebc` (live retry), `98677c2` (UI).
+- Dedicated branch pushed successfully through configured Git credentials.
+- `git fetch origin` failed on an existing unrelated local ref
+  `refs/heads/fix/bug7-source-mtime` pointing at missing object
+  `ad9bcd91383451b350d33dfd6a1df1fc62936a48`. The ref was left untouched;
+  normal branch push succeeds. No merge or release performed.
 
 ## Next tasks and continuation checkpoint
 
