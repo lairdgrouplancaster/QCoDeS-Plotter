@@ -18,6 +18,7 @@ class FiniteBinMeans:
         self._positive = np.zeros(shape, dtype=bool)
         self._negative = np.zeros(shape, dtype=bool)
         self._integer = np.zeros(shape, dtype=bool)
+        self._fractional = np.zeros(shape, dtype=bool)
         self._absolute_sums = np.zeros(shape, dtype=float)
 
     def add(self, indices, values):
@@ -37,14 +38,20 @@ class FiniteBinMeans:
         sensitive = np.zeros(self.sums.shape, dtype=bool)
         if original.dtype.kind == "O":
             sensitive.ravel()[targets] = True
-        elif original.dtype.kind in "iu":
+        elif original.dtype.kind in "biu":
             self._integer.ravel()[targets] = True
+        elif original.dtype.kind == "f":
+            np.logical_or.at(self._fractional.ravel(), targets, values != np.trunc(values))
         # Several individually exact integers can have an inexact total.
         # Retain the accumulated absolute bound and integer presence across
         # chunks, including a later floating record in the same bin.
         with np.errstate(over="ignore", invalid="ignore"):
             np.add.at(self._absolute_sums.ravel(), targets, np.abs(values))
-        sensitive |= self._integer & (self._absolute_sums >= 2**53)
+        # Mixed fractional records can round a partial sum below 2**53 too:
+        # integer 2**51 followed by two floats 2**51 + .5 loses their residual.
+        # Remember both kinds across chunks, independently for each bin. Pure
+        # integers and integral float records retain their vectorized path.
+        sensitive |= self._integer & ((self._absolute_sums >= 2**53) | self._fractional)
         self._largest = max(self._largest, float(np.max(np.abs(values))))
         self._samples += values.size
         # Leave headroom for rounded additions at the finite sum boundary.
