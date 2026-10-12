@@ -106,6 +106,12 @@
         "user_preference": {
             "type": "object",
             "properties": {
+                "cursor_significant_figures": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 17,
+                    "default": 6
+                },
                 "font_size": {
                     "type": "integer",
                     "minimum": 6,
@@ -261,6 +267,7 @@
             "required": [
                 "theme",
                 "font_size",
+                "cursor_significant_figures",
                 "plot_tile_rows",
                 "plot_tile_columns",
                 "bar_colour",

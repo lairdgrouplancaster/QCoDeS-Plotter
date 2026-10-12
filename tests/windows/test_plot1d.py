@@ -724,7 +724,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             "x": qtw.QLabel(),
             "y": qtw.QLabel(),
             }
-        window.formatNum = lambda value: str(value)
+        window.format_cursor_number = lambda value: str(value)
 
         try:
             scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.2, 9.0))
@@ -751,14 +751,14 @@ class SnapToTraceTestCase(unittest.TestCase):
             "x": qtw.QLabel(),
             "y": qtw.QLabel(),
         }
-        window.formatNum = lambda value: f"{value:.3g}"
+        window.format_cursor_number = lambda value: f"{value:.3g}"
 
         try:
             plot_item.vb.setRange(xRange=(0.0, 2.0), yRange=(0.0, 2.0), padding=0)
             scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.3, 0.7))
             plotWidget.mouseMoved(window, scene_pos)
 
-            self.assertEqual(window.pos_labels["x"].text(), "x = 20;")
+            self.assertEqual(window.pos_labels["x"].text(), "x = 20")
             self.assertEqual(window.pos_labels["y"].text(), "y = 5.01")
             self.assertEqual(window.pos_labels["index"].text(), "[1]")
         finally:
@@ -788,7 +788,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             "x": qtw.QLabel(),
             "y": qtw.QLabel(),
             }
-        window.formatNum = lambda value: str(value)
+        window.format_cursor_number = lambda value: str(value)
         window._show_snap_report = lambda *_args: None
         window._show_snap_marker = lambda *_args: None
 
@@ -798,7 +798,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             plot1d.mouseMoved(window, scene_pos)
 
             self.assertEqual(window.pos_labels["index"].text(), "[2]")
-            self.assertEqual(window.pos_labels["x"].text(), "x = 5.0;")
+            self.assertEqual(window.pos_labels["x"].text(), "x = 5.0")
             self.assertEqual(window.pos_labels["y"].text(), "y = 25.0")
         finally:
             action.deleteLater()

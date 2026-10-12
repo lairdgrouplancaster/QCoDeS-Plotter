@@ -40,6 +40,8 @@ if TYPE_CHECKING:
         @staticmethod
         def formatNum(num: float, sf: int = 3) -> str: ...
 
+        def format_cursor_number(self, value: float) -> str: ...
+
         def _set_cursor_index_label(self, text: str) -> None: ...
         def _cursor_1d_x_data(self) -> Any: ...
 else:
@@ -295,6 +297,7 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         Updates the coordinate readout, optionally snapping to a 1d trace.
 
         """
+        self._last_cursor_scene_pos = pos
         if not (
             self.snap_to_trace_action is not None
             and self.snap_to_trace_action.isChecked()
@@ -316,8 +319,8 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             return
 
         self._set_cursor_index_label(f"[{nearest.point_number - 1}]")
-        self.pos_labels["x"].setText(f"x = {self.formatNum(nearest.x_value)};")
-        self.pos_labels["y"].setText(f"y = {self.formatNum(nearest.y_value)}")
+        self.pos_labels["x"].setText(f"x = {self.format_cursor_number(nearest.x_value)}")
+        self.pos_labels["y"].setText(f"y = {self.format_cursor_number(nearest.y_value)}")
         self._show_snap_report(nearest.label, nearest.point_number)
         self._show_snap_marker(
             nearest.x_view_value,

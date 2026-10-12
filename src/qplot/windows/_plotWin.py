@@ -42,6 +42,7 @@ from ._plot_tiling import plot_tile_size
 from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
     AXIS_MAJOR_TICK_COUNT_KEY,
+    CURSOR_SIGNIFICANT_FIGURES_KEY,
     MOUSE_MODE_KEY,
     PreferencesDialog,
     create_preferences_action,
@@ -895,25 +896,22 @@ class plotWidget(
         self.toolbarCo_ord = qtw.QToolBar("Coordinates")
         self.addToolBar(QtCore.Qt.ToolBarArea.BottomToolBarArea, self.toolbarCo_ord)
         
-        labelWidth = self._label_width #About the size of 3 s.f. scientific
         self.pos_labels = {}
 
         posLabelIndex = qtw.QLabel("")
-        posLabelIndex.setMinimumWidth(45)
         self.toolbarCo_ord.addWidget(posLabelIndex)
         self.pos_labels["index"] = posLabelIndex
         
         posLabelx = qtw.QLabel("x= ")
-        posLabelx.setMinimumWidth(labelWidth)
         self.toolbarCo_ord.addWidget(posLabelx)
         self.pos_labels["x"] = posLabelx
         
         posLabely = qtw.QLabel("y= ")
-        posLabely.setMinimumWidth(labelWidth)
         self.toolbarCo_ord.addWidget(posLabely)
         self.pos_labels["y"] = posLabely
         
         self.toolbarCo_ord.addWidget(qtw.QLabel("  "))
+        self.apply_cursor_label_widths()
         
         self.plot.scene().sigMouseMoved.connect(self.mouseMoved)
     
@@ -1432,6 +1430,41 @@ class plotWidget(
         return formatted
 
 
+    def format_cursor_number(self, value: float) -> str:
+        """Format a coordinate using the current cursor precision preference."""
+        return self.formatNum(value, sf=self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY))
+
+
+    def apply_cursor_label_widths(self) -> None:
+        """Reserve equal coordinate widths independent of the current values."""
+        labels = self.__dict__.get("pos_labels", {})
+        index_label = labels.get("index")
+        if index_label is not None:
+            index_width = max(
+                index_label.fontMetrics().horizontalAdvance(
+                    f"[{digit * 7},{digit * 7}]"
+                ) + 12
+                for digit in "0123456789"
+            )
+            index_label.setFixedWidth(index_width)
+        coordinates = [labels[axis] for axis in ("x", "y", "z") if axis in labels]
+        if not coordinates:
+            return
+        figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
+        # Allow a sign, decimal point, three exponent digits.
+        # Measure every digit so proportional fonts also fit their widest one.
+        width = max(
+            label.fontMetrics().horizontalAdvance(
+                f"{axis} = -{digit}.{digit * (figures - 1)}e+{digit * 3}"
+            ) + 12
+            for label in coordinates
+            for axis in ("x", "y", "z")
+            for digit in "0123456789"
+        )
+        for label in coordinates:
+            label.setFixedWidth(max(self._label_width, width))
+
+
     def _set_cursor_index_label(self, text: str) -> None:
         """
         Update the cursor index label when the toolbar includes one.
@@ -1499,6 +1532,7 @@ class plotWidget(
         
         self.setStyleSheet(self.config.theme.main)
         self.config.theme.style_plotItem(self)
+        plotWidget.apply_cursor_label_widths(self)
 
 
     def apply_current_settings(self):
@@ -1512,6 +1546,9 @@ class plotWidget(
         apply_colorbar_width = getattr(self, "apply_colorbar_width_preference", None)
         if callable(apply_colorbar_width):
             apply_colorbar_width()
+        cursor_pos = self.__dict__.get("_last_cursor_scene_pos")
+        if cursor_pos is not None:
+            self.mouseMoved(cursor_pos)
 
 
     def _configured_mouse_mode(self):
@@ -1838,6 +1875,7 @@ class plotWidget(
             The cursor position object.
 
         """
+        self._last_cursor_scene_pos = pos
         # Ignore if not in plot widget
         if not self.plot.sceneBoundingRect().contains(pos):
             self._set_cursor_index_label("")
@@ -1894,12 +1932,11 @@ class plotWidget(
         
         # Format text into a easy to read format
         index_txt = ""
-        x_txt = f"x = {self.formatNum(physical_x)};"
-        y_txt = f"y = {self.formatNum(physical_y)}"
+        x_txt = f"x = {self.format_cursor_number(physical_x)}"
+        y_txt = f"y = {self.format_cursor_number(physical_y)}"
         
         # For 2d plots.
         if self.pos_labels.get("z", 0):
-            y_txt += ";"
             sample_at = getattr(self, "heatmap_sample_at", None)
             sample = (
                 sample_at(mousePoint.x(), mousePoint.y())
@@ -1909,9 +1946,9 @@ class plotWidget(
             if sample is not None:
                 i, j, x, y, z = sample
                 index_txt = f"[{i},{j}]"
-                x_txt = f"x = {self.formatNum(x)};"
-                y_txt = f"y = {self.formatNum(y)};"
-                self.pos_labels["z"].setText(f"z = {self.formatNum(z)}")
+                x_txt = f"x = {self.format_cursor_number(x)}"
+                y_txt = f"y = {self.format_cursor_number(y)}"
+                self.pos_labels["z"].setText(f"z = {self.format_cursor_number(z)}")
                 if hasattr(self, "show_hover_pixel_outline"):
                     self.show_hover_pixel_outline(i, j)
                 else:

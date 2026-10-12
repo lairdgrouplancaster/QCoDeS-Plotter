@@ -56,10 +56,15 @@ class PlotStatusWidget(qtw.QWidget):
         row.addWidget(self.elapsed_label)
         row.addWidget(self.stage_label)
 
-        self.stack = qtw.QStackedLayout(self)
-        self.stack.setContentsMargins(12, 0, 4, 0)
+        self.stack = qtw.QStackedLayout()
+        # QStackedLayout fills its geometry without applying content margins.
+        # An outer layout reserves real space beside both status views.
+        layout = qtw.QHBoxLayout(self)
+        layout.setContentsMargins(12, 0, 16, 0)
+        layout.addLayout(self.stack)
         # Long status text must not enlarge the toolbar or hide its controls.
         self.stack.setSizeConstraint(qtw.QLayout.SizeConstraint.SetNoConstraint)
+        layout.setSizeConstraint(qtw.QLayout.SizeConstraint.SetNoConstraint)
         self.stack.addWidget(self.status_label)
         self.stack.addWidget(self.progress_panel)
 

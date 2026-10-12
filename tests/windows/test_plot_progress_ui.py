@@ -23,6 +23,23 @@ def worker(progress):
     return SimpleNamespace(progress=progress, is_cancelled=lambda: False)
 
 
+def test_toolbar_status_reserves_visible_right_padding(qapplication):
+    status = PlotStatusWidget()
+    status.resize(600, 40)
+    status.show()
+    try:
+        for progress in (False, True):
+            if progress:
+                status.start_progress()
+            else:
+                status.show_message("Loaded points.")
+            qapplication.processEvents()
+            displayed = status.stack.currentWidget()
+            assert status.width() - (displayed.x() + displayed.width()) == 16
+    finally:
+        status.close()
+
+
 def test_stage_progress_unknown_work_and_stale_completion(qapplication, monkeypatch):
     clock = [100.0]
     monkeypatch.setattr('qplot.windows._plot_state.perf_counter', lambda: clock[0])

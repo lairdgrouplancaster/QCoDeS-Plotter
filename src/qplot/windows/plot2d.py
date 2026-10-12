@@ -326,11 +326,10 @@ class plot2d(
         self._install_plot_control_view_range_preserver()
         self.__dict__["z_index"] = None
         
-        self.pos_labels["y"].setText(self.pos_labels["y"].text() + ";")
-        
         posLabelx = qtw.QLabel("z= ")
         self.toolbarCo_ord.addWidget(posLabelx)
         self.pos_labels["z"] = posLabelx
+        self.apply_cursor_label_widths()
         self._init_heatmap_downsample_warning_button()
         
 ###############################################################################

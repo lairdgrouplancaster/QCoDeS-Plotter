@@ -42,6 +42,8 @@ COPY_PLOT_IMAGE_RESOLUTION_OPTIONS = (
     ("Vector SVG", COPY_PLOT_IMAGE_RESOLUTION_SVG),
 )
 
+CURSOR_SIGNIFICANT_FIGURES_KEY = "user_preference.cursor_significant_figures"
+
 COLORBAR_WIDTH_KEY = "user_preference.colorbar_width"
 AXIS_TICK_WIDTH_KEY = "user_preference.axis_tick_width"
 AXIS_MAJOR_TICK_COUNT_KEY = "user_preference.axis_major_tick_count"
@@ -49,6 +51,7 @@ AXIS_MAJOR_TICK_COUNT_KEY = "user_preference.axis_major_tick_count"
 PREFERENCE_KEYS = (
     "user_preference.theme",
     FONT_SIZE_KEY,
+    CURSOR_SIGNIFICANT_FIGURES_KEY,
     COLORBAR_WIDTH_KEY,
     AXIS_TICK_WIDTH_KEY,
     AXIS_MAJOR_TICK_COUNT_KEY,
@@ -170,6 +173,15 @@ class PreferencesDialog(qtw.QDialog):
             "Font size for graph axis labels, tick numbers, and colour scales"
             )
         self._add_row(form, "Graph &font size:", self.fontSizeSpin)
+
+        self.cursorSignificantFiguresSpin = qtw.QSpinBox(tab)
+        self.cursorSignificantFiguresSpin.setObjectName("cursorSignificantFiguresPreferenceSpin")
+        self.cursorSignificantFiguresSpin.setAccessibleName("Cursor significant figures")
+        self.cursorSignificantFiguresSpin.setRange(1, 17)
+        self.cursorSignificantFiguresSpin.setToolTip(
+            "Significant figures for the x, y, and z cursor coordinates, including snapped values"
+            )
+        self._add_row(form, "Cursor significant &figures:", self.cursorSignificantFiguresSpin)
 
         self.colorbarWidthSpin = qtw.QSpinBox(tab)
         self.colorbarWidthSpin.setObjectName("colorbarWidthPreferenceSpin")
@@ -470,6 +482,7 @@ class PreferencesDialog(qtw.QDialog):
         return (
             self.themeCombo,
             self.fontSizeSpin,
+            self.cursorSignificantFiguresSpin,
             self.colorbarWidthSpin,
             self.axisTickWidthSpin,
             self.axisMajorTickCountSpin,
@@ -502,6 +515,9 @@ class PreferencesDialog(qtw.QDialog):
             theme_index = self.themeCombo.findData(values["user_preference.theme"])
             self.themeCombo.setCurrentIndex(max(theme_index, 0))
             self.fontSizeSpin.setValue(int(values[FONT_SIZE_KEY]))
+            self.cursorSignificantFiguresSpin.setValue(
+                int(values[CURSOR_SIGNIFICANT_FIGURES_KEY])
+                )
 
             self.colorbarWidthSpin.setValue(int(values[COLORBAR_WIDTH_KEY]))
             self.axisTickWidthSpin.setValue(float(values[AXIS_TICK_WIDTH_KEY]))
@@ -567,6 +583,7 @@ class PreferencesDialog(qtw.QDialog):
         values = {
             "user_preference.theme": self.themeCombo.currentData(),
             FONT_SIZE_KEY: int(self.fontSizeSpin.value()),
+            CURSOR_SIGNIFICANT_FIGURES_KEY: int(self.cursorSignificantFiguresSpin.value()),
             COLORBAR_WIDTH_KEY: int(self.colorbarWidthSpin.value()),
             AXIS_TICK_WIDTH_KEY: float(self.axisTickWidthSpin.value()),
             AXIS_MAJOR_TICK_COUNT_KEY: int(self.axisMajorTickCountSpin.value()),

@@ -315,6 +315,8 @@ Common actions:
 * `Options -> Preferences...` edits common theme, plot mouse mode, default
   load location, preview, refresh, confirmation, and runtime settings. On
   macOS this appears as `qPlot -> Preferences...`.
+  In Appearance, `Cursor significant figures` controls the x, y, and z
+  coordinate readouts, including snapped trace values (1–17; default 6).
   Use `Restore Defaults` in that dialog to reset the shown preferences without
   leaving the dialog.
 * `Options -> Reset All Settings...` resets all qPlot settings to their
