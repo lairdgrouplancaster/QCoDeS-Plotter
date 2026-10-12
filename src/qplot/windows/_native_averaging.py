@@ -11,6 +11,36 @@ from pyqtgraph.graphicsItems.PlotDataItem import PlotDataset
 from qplot.tools.sample_statistics import finite_mean
 
 
+def _integer_totals(total, values, weight=1):
+    """Accumulate in int64 when proven safe, otherwise use Python integers."""
+    lower = weight * int(np.min(values))
+    upper = weight * int(np.max(values))
+    if total is not None:
+        lower += int(np.min(total))
+        upper += int(np.max(total))
+    if np.iinfo(np.int64).min <= lower and upper <= np.iinfo(np.int64).max:
+        # A large unsigned input may wrap before cancellation restores an
+        # int64 total; only choose this path when each operand fits too.
+        if (int(np.min(values)) >= np.iinfo(np.int64).min
+                and int(np.max(values)) <= np.iinfo(np.int64).max
+                and (total is None or total.dtype.kind == "i")):
+            weighted = values.astype(np.int64) * weight
+            return weighted if total is None else total + weighted
+    weighted = values.astype(object) * weight
+    return weighted if total is None else total.astype(object) + weighted
+
+
+def _integer_average(total, count):
+    # A representable integer numerator needs only the ordinary vectorized
+    # division. Otherwise convert each NumPy integer to Python before dividing
+    # so conversion cannot round the total prior to forming the mean.
+    exact_float_bound = 2 ** (np.finfo(float).nmant + 1)
+    if (total.dtype.kind != "O" and int(np.min(total)) >= -exact_float_bound
+            and int(np.max(total)) <= exact_float_bound):
+        return total / count
+    return np.fromiter((int(value) / count for value in total), dtype=float, count=len(total))
+
+
 class _AveragePlotDataItem(pg.PlotDataItem):
     """Render samples already mapped, clipped and downsampled by their sources."""
 
@@ -118,6 +148,10 @@ class NativePlotItem(pg.PlotItem):
             average._qplot_mean_sources.append((1, y))
             average._qplot_minimum = np.minimum(average._qplot_minimum, y)
             average._qplot_maximum = np.maximum(average._qplot_maximum, y)
+            if average._qplot_integer_total is not None and y.dtype.kind in "iu":
+                average._qplot_integer_total = _integer_totals(average._qplot_integer_total, y)
+            else:
+                average._qplot_integer_total = None
             # A difference update retains small variations and constant
             # values near float's upper bound. Opposite extremes can overflow
             # that difference; bounded weights handle those cells and preserve
@@ -143,16 +177,18 @@ class NativePlotItem(pg.PlotItem):
             sources = average._qplot_mean_sources
             exact_cells = any(values.dtype.kind in "iuO" for _weight, values in sources)
             mixed_sign = (average._qplot_minimum < 0) & (average._qplot_maximum > 0)
-            # Large same-sign integers can round before their mean is formed,
-            # even when its correctly rounded float result is distinct. Limit
-            # exact replay to those cells and the cancellation cases above.
-            large_integers = exact_cells & (
-                (average._qplot_minimum <= -(2**53))
-                | (average._qplot_maximum >= 2**53)
-            )
-            repair = ((mixed_sign | large_integers)
+            # Integer means can round at any intermediate running update.
+            # Accumulate Python integers once per curve, then use correctly
+            # rounded integer division. This avoids per-cell Fraction replay
+            # and revisiting all prior curves for ordinary integer traces.
+            integer_total = average._qplot_integer_total
+            if integer_total is not None:
+                y = _integer_average(integer_total, count)
+            repair = ((mixed_sign | exact_cells)
                       & np.isfinite(average._qplot_minimum)
                       & np.isfinite(average._qplot_maximum))
+            if integer_total is not None:
+                repair[:] = False
             for cell_index in np.flatnonzero(repair):
                 cells = np.array([values[cell_index] for _weight, values in sources],
                                  dtype=object if exact_cells else None)
@@ -170,4 +206,5 @@ class NativePlotItem(pg.PlotItem):
             average._qplot_mean_sources = [(count, y)]
             average._qplot_minimum = y.copy()
             average._qplot_maximum = y.copy()
+            average._qplot_integer_total = _integer_totals(None, y, count) if y.dtype.kind in "iu" else None
         average.setData(x, y, stepMode=curve.opts["stepMode"])
