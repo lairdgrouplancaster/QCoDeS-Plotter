@@ -13,6 +13,7 @@ from PyQt6 import (
 )
 
 from qplot import config
+from qplot._metadata import version_info
 from qplot.datahandling.database import (
     DatabaseDetailWorker as DatabaseDetailWorker,
 )
@@ -567,7 +568,7 @@ class MainWindow(
             max(configured_width, MAIN_WINDOW_READABLE_WIDTH),
             configured_height,
             )
-        self.setWindowTitle("qPlot")
+        self.setWindowTitle(f"qPlot-{version_info()['version']}")
         startup_elapsed = perf_counter() - startup_start
         self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
         
