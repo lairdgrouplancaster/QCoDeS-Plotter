@@ -65,6 +65,8 @@ if TYPE_CHECKING:
 
         def _marquee_axis_assignment_changed(self) -> None: ...
 
+        def _update_native_precision_status(self) -> None: ...
+
         def closeEvent(self, event: object) -> None: ...
 
         def add_trace_from_dialog(self, label: str, trace_key: Any) -> None: ...
@@ -1047,6 +1049,8 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         if dialog is not None:
             dialog.refresh_rows()
 
+        self._update_native_precision_status()
+
     def _default_plot_axis_names(self) -> tuple[str, str] | None:
         """Return the independent/dependent axis pair for a 1D plot."""
 
@@ -1318,6 +1322,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         set_z = getattr(line, "setZValue", None)
         if callable(set_z):
             set_z(z)
+        self._update_native_precision_status()
 
 
 class _TracePreviewDelegate(CenteredPreviewDelegate):

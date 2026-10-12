@@ -673,6 +673,24 @@ class plotWidget(
         elif self.__dict__.get("_qplot_native_fft_error_text"):
             self._qplot_native_fft_error_text = None
             self.show_status("", 0)
+        self._update_native_precision_status()
+
+    def _update_native_precision_status(self):
+        error = next((line._qplot_precision_error for line in tuple(self.plot.items)
+                      if is_native_source_curve(line) and line.isVisible()
+                      and getattr(line, "_qplot_precision_error", None)), None)
+        if error:
+            self._qplot_native_precision_error_text = error
+            self.show_plot_state("Cannot display recorded distinctions", error, kind="error")
+        elif self.__dict__.get("_qplot_native_precision_error_text"):
+            previous = self._qplot_native_precision_error_text
+            self._qplot_native_precision_error_text = None
+            overlay = self.plot_state_overlay
+            if (overlay.title_label.text() == "Cannot display recorded distinctions"
+                    and overlay.detail_label.text() == previous):
+                overlay.hide()
+                if not self.__dict__.get("_qplot_native_fft_error_text"):
+                    self.show_status("", 0)
 
     def _native_fft_validation_error(self):
         for line in tuple(self.plot.items):
@@ -699,6 +717,7 @@ class plotWidget(
             # A worker's load-status message may follow the initial rollback
             # during an axis change. Keep its FFT explanation after publication.
             self.show_status(self._qplot_native_fft_error_text, 0)
+        self._update_native_precision_status()
 
     def _install_native_transform_trace_handler(self, line):
         if line is None or getattr(line, "_qplot_transform_label_handler", False):

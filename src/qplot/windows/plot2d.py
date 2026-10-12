@@ -15,6 +15,10 @@ from qplot.tools.heatmap_geometry import (
 
 from . import _colorbar
 from ._commands import command_spec, create_action
+from ._display_precision import (
+    DISPLAY_PRECISION_MESSAGE,
+    float_display_loses_distinctions,
+)
 from ._mixed_plots import MixedPlotMixin
 from ._plot2d_sweeps import Plot2DSweepMixin
 from ._plot_axis_scaling import _install_flush_axis_draw_specs
@@ -429,6 +433,17 @@ class plot2d(
                     str(error),
                     kind="error",
                     )
+                return
+
+            if float_display_loses_distinctions(self.dataGrid):
+                self._reject_heatmap_color_range(
+                    message=DISPLAY_PRECISION_MESSAGE,
+                    title="Unsupported heatmap display precision",
+                )
+                self._emit_heatmap_trace_updated()
+                if self._refresh_publication_source_is_current(
+                        plot_worker, clear_display=clear_display):
+                    self._mark_display_synchronized(plot_worker)
                 return
 
             autoLevels = self.relevel_refresh.isChecked()

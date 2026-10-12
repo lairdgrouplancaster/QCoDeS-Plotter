@@ -16,6 +16,11 @@ from qplot.tools.plot_tools import (
 )
 from qplot.tools.sample_statistics import finite_mean
 
+from ._display_precision import (
+    DISPLAY_PRECISION_MESSAGE,
+    float_display_loses_distinctions,
+)
+
 
 def _safe_difference(values: np.ndarray) -> np.ndarray:
     """Subtract samples before narrowing arithmetic can overflow or wrap."""
@@ -240,6 +245,14 @@ class NativePlotDataItem(pg.PlotDataItem):
 
     _datasetMapped: PlotDataset | None
     _qplot_fft_error: str | None = None
+    _qplot_precision_error: str | None = None
+
+    def _precision_checked_samples(self, x, y):
+        self._qplot_precision_error = None
+        if float_display_loses_distinctions(x) or float_display_loses_distinctions(y):
+            self._qplot_precision_error = DISPLAY_PRECISION_MESSAGE
+            return np.array([], dtype=float), np.array([], dtype=float)
+        return x, y
 
     def _fourierTransform(self, x, y):
         """Prepare increasing FFT coordinates without changing source data.
@@ -341,6 +354,8 @@ class NativePlotDataItem(pg.PlotDataItem):
         # cache; upstream still owns log scaling, clipping, downsampling, curve
         # updates and cache invalidation through its ordinary native setters.
         source = self._dataset
+        if source is None:
+            self._qplot_precision_error = None
         if source is not None and self._datasetMapped is None:
             if self.opts["derivativeMode"] or self.opts["phasemapMode"]:
                 # Native derivative/phase mapping uses original samples,
@@ -348,8 +363,6 @@ class NativePlotDataItem(pg.PlotDataItem):
                 # mode replaces both coordinates, so FFT/log-X must not
                 # discard its first sample.
                 x = source.y[:-1] if self.opts["phasemapMode"] else source.x[:-1]
-                if self.opts["phasemapMode"] and x.dtype.kind == "O":
-                    x = x.astype(np.float64)
                 y = _safe_secant(source.x, source.y)
             elif self.opts["subtractMeanMode"] and source.y.dtype.kind in "iu":
                 x = source.x
@@ -370,7 +383,7 @@ class NativePlotDataItem(pg.PlotDataItem):
                 # Keep the original dataset exact for CSV/cursor access and
                 # map only the on-screen values to float.
                 x = source.x
-                y = source.y if self.opts["fftMode"] else source.y.astype(np.float64)
+                y = source.y
                 if self.opts["subtractMeanMode"]:
                     y = (_center_object_samples(source.y) if source.y.dtype.kind == "O"
                          else _center_float_samples(y))
@@ -379,9 +392,20 @@ class NativePlotDataItem(pg.PlotDataItem):
                     if self.opts["logMode"][0]:
                         x, y = x[1:], y[1:]
             else:
+                # Upstream retains dense integer samples until QPainter
+                # converts them to doubles. Reject only conversions that
+                # merge distinct values, keeping originals for processing.
+                self._qplot_precision_error = None
+                if not self.opts["fftMode"]:
+                    x, y = self._precision_checked_samples(source.x, source.y)
+                    if self._qplot_precision_error:
+                        self._datasetMapped = PlotDataset(x, y)
                 return super()._getDisplayDataset()
+            x, y = self._precision_checked_samples(x, y)
             if x.dtype.kind == "O":
                 x = x.astype(np.float64)
+            if y.dtype.kind == "O":
+                y = y.astype(np.float64)
             mapped = PlotDataset(x, y)
             if True in self.opts["logMode"]:
                 mapped.applyLogMapping(self.opts["logMode"])

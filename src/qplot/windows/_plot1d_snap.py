@@ -149,7 +149,8 @@ def _line_snap_data(line: object | None) -> _LineData | None:
     aligned for snapping and selection statistics.
 
     """
-    if line is None or not _line_is_snap_visible(line):
+    if (line is None or not _line_is_snap_visible(line)
+            or getattr(line, "_qplot_precision_error", None)):
         return None
 
     get_data = getattr(line, "getData", None)

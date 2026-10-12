@@ -25,6 +25,10 @@ from ._colorbar import (
     _colorbar_colormap_for_name,
     _colorbar_colormap_preview,
 )
+from ._display_precision import (
+    DISPLAY_PRECISION_MESSAGE,
+    float_display_loses_distinctions,
+)
 from ._plot_appearance import ReorderAppearanceTable, configure_appearance_table
 from ._plot_drop_axes import DroppedAxisMapping, displayed_axis_parameter
 from ._plot_refresh import plot_refresh_required
@@ -316,6 +320,15 @@ class HeatmapLayer:
             "y": np.asarray(y_data),
         }
         self.data_grid = np.asarray(data_grid)
+        if float_display_loses_distinctions(self.data_grid):
+            self._report_compatibility_error(DISPLAY_PRECISION_MESSAGE)
+            # Retain exact copied samples for inspection/export, but do not
+            # expose a misleading renderer or include it in colour scaling.
+            self.geometry = None
+            self._hide_renderers()
+            if sync_colorbar:
+                self._sync_parent_colorbar()
+            return False
         self.geometry = geometry
         self._render()
         if sync_colorbar:
@@ -1091,7 +1104,7 @@ class Plot2DLayerMixin:
             if layer is self:
                 continue
             data = getattr(layer, "data_grid", None)
-            if data is not None:
+            if data is not None and getattr(layer, "geometry", None) is not None:
                 arrays.append(np.asarray(data))
         return arrays
 
