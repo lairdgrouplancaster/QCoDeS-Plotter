@@ -16,6 +16,7 @@ from qplot.windows import main as main_window
 from qplot.windows._commands import command_spec
 from qplot.windows._subplots.subplot1d import custom_viewbox
 from tests._window_lifecycle import close_main_window
+from tests.windows.test_axis_auto_padding_overflow import _axis_ranges
 from tests.windows.test_axis_auto_padding_overflow import (
     axis_messages as _axis_messages,
 )
@@ -184,13 +185,13 @@ def test_graphics_auto_disable_retains_all_ranges_and_synchronizes_modes(fft_plo
         plot.open_axis_scale_dialog(axis)
     plot._axis_scale_dialog.hide()
     _request(plot, "graphics", qapplication)
-    before = {axis: deepcopy(plot._axis_scale_viewbox(axis).viewRange())
-              for axis in ("x", "y", "x2", "y2")}
+    before = _axis_ranges(plot)
     plot.plot.autoBtn.mode = "manual"
     _request(plot, "graphics", qapplication)
     for axis, previous in before.items():
         assert plot._axis_scale_controls[axis].manualRadio.isChecked()
-        assert plot._axis_scale_viewbox(axis).viewRange() == previous
+        number = plot._axis_scale_axis_number(axis)
+        assert plot._axis_scale_viewbox(axis).viewRange()[number] == previous
 
 
 @pytest.fixture

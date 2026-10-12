@@ -67,6 +67,7 @@ from ._widgets.details_tables import (
 )
 
 _database_file_identity = database_file_identity
+_TEST_DATABASE_READER_RELEASE_TIMEOUT_SECONDS = 10.0
 
 
 class _DatabaseLoadPublicationAborted(RuntimeError):
@@ -303,12 +304,13 @@ class _TestDatabaseReplacementState:
 class TestDatabaseGenerationWorker(QtCore.QRunnable):
     """Generate a test database without blocking the GUI thread."""
 
-    def __init__(self, specifications, database_path, overwrite=False):
+    def __init__(self, specifications, database_path, overwrite=False, *, read_services=()):
         super().__init__()
         self.signals = TestDatabaseGenerationSignals()
         self.specifications = list(specifications)
         self.database_path = str(database_path)
         self.overwrite = overwrite
+        self._read_services = tuple(read_services)
         self._cancelled = threading.Event()
         self._publication_completed = threading.Event()
 
@@ -319,6 +321,7 @@ class TestDatabaseGenerationWorker(QtCore.QRunnable):
     def run(self):
         error = None
         try:
+            self._wait_for_read_services()
             generate_database(
                 self.specifications,
                 self.database_path,
@@ -342,6 +345,23 @@ class TestDatabaseGenerationWorker(QtCore.QRunnable):
         except RuntimeError as err:
             if "wrapped C/C++ object" not in str(err):
                 raise
+
+
+    def _wait_for_read_services(self):
+        """Release qPlot's old file handles before generating their replacement."""
+        deadline = monotonic() + _TEST_DATABASE_READER_RELEASE_TIMEOUT_SECONDS
+        for service in self._read_services:
+            while True:
+                if self._cancelled.is_set():
+                    raise GenerationCancelled("Test-database generation was cancelled")
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        "qPlot's database reader did not finish closing before "
+                        "test-database generation. The output database was not changed."
+                    )
+                if service.wait_closed(min(0.1, remaining)):
+                    break
 
 
 class DatabaseActionsMixin:
@@ -919,6 +939,7 @@ class DatabaseActionsMixin:
 
         file_textbox = getattr(self, "fileTextbox", None)
         current_database = file_textbox.text() if file_textbox is not None else ""
+        read_services = ()
         if (
                 current_database
                 and canonical_database_path(current_database)
@@ -934,6 +955,13 @@ class DatabaseActionsMixin:
             )
             if callable(prepare_replacement):
                 prepare_replacement(database_path)
+                resolved_path = canonical_database_path(database_path)
+                read_services = tuple(
+                    service
+                    for service in getattr(self, "_retired_trusted_read_services", ())
+                    if getattr(service, "database_instance", None) is not None
+                    and service.database_instance.resolved_path == resolved_path
+                )
 
         self._test_database_generation_active = True
         DatabaseActionsMixin._sync_database_generation_controls(self)
@@ -941,6 +969,7 @@ class DatabaseActionsMixin:
             specifications,
             database_path,
             overwrite=overwrite,
+            read_services=read_services,
         )
         self._test_database_generation_worker = worker
         worker.signals.finished.connect(self.test_database_generation_finished)

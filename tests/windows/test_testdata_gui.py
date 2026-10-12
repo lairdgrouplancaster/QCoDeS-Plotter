@@ -1,8 +1,10 @@
 import csv
 import sqlite3
+import threading
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
 from PyQt6 import QtGui
 from PyQt6 import QtWidgets as qtw
 
@@ -12,7 +14,8 @@ from qplot.datahandling.file_identity import (
     database_instance,
     database_publication_guard_path,
 )
-from qplot.testdata import CSV_COLUMNS, INSTRUCTION_FILE_NAMES
+from qplot.testdata import CSV_COLUMNS, INSTRUCTION_FILE_NAMES, GenerationCancelled
+from qplot.windows import _database_actions as database_actions_module
 from qplot.windows._database_actions import (
     DatabaseActionsMixin,
     reveal_file_in_file_manager,
@@ -325,7 +328,17 @@ def test_generation_releases_current_database_before_replacing_it(tmp_path):
         (),
         {"text": lambda _self: str(database_path)},
     )()
-    harness._prepare_test_database_replacement = Mock()
+    retiring_reader = SimpleNamespace(
+        database_instance=database_instance(database_path),
+        wait_closed=Mock(side_effect=[False, True]),
+    )
+    unrelated_reader = SimpleNamespace(
+        database_instance=database_instance(tmp_path / "other.db"),
+        wait_closed=Mock(),
+    )
+    harness._prepare_test_database_replacement = Mock(side_effect=lambda _path: setattr(
+        harness, "_retired_trusted_read_services", (retiring_reader, unrelated_reader),
+    ))
     harness._reload_replaced_database = Mock(return_value=True)
 
     try:
@@ -355,6 +368,8 @@ def test_generation_releases_current_database_before_replacing_it(tmp_path):
         harness._prepare_test_database_replacement.assert_called_once_with(
             str(database_path)
         )
+        assert retiring_reader.wait_closed.call_count == 2
+        unrelated_reader.wait_closed.assert_not_called()
         quarantine.assert_called_once_with(str(database_path))
         harness._reload_replaced_database.assert_called_once_with(str(database_path))
         connection = sqlite3.connect(database_path)
@@ -518,6 +533,62 @@ def test_invalid_csv_is_reported_before_database_destination_prompt(tmp_path):
         assert "Invalid CSV header" in harness.errors[0][2]
     finally:
         harness.deleteLater()
+
+
+@pytest.mark.parametrize("outcome", ["closed", "cancelled", "timeout"])
+def test_generation_waits_for_reader_shutdown_before_touching_output(
+    tmp_path, monkeypatch, qapplication, outcome,
+):
+    database_path = tmp_path / "protected.db"
+    database_path.write_bytes(b"existing database sentinel")
+    before = (database_path.read_bytes(), database_path.stat().st_mtime_ns,
+              database_file_identity(database_path))
+    waiting = threading.Event()
+    released = threading.Event()
+
+    def wait_closed(timeout):
+        assert 0 < timeout <= 0.1
+        waiting.set()
+        return released.wait(timeout)
+
+    if outcome == "timeout":
+        monkeypatch.setattr(database_actions_module,
+                            "_TEST_DATABASE_READER_RELEASE_TIMEOUT_SECONDS", 0.1)
+    generate = Mock()
+    monkeypatch.setattr(database_actions_module, "generate_database", generate)
+    worker = database_actions_module.TestDatabaseGenerationWorker(
+        [], database_path, overwrite=True,
+        read_services=(SimpleNamespace(wait_closed=wait_closed),),
+    )
+    results = []
+    worker.signals.finished.connect(lambda *args: results.append(args))
+    thread = threading.Thread(target=worker.run)
+    thread.start()
+    try:
+        assert waiting.wait(2)
+        generate.assert_not_called()
+        if outcome == "closed":
+            released.set()
+        elif outcome == "cancelled":
+            worker.cancel()
+        thread.join(2)
+        assert not thread.is_alive(), "Reader wait must be bounded and cancellable"
+        qapplication.processEvents()
+        assert len(results) == 1
+        error = results[0][2]
+        if outcome == "closed":
+            generate.assert_called_once()
+            assert error is None
+        else:
+            generate.assert_not_called()
+            assert isinstance(error, GenerationCancelled if outcome == "cancelled" else TimeoutError)
+        assert (database_path.read_bytes(), database_path.stat().st_mtime_ns,
+                database_file_identity(database_path)) == before
+        assert set(tmp_path.iterdir()) == {database_path}
+    finally:
+        worker.cancel()
+        released.set()
+        thread.join(2)
 
 
 def test_generation_cancelled_before_first_run_removes_temporary_database(tmp_path):

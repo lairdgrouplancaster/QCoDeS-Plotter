@@ -3766,6 +3766,7 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
             )
         )
 
+        assert errors == []
         replacement_instance = database_instance(database_path)
         assert replacement_instance != original_instance
         assert window._loaded_database_instance == replacement_instance
@@ -3787,7 +3788,6 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
         assert window._test_database_generation_worker is None
         assert window.monitor.isActive()
         assert window.monitor.interval() == expected_monitor_interval
-        assert errors == []
 
         replacement_guid = window._selected_run_guid
         assert replacement_guid
