@@ -608,6 +608,9 @@ class loader(QtCore.QRunnable):
                 data = self._normalise_array_records(data)
                 depvarData = data[self.param.name]
                 acquired = self._acquired_sample_mask(depvarData, write_status)
+                # Count this parameter's acquired samples, including array
+                # elements but excluding preallocated, unmeasured padding.
+                self.loaded_point_count = int(np.count_nonzero(acquired))
 
                 # A QCoDeS array record adds a storage dimension, not an
                 # independent setpoint. Select the plot by declared axes.

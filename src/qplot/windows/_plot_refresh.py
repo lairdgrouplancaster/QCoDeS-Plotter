@@ -812,8 +812,13 @@ class PlotRefreshMixin(_PlotRefreshBase):
                     5000,
                     )
             else:
+                loaded_points = getattr(worker, "loaded_point_count", None)
+                if loaded_points is None:
+                    loaded_points = getattr(worker, "dataset_length_at_start", None)
+                if loaded_points is None:
+                    loaded_points = self.ds.number_of_results
                 self.show_status(
-                    f"Loaded {self.ds.number_of_results:,} points for {self.param.name} "
+                    f"Loaded {loaded_points:,} points for {self.param.name} "
                     f"in {elapsed:.2f} seconds.",
                     5000,
                     )

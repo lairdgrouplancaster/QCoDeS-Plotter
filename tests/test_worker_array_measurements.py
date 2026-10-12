@@ -81,6 +81,7 @@ def test_array_measurement_keeps_paired_samples_on_initial_and_cached_load(
         valid = ~np.isnan(x_expected) & ~np.isnan(y_expected)
         for x_name in ("x", "signal"):
             initial = _run_worker(dataset, "signal", x_name, read_data=True)
+            assert initial.loaded_point_count == y_expected.size
             source = initial.cache_data["signal"]
             ragged = len({len(x) for x, _ in records}) > 1
             assert source["signal"].ndim == (1 if ragged else 2)
@@ -102,6 +103,7 @@ def test_array_measurement_keeps_paired_samples_on_initial_and_cached_load(
                 initial.cache_data,
             )
             cached = _run_worker(dataset, "signal", x_name, read_data=False)
+            assert cached.loaded_point_count == y_expected.size
             assert not hasattr(cached, "dataGrid")
             np.testing.assert_array_equal(cached.axis_data["x"], expected_x)
             np.testing.assert_array_equal(cached.axis_data["y"], expected_y)

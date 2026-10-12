@@ -197,10 +197,11 @@ def test_real_plot_keeps_progress_until_display_commit(tmp_path, monkeypatch, di
         assert plot.toolbarRef.isHidden()
         plot.toolbarRef.toggleViewAction().trigger()
         assert plot.plot_status.status_label.isVisible()
-        assert plot.plot_status.message.startswith('Loaded ')
+        expected_points = 12 if dimensions == 2 or arrays else 3
+        assert plot.plot_status.message.startswith(f'Loaded {expected_points:,} points for z in ')
         QtWidgets.QApplication.sendEvent(plot, QtGui.QStatusTipEvent('Menu hint'))
         assert plot.findChildren(QtWidgets.QStatusBar) == []
-        assert plot.plot_status.message.startswith('Loaded ')
+        assert plot.plot_status.message.startswith(f'Loaded {expected_points:,} points for z in ')
 
         # A renderer exception must also remove the busy indicator; exercise
         # the concrete callback directly so the exception stays in this test.

@@ -108,6 +108,8 @@ def test_boolean_missing_heatmap_from_public_qcodes(
         _run(worker)
 
         def compare(worker):
+            if loading == "normal":
+                assert worker.loaded_point_count == signal.size
             np.testing.assert_array_equal(worker.axis_data["x"], [0., 1.] if swapped else [0., 1., 2.])
             np.testing.assert_array_equal(worker.axis_data["y"], [0., 1., 2.] if swapped else [0., 1.])
             np.testing.assert_array_equal(np.asarray(worker.dataGrid, dtype=float), expected_grid)
