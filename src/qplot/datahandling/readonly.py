@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import stat
 import struct
 import sys
 import tempfile
@@ -1450,6 +1451,10 @@ def _file_signature(path):
         stat_result = path.stat()
     except FileNotFoundError:
         return None
+    # Snapshot artifacts are files, never streams. Inspect before any header
+    # read or copy so a FIFO sidecar cannot block past the read deadline.
+    if not stat.S_ISREG(stat_result.st_mode):
+        raise OSError(f"The database artifact is not a regular file: {path}")
     return _stat_signature(stat_result)
 
 

@@ -391,6 +391,46 @@ All Python commands use the project venv; Matplotlib cache is
   final measurement reviews UI/lifecycle, final UI reviews safety/packaging.
   Current clean-round count **0**.
 
+### BH-019 — Snapshot preflight blocks on a named-pipe database sidecar
+
+- Fresh round 8 safety reviewer used an actual QCoDeS DELETE-mode database and
+  exact colocated `source.db-journal` FIFO. `sqlite_read_only_connection` with
+  a 0.2 s deadline blocks more than five seconds in the sidecar prefix read.
+  Main database hash and FIFO are unchanged. Trusted native preflight already
+  rejects nonregular artifacts; the snapshot observation path did not.
+- Repair centralizes regular-file rejection in snapshot file signatures before
+  prefix reads/copies, covering sidecars consistently without changing allowed
+  source writes or native VFS behavior. Final safety independently approved and
+  reran 16 regressions. Readonly batch: **93 passed**; packaging/IPC/auxiliary:
+  **114 passed, 2 skips**; native checks: **12 passed**.
+- Consolidated input audit found a further BH-016 case: generator CSV input
+  FIFOs hang the synchronous GUI validation path. CSV now checks regular-file
+  mode before opening, preserving regular symlink reads. **112 generator/UI
+  tests passed**; independent final safety reviewer approved and reran all five
+  generator FIFO/symlink cases. DB/config/CSV public input entrypoints audited;
+  destination/diagnostic/cache guards already reject special files appropriately.
+- Actual qPlot launcher/UI smoke after these repairs passed (visible window,
+  active event loop, normal exit 0). Round 8 is **not clean**, count remains **0**.
+
+### BH-020 — Rectilinearity detection accepts an overflowing coordinate mismatch
+
+- Real shaped QCoDeS arrays: X rows `[-1, 0, 1]` and `[-1, 0, .9]`, Y=0/1,
+  signals `[1, 2, 3]` / `[4, 5, 6]`. Unit data correctly yields four X columns
+  and missing holes. At X scale `1e308`, raw origin subtraction overflows;
+  `isclose(inf, inf)` accepts a false match and moves signal 6 from `9e307`
+  to `1e308` in a three-column grid.
+- Final safety owns normalized-coordinate comparison and real regression;
+  final measurement will independently review. Existing tolerance/cancellation
+  behavior must be retained. Round 8 measurement checks otherwise passed
+  **432 tests, 3 skips**; UI/lifecycle completed with **409 tests passed**.
+
+### Integrated suite result
+
+- Full suite begun at `19acccd`: **4,773 passed, 44 skipped, 119 subtests passed**,
+  860.01 s. This resolves all previous 26 integration failures. Subsequent
+  BH-016–BH-019 repairs have the focused validation recorded above; BH-020 and
+  final review rounds remain pending before the campaign can finish.
+
 ### Numerical scope note
 
 - Float-only summation can differ from an exact rational oracle by one floating

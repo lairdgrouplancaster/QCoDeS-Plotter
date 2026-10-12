@@ -326,6 +326,10 @@ def read_specifications(csv_path):
     """Read and validate all nonblank rows in a generator CSV file."""
     csv_path = Path(csv_path)
     try:
+        # The GUI validates this input before starting its generation worker.
+        # A FIFO must not block that synchronous read waiting for a writer.
+        if not stat.S_ISREG(csv_path.stat().st_mode):
+            raise OSError("The instruction CSV source is not a regular file.")
         handle = csv_path.open("r", encoding="utf-8-sig", newline="")
     except OSError as error:
         raise SpecificationError(f"Could not open {csv_path}: {error}") from error
