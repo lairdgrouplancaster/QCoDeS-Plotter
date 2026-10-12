@@ -544,13 +544,13 @@ class config:
         directory = path.dirname(self.default_file)
         stem, suffix = path.splitext(path.basename(self.default_file))
         candidate = path.join(directory, f"{stem}.invalid{suffix}")
-        if not path.exists(candidate):
+        if not path.lexists(candidate):
             return candidate
 
         index = 1
         while True:
             candidate = path.join(directory, f"{stem}.invalid.{index}{suffix}")
-            if not path.exists(candidate):
+            if not path.lexists(candidate):
                 return candidate
             index += 1
 
