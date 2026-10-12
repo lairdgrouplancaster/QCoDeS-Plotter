@@ -1,4 +1,4 @@
-"""Saved font sizing updates widgets, plot labels, ticks, and colour scales."""
+"""Graph font sizing updates axes and colour scales while preserving UI fonts."""
 
 import pyqtgraph as pg
 import pytest
@@ -6,7 +6,7 @@ from jsonschema import ValidationError
 from PyQt6 import QtWidgets as qtw
 
 from qplot.configuration.config import config
-from qplot.configuration.fonts import FONT_SIZE_KEY, configured_stylesheet
+from qplot.configuration.fonts import FONT_SIZE_KEY
 from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._preferences import PreferencesDialog
@@ -66,19 +66,30 @@ class PlotFontWindow(qtw.QMainWindow):
 
 
 @pytest.mark.parametrize("theme", ["light", "dark", "pyqt"])
-def test_font_size_updates_open_widgets_and_all_plot_axes(cfg, theme, qapplication):
+def test_font_size_updates_only_plot_axes(cfg, theme, qapplication):
     cfg.update("user_preference.theme", theme)
     plot = PlotFontWindow(cfg)
     try:
+        plot.update_theme(cfg)
         plot.show()
         plot.plot_state_overlay.show("Loading", "Reading plot data")
+        qapplication.processEvents()
+        ui_fonts = [
+            widget.font().toString() for widget in (
+                plot, plot.widget, plot.plot_state_overlay.title_label,
+                plot.plot_state_overlay.detail_label,
+            )
+        ]
         for size in (10, 18, 8):
             cfg.update(FONT_SIZE_KEY, size)
             plot.update_theme(cfg)
             qapplication.processEvents()
-            assert plot.widget.font().pointSize() == size
-            assert plot.plot_state_overlay.title_label.font().pointSizeF() == size
-            assert plot.plot_state_overlay.detail_label.font().pointSizeF() == pytest.approx(size * 0.8)
+            assert [
+                widget.font().toString() for widget in (
+                    plot, plot.widget, plot.plot_state_overlay.title_label,
+                    plot.plot_state_overlay.detail_label,
+                )
+            ] == ui_fonts
             for item in (plot.plot, plot.bar):
                 for side in ("left", "bottom", "right", "top"):
                     axis = item.getAxis(side)
@@ -96,7 +107,9 @@ def test_font_size_updates_open_widgets_and_all_plot_axes(cfg, theme, qapplicati
         plot.deleteLater()
 
 
-def test_apply_preferences_updates_open_main_and_plot_windows(cfg, qapplication):
+@pytest.mark.parametrize("theme", ["light", "dark", "pyqt"])
+def test_apply_preferences_preserves_ui_fonts(cfg, qapplication, theme):
+    cfg.update("user_preference.theme", theme)
     main = MainWindow()
     main.startupDatabaseTimer.stop()
     plot = PlotFontWindow(main.config)
@@ -104,26 +117,23 @@ def test_apply_preferences_updates_open_main_and_plot_windows(cfg, qapplication)
     dialog = PreferencesDialog(main.config, main)
     dialog.preferencesApplied.connect(main.apply_current_settings)
     try:
-        dialog.fontSizeSpin.setValue(16)
-        assert dialog.apply_preferences()
+        plot.update_theme(main.config)
+        dialog.show()
         qapplication.processEvents()
-        assert main.font().pointSize() == 16
-        assert main.RunList.font().pointSize() == 16
-        assert dialog.fontSizeSpin.font().pointSize() == 16
-        assert plot.widget.font().pointSize() == 16
-        assert plot.plot.getAxis("bottom").style["tickFont"].pointSize() == 16
-        assert config().get(FONT_SIZE_KEY) == 16
+        ui_widgets = (main, main.RunList, dialog.fontSizeSpin, plot, plot.widget)
+        ui_fonts = [widget.font().toString() for widget in ui_widgets]
+        for size in (16, 8, 10):
+            dialog.fontSizeSpin.setValue(size)
+            assert dialog.apply_preferences()
+            qapplication.processEvents()
+            assert [widget.font().toString() for widget in ui_widgets] == ui_fonts
+            assert main.styleSheet() == main.config.theme.main
+            assert plot.styleSheet() == main.config.theme.main
+            assert plot.plot.getAxis("bottom").style["tickFont"].pointSize() == size
+            assert config().get(FONT_SIZE_KEY) == size
     finally:
         dialog.close()
         main.windows.remove(plot)
         plot.close()
         plot.deleteLater()
         close_main_window(main)
-
-
-def test_default_stylesheet_unchanged_and_secondary_text_scales(cfg):
-    assert configured_stylesheet(cfg) == cfg.theme.main
-    cfg.update(FONT_SIZE_KEY, 20)
-    stylesheet = configured_stylesheet(cfg)
-    assert "font-size: 20pt;" in stylesheet
-    assert "font-size: 18pt;" in stylesheet

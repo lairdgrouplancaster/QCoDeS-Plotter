@@ -4,7 +4,6 @@ from typing import Any
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
-from qplot.configuration.fonts import DEFAULT_FONT_SIZE, scale_font_stylesheet
 from qplot.datahandling.plot_progress import PlotProgress
 
 
@@ -43,7 +42,6 @@ class PlotStateOverlay(QtCore.QObject):
     def __init__(self, target: qtw.QWidget) -> None:
         super().__init__(target)
         self.owner: qtw.QWidget = target
-        self._kind = "info"
         target_obj: Any = target
         viewport = target_obj.viewport() if hasattr(target_obj, "viewport") else None
         self.target: qtw.QWidget = viewport or target
@@ -108,7 +106,6 @@ class PlotStateOverlay(QtCore.QObject):
         self.title_label.setText(str(title or ""))
         self.detail_label.setText(str(detail or ""))
         self.detail_label.setVisible(bool(detail))
-        self._kind = kind
         self.frame.setStyleSheet(self._stylesheet(kind))
         self._sync_geometry()
         self.frame.show()
@@ -196,13 +193,6 @@ class PlotStateOverlay(QtCore.QObject):
             event: QtCore.QEvent | None,
             ) -> bool:
         if (
-                source is self.owner
-                and event is not None
-                and event.type() == QtCore.QEvent.Type.FontChange
-                ):
-            self.frame.setStyleSheet(self._stylesheet(self._kind))
-            self._sync_geometry()
-        if (
                 event is not None
                 and (source is self.owner or source is self.target)
                 and event.type() in (QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.Show)
@@ -212,7 +202,7 @@ class PlotStateOverlay(QtCore.QObject):
 
     def _stylesheet(self, kind: str) -> str:
         panel_style = self._styles.get(kind, self._styles["info"])
-        stylesheet = (
+        return (
             "QFrame#plotStateOverlay {"
             f"{panel_style}"
             "border-radius: 6px;"
@@ -230,10 +220,6 @@ class PlotStateOverlay(QtCore.QObject):
             "font-size: 8pt;"
             "}"
             )
-        font_size = self.owner.font().pointSizeF()
-        return scale_font_stylesheet(
-            stylesheet, font_size if font_size > 0 else DEFAULT_FONT_SIZE,
-        )
 
     def _sync_geometry(self) -> None:
         if not self.frame.isVisible() and not self.title_label.text():

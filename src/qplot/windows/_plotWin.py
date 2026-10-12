@@ -7,7 +7,6 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from qplot.configuration.fonts import configured_stylesheet
 from qplot.tools import (
     unpack_param,
 )
@@ -1478,7 +1477,7 @@ class plotWidget(
         """
         self.config = config
         
-        self.setStyleSheet(configured_stylesheet(self.config))
+        self.setStyleSheet(self.config.theme.main)
         self.config.theme.style_plotItem(self)
 
 

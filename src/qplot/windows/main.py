@@ -13,7 +13,6 @@ from PyQt6 import (
 )
 
 from qplot import config
-from qplot.configuration.fonts import configured_stylesheet
 from qplot.datahandling.database import (
     DatabaseDetailWorker as DatabaseDetailWorker,
 )
@@ -539,7 +538,7 @@ class MainWindow(
         self.startup_database_path = startup_database_path
         
         # Set GUI color and style from user choice in qplot.configuration.themes
-        self.setStyleSheet(configured_stylesheet(self.config))
+        self.setStyleSheet(self.config.theme.main)
         
         #widgets
         self.l = qtw.QVBoxLayout()
@@ -1408,7 +1407,7 @@ class MainWindow(
         sync_theme_actions()
         
         # Update all windows.
-        self.setStyleSheet(configured_stylesheet(self.config))
+        self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
         self.show_status(f"Theme changed to {theme}.", 2000)
@@ -1500,7 +1499,7 @@ class MainWindow(
                 run_list.apply_configured_column_widths()
             if hasattr(run_list, "apply_configured_column_visibility"):
                 run_list.apply_configured_column_visibility()
-        self.setStyleSheet(configured_stylesheet(self.config))
+        self.setStyleSheet(self.config.theme.main)
         for win in self.windows:
             win.update_theme(self.config)
             apply_major_ticks = getattr(

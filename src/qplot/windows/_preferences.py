@@ -163,13 +163,13 @@ class PreferencesDialog(qtw.QDialog):
 
         self.fontSizeSpin = qtw.QSpinBox(tab)
         self.fontSizeSpin.setObjectName("fontSizePreferenceSpin")
-        self.fontSizeSpin.setAccessibleName("Font size")
+        self.fontSizeSpin.setAccessibleName("Graph font size")
         self.fontSizeSpin.setRange(6, 36)
         self.fontSizeSpin.setSuffix(" pt")
         self.fontSizeSpin.setToolTip(
-            "Font size for windows, plot axis labels and tick numbers, and colour scales"
+            "Font size for graph axis labels, tick numbers, and colour scales"
             )
-        self._add_row(form, "&Font size:", self.fontSizeSpin)
+        self._add_row(form, "Graph &font size:", self.fontSizeSpin)
 
         self.colorbarWidthSpin = qtw.QSpinBox(tab)
         self.colorbarWidthSpin.setObjectName("colorbarWidthPreferenceSpin")
