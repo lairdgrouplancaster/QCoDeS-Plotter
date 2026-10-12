@@ -1,7 +1,7 @@
 import unittest
-from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
 import pytest
 from PyQt6 import QtCore, QtTest
@@ -12,8 +12,8 @@ from qplot.configuration.themes.dark import dark
 from qplot.configuration.themes.light import light
 from qplot.datahandling.file_identity import database_instance
 from qplot.windows._database_actions import DatabaseActionsMixin
-from qplot.windows._preferences import PreferencesDialog
 from qplot.windows._plotWin import plotWidget
+from qplot.windows._preferences import PreferencesDialog
 from qplot.windows._run_controls import RunControlsMixin
 
 
@@ -24,6 +24,8 @@ class _Config:
             "user_preference.auto_plot": False,
             "user_preference.theme": "light",
             "user_preference.font_size": 10,
+            "user_preference.show_source_annotation": True,
+            "user_preference.cursor_significant_figures": 6,
             "user_preference.plot_tile_rows": 2,
             "user_preference.plot_tile_columns": 2,
             "user_preference.confirm_incompatible_axes": True,

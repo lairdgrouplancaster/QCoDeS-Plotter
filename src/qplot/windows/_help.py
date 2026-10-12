@@ -1,8 +1,10 @@
+from html import escape
 from typing import Any, cast
 
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot._metadata import version_info
 from qplot.diagnostics import default_log_file
 
 from ._commands import create_action, shortcut_help_html
@@ -70,7 +72,44 @@ def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
     copy_log_path_action.triggered.connect(lambda: copy_diagnostic_log_path(window))
     help_menu.addAction(copy_log_path_action)
 
+    help_menu.addSeparator()
+    about_action = QtGui.QAction("&About qPlot", window)
+    about_action.setObjectName("aboutQplotAction")
+    # Keep this window-owned action in Help. Cocoa's AboutRole rewrites its
+    # title to "About python", while ApplicationSpecificRole accumulates
+    # duplicate application-menu entries when switching between windows.
+    about_action.setMenuRole(QtGui.QAction.MenuRole.NoRole)
+    about_action.setStatusTip("Show qPlot version and build information")
+    about_action.triggered.connect(lambda: show_about(window))
+    help_menu.addAction(about_action)
+
     return help_menu
+
+
+def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
+    """Show selectable release and development provenance in an owned dialog."""
+    info = version_info()
+    rows = [f"<p><b>Version:</b> {escape(str(info['version']))}</p>"]
+    if "released" in info:
+        build = "Release" if info["released"] else "Unreleased development build"
+        if info.get("dirty"):
+            build += " (local changes)"
+        rows.append(f"<p><b>Build:</b> {build}</p>")
+    elif info.get("checkout"):
+        rows.append("<p><b>Build:</b> Source checkout</p>")
+    if info.get("commit"):
+        rows.append(f"<p><b>Commit:</b> {escape(str(info['commit']))}</p>")
+    if info.get("pull_request"):
+        rows.append(f"<p><b>Pull request:</b> #{escape(str(info['pull_request']))}</p>")
+    return _show_help_dialog(
+        parent, "About qPlot",
+        "<h2>qPlot</h2><p>A viewer for QCoDeS measurement data.</p>"
+        + "".join(rows)
+        + '<p><a href="https://github.com/lairdgrouplancaster/QCoDeS-Plotter">'
+        "Project on GitHub</a></p>",
+        "qplotAboutDialog",
+        size=(580, 320),
+    )
 
 
 def show_quick_start(parent: qtw.QWidget | None = None) -> qtw.QDialog:
@@ -118,19 +157,21 @@ def _show_help_dialog(
         title: str,
         html: str,
         object_name: str,
+        *,
+        size: tuple[int, int] = (640, 520),
         ) -> qtw.QDialog:
     dialog = qtw.QDialog(parent)
     dialog.setObjectName(object_name)
     dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
     dialog.setWindowTitle(title)
-    dialog.resize(640, 520)
+    dialog.resize(*size)
 
     layout = qtw.QVBoxLayout(dialog)
     browser = qtw.QTextBrowser()
     browser.setObjectName("qplotHelpBrowser")
     browser.setOpenExternalLinks(True)
     browser.setHtml(html)
-    browser.setMinimumSize(520, 360)
+    browser.setMinimumSize(min(520, size[0] - 40), min(360, size[1] - 100))
     layout.addWidget(browser)
 
     buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)

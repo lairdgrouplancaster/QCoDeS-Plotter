@@ -581,6 +581,9 @@ class PlotTheme:
 
         plot_item.vb.gridPen = pg.mkPen(color=cls.plot_grid)
         cls.set_line_colours(plot_item)
+        update_annotation = getattr(plot_win, "_update_plot_annotation", None)
+        if callable(update_annotation):
+            update_annotation()
 
     @classmethod
     def set_line_colours(cls, plot_item):

@@ -29,6 +29,7 @@ class FakeConfig:
         self.defaults = {
             "user_preference.theme": "light",
             "user_preference.font_size": 10,
+            "user_preference.show_source_annotation": True,
             "user_preference.cursor_significant_figures": 6,
             COLORBAR_WIDTH_KEY: 15,
             AXIS_TICK_WIDTH_KEY: 2.0,

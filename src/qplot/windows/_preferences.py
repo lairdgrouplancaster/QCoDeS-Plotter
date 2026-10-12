@@ -13,6 +13,7 @@ from qplot.configuration.fonts import FONT_SIZE_KEY
 
 from ._commands import create_action
 from ._config_persistence import persist_config_values
+from ._plot_annotation import SHOW_SOURCE_ANNOTATION_KEY
 from ._plot_tiling import PLOT_TILE_COLUMNS_KEY, PLOT_TILE_ROWS_KEY
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
@@ -51,6 +52,7 @@ AXIS_MAJOR_TICK_COUNT_KEY = "user_preference.axis_major_tick_count"
 PREFERENCE_KEYS = (
     "user_preference.theme",
     FONT_SIZE_KEY,
+    SHOW_SOURCE_ANNOTATION_KEY,
     CURSOR_SIGNIFICANT_FIGURES_KEY,
     COLORBAR_WIDTH_KEY,
     AXIS_TICK_WIDTH_KEY,
@@ -173,6 +175,13 @@ class PreferencesDialog(qtw.QDialog):
             "Font size for graph axis labels, tick numbers, and colour scales"
             )
         self._add_row(form, "Graph &font size:", self.fontSizeSpin)
+
+        self.showSourceAnnotationCheck = qtw.QCheckBox("Show source annotation", tab)
+        self.showSourceAnnotationCheck.setObjectName("showSourceAnnotationPreferenceCheck")
+        self.showSourceAnnotationCheck.setToolTip(
+            "Show the database, run IDs and parameters above plots, including in exports"
+            )
+        form.addRow(self.showSourceAnnotationCheck)
 
         self.cursorSignificantFiguresSpin = qtw.QSpinBox(tab)
         self.cursorSignificantFiguresSpin.setObjectName("cursorSignificantFiguresPreferenceSpin")
@@ -482,6 +491,7 @@ class PreferencesDialog(qtw.QDialog):
         return (
             self.themeCombo,
             self.fontSizeSpin,
+            self.showSourceAnnotationCheck,
             self.cursorSignificantFiguresSpin,
             self.colorbarWidthSpin,
             self.axisTickWidthSpin,
@@ -515,6 +525,7 @@ class PreferencesDialog(qtw.QDialog):
             theme_index = self.themeCombo.findData(values["user_preference.theme"])
             self.themeCombo.setCurrentIndex(max(theme_index, 0))
             self.fontSizeSpin.setValue(int(values[FONT_SIZE_KEY]))
+            self.showSourceAnnotationCheck.setChecked(values[SHOW_SOURCE_ANNOTATION_KEY])
             self.cursorSignificantFiguresSpin.setValue(
                 int(values[CURSOR_SIGNIFICANT_FIGURES_KEY])
                 )
@@ -583,6 +594,7 @@ class PreferencesDialog(qtw.QDialog):
         values = {
             "user_preference.theme": self.themeCombo.currentData(),
             FONT_SIZE_KEY: int(self.fontSizeSpin.value()),
+            SHOW_SOURCE_ANNOTATION_KEY: self.showSourceAnnotationCheck.isChecked(),
             CURSOR_SIGNIFICANT_FIGURES_KEY: int(self.cursorSignificantFiguresSpin.value()),
             COLORBAR_WIDTH_KEY: int(self.colorbarWidthSpin.value()),
             AXIS_TICK_WIDTH_KEY: float(self.axisTickWidthSpin.value()),

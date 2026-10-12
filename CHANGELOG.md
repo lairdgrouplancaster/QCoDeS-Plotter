@@ -8,7 +8,37 @@ release workflow and its validation gates. See `docs/distribution.md`.
 
 ## Unreleased
 
-## 1.6.0b3 - Unreleased
+## 1.6.0b4 - Unreleased
+
+### Added
+
+- Combine line traces and heatmaps in one plot, with axis-aware preview drops
+  and a shared Appearance dialog. Removing the original dataset promotes a
+  remaining source while retaining the plot's appearance and state.
+- Identify plotted databases, run IDs, and parameters in a shaded annotation
+  strip included in exports. A saved Show source annotation preference controls
+  visibility and is enabled by default.
+- Add saved plot-tiling and cursor-precision preferences, and limit the graph
+  font-size preference to graph text.
+- Add Help -> About qPlot with the running version, source commit and local
+  changes, plus commit and PR provenance in CI-built application packages.
+
+### Changed
+
+- Consolidate plot feedback and loading progress in the refresh toolbar, with
+  accurate initial point counts and stable cursor readouts.
+- Clarify refresh controls and incompatible-axis confirmations.
+
+### Fixed
+
+- Preserve coordinate ownership, drawing order, native transforms, and specific
+  FFT validation messages when combining or replacing plot sources.
+- Stabilize GUI test waits and release plot windows and background workers
+  during teardown.
+
+This application beta retains the exact `qplotter-native==1.0.0` dependency.
+
+## 1.6.0b3
 
 ### Added
 

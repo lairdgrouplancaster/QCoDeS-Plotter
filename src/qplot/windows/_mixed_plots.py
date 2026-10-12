@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         operation_kind: str
 
         def apply_axis_major_tick_count_preference(self) -> None: ...
+        def _update_plot_annotation(self) -> None: ...
         def _add_plot_overlay(self, item: Any, viewbox: Any = None) -> None: ...
         def _marquee_viewbox(self) -> Any: ...
 else:
@@ -146,6 +147,7 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
                     item.setZValue(z)
                 renderers[(kind, key)] = (self._heatmap_axis_viewbox(layer), items)
         self._sync_data_drawing_layers(renderers)
+        self._update_plot_annotation()
 
     def _sync_data_drawing_layers(self, renderers):
         layers = self.__dict__.get("_plot_data_viewboxes", {})
@@ -209,6 +211,14 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
         super()._sync_heatmap_layer_order()
         self._sync_plot_item_order()
 
+    def _set_layer_visibility(self, layer, visible):
+        super()._set_layer_visibility(layer, visible)
+        self._update_plot_annotation()
+
+    def _set_layer_opacity(self, layer, opacity):
+        super()._set_layer_opacity(layer, opacity)
+        self._update_plot_annotation()
+
     def can_swap_plot_axes(self):
         mixin = Plot1DTraceMixin if self.operation_kind == "plot1d" else Plot2DLayerMixin
         return mixin.can_swap_plot_axes(self)
@@ -231,6 +241,7 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
         return result
 
     def _sync_mixed_axis_labels(self):
+        self._update_plot_annotation()
         plot = self.__dict__.get("plot")
         if plot is None:
             return
@@ -372,6 +383,7 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
         return getattr(source, "display_param", None) or source.param
 
     def _sync_heatmap_colorbar_items(self, *, rescale=False):
+        self._update_plot_annotation()
         if self.operation_kind == "plot1d":
             layers = self.__dict__.get("heatmaps", {})
             if not layers:

@@ -80,6 +80,11 @@ are implemented. See
 
 The application distribution is `qplotter`; its Python imports and
 console commands remain `qplot`, `qplot-cfg`, and `qplot-generate-db`.
+Use **Help → About qPlot** to see the version in use on every platform.
+Source checkouts also show the commit and
+whether there are local changes. CI-built packages retain their build commit
+and, for pull-request builds, the PR number. Packages installed without build
+provenance still show the release number.
 The separately built `qplotter-native==1.0.0` supplies the protected
 SQLite reader through `qplot_native`. The application's exact dependency pin
 installs the compatible native wheel automatically. Both packages pin the same
@@ -98,9 +103,9 @@ source builds, and release validation.
 ## Install
 
 Install qPlot inside a supported Python virtual environment. This checkout
-prepares the first split PyPI release, application `1.6.0b3` with native `1.0.0`;
-the commands targeting these packages work after publication. Until then, use
-validated local artifacts as described in [Distribution](docs/distribution.md).
+prepares application beta `1.6.0b4`, retaining native `1.0.0`. The installation
+examples below target `1.6.0b3`; use validated local artifacts to try the next
+beta before publication, as described in [Distribution](docs/distribution.md).
 
 ### Prelude
 #### Windows

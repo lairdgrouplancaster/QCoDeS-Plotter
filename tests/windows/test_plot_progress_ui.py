@@ -8,11 +8,11 @@ from PyQt6 import QtCore, QtGui, QtTest, QtWidgets
 from qplot.configuration.config import config
 from qplot.datahandling import trusted_plot
 from qplot.datahandling.plot_progress import PlotProgress
-from qplot.windows._plot_refresh import PlotRefreshMixin
 from qplot.windows._plot_feedback import PlotWindowFeedbackMixin
-from qplot.windows._plotWin import plotWidget
+from qplot.windows._plot_refresh import PlotRefreshMixin
 from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._plot_status import PlotStatusWidget
+from qplot.windows._plotWin import plotWidget
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
 from tests.datahandling.test_trusted_plot import make_run, prohibit_snapshots

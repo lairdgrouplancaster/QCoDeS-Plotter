@@ -375,6 +375,17 @@ Each plot window has plot controls, optional toolbars, and dock
 panels. Toolbars and dock panels can be shown or hidden from `View -> Panels and toolbars`,
 by right-clicking a toolbar or panel, or with keyboard shortcuts.
 
+Above the plot, qPlot identifies the displayed sources, for example
+`Databasename: 9 (Signal); 10-12 (Current); 6-8, 11, 12 (Voltage)`.
+Run IDs are grouped by parameter label, with ranges for three or more
+consecutive IDs. Each database has its own line. Hidden or fully transparent
+traces and heatmaps are omitted. This annotation is included in plot images,
+SVGs, PDFs, and printing.
+The annotation uses a shaded strip with a bold database name. In
+`Preferences -> Appearance`, `Show source annotation` controls its visibility
+in all plots and exports. It is enabled by default. Hiding it also removes
+the space reserved for the strip.
+
 The `Refresh and status` toolbar is visible by default, including for completed
 runs. Its right-hand side shows the latest status message until another
 message or loading progress replaces it. During loading it shows a progress

@@ -28,6 +28,7 @@ from ._help import add_help_menu
 from ._native_averaging import NativePlotItem, is_native_source_curve
 from ._native_transforms import native_fft_coordinate_error
 from ._plot1d_snap import _line_snap_data
+from ._plot_annotation import PlotAnnotationMixin
 from ._plot_axis_scaling import (
     PlotAxisScalingMixin,
     _PowerScaledAxisItem,
@@ -411,6 +412,7 @@ def _plot_area_size_icon(size):
 
 
 class plotWidget(
+    PlotAnnotationMixin,
     PlotWindowFeedbackMixin,
     PlotAxisScalingMixin,
     PlotMarqueeMixin,
@@ -488,6 +490,9 @@ class plotWidget(
         self._dataset_key = dataset_key
         self._guid = dataset_key.guid
         self.param = param
+        self._plot_source_info = (
+            dataset_key.database_path, self.ds.run_id, param.label or param.name,
+        )
         self._qplot_display_synchronized = False
         self._qplot_display_uses_direct_sql = False
         self.name = str(self)
@@ -538,6 +543,7 @@ class plotWidget(
         self.plot_state_overlay = PlotStateOverlay(self.widget, self.plot_status)
         self.show_status("Working, please wait", 0)
         self.initFrame() # See plot1d, plot2d
+        self._init_plot_annotation()
         self._init_native_transform_labels()
         
         if self.visible: #dont run non essential GUI functions if not displaying
