@@ -339,6 +339,38 @@ All Python commands use the project venv; Matplotlib cache is
   spans safety/native/packaging, measurements/performance and UI/lifecycle.
   Clean-round count: **0**. Two complete consecutive clean rounds still required.
 
+### BH-016 — Synthetic overwrite and settings startup block on named pipes
+
+- Fresh round 7 safety reviewer reproduced `generate_database(...,
+  existing_fifo_named_output_db, overwrite=True)`: generation finishes in
+  0.02 s, then the destination probe blocks for more than eight seconds.
+  `_require_rollback_journal_database` opens/reads before rejecting non-regular
+  file mode. No concurrent namespace substitution is involved.
+- Settings startup similarly blocks reading a FIFO `config.json`. Both paths now
+  reject a non-regular source before opening; settings keeps its existing
+  in-memory-default recovery and ordinary symlink-read policy.
+- Four direct/symlink FIFO regressions use subprocess deadlines and verify
+  bounded completion, unchanged FIFO and temporary/guard cleanup. Generator:
+  **128 passed**; settings/auxiliary: **102 passed, 25 subtests**. Final UI reviewer
+  independently approved both repairs and reran **94 tests, 25 subtests**.
+- Round 7 is **not clean**, clean-round count **0**. Safety/native/packaging
+  audit otherwise completed with **188 passed, 2 platform skips**; UI audit
+  completed with **205 distinct tests passed** across appropriate environments.
+
+### BH-017 — Array heatmap reduction overflows finite coordinate spans
+
+- Actual QCoDeS array reproduction: x = `[-1, 0, 1] * 1e308`, y = `[0, 1]`,
+  z = `[[1, 3, 5], [101, 103, 105]]`, four-cell reduction. Memory, buffered and
+  streamed routes all fail with nonfinite centres/wrong bins; scale-equivalent
+  unit data succeeds. Source hashes unchanged. Scalar SQL was fixed in BH-011.
+- `_scaled_axis_indices` now normalizes coordinates by a binary scale before
+  subtraction/binning and restores original centre units, preserving the
+  existing array-edge convention. **210 focused tests passed**, including 24
+  real-QCoDeS regressions across three routes, both axes and four scales.
+- Final safety reviewer independently approved and reran **40 array/SQL tests**.
+  Broader measurement audit: **435 passed**. Two-million-point ordinary binning
+  retained identical centres/indices: median 9.32 ms before, 9.65 ms after.
+
 ### Numerical scope note
 
 - Float-only summation can differ from an exact rational oracle by one floating

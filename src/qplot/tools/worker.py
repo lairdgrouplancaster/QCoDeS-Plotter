@@ -2285,13 +2285,22 @@ class loader(QtCore.QRunnable):
                 np.zeros(values.size, dtype=np.int64),
                 )
 
-        scaled = (values - lower) / (upper - lower)
+        # Rebase in binary-scaled units: a sweep spanning both finite float
+        # extremes can overflow its raw span before the ratio is formed.
+        # Power-of-two scaling retains ordinary coordinates exactly and also
+        # keeps subnormal coordinate spans usable without reciprocal widths.
+        magnitude = max(abs(lower), abs(upper))
+        exponent = math.frexp(magnitude)[1] - 1
+        coordinate_scale = math.ldexp(1.0, max(-1022, min(1023, exponent)))
+        scaled_lower, scaled_upper = lower / coordinate_scale, upper / coordinate_scale
+        span = scaled_upper - scaled_lower
+        scaled = (values / coordinate_scale - scaled_lower) / span
         self._check_cancelled()
         indices = np.floor(scaled * bin_count).astype(np.int64)
         self._check_cancelled()
         indices = np.clip(indices, 0, bin_count - 1)
-        step = (upper - lower) / bin_count
-        centres = lower + (np.arange(bin_count, dtype=float) + 0.5) * step
+        step = span / bin_count
+        centres = (scaled_lower + (np.arange(bin_count, dtype=float) + 0.5) * step) * coordinate_scale
 
         return centres, indices
 
