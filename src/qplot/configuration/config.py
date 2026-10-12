@@ -275,6 +275,11 @@ class config:
             if config is missing
 
         """
+        # Settings are files, not streams. In particular, opening a named pipe
+        # for reading can block startup forever before JSON parsing begins.
+        # Follow ordinary symlinks as before, but reject special targets.
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            raise OSError("The configuration source is not a regular file.")
         with open(path, encoding="utf-8") as fp:
             config = json.load(fp, parse_constant=_reject_json_constant)
         return config

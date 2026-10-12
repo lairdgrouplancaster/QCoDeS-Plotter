@@ -1124,13 +1124,16 @@ def _require_rollback_journal_database(database_path):
     """Reject destinations that cannot be locked without creating sidecars."""
     try:
         status = database_path.lstat()
+        # Inspect the entry before opening it: reading a FIFO blocks until a
+        # writer arrives, so the later header check cannot reject it safely.
+        if not stat.S_ISREG(status.st_mode):
+            raise _unsafe_publication_error(database_path)
         with database_path.open("rb") as handle:
             header = handle.read(20)
     except OSError as error:
         raise _unsafe_publication_error(database_path) from error
     if (
-            not stat.S_ISREG(status.st_mode)
-            or not header.startswith(_SQLITE_HEADER)
+            not header.startswith(_SQLITE_HEADER)
             or header[18:20] != _SQLITE_ROLLBACK_JOURNAL_VERSIONS
             ):
         # A persistent WAL-mode main can have no sidecars while quiescent, but

@@ -1,5 +1,6 @@
 """Regression coverage for settings recovery discovered during the bug hunt."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -45,3 +46,36 @@ print(recovered.invalid_config_backup_file)
     for name in occupied_names:
         assert (tmp_path / name).is_symlink()
     assert not (tmp_path / "absent-target").exists()
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="POSIX FIFO required")
+@pytest.mark.parametrize("symlink", [False, True])
+def test_config_fifo_uses_defaults_without_blocking_or_modifying_source(tmp_path, symlink):
+    settings_directory = tmp_path / "settings"
+    settings_directory.mkdir()
+    settings = settings_directory / "config.json"
+    fifo = settings_directory / "pipe" if symlink else settings
+    os.mkfifo(fifo)
+    if symlink:
+        settings.symlink_to(fifo)
+    before = {entry.name: entry.lstat() for entry in settings_directory.iterdir()}
+
+    result = subprocess.run(
+        [sys.executable, "-c", """
+import sys
+from qplot.configuration.config import config
+from qplot.diagnostics import configure_logging
+config.default_path = sys.argv[1]
+config.default_file = sys.argv[2]
+configure_logging(sys.argv[3], force=True)
+recovered = config()
+recovered.validate(recovered.config)
+assert recovered.config == recovered.build_default_config()
+assert "Could not read configuration" in recovered.startup_warning
+""", str(settings_directory), str(settings), str(tmp_path / "diagnostics.log")],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert {entry.name: entry.lstat() for entry in settings_directory.iterdir()} == before
+    assert fifo.is_fifo()
+    assert settings.is_symlink() == symlink
