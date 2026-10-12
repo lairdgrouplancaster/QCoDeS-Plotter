@@ -192,13 +192,13 @@ def test_qt_marquee_drag_uses_main_trace_axes(loaded_plot, axes, log_modes):
             (0, "x", [rect.left(), rect.right()], owner.width()),
             (1, "y", [rect.top(), rect.bottom()], owner.height()),
         ):
-            if name in zoom_axes:
-                # PyQtGraph aligns linked ViewBoxes by screen pixels; their
-                # sceneBoundingRects can differ by one pixel at the edge.
-                np.testing.assert_allclose(owner.viewRange()[dimension], limits,
-                                           atol=2 * (limits[1] - limits[0]) / pixels)
-            else:
-                np.testing.assert_allclose(owner.viewRange()[dimension], owner_before[dimension])
+            if name not in zoom_axes:
+                limits = owner_before[dimension]
+            # The semantic axis ranges above stay exact. Linked ViewBoxes
+            # align by screen pixels, including the dimension left unzoomed.
+            tolerance = (2 * (limits[1] - limits[0]) / pixels
+                         if owner.linkedView(dimension) is not None else 0)
+            np.testing.assert_allclose(owner.viewRange()[dimension], limits, atol=tolerance)
 
     # Resize through real Qt events as well as checking handle hit testing.
     set_ranges()

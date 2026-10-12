@@ -51,6 +51,17 @@ def _click(radio):
                           pos=QtCore.QPoint(8, radio.height() // 2))
 
 
+def _axis_ranges(plot, *, target=False):
+    # Compare the ViewBox dimension that owns each semantic axis. Its linked
+    # perpendicular dimension can shift by a pixel when Qt adjusts the layout.
+    ranges = {}
+    for axis in ("x", "y", "x2", "y2"):
+        viewbox = plot._axis_scale_viewbox(axis)
+        bounds = viewbox.getState()["targetRange"] if target else viewbox.viewRange()
+        ranges[axis] = bounds[plot._axis_scale_axis_number(axis)][:]
+    return ranges
+
+
 @pytest.mark.parametrize("axis,fft_plots", [
     (axis, {"x": np.array([0., sign * _MAXIMUM]), "y": np.array([1., 2.])})
     if axis in ("x", "x2") else
@@ -66,8 +77,8 @@ def test_initial_padding_overflow_keeps_bounded_auto_and_recovers(
     assert viewbox.autoRangeEnabled()[plot._axis_scale_axis_number(axis)] is False
     assert any(window is plot and "supported plot range" in message
                for window, message in axis_messages)
-    before = deepcopy(viewbox.viewRange())
-    assert np.all(np.isfinite(before))
+    before = _axis_ranges(plot)
+    assert np.all(np.isfinite(list(before.values())))
     raw_x, raw_y = line.getOriginalDataset()
     expected_x, expected_y = fft_plots[2:]
     # The merged source is the second recorded QCoDeS array, in reverse order.
@@ -75,7 +86,7 @@ def test_initial_padding_overflow_keeps_bounded_auto_and_recovers(
     np.testing.assert_array_equal(raw_y, expected_y[::-1] if axis in ("x2", "y2") else expected_y)
     _click(controls.autoRadio)
     qapplication.processEvents()
-    np.testing.assert_array_equal(viewbox.viewRange(), before)
+    assert _axis_ranges(plot) == before
     assert controls.autoRadio.isChecked()
 
     # Keep the same trace and Qt data-publication signal, now with supported
@@ -104,13 +115,14 @@ def test_rejected_auto_click_restores_manual_controls_and_view(
     qapplication.processEvents()
     assert controls.manualRadio.isChecked()
     before = deepcopy(viewbox.getState())
+    ranges_before = _axis_ranges(plot, target=True)
     fields = controls.minText.text(), controls.maxText.text()
     original = tuple(values.copy() for values in line.getOriginalDataset())
     axis_messages.clear()
     _click(controls.autoRadio)
     qapplication.processEvents()
     assert controls.manualRadio.isChecked()
-    assert viewbox.getState()["targetRange"] == before["targetRange"]
+    assert _axis_ranges(plot, target=True) == ranges_before
     assert viewbox.getState()["autoRange"] == before["autoRange"]
     assert (controls.minText.text(), controls.maxText.text()) == fields
     assert any(window is plot and "supported plot range" in message

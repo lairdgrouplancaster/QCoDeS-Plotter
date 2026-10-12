@@ -564,9 +564,11 @@ class plotWidget(
             initial_width, initial_height = plot_tile_size(self.config, screenrect)
             self.resize(initial_width, initial_height)
             
-            w = qtw.QFrame()
-            w.setLayout(self._window_layout)
-            self.setCentralWidget(w)
+        # Hidden source plots also own their canvas and progress timer. Their
+        # toolbar must not be destroyed while an unparented canvas keeps polling.
+        w = qtw.QFrame()
+        w.setLayout(self._window_layout)
+        self.setCentralWidget(w)
         
         # Keep the timer alive through this plot's own terminal display commit,
         # even if another parameter publishes shared dataset completion first.
