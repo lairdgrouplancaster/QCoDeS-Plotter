@@ -114,13 +114,29 @@ def test_actual_normal_plot_and_export_run_csv(tmp_path, monkeypatch, kind, shap
             assert not plot.worker.loaded_from_sql_heatmap
             valid = ~np.isnan(expected["fast"]) & ~np.isnan(expected["signal"])
             for axis, name in (("x", "fast"), ("y", "signal")):
-                np.testing.assert_array_equal(plot.line.getData()["xy".index(axis)], expected[name][valid])
+                np.testing.assert_array_equal(
+                    plot.line.getOriginalDataset()["xy".index(axis)], expected[name][valid],
+                )
+            if kind == "line_precision":
+                assert plot.line._qplot_precision_error
+                assert plot.line.getData()[0].size == 0
+            else:
+                np.testing.assert_array_equal(plot.line.getData()[0], expected["fast"][valid])
+                np.testing.assert_array_equal(plot.line.getData()[1], expected["signal"][valid])
             # Exercise publication, then a cache-backed normal refresh too.
             plot.refreshWindow(force=True)
             wait_for(lambda: not plot.worker.running)
             plot.monitor.stop()
-            np.testing.assert_array_equal(plot.line.getData()[0], expected["fast"][valid])
-            np.testing.assert_array_equal(plot.line.getData()[1], expected["signal"][valid])
+            np.testing.assert_array_equal(plot.line.getOriginalDataset()[0], expected["fast"][valid])
+            np.testing.assert_array_equal(plot.line.getOriginalDataset()[1], expected["signal"][valid])
+            if kind == "line_precision":
+                assert plot.line._qplot_precision_error
+                plot.plot.ctrl.subtractMeanCheck.setChecked(True)
+                assert plot.line._qplot_precision_error is None
+                np.testing.assert_array_equal(plot.line.getData()[1], np.arange(10.) - 4.5)
+            else:
+                np.testing.assert_array_equal(plot.line.getData()[0], expected["fast"][valid])
+                np.testing.assert_array_equal(plot.line.getData()[1], expected["signal"][valid])
         else:
             valid = np.isfinite(expected["fast"]) & np.isfinite(expected["signal"])
             for fast, slow, signal in zip(expected["fast"], expected["slow"],

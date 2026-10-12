@@ -5,6 +5,7 @@ from typing import cast
 
 import numpy as np
 import pyqtgraph as pg
+from PyQt6 import QtCore
 from pyqtgraph.graphicsItems.PlotDataItem import PlotDataset
 
 from qplot.datahandling.parameter_data import numeric_isfinite
@@ -243,13 +244,35 @@ def native_fft_coordinate_error(x: np.ndarray | None) -> str | None:
 class NativePlotDataItem(pg.PlotDataItem):
     """Keep acquisition order while preparing native derivatives and FFTs."""
 
+    sigDisplayChanged = QtCore.pyqtSignal(object)
     _datasetMapped: PlotDataset | None
     _qplot_fft_error: str | None = None
     _qplot_precision_error: str | None = None
 
+    def viewRangeChanged(self, vb=None, ranges=None, changed=None):
+        super().viewRangeChanged(vb, ranges, changed)
+        self.sigDisplayChanged.emit(self)
+
     def _precision_checked_samples(self, x, y):
         self._qplot_precision_error = None
-        if float_display_loses_distinctions(x) or float_display_loses_distinctions(y):
+        if x.dtype.kind not in "iuO" and y.dtype.kind not in "iuO":
+            return x, y
+        # Only paired finite samples can be drawn. Derivatives and phase maps
+        # can leave an exact coordinate opposite a missing slope; its rounded
+        # position must not reject unrelated finite plotted samples.
+        visible_x, visible_y = x, y
+        if x.shape == y.shape:
+            paired = numeric_isfinite(x) & numeric_isfinite(y)
+            for values, logarithmic in zip((x, y), self.opts["logMode"], strict=True):
+                if logarithmic:
+                    # Log mapping also hides nonpositive samples. Compare only
+                    # finite partners: Decimal NaN comparisons can raise.
+                    paired[paired] &= values[paired] > 0
+            visible_x, visible_y = x[paired], y[paired]
+        # Centre-step plots supply N+1 edges and N values. Keep their existing
+        # conservative precision check without inventing sample pairings.
+        if (float_display_loses_distinctions(visible_x)
+                or float_display_loses_distinctions(visible_y)):
             self._qplot_precision_error = DISPLAY_PRECISION_MESSAGE
             return np.array([], dtype=float), np.array([], dtype=float)
         return x, y

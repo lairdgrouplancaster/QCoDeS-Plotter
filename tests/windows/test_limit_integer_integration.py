@@ -63,8 +63,12 @@ _CASES = [
 
 
 @pytest.mark.parametrize(
-    "integer_array_plot,operation,bound",
-    [((np.arange(4), values, True), operation, bound) for operation, bound, values in _CASES],
+    "integer_array_plot,operation,bound,displayable",
+    [((np.arange(4), values, True), operation, bound, displayable)
+     for (operation, bound, values), displayable in zip(
+         _CASES, [False, False, False, False, False, False, False, True, True, True, False, False],
+         strict=True,
+     )],
     indirect=["integer_array_plot"],
     ids=[
         "unsigned-noop-maximum", "signed-noop-minimum",
@@ -76,7 +80,7 @@ _CASES = [
     ],
 )
 def test_integer_limits_keep_exact_plot_and_csv_values(
-    integer_array_plot, operation, bound, tmp_path, monkeypatch,
+    integer_array_plot, operation, bound, displayable, tmp_path, monkeypatch,
 ):
     plot = integer_array_plot
     original = plot.axis_data["y"].copy()
@@ -100,8 +104,14 @@ def test_integer_limits_keep_exact_plot_and_csv_values(
     assert [Decimal(str(value)) for value in worker.axis_data["y"]] == expected
     assert [Decimal(str(value)) for value in plot.line.getOriginalDataset()[1]] == expected
     snap = _line_snap_data(plot.line)
-    assert snap is not None
-    assert [Decimal(str(value)) for value in snap.y_raw] == expected
+    if displayable:
+        assert plot.line._qplot_precision_error is None
+        assert snap is not None
+        assert [Decimal(str(value)) for value in snap.y_raw] == expected
+    else:
+        assert plot.line._qplot_precision_error
+        assert plot.line.getData()[0].size == 0
+        assert snap is None
     rows = _plot_csv_from_action(plot, monkeypatch, tmp_path / "limited.csv")
     assert len(rows) == 5
     assert [Decimal(row[1]) for row in rows[1:]] == expected
@@ -160,7 +170,14 @@ def test_fractional_limit_composes_with_native_controls_gradient_and_csv(
     assert float(snap.y_raw[exact_edge]) == 1.0
     plot.plot.ctrl.derivativeCheck.setChecked(False)
     plot.plot.ctrl.phasemapCheck.setChecked(True)
-    assert float(plot.line.getData()[1][exact_edge]) == 1.0
+    if first == "Limit Maximum":
+        # Phase X retains two distinct adjacent integers near -2**63, which
+        # collide in the painter. Ordinary derivatives remain representable.
+        assert plot.line._qplot_precision_error
+        assert plot.line.getData()[0].size == 0
+        np.testing.assert_array_equal(plot.line.getOriginalDataset()[1], raw)
+    else:
+        assert float(plot.line.getData()[1][exact_edge]) == 1.0
     plot.plot.ctrl.phasemapCheck.setChecked(False)
 
     derivative = operation_option(plot, "dy/dx")

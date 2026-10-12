@@ -299,11 +299,20 @@ def test_single_integer_average_retains_source_precision(no_callback_errors):
     plot = NativePlotItem()
     widget = pg.PlotWidget(plotItem=plot)
     try:
-        plot.addItem(NativePlotDataItem(np.arange(2), values))
+        source = NativePlotDataItem(np.arange(2), values)
+        plot.addItem(source)
         plot.ctrl.averageGroup.setChecked(True)
+        # The source cannot be drawn at its absolute precision, so it cannot
+        # supply a displayed average. Its exact samples remain recoverable.
+        assert source._qplot_precision_error
+        assert not plot.avgCurves
+        np.testing.assert_array_equal(source.getOriginalDataset()[1], values)
+        plot.ctrl.subtractMeanCheck.setChecked(True)
+        assert source._qplot_precision_error is None
         count, average = next(iter(plot.avgCurves.values()))
         assert count == 1
-        assert average.getData()[1].dtype == values.dtype
-        np.testing.assert_array_equal(average.getData()[1], values)
+        np.testing.assert_array_equal(average.getData()[1], [-.5, .5])
+        assert source.getOriginalDataset()[1].dtype == values.dtype
+        np.testing.assert_array_equal(source.getOriginalDataset()[1], values)
     finally:
         widget.close()

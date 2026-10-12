@@ -44,8 +44,8 @@ from qplot.datahandling.trusted_presentation import bounded_presentation_error
 from qplot.diagnostics import log_event, log_exception
 from qplot.testdata import (
     GenerationCancelled,
-    generate_database,
     example_csv_contents,
+    generate_database,
     instruction_collection_contents,
     read_specifications,
 )

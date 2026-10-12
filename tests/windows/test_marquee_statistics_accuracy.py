@@ -1,5 +1,7 @@
 """Selection statistics through real QCoDeS samples and the Stats action."""
 
+from fractions import Fraction
+
 import numpy as np
 import pytest
 from PyQt6 import QtCore
@@ -27,6 +29,17 @@ VALUES = (
 ], indirect=True)
 def test_stats_action_retains_recorded_variation(measured_plots, no_callback_errors):
     _window, (host,), x, values = measured_plots
+    if values.ndim == 1 and values.dtype.kind in "iu":
+        # No line selection exists while absolute coordinates are rejected.
+        # Centering restores its visible variation and usable statistics.
+        assert host.line._qplot_precision_error
+        assert host._marquee_stats_text() is None
+        raw = values.copy()
+        exact_mean = sum(Fraction(int(value)) for value in raw) / len(raw)
+        values = np.array([float(Fraction(int(value)) - exact_mean) for value in raw])
+        host.plot.ctrl.subtractMeanCheck.setChecked(True)
+        assert host.line._qplot_precision_error is None
+        np.testing.assert_array_equal(host.line.getOriginalDataset()[1], raw)
     if values.ndim == 2:
         rect = QtCore.QRectF(-.5, -.5, len(x), 2.)
     else:

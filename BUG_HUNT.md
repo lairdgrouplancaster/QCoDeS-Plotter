@@ -252,6 +252,102 @@ All Python commands use the project venv; Matplotlib cache is
 
 ## Git and publication checkpoint
 
+### Round 6 findings and integration
+
+- BH-012: real streamed QCoDeS array heatmap with repeated cell values
+  `int64(2**51), float64(2**51 + .5), float64(2**51 + .5)` returns `2**51`;
+  correctly rounded mean is `2**51 + .5`. `FiniteBinMeans` promotes exact
+  arithmetic only above an absolute-sum threshold and misses this mixed
+  fractional case. Fresh UI reviewer owns consolidated repair and regressions;
+  related trusted SQL aggregation also lost the fractional result across page
+  boundaries. Per-bin fractional provenance now triggers exact replay alongside
+  integer provenance. **47 new regressions passed**, including four actual
+  trusted-service/native-reader cases with unchanged protected source files.
+  Related suites: **193** and **74** passed. Fresh measurement independently
+  approved; committed as `a5c3360`. Ordinary 200,000-bin mixed integral benchmark
+  changed from 17.3 to 19.6 ms (local medians).
+- BH-013: BH-010 introduced synchronous exact Fraction replay for ordinary
+  mixed int/float traces. Real Qt toggle with three 300,000-point sources
+  (integer ones, float twos, float threes) takes 3.17 s and blocks a queued
+  timer. Default source data is not automatically downsampled. Fresh safety
+  reviewer repaired this with integer numerators in shared binary units; the
+  same GUI action takes 16.5 ms, fractional mixed data 139.8 ms. Focused cases
+  and 4,750 randomized means match the rational oracle. Independent review and
+  zoom synchronization follow-up also approved by fresh measurement reviewer.
+- Round 6 safety/native/packaging review found no further actionable bug;
+  24 focused checks passed. Round 6 is **not clean**, clean-round count **0**.
+- BH-010 committed as `1edba35`, BH-011 as `7c5958e`, both pushed to draft PR.
+- After BH-011, repeated 2,000,000-row benchmark retained all finite cells:
+  500 x 500 grid; aggregation 2.506 s, preview 1.739 s. Ruff and mypy passed.
+- Full suite started at `fe1d82f`: **26 failed, 4,648 passed, 41 skipped**,
+  767.30 s. Nine sparse axis/style test hosts lack the new precision-overlay
+  callback; their harnesses now stub this separately tested integration concern.
+  Remaining numeric failures are being individually audited for intentional
+  display rejection versus over-rejection. Two GUI CSV failures confirmed BH-014.
+
+### BH-014 — Guarded example CSV creation rejects its own replaced stage
+
+- BH-007's CLI atomic writer replaces its target inode. GUI example CSV creation
+  already owns an atomic export transaction, whose staging identity check
+  correctly rejects that replacement. Ordinary creation therefore fails before
+  publication with "The private export staging file changed unexpectedly."
+- Split byte generation into `example_csv_contents`; CLI keeps its guarded
+  publication, GUI writes these bytes to its existing owned stage using the
+  collection-export writer. No weakening of destination/stage checks.
+- Existing GUI creation/replacement and protected-destination regressions caught
+  this. Rerun with generator safety and sparse-host fixes: **158 passed,
+  33 Windows-only skips, 29 subtests passed**. Independent fresh safety reviewer
+  approved; committed as `90cd101`.
+
+### BH-015 — Native averages retain stale downsampled data after zoom
+
+- Round 6 actual Qt reproduction: a 100,000-point sine trace with automatic
+  mean downsampling and clipping yields 2,857 initial source/average points.
+  Zoom to X=1000..1050 updates the source to 52 points, but its single-source
+  average remains at the old 2,857 coarse points. Generated averages disable
+  their own processing and miss display-data invalidation on range changes.
+- Fresh safety reviewer owns a focused view-change synchronization repair and
+  real native regression. Source display-change signals now queue one owned
+  timer; source-array identity comparisons prevent feedback. Primary/secondary
+  viewboxes, coalescing, removal and deletion covered. Combined native suites:
+  **71 passed, 2 domain skips**; fresh measurement independently approved.
+
+### Precision-guard integration follow-up (BH-008)
+
+- Full-suite phase-map failure exposed over-rejection: exact coordinates
+  opposite missing derivatives cannot draw a point, yet their conversion
+  collisions rejected the remaining valid curve. Log-hidden values had the
+  same issue. Check only paired finite, log-visible samples.
+- Existing numeric tests that expected drawing/snapping of indistinguishable
+  values are updated to verify explicit rejection, retained original samples,
+  safe CSV output, and native centering recovery. Real paired/log cases have
+  regressions that failed before repair. **108 integration tests** and **10
+  focused tests** passed. Fresh UI independently approved and reran **36 tests**.
+
+## Final integration and fresh review checkpoint
+
+- All fixes through BH-015 and BH-008 integration follow-up are frozen and
+  independently approved. Ruff, mypy (88 source files), whitespace checks pass.
+- Actual `python -m qplot` startup after these changes: visible window, running
+  event loop, normal shutdown, exit 0, temporary settings/logs.
+- Rebuilt application source distribution and pure-Python wheel successfully
+  in `/private/tmp/qplot-bug-hunt-final-dist`.
+- Final integrated full suite running with verbose failure reporting in
+  `/private/tmp/qplot-bug-hunt-integrated-tests.log`.
+- Round 7 starts with three newly created reviewers (`final_safety`,
+  `final_measurement`, `final_ui`) who did not author campaign fixes. Coverage
+  spans safety/native/packaging, measurements/performance and UI/lifecycle.
+  Clean-round count: **0**. Two complete consecutive clean rounds still required.
+
+### Numerical scope note
+
+- Float-only summation can differ from an exact rational oracle by one floating
+  point unit. Without an accuracy contract or material workflow consequence,
+  ordinary rounding alone is not classified as a bug. This campaign preserves
+  integer/mixed provenance and repairs confirmed cancellation, overflow and
+  visible representation errors; it does not promise universally correctly
+  rounded floating-point operations.
+
 - Focused commits: `af1d031` (settings), `3264ebc` (live retry), `98677c2` (UI).
 - `d0062d3` preserves trusted preview numeric meaning; `e57126b` protects generator
   CSV destinations and finite synthetic coordinates. All pushed.
@@ -265,9 +361,9 @@ All Python commands use the project venv; Matplotlib cache is
 
 ## Next tasks and continuation checkpoint
 
-1. Integrate independently reviewed BH-010/BH-011 and push for CI.
-2. Diagnose failures in full integration run at `fe1d82f`, then revalidate fixes.
-3. Complete fresh round 6 and subsequent complete rounds until two consecutive
+1. Commit/push final approved integration changes and update draft PR for CI.
+2. Finish full integration run and resolve any remaining failures.
+3. Complete fresh round 7 and subsequent complete rounds until two consecutive
    rounds find no actionable bugs. Current clean-round count: **0**.
 4. Finish final automated tests, actual qPlot startup, distribution checks and
    draft PR/CI status. No native source changed; rebuilt native artifact already
