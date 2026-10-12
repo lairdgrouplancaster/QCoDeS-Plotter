@@ -2,7 +2,7 @@
 
 import time
 
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtWidgets, sip
 
 _WORKER_NAMES = (
     "_database_load_worker",
@@ -27,6 +27,15 @@ _POOL_NAMES = (
 def close_main_window(window, timeout_ms=12_000):
     """Cancel and join window work before releasing its database snapshots."""
 
+    from qplot.windows._plotWin import plotWidget
+
+    # Closing a plot intentionally retains it when another plot uses its data.
+    # Once the entire test window shuts down, delete even those hidden sources.
+    plots = [
+        widget for widget in QtWidgets.QApplication.topLevelWidgets()
+        if isinstance(widget, plotWidget)
+        and getattr(widget, "threadPool", None) is window.threadPool
+    ]
     window.startupDatabaseTimer.stop()
     window.monitor.stop()
     window._automatic_refresh_shutdown = True
@@ -69,8 +78,12 @@ def close_main_window(window, timeout_ms=12_000):
         time.sleep(0.01)
     assert window.ds is None
     assert window.dataset_holder == {}
+    for plot in plots:
+        if not sip.isdeleted(plot):
+            plot.deleteLater()
     window.hide()
     window.deleteLater()
     if app is not None:
         app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
         app.processEvents()
+    assert all(sip.isdeleted(plot) for plot in plots)

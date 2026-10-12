@@ -943,7 +943,9 @@ def test_qt_subprocess_exits_at_one_deadline_with_exact_diagnostics(
         check=False,
         capture_output=True,
         text=True,
-        timeout=6.0,
+        # Include interpreter imports and teardown under parallel suite load.
+        # The child still separately asserts the actual Qt shutdown takes <1s.
+        timeout=30.0,
         env=environment,
     )
 

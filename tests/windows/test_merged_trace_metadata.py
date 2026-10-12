@@ -13,6 +13,7 @@ from qcodes.parameters import ManualParameter
 
 from qplot.tools.operation_registry import OperationCall, OperationExecutionError
 from qplot.windows import main as main_window
+from qplot.windows._plot_feedback import PlotWindowFeedbackMixin
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_differentiation_integration import (
     apply_operations,
@@ -24,6 +25,11 @@ from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
 @pytest.fixture
 def merged_plots(tmp_path, monkeypatch, request):
     configure_temp_qplot(monkeypatch, tmp_path)
+    setup_errors = []
+    monkeypatch.setattr(
+        PlotWindowFeedbackMixin, "show_error",
+        lambda _plot, *error: setup_errors.append(error),
+    )
     database_path = tmp_path / "merged.db"
     initialise_or_create_database_at(str(database_path), journal_mode="DELETE")
     experiment = load_or_create_experiment("merged metadata", sample_name="test")
@@ -49,6 +55,7 @@ def merged_plots(tmp_path, monkeypatch, request):
         for path in [database_path.with_name(database_path.name + suffix)]
     }
     window = main_window.MainWindow()
+    monkeypatch.setattr(window, "show_error", lambda *error: setup_errors.append(error))
     try:
         window.startupDatabaseTimer.stop()
         window.monitor.stop()
@@ -57,6 +64,8 @@ def merged_plots(tmp_path, monkeypatch, request):
         window.close_database(status=False)
         assert window.load_file(str(database_path))
         wait_for(lambda: not window._database_load_active)
+        window.monitor.stop()
+        assert not setup_errors
         plots = []
         for guid in guids:
             prior_plot_count = len(window.windows)
@@ -64,6 +73,7 @@ def merged_plots(tmp_path, monkeypatch, request):
             wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
             plot = window.windows[-1]
             wait_for(lambda plot=plot: hasattr(plot, "axis_data") and not plot.worker.running)
+            assert not setup_errors
             plot.monitor.stop()
             monkeypatch.setattr(plot, "show_error", lambda *_args: None)
             assert not plot.ds.running
