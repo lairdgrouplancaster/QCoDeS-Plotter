@@ -26,6 +26,15 @@ from qplot.windows.plot1d import plot1d
 
 
 class SnapToTraceTestCase(unittest.TestCase):
+    def setUp(self):
+        # These focused axis/style tests use partial window hosts without the
+        # plot-state overlay. Real precision status is covered by integration
+        # tests in test_bug_hunt_measurement_lines.py.
+        for host in (Plot1DTraceMixin, plotWidget):
+            self.enterContext(patch.object(
+                host, "_update_native_precision_status", return_value=None, create=True,
+            ))
+
     def test_major_tick_count_preference_applies_to_plot_and_colorbar_axes(self):
         class Axis:
             def __init__(self):

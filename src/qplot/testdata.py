@@ -406,6 +406,15 @@ def _write_instruction_csv(csv_path, content, overwrite):
             temporary_path.unlink(missing_ok=True)
 
 
+def example_csv_contents():
+    """Return example CSV bytes for either CLI or guarded GUI publication."""
+    content = io.StringIO(newline="")
+    writer = csv.writer(content)
+    writer.writerow(CSV_COLUMNS)
+    writer.writerows(EXAMPLE_ROWS)
+    return content.getvalue().encode("utf-8-sig")
+
+
 def write_example_csv(csv_path, overwrite=False):
     """Write a ready-to-use example generator CSV and return its path."""
     csv_path = Path(csv_path)
@@ -413,11 +422,7 @@ def write_example_csv(csv_path, overwrite=False):
         raise SpecificationError("Example output path must end in .csv")
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        content = io.StringIO(newline="")
-        writer = csv.writer(content)
-        writer.writerow(CSV_COLUMNS)
-        writer.writerows(EXAMPLE_ROWS)
-        _write_instruction_csv(csv_path, content.getvalue().encode("utf-8-sig"), overwrite)
+        _write_instruction_csv(csv_path, example_csv_contents(), overwrite)
     except FileExistsError as error:
         raise SpecificationError(
             f"{csv_path} already exists; use --overwrite to replace it"
