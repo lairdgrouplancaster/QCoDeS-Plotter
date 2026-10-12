@@ -9,7 +9,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore
 from pyqtgraph.graphicsItems.PlotDataItem import PlotDataset
 
-from qplot.tools.sample_statistics import finite_mean
+from qplot.tools.sample_statistics import finite_mean, sample_fraction
 
 
 def _integer_totals(total, values, weight=1):
@@ -284,8 +284,7 @@ class NativePlotItem(pg.PlotItem):
                 else:
                     # Native shape replacement treats the replacement as
                     # the preceding count of curves, retaining that weight.
-                    total = sum((weight * Fraction(value.item() if isinstance(value, np.generic)
-                                                   else value)
+                    total = sum((weight * sample_fraction(value)
                                  for (weight, _values), value in zip(sources, cells, strict=True)),
                                 Fraction())
                     y[cell_index] = float(total / count)

@@ -21,6 +21,7 @@ from fractions import Fraction
 import numpy as np
 
 from qplot.datahandling.parameter_data import numeric_isfinite, numeric_isnan
+from qplot.tools.sample_statistics import sample_fraction
 
 
 def _integer_differences(values, axis=0, step=1, *, cancelled_callback=None):
@@ -249,7 +250,7 @@ def _fraction_as_float(value):
 
 def _sample_fraction(value):
     """Use the exact recorded scalar, including NumPy integer/float cells."""
-    return Fraction(value.item() if isinstance(value, np.generic) else value)
+    return sample_fraction(value)
 
 
 def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callback=None):
@@ -329,7 +330,7 @@ def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callba
                     total = Fraction()
                     exact_values = []
                     for value in values_for_sum(original):
-                        exact_value = Fraction(value)
+                        exact_value = sample_fraction(value)
                         exact_values.append(exact_value)
                         total += exact_value
                     exact_mean = total / len(original)
@@ -392,7 +393,7 @@ def subtract_mean(
             if not values.size:
                 continue
             if np.all(numeric_isfinite(values)):
-                exact = [Fraction(value.item() if isinstance(value, np.generic) else value)
+                exact = [sample_fraction(value)
                          for value in values]
                 mean = sum(exact) / len(exact)
                 centered[position][valid] = [_fraction_as_float(value - mean) for value in exact]

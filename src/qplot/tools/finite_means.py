@@ -4,6 +4,8 @@ from fractions import Fraction
 
 import numpy as np
 
+from .sample_statistics import sample_fraction
+
 
 class FiniteBinMeans:
     """Keep only one count/sum per bin, never the original sample history."""
@@ -89,7 +91,7 @@ class FiniteBinMeans:
             value = values[position]
             if isinstance(value, np.generic):
                 value = value.item()
-            self.exact[int(targets[position])] += Fraction(value)
+            self.exact[int(targets[position])] += sample_fraction(value)
 
     def begin_exact_replay(self):
         """Discard rounded history for promoted bins, retaining their counts."""

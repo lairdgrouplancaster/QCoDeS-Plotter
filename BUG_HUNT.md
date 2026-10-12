@@ -371,6 +371,26 @@ All Python commands use the project venv; Matplotlib cache is
   Broader measurement audit: **435 passed**. Two-million-point ordinary binning
   retained identical centres/indices: median 9.32 ms before, 9.65 ms after.
 
+### BH-018 — Exact numeric fallback rejects NumPy longdouble scalars
+
+- Actual native plot reproduction: integer `[1, 1]` plus longdouble
+  `[1e308, 1e-308]` forces the finite exact-average fallback and raises
+  `TypeError` from `Fraction`. NumPy longdouble `.item()` retains a NumPy scalar
+  even on this ARM platform where its mantissa is binary64-sized.
+- A shared exact scalar conversion uses NumPy floating `as_integer_ratio`,
+  preserving wider mantissas on platforms that provide them. Statistics,
+  bounded means and directly related native/operation paths use it. Real
+  QCoDeS NPY round-trip regressions cover platform dtype differences. Five new
+  tests passed; focused batch **158 passed, 3 skips**. Final UI reviewer
+  independently approved and reran all five regressions (plus 81 related tests).
+- Native TypeError is reproduced locally on ARM; wider NPY mantissa preservation
+  is conditional on platforms that provide it. This does not promise exact
+  rounding for ordinary float-only operations.
+- BH-016 committed as `8c13368`; BH-017 as `d41c798`. Round 7 remains not clean.
+- Round 8 starts with rotated complete coverage: final safety reviews measurement,
+  final measurement reviews UI/lifecycle, final UI reviews safety/packaging.
+  Current clean-round count **0**.
+
 ### Numerical scope note
 
 - Float-only summation can differ from an exact rational oracle by one floating

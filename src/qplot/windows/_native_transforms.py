@@ -15,7 +15,7 @@ from qplot.tools.plot_tools import (
     _integer_differences,
     _integer_samples,
 )
-from qplot.tools.sample_statistics import finite_mean
+from qplot.tools.sample_statistics import finite_mean, sample_fraction
 
 from ._display_precision import (
     DISPLAY_PRECISION_MESSAGE,
@@ -66,7 +66,7 @@ def _center_object_samples(values: np.ndarray) -> np.ndarray:
     numeric = values.astype(np.float64)
     if not np.all(np.isfinite(numeric)):
         return numeric - np.mean(numeric)
-    exact = [Fraction(value) for value in values]
+    exact = [sample_fraction(value) for value in values]
     mean = sum(exact) / len(exact)
     return np.fromiter(
         (_fraction_as_float(value - mean) for value in exact),
@@ -89,7 +89,7 @@ def _safe_secant(x: np.ndarray, y: np.ndarray) -> np.ndarray:
         # overflow and underflow while dividing by a huge coordinate span.
         cells = [value.item() if isinstance(value, np.generic) else value
                  for value in (x[index], x[index + 1], y[index], y[index + 1])]
-        left_x, right_x, left_y, right_y = map(Fraction, cells)
+        left_x, right_x, left_y, right_y = map(sample_fraction, cells)
         distance = right_x - left_x
         if distance:
             quotient = (right_y - left_y) / distance
@@ -183,12 +183,12 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
         # without unsigned/signed overflow.
         exact: np.ndarray = x.astype(object)
         if x.dtype.kind == "O" and not _integer_samples(x):
-            exact = cast(np.ndarray, np.frompyfunc(Fraction, 1, 1)(exact))
+            exact = cast(np.ndarray, np.frompyfunc(sample_fraction, 1, 1)(exact))
         with np.errstate(over="ignore", invalid="ignore"):
             try:
                 rebased = (exact - exact[0]).astype(np.float64)
             except (TypeError, OverflowError):
-                exact = cast(np.ndarray, np.frompyfunc(Fraction, 1, 1)(exact))
+                exact = cast(np.ndarray, np.frompyfunc(sample_fraction, 1, 1)(exact))
                 rebased = np.fromiter(
                     (_fraction_as_float(value - exact[0]) for value in exact),
                     dtype=np.float64, count=len(exact),
@@ -200,10 +200,10 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
             # Their finite span can exceed float64 before rebasing finishes.
             # Scale exact differences before converting them to float.
             coordinate_scale = float(np.max(np.abs(x.astype(np.float64))))
-            anchor = Fraction(exact[0])
+            anchor = sample_fraction(exact[0])
             scale = Fraction(coordinate_scale)
             x = np.fromiter(
-                (float((Fraction(value) - anchor) / scale) for value in exact),
+                (float((sample_fraction(value) - anchor) / scale) for value in exact),
                 dtype=np.float64, count=len(exact),
             )
             dx = np.diff(x)
@@ -315,7 +315,7 @@ class NativePlotDataItem(pg.PlotDataItem):
                 # FFT converts integer/object arrays to float. Remove their
                 # exact offset first so adjacent recorded integers survive;
                 # restore only DC after any nonuniform interpolation.
-                exact = [Fraction(value.item() if isinstance(value, np.generic) else value)
+                exact = [sample_fraction(value)
                          for value in y]
                 dc_offset = sum(exact, Fraction()) / len(exact)
                 y = np.array([float(value - dc_offset) for value in exact])
