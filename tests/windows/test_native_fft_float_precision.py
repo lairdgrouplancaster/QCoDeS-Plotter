@@ -129,7 +129,7 @@ def test_unrepresentable_fft_frequency_axis_is_rejected(fft_plots, no_callback_e
             click_control(plot, "fftCheck")
         assert not plot.plot.ctrl.fftCheck.isChecked()
         assert not plot.line.opts["fftMode"]
-        assert "FFT requires" in plot.statusBar().currentMessage()
+        assert "FFT requires" in plot.plot_status.message
         for observed, expected in zip(plot.line.getData(), raw, strict=True):
             np.testing.assert_array_equal(observed, expected)
 
@@ -163,7 +163,7 @@ def test_refresh_to_unrepresentable_fft_coordinates_rolls_back_and_recovers(
     wait_for(lambda: not plot.worker.running)
     plot.monitor.stop()
     assert not plot.plot.ctrl.fftCheck.isChecked()
-    assert "FFT requires" in plot.statusBar().currentMessage()
+    assert "FFT requires" in plot.plot_status.message
     for line in (plot.line, secondary):
         assert not line.opts["fftMode"]
         for observed, raw in zip(line.getData(), line.getOriginalDataset(), strict=True):

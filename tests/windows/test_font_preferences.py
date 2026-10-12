@@ -8,6 +8,7 @@ from PyQt6 import QtWidgets as qtw
 from qplot.configuration.config import config
 from qplot.configuration.fonts import FONT_SIZE_KEY
 from qplot.windows._plot_state import PlotStateOverlay
+from qplot.windows._plot_status import PlotStatusWidget
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._preferences import PreferencesDialog
 from qplot.windows.main import MainWindow
@@ -56,7 +57,7 @@ class PlotFontWindow(qtw.QMainWindow):
         self.config = cfg
         self.widget = pg.GraphicsLayoutWidget()
         self.setCentralWidget(self.widget)
-        self.plot_state_overlay = PlotStateOverlay(self.widget)
+        self.plot_state_overlay = PlotStateOverlay(self.widget, PlotStatusWidget(self.widget))
         self.plot = self.widget.addPlot()
         self.plot.setLabel("bottom", "Gate", units="V")
         self.plot.setLabel("left", "Current", units="A")

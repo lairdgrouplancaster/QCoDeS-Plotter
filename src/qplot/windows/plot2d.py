@@ -59,6 +59,12 @@ class plot2d(
         self.__dict__["_colorbar_manual_levels"] = None
 
         
+    def initAxes(self) -> None:
+        """Keep axis-selection state; expose swaps through Appearance."""
+        super().initAxes()
+        self.axes_dock.toggleViewAction().setVisible(False)
+
+
     def initFrame(self) -> None:
         """
         Sets up the initial plot and starting data.
@@ -264,11 +270,11 @@ class plot2d(
     def initRefresh(self, refresh: Any) -> None:
         super().initRefresh(refresh)
         
-        self.toolbarRef.addSeparator()
         self.relevel_refresh = qtw.QCheckBox("Autoscale colors on refresh")
         self.relevel_refresh.setToolTip("Autoscale the heatmap colour range on each refresh")
         self.relevel_refresh.toggled.connect(self._colorbar_auto_refresh_changed)
-        self.toolbarRef.addWidget(self.relevel_refresh)
+        self.toolbarRef.insertWidget(self.plotStatusAction, self.relevel_refresh)
+        self.toolbarRef.insertSeparator(self.plotStatusAction)
      
     
     def initContextMenu(self) -> None:

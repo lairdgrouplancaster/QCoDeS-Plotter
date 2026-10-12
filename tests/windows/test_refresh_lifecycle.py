@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -12,6 +13,7 @@ from qplot.configuration.themes.light import light
 from qplot.datahandling.file_identity import database_instance
 from qplot.windows._database_actions import DatabaseActionsMixin
 from qplot.windows._preferences import PreferencesDialog
+from qplot.windows._plotWin import plotWidget
 from qplot.windows._run_controls import RunControlsMixin
 
 
@@ -113,21 +115,33 @@ class _RefreshHarness(qtw.QMainWindow):
 
 @pytest.mark.parametrize("theme", [light, dark, blank], ids=["light", "dark", "blank"])
 @pytest.mark.parametrize("style_name", qtw.QStyleFactory.keys())
-def test_refresh_interval_text_does_not_overlap_native_buttons(theme, style_name):
+@pytest.mark.parametrize("plot_control", [False, True], ids=["main", "plot"])
+def test_refresh_interval_text_does_not_overlap_native_buttons(theme, style_name, plot_control):
     window = _RefreshHarness()
+    if plot_control:
+        window.spinBox.deleteLater()
+        window.ds = SimpleNamespace(running=True)
+        window.refreshWindow = lambda: None
+        plotWidget.initRefresh(window, 0.1)
     window.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen)
     window.setStyleSheet(theme.main)
     style = qtw.QStyleFactory.create(style_name)
     style.setParent(window)
     spin = window.spinBox
     spin.setStyle(style)
-    container = qtw.QWidget(window)
-    layout = qtw.QHBoxLayout(container)
-    layout.addWidget(spin)
-    window.setCentralWidget(container)
+    if not plot_control:
+        container = qtw.QWidget(window)
+        layout = qtw.QHBoxLayout(container)
+        layout.addWidget(spin)
+        window.setCentralWidget(container)
     try:
         window.show()
         assert spin.maximum() == 10_000.0
+        spin.setValue(10_000.0)
+        assert spin.text() == ("10,000.0" if plot_control else "10,000.0 s")
+        window.resize(1200, 600)
+        qtw.QApplication.processEvents()
+        assert spin.minimumWidth() == spin.maximumWidth() == spin.sizeHint().width()
         for interval in (0.0, 10.0, 10_000.0):
             spin.setValue(interval)
             qtw.QApplication.processEvents()
@@ -135,6 +149,7 @@ def test_refresh_interval_text_does_not_overlap_native_buttons(theme, style_name
             spin.initStyleOption(option)
             editor = spin.lineEdit()
             edit_rect = editor.geometry()
+            button_lefts = []
             for control in (
                 qtw.QStyle.SubControl.SC_SpinBoxUp,
                 qtw.QStyle.SubControl.SC_SpinBoxDown,
@@ -145,6 +160,8 @@ def test_refresh_interval_text_does_not_overlap_native_buttons(theme, style_name
                 assert not edit_rect.intersects(button_rect), (
                     style_name, interval, edit_rect, button_rect
                 )
+                button_lefts.append(button_rect.left())
+            assert 0 <= min(button_lefts) - edit_rect.right() <= 4
             assert editor.width() >= editor.fontMetrics().horizontalAdvance(spin.text())
 
         frame = qtw.QStyleOptionFrame()

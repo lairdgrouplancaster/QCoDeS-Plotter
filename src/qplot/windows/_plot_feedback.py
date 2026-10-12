@@ -21,25 +21,21 @@ _Shortcut = str | QKeySequence | list[QKeySequence] | tuple[QKeySequence, ...]
 
 class PlotWindowFeedbackMixin(_PlotWindowFeedbackBase):
     """
-    Status-bar, overlay, error-dialog, and shortcut helpers for plot windows.
+    Toolbar status, overlay, error-dialog, and shortcut helpers for plot windows.
 
     """
 
     def show_status(self, message: str, timeout: int = 5000) -> None:
         """
-        Shows a short message in the plot window status bar.
+        Keep the message until another message or progress display replaces it.
+
+        ``timeout`` is accepted for shared callers; plot messages do not expire.
 
         """
         if self.visible:
-            status_bar = self.statusBar()
-            if status_bar is not None:
-                if not status_bar.property("qplotCollapseWhenEmpty"):
-                    status_bar.setProperty("qplotCollapseWhenEmpty", True)
-                    status_bar.messageChanged.connect(
-                        lambda text: status_bar.setVisible(bool(text))
-                        )
-                status_bar.showMessage(message, timeout)
-                status_bar.setVisible(bool(status_bar.currentMessage()))
+            feedback = self.__dict__.get("plot_status")
+            if feedback is not None:
+                feedback.show_message(message)
 
 
     def show_plot_state(
@@ -74,7 +70,7 @@ class PlotWindowFeedbackMixin(_PlotWindowFeedbackBase):
             details: str | None = None,
             ) -> None:
         """
-        Shows an error both in the status bar and, for visible windows, in a
+        Shows an error both in the toolbar and, for visible windows, in a
         message box.
 
         """

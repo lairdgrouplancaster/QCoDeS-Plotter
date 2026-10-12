@@ -22,6 +22,7 @@ from qplot.windows._colorbar import (
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey, TraceKey
 from qplot.windows._plot2d_sweeps import Plot2DSweepMixin
 from qplot.windows._plot_state import PlotStateOverlay
+from qplot.windows._plot_status import PlotStatusWidget
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
@@ -959,7 +960,7 @@ class CutAxisTransactionQtIntegrationTestCase(unittest.TestCase):
 
         overlay_target = qtw.QWidget(cut)
         overlay_target.resize(400, 240)
-        cut.plot_state_overlay = PlotStateOverlay(overlay_target)
+        cut.plot_state_overlay = PlotStateOverlay(overlay_target, PlotStatusWidget(overlay_target))
         cut.monitor = QtCore.QTimer(cut)
         cut.spinBox = qtw.QDoubleSpinBox(cut)
         cut.spinBox.setValue(0.2)

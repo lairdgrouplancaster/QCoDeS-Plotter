@@ -39,7 +39,6 @@ from ._dataset_handle import (
 from ._export_paths import choose_export_path, write_export_atomically
 from ._plot2d_layers import _heatmap_layer_compatibility, _window_display_unit
 from ._plot_drop_axes import plan_drop_axes
-from ._plot_refresh import plot_refresh_required
 from ._plot_source_promotion import promote_plot_source
 from ._plot_tiling import place_plot_window
 from ._refresh_interval import refresh_interval_value
@@ -1752,7 +1751,7 @@ class PlotActionsMixin:
 
         """
         # The plot is normally in front of the main window when a drop occurs.
-        # Keep its status bar in sync with the main-window feedback produced by
+        # Keep its toolbar in sync with the main-window feedback produced by
         # ``add_trace_to_plot`` so a post-drop rejection is visible where the
         # user performed the action.
         previous_target = getattr(self, "_preview_drop_feedback_window", None)
@@ -2174,8 +2173,6 @@ class PlotActionsMixin:
                 continue
             try:
                 if win._dataset_key == source_key and win.param.name == param.name:
-                    if plot_refresh_required(win):
-                        target_win.toolbarRef.show()
                     return win
             except AttributeError:
                 continue

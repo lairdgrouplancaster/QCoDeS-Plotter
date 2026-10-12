@@ -238,7 +238,7 @@ def test_unsupported_fft_inputs_and_recovery(fft_plots, no_callback_errors):
             assert not line.opts["fftMode"]
             assert_spectrum(line, raw_x, raw_y - np.mean(y))
             assert_full_snap_data(line, raw_x, raw_y - np.mean(y), raw_x, raw_y - np.mean(y))
-        assert "FFT requires" in descending.statusBar().currentMessage()
+        assert "FFT requires" in descending.plot_status.message
         with np.errstate(divide="ignore", invalid="ignore"):
             click_control(descending, "logXCheck")
             log_x = np.log10(x[::-1])
@@ -252,7 +252,7 @@ def test_unsupported_fft_inputs_and_recovery(fft_plots, no_callback_errors):
         # Retrying the still-invalid trace remains a safe rejected toggle.
         click_control(descending, "fftCheck")
     assert not descending.plot.ctrl.fftCheck.isChecked()
-    assert "FFT requires" in descending.statusBar().currentMessage()
+    assert "FFT requires" in descending.plot_status.message
     assert_samples(descending.line, x[::-1], y[::-1])
     assert_samples(secondary, x, y)
     assert_display(descending.line, x[::-1], y[::-1] - np.mean(y))
@@ -293,11 +293,11 @@ def test_reversing_phase_precedence_and_valid_coordinate_recovery(fft_plots, no_
     click_control(descending, "fftCheck")
     click_control(descending, "subtractMeanCheck")
     assert_spectrum(descending.line, y[:-1], np.diff(y) / np.diff(x))
-    assert "FFT requires" not in descending.statusBar().currentMessage()
+    assert "FFT requires" not in descending.plot_status.message
     click_control(descending, "phasemapCheck")
     assert not descending.plot.ctrl.fftCheck.isChecked()
     assert_spectrum(descending.line, x, y - np.mean(y))
-    assert "FFT requires" in descending.statusBar().currentMessage()
+    assert "FFT requires" in descending.plot_status.message
     # A real axis reassignment refreshes from QCoDeS with valid coordinates.
     assert descending.set_plot_axes_swapped(True)
     wait_for(lambda: not descending.worker.running)
@@ -307,7 +307,7 @@ def test_reversing_phase_precedence_and_valid_coordinate_recovery(fft_plots, no_
     increasing_y = y[::-1]
     samples = np.interp(np.linspace(1., 82., 4), increasing_y, (x - np.mean(x))[::-1])
     assert_spectrum(descending.line, np.fft.rfftfreq(4, 27.), np.abs(np.fft.rfft(samples) / 4))
-    assert "FFT requires" not in descending.statusBar().currentMessage()
+    assert "FFT requires" not in descending.plot_status.message
 
 
 def test_nan_coordinate_guard_before_pyqtgraph_interpolation():
@@ -346,7 +346,7 @@ def test_zero_span_fft_rejection_keeps_ui_exports_and_retry_usable(
             click_control(host, "fftCheck")
     assert not host.plot.ctrl.fftCheck.isChecked()
     assert not host.plot.saveState()["fftCheck"]
-    assert "FFT requires" in host.statusBar().currentMessage()
+    assert "FFT requires" in host.plot_status.message
     label = "Signal - mean(Signal)" if subtract_mean else "Signal"
     for side in ("bottom", "top"):
         assert_axis(host, side, "Coordinate", "V")
@@ -390,7 +390,7 @@ def test_zero_span_fft_rejection_keeps_ui_exports_and_retry_usable(
         x, y = host.line.getOriginalDataset()
         samples = y - np.mean(y) if subtract_mean else y
         assert_spectrum(host.line, np.fft.rfftfreq(4), np.abs(np.fft.rfft(samples) / 4))
-        assert "FFT requires" not in host.statusBar().currentMessage()
+        assert "FFT requires" not in host.plot_status.message
 
 
 @pytest.mark.parametrize("fft_plots", [{
@@ -407,7 +407,7 @@ def test_active_fft_rolls_back_all_curves_on_real_coordinate_refresh(fft_plots, 
     wait_for(lambda: not host.worker.running)
     host.monitor.stop()
     assert not host.plot.ctrl.fftCheck.isChecked()
-    assert "FFT requires" in host.statusBar().currentMessage()
+    assert "FFT requires" in host.plot_status.message
     for line in (host.line, secondary):
         assert not line.opts["fftMode"]
         assert_spectrum(line, *line.getOriginalDataset())

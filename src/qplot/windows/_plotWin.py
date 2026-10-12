@@ -37,6 +37,7 @@ from ._plot_feedback import PlotWindowFeedbackMixin
 from ._plot_marquee import PlotMarqueeMixin
 from ._plot_refresh import PlotRefreshMixin
 from ._plot_state import PlotStateOverlay
+from ._plot_status import PlotStatusWidget
 from ._plot_tiling import plot_tile_size
 from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
@@ -46,6 +47,7 @@ from ._preferences import (
     create_preferences_action,
 )
 from ._refresh_interval import (
+    RefreshIntervalSpinBox,
     connect_refresh_interval_edits,
     refresh_interval_value,
     remember_refresh_interval,
@@ -499,7 +501,6 @@ class plotWidget(
         self._merged_trace_users = 0
         self.operations = {}
         self._last_error_text = None
-        self.show_status("Working, please wait", 0)
         
         ### WIDGETS
         self._window_layout = qtw.QVBoxLayout()
@@ -508,7 +509,6 @@ class plotWidget(
         self._window_layout.setContentsMargins(0, 0, 0, 0)
         
         self.widget = pg.GraphicsLayoutWidget()
-        self.plot_state_overlay = PlotStateOverlay(self.widget)
         self._install_preview_drop_target()
         # Overwrite default viewbox to give more flexibility
         self.vb = custom_viewbox() # Mainly for linking secondary axis
@@ -534,6 +534,8 @@ class plotWidget(
         self.initAxes()
         self.initOperations()
         self.initRefresh(refrate)
+        self.plot_state_overlay = PlotStateOverlay(self.widget, self.plot_status)
+        self.show_status("Working, please wait", 0)
         self.initFrame() # See plot1d, plot2d
         self._init_native_transform_labels()
         
@@ -564,6 +566,13 @@ class plotWidget(
         if self._refresh_monitor_required(self.ds):
             self.monitorIntervalChanged(refresh_interval_value(self.spinBox))
 
+
+    def event(self, event):
+        # Menu hover tips must not create a bottom status bar or overwrite the
+        # persistent operation message in the refresh toolbar.
+        if event.type() == QtCore.QEvent.Type.StatusTip:
+            return True
+        return super().event(event)
 
     def _install_preview_drop_target(self):
         """Receive preview drops at the window, outside pyqtgraph's view.
@@ -842,19 +851,30 @@ class plotWidget(
             Default value for the refresh timer.
 
         """
-        self.toolbarRef = qtw.QToolBar("Refresh Timer")
+        self.toolbarRef = qtw.QToolBar("Refresh and status")
+        self.toolbarRef.setObjectName("plotRefreshToolbar")
         self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, self.toolbarRef)
         
-        if not self.ds.running:
-            self.toolbarRef.hide()
-        
-        self.spinBox = qtw.QDoubleSpinBox()
+        self.spinBox = RefreshIntervalSpinBox()
+        self.spinBox.setObjectName("refreshIntervalSpin")
         self.spinBox.setRange(0.0, 10_000.0)
         self.spinBox.setSingleStep(0.1)
         self.spinBox.setDecimals(1)
 
+        self.refreshPlotButton = qtw.QToolButton()
+        self.refreshPlotButton.setObjectName("refreshPlotButton")
+        self.refreshPlotButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_BrowserReload)
+        )
+        self.refreshPlotButton.setToolTip("Refresh plot data now (R)")
+        self.refreshPlotButton.setAccessibleName("Refresh plot data")
+        self.refreshPlotButton.setFixedSize(28, 26)
+        self.refreshPlotButton.clicked.connect(lambda: self.refreshWindow(force=True))
+        self.toolbarRef.addWidget(self.refreshPlotButton)
         self.toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
         self.toolbarRef.addWidget(self.spinBox)
+        self.plot_status = PlotStatusWidget(self.toolbarRef)
+        self.plotStatusAction = self.toolbarRef.addWidget(self.plot_status)
         
         if refrate is not None and refrate > 0:
             set_refresh_interval(self.spinBox, refrate)
@@ -872,7 +892,7 @@ class plotWidget(
         Sets up bottom toolbar which displays cursor point.
 
         """
-        self.toolbarCo_ord = qtw.QToolBar("Co-ordinates")
+        self.toolbarCo_ord = qtw.QToolBar("Coordinates")
         self.addToolBar(QtCore.Qt.ToolBarArea.BottomToolBarArea, self.toolbarCo_ord)
         
         labelWidth = self._label_width #About the size of 3 s.f. scientific
@@ -1274,7 +1294,7 @@ class plotWidget(
             qplot.tools.plot_tools for functions
 
         """
-        self.oper_dock = QDock_context("Operations", self)
+        self.oper_dock = QDock_context("Data operations", self)
         self.addDockWidget(QtCore.Qt.DockWidgetArea.RightDockWidgetArea, self.oper_dock)
         self.oper_dock.setVisible(False)# Large window so toggle off by default
         
@@ -1365,7 +1385,7 @@ class plotWidget(
         main_menu.addAction(refreshAction)
         
         toolbar_menu = self.createPopupMenu()
-        toolbar_menu.setTitle("Toolbars")
+        toolbar_menu.setTitle("Panels and toolbars")
         main_menu.addMenu(toolbar_menu)
         add_help_menu(self)
     

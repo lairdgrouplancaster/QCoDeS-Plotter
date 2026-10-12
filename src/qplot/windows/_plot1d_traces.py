@@ -579,7 +579,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
 
         A 1D plot only has one independent/dependent axis pair. The visible
         dropdown dock is therefore replaced by the Swap X/Y checkbox in Trace
-        Appearance. Two-dimensional plots continue to use the dock.
+        Appearance. Cut windows retain their dedicated controls.
 
         """
         super().initAxes()

@@ -16,7 +16,7 @@ from qplot.windows._widgets.toolbar import QDock_context
 class OperationsPanelTestCase(unittest.TestCase):
     def _panel(self, panel_type):
         main = qtw.QMainWindow()
-        main.oper_dock = QDock_context("Operations", main)
+        main.oper_dock = QDock_context("Data operations", main)
         return main, panel_type(main)
 
     def _option(self, widget, label):
@@ -33,7 +33,7 @@ class OperationsPanelTestCase(unittest.TestCase):
             messages.append(message)
 
         main = qtw.QMainWindow()
-        main.oper_dock = QDock_context("Operations", main)
+        main.oper_dock = QDock_context("Data operations", main)
 
         previous = QtCore.qInstallMessageHandler(handler)
         try:
@@ -72,7 +72,7 @@ class OperationsPanelTestCase(unittest.TestCase):
 
             def __init__(self):
                 super().__init__()
-                self.oper_dock = QDock_context("Operations", self)
+                self.oper_dock = QDock_context("Data operations", self)
 
         class TimedPlot2D(Plot2DWindow):
             pass

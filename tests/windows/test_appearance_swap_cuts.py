@@ -88,6 +88,27 @@ def _assert_cut_marker(heatmap, cut):
     np.testing.assert_array_equal(expected_y, expected_x + cut.fixed_value)
 
 
+def test_axis_panel_is_available_only_as_cut_controls(heatmap_with_cuts):
+    heatmap, cuts = heatmap_with_cuts
+    menu = heatmap.createPopupMenu()
+    assert "Data axes" not in [action.text() for action in menu.actions() if action.isVisible()]
+    assert not heatmap.axes_dock.toggleViewAction().isVisible()
+    for cut in cuts:
+        menu = cut.createPopupMenu()
+        action = cut.axes_dock.toggleViewAction()
+        assert cut.axes_dock.windowTitle() == "Cut controls"
+        assert action in menu.actions() and action.isVisible()
+        assert action.text() == "Cut controls"
+        assert action.shortcut().toString() == "Ctrl+Alt+A"
+        action.trigger()
+        qtw.QApplication.processEvents()
+        assert cut.axes_dock.isVisible()
+        assert cut.picker.slider.isVisible()
+        assert cut.axis_dropdown["x"].isVisible()
+        action.trigger()
+        assert cut.axes_dock.isHidden()
+
+
 def _wait_for_axes(heatmap, axes):
     wait_for(lambda: (
         not heatmap.worker.running

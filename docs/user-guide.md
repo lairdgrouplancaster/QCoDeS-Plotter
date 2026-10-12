@@ -364,14 +364,22 @@ snapshot and materialises the QCoDeS dataset. Merely loading, selecting, or
 scrolling a trusted live database does not do this work or copy the database.
 
 Plot windows may appear before their data has finished loading. Check the plot
-window status bar; unless qPlot stops responding or shows an error, wait for the
+window refresh toolbar; unless qPlot stops responding or shows an error, wait for the
 load to complete.
 
 ## Plot Windows
 
-Each plot window has plot controls, a status bar, optional toolbars, and dock
-panels. Toolbars and dock panels can be shown or hidden from `View -> Toolbars`,
+Each plot window has plot controls, optional toolbars, and dock
+panels. Toolbars and dock panels can be shown or hidden from `View -> Panels and toolbars`,
 by right-clicking a toolbar or panel, or with keyboard shortcuts.
+
+The `Refresh and status` toolbar is visible by default, including for completed
+runs. Its right-hand side shows the latest status message until another
+message or loading progress replaces it. During loading it shows a progress
+bar for the current stage, elapsed time, and the stage number. Hover over
+progress for the stage name and detailed counts, or over a shortened status
+message to read it in full. Empty-data and error explanations also appear in
+the plot area.
 
 Common plot controls:
 
@@ -387,8 +395,9 @@ Common plot controls:
   linear and base-10 logarithmic scaling. Non-positive values are omitted.
 * Right-drag on the plot, or scroll over an axis, to fast scale an axis.
 * The bottom toolbar shows cursor coordinates and array indices.
-* The left panel controls assigned axes and plot-specific options.
-* The right `Operations` panel applies data operations during refresh, after
+* Use `Swap X/Y` in the Appearance dialog to exchange the plotted axes.
+* Cut windows have a `Cut controls` panel for the cut direction and position.
+* The right `Data operations` panel applies data operations during refresh, after
   data is loaded from the database.
 
 ### Line Plots
@@ -455,7 +464,7 @@ Color-scale controls:
 
 ### Data Operations
 
-Plot windows can apply operations during refresh from the `Operations` panel.
+Plot windows can apply operations during refresh from the `Data operations` panel.
 The available operations depend on the plot type.
 
 Common operations:
@@ -565,10 +574,10 @@ Plot-window shortcuts:
 | `Ctrl+C` / `Cmd+C` | Copy the plot image to the clipboard using the selected copy format/resolution |
 | `Ctrl+E` | Export the plot |
 | `Ctrl+P` / `Cmd+P` | Print the visible plot area |
-| `Ctrl+Alt+R` | Show or hide the refresh toolbar |
-| `Ctrl+Alt+C` | Show or hide the coordinate toolbar |
-| `Ctrl+Alt+A` | Show or hide the axis control panel |
-| `Ctrl+Alt+O` | Show or hide the operations dock |
+| `Ctrl+Alt+R` | Show or hide the refresh and status toolbar |
+| `Ctrl+Alt+C` | Show or hide the coordinates toolbar |
+| `Ctrl+Alt+A` | Show or hide Cut controls in a cut window |
+| `Ctrl+Alt+O` | Show or hide the data operations panel |
 | `S` | Snap the 1D coordinate readout to the nearest trace point |
 
 Heatmap shortcuts:

@@ -113,6 +113,9 @@ _STYLESHEET_TEMPLATE = Template(
         padding-right: 7px;
         background-color: $menu_hover_bg;
     }
+    QLabel#plotStatusMessage {
+        color: $status_text;
+    }
     QStatusBar {
         background-color: $window_bg;
         color: $status_text;
@@ -127,6 +130,10 @@ _STYLESHEET_TEMPLATE = Template(
     }
     QToolBar QLabel {
         color: $text;
+    }
+    QToolBar#plotRefreshToolbar {
+        /* Qt uses the largest padding edge as the toolbar frame width. */
+        padding: 2px;
     }
     QPushButton {
         min-height: 20px;
@@ -225,11 +232,6 @@ _STYLESHEET_TEMPLATE = Template(
     QLineEdit#databasePathField {
         background-color: $field_alt_bg;
         color: $muted_text;
-    }
-    QDoubleSpinBox#refreshIntervalSpin {
-        /* Windows 11 places both native step buttons side by side. Its
-           stylesheet edit-field geometry otherwise overlaps the up button. */
-        padding-right: 32px;
     }
     QSpinBox#heatmapAppearanceOpacity {
         padding: 0 16px 0 4px;
