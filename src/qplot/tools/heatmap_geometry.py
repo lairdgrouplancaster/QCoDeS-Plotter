@@ -39,16 +39,26 @@ def bounded_grid_shape(x_count, y_count, *, max_cells, max_side):
 
 
 def spatial_axis_bins(lower, upper, source_count, bin_count):
+    """Return centres and finite normalized geometry for SQL bin assignment.
+
+    A reciprocal bin width can overflow for valid subnormal coordinates.
+    Binary scaling also bounds a sweep crossing both finite float extremes,
+    before subtracting its endpoints or extending its half-cell edges.
+    """
     if not np.isfinite(lower) or not np.isfinite(upper):
-        return np.array([], dtype=float), 0.0, 1.0
+        return np.array([], dtype=float), 0.0, 1.0, 1.0
+    magnitude = max(abs(lower), abs(upper))
+    exponent = math.frexp(magnitude)[1] - 1 if magnitude else 0
+    coordinate_scale = math.ldexp(1.0, max(-1022, min(1023, exponent)))
+    scaled_lower, scaled_upper = lower / coordinate_scale, upper / coordinate_scale
     if source_count <= 1 or bin_count <= 1 or lower == upper:
-        return np.array([lower], dtype=float), lower, 1.0
-    source_step = (upper - lower) / (source_count - 1)
-    lower_edge = lower - source_step / 2
-    upper_edge = upper + source_step / 2
+        return np.array([lower], dtype=float), scaled_lower, 1.0, coordinate_scale
+    source_step = (scaled_upper - scaled_lower) / (source_count - 1)
+    lower_edge = scaled_lower - source_step / 2
+    upper_edge = scaled_upper + source_step / 2
     bin_width = (upper_edge - lower_edge) / bin_count
     centres = lower_edge + (np.arange(bin_count, dtype=float) + 0.5) * bin_width
-    return centres, lower_edge, 1.0 / bin_width
+    return centres * coordinate_scale, lower_edge, bin_width, coordinate_scale
 
 
 @dataclass(frozen=True, slots=True, init=False)

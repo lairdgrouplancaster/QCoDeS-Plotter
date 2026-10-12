@@ -153,10 +153,10 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
         else:
             lo, hi = lower[axis], upper[axis]
             assert lo is not None and hi is not None
-            centres, edge, scale = spatial_axis_bins(float(lo), float(hi), counts[axis], size)
+            centres, edge, width, scale = spatial_axis_bins(float(lo), float(hi), counts[axis], size)
             axes.append(centres)
-            groups.append(f'MIN(CAST(({name} - ?) * ? AS INTEGER), ?)')
-            group_bindings.extend((edge, scale, size - 1))
+            groups.append(f'MIN(CAST(({name} / ? - ?) / ? AS INTEGER), ?)')
+            group_bindings.extend((scale, edge, width, size - 1))
     shape = (len(axes[1]), len(axes[0]))
     sums = np.zeros(shape)
     samples = np.zeros(shape, dtype=np.int64)

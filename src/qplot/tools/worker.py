@@ -1460,27 +1460,27 @@ class loader(QtCore.QRunnable):
             x_centres = np.array([], dtype=float)
             x_group_sql = x_column
         else:
-            x_centres, x_lower_edge, x_scale = self._spatial_axis_bins(
+            x_centres, x_lower_edge, x_width, x_scale = self._spatial_axis_bins(
                 float(x_min),
                 float(x_max),
                 x_count,
                 x_bins,
                 )
-            x_group_sql = f"MIN(CAST(({x_column} - ?) * ? AS INTEGER), ?)"
-            query_parameters.extend((x_lower_edge, x_scale, x_bins - 1))
+            x_group_sql = f"MIN(CAST(({x_column} / ? - ?) / ? AS INTEGER), ?)"
+            query_parameters.extend((x_scale, x_lower_edge, x_width, x_bins - 1))
 
         if y_exact:
             y_centres = np.array([], dtype=float)
             y_group_sql = y_column
         else:
-            y_centres, y_lower_edge, y_scale = self._spatial_axis_bins(
+            y_centres, y_lower_edge, y_width, y_scale = self._spatial_axis_bins(
                 float(y_min),
                 float(y_max),
                 y_count,
                 y_bins,
                 )
-            y_group_sql = f"MIN(CAST(({y_column} - ?) * ? AS INTEGER), ?)"
-            query_parameters.extend((y_lower_edge, y_scale, y_bins - 1))
+            y_group_sql = f"MIN(CAST(({y_column} / ? - ?) / ? AS INTEGER), ?)"
+            query_parameters.extend((y_scale, y_lower_edge, y_width, y_bins - 1))
 
         if (
                 (not x_exact and x_centres.size == 0)
