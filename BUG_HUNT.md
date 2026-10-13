@@ -554,7 +554,62 @@ All Python commands use the project venv; Matplotlib cache is
   performance; final safety covers UI/lifecycle; final measurement covers
   database safety/native packaging/settings/generation/diagnostics/export.
   Coordinator runs final full integration, actual startup and package checks.
-  Consecutive clean-round count remains **0** until all areas finish.
+  All three domains completed without new actionable bugs on `1798979`:
+  **first complete clean round**.
+- UI/lifecycle: **360 passed, 35 expected platform/type skips**, plus fresh
+  line/heatmap mixed-workflow probes (resize, axes, Auto, refresh, CSV, close),
+  no callback exceptions or protected database changes.
+- Safety/native/packaging/auxiliary publication: **1,020 passed, 34 platform
+  skips, 28 subtests**; no source or native changes. The existing settings helper
+  named `_migrate_config` is unchanged from baseline; this campaign adds no
+  settings migrations or compatibility formats.
+- Measurement/performance: **547 passed**, 24 independent real-QCoDeS grid
+  comparisons across three loading routes. A 300k-sample FFT took 0.112 s,
+  derivative 0.010 s, and an extreme mixed-mean probe cancelled at its requested
+  fifth callback. No new actionable finding.
+
+### Fresh round 11 and final validation
+
+- Rotated review started on the same `1798979` source: final safety covers
+  measurements/performance; final measurement covers UI/lifecycle; final UI
+  covers safety/native/packaging/auxiliary publication. Consecutive clean count:
+  **1**, pending completion of every round-11 area.
+- Full suite running against the source tree committed as `1798979`:
+  `/private/tmp/qplot-bug-hunt-final-integrated.log`. Ruff and mypy (88 files)
+  pass; actual `python -m qplot` startup reports visible window, live event loop
+  and exit 0. Application sdist/wheel rebuilt: 363 source archive files,
+  all 201 test modules included; 129 wheel files / 123 runtime files. Inventory
+  and `twine check` pass. Native code remains unchanged; earlier rebuilt
+  universal artifact passed architecture and pinned ABI checks.
+- UI/lifecycle completed clean: **486 passed, 2 expected skips, 2 subtests**,
+  including fresh active-refresh drop/remove/close probes for both host types.
+  Safety/native/packaging completed clean: **217 passed, 3 subtests**, including
+  actual native SHM/read-only/cancellation and synthetic publication checks.
+  Measurement review found BH-024 below, so round 11 is **not clean** and the
+  consecutive clean-round count resets to **0**.
+
+### BH-024 — Long integer row centering delays cancellation
+
+- Real current-QCoDeS array dataset at the default 2,000,000-point full-resolution
+  limit enters registered Subtract Row Mean with shape `(1, 2_000_000)` and int64
+  samples. `worker.cancel()` requested at 37.8 ms is not observed until 3.727 s,
+  after the entire exact calculation. No partial result publishes and source
+  hashes remain unchanged; this is operation cancellation latency, not an
+  unbounded database transaction or incorrect result.
+- Exact conversion, summation and residual loops only check cancellation at row
+  boundaries. Final safety owns periodic checks within those phases and bounded
+  consumption/real-worker regressions. Final measurement independently approved:
+  **55 tests passed**, including 17 new regressions and 11 additional exact-result,
+  NaN/Inf/source-immutability probes. Real default-limit cancellation improved
+  **3.727 s → 0.0381 s** (request at 0.0378 s), without partial publication.
+  Probe: `/private/tmp/qplot_round11_cancel_probe.py` and corresponding `.log`.
+
+- Full `1798979` integration result: **1 failed, 4,898 passed, 44 skipped,
+  119 subtests**, 830.59 s. The sole failure is subnormal line-mean recovery:
+  processed values are representable signed zeros but the range guard can leave
+  drawing rejected after processing/refresh. Final UI owns this event-ordering
+  follow-up; final measurement independently reviews. Final full validation and
+  two subsequent complete clean rounds remain required.
 
 ### Numerical scope note
 

@@ -393,10 +393,22 @@ def subtract_mean(
             if not values.size:
                 continue
             if np.all(numeric_isfinite(values)):
-                exact = [sample_fraction(value)
-                         for value in values]
-                mean = sum(exact) / len(exact)
-                centered[position][valid] = [_fraction_as_float(value - mean) for value in exact]
+                exact = []
+                for index, value in enumerate(values):
+                    if index % 1024 == 0:
+                        _check_cancelled(cancelled_callback)
+                    exact.append(sample_fraction(value))
+                total = Fraction()
+                for start in range(0, len(exact), 1024):
+                    _check_cancelled(cancelled_callback)
+                    total += sum(exact[start:start + 1024])
+                mean = total / len(exact)
+                residuals = np.empty(len(exact))
+                for index, value in enumerate(exact):
+                    if index % 1024 == 0:
+                        _check_cancelled(cancelled_callback)
+                    residuals[index] = _fraction_as_float(value - mean)
+                centered[position][valid] = residuals
             else:
                 numeric = values.astype(float)
                 centered[position][valid] = numeric - np.mean(numeric)
