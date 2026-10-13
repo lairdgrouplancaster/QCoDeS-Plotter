@@ -277,3 +277,18 @@ def test_startup_observer_preserves_launcher_readiness_before_qt_imports():
                for node in observed_run.body)
     assert 'return original_run(*args, **kwargs)' in acceptance.STARTUP_HOOK
     assert 'assert self.isVisible()' in acceptance.STARTUP_HOOK
+
+
+@pytest.mark.parametrize('installation', ['wheel', 'fresh-checkout', 'stamped-sdist'])
+def test_smoke_requires_build_stamp_only_when_installation_carries_it(tmp_path, installation):
+    runtime = {'qplot/__init__.py', 'qplot/_build_info.json',
+               'qplot/configuration/config_schema.json', 'qplot/resources/data.csv'}
+    source = None if installation == 'wheel' else tmp_path
+    if installation == 'stamped-sdist':
+        stamp = tmp_path / 'src/qplot/_build_info.json'
+        stamp.parent.mkdir(parents=True)
+        stamp.write_text('{"version": "1.6.0"}')
+    observed = acceptance.smoke_runtime_files(runtime, editable_source=source)
+    assert ('qplot/_build_info.json' in observed) == (installation != 'fresh-checkout')
+    assert observed - {'qplot/_build_info.json'} == runtime - {'qplot/_build_info.json'}
+    assert 'qplot/_build_info.json' in runtime, 'Wheel inventory must stay unchanged'

@@ -382,6 +382,15 @@ def fresh_checkout(repository: Path, destination: Path) -> Path:
     return destination
 
 
+def smoke_runtime_files(runtime: set[str], *, editable_source: Path | None) -> set[str]:
+    """Keep required resources, allowing unstamped editable Git checkouts."""
+    if editable_source is not None and not (editable_source / 'src/qplot/_build_info.json').is_file():
+        # Release wheels and extracted sdists carry generated provenance.
+        # A fresh Git checkout instead reports provenance from Git at runtime.
+        return runtime - {'qplot/_build_info.json'}
+    return set(runtime)
+
+
 def accept_installation(repository: Path, artifacts: dict[str, Path],
                         temporary: Path, *, editable: bool, public_pypi: bool = False) -> None:
     assert not temporary.resolve().is_relative_to(repository.resolve())
@@ -444,7 +453,8 @@ else:
     if editable:
         prove_editable_edit(python, app, temporary, audit, env)
     start_qplot(environment, temporary, env)
-    validator.smoke_test_installation(repository, app_wheel, native, runtime,
+    smoke_runtime = smoke_runtime_files(runtime, editable_source=app if editable else None)
+    validator.smoke_test_installation(repository, app_wheel, native, smoke_runtime,
                                      temporary, environment, audit_code=audit, env=env)
     validator.run([str(python), '-I', str(native_probe)], cwd=temporary, env=env)
     assert_no_compiler_builds(log, baseline)

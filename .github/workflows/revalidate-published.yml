@@ -1,0 +1,122 @@
+name: Revalidate published qPlot release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: Existing published release tag
+        type: string
+        required: true
+        default: v1.6.0
+      release-run-id:
+        description: Original publication run containing qplot-release receipts
+        type: string
+        required: true
+        default: "38429734516"
+
+# This workflow can read artifacts and source, but cannot upload to PyPI.
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  public-installations:
+    name: Public PyPI ${{ matrix.platform }} Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux-x86_64, macos-arm64, macos-intel, windows-x64]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-latest
+          - platform: macos-arm64
+            os: macos-latest
+          - platform: macos-intel
+            os: macos-15-intel
+          - platform: windows-x64
+            os: windows-2025
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PIP_NO_CACHE_DIR: "1"
+      UV_NO_CACHE: "1"
+      QPLOT_RELEASE_TAG: ${{ inputs.release-tag }}
+      QPLOT_RELEASE_RUN_ID: ${{ inputs.release-run-id }}
+      QPLOT_RECHECK_PLATFORM: ${{ matrix.platform }}
+    steps:
+      - name: Check out corrected validation tools
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Check out the original release source separately
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.release-tag }}
+          path: release-source
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Download receipts from the original publication run
+        uses: actions/download-artifact@v4
+        with:
+          name: qplot-release
+          path: release
+          run-id: ${{ inputs.release-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Qt system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends libegl1
+      - name: Configure Windows temporary directory
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $standardTemp = Join-Path $env:RUNNER_TEMP "qplot-standard-user"
+          New-Item -ItemType Directory -Force -Path $standardTemp | Out-Null
+          "QPLOT_UNPRIVILEGED_TEMP=$standardTemp" >> $env:GITHUB_ENV
+          "TEMP=$standardTemp" >> $env:GITHUB_ENV
+          "TMP=$standardTemp" >> $env:GITHUB_ENV
+          "TMPDIR=$standardTemp" >> $env:GITHUB_ENV
+      - name: Recheck public wheel and editable installations
+        if: runner.os != 'Windows'
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: |
+          for mode in wheel editable; do
+            python scripts/revalidate_published_release.py \
+              --repository release-source --bundle release \
+              --tag "$QPLOT_RELEASE_TAG" --run-id "$QPLOT_RELEASE_RUN_ID" \
+              --platform "$QPLOT_RECHECK_PLATFORM" --mode "$mode"
+          done
+      - name: Recheck both installations as a standard Windows user
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/qplot-standard-user/matplotlib
+        run: |
+          $python = (Get-Command python).Source
+          foreach ($mode in @("wheel", "editable")) {
+            $arguments = @(
+              "scripts/revalidate_published_release.py",
+              "--repository", "release-source", "--bundle", "release",
+              "--tag", $env:QPLOT_RELEASE_TAG,
+              "--run-id", $env:QPLOT_RELEASE_RUN_ID,
+              "--platform", $env:QPLOT_RECHECK_PLATFORM, "--mode", $mode
+            )
+            & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
+              -FilePath $python -ArgumentList $arguments -TimeoutSeconds 900
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Upload Windows failure diagnostics
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: qplot-public-recheck-windows-${{ matrix.python-version }}-diagnostics
+          if-no-files-found: ignore
+          path: |
+            ${{ env.QPLOT_UNPRIVILEGED_TEMP }}/child-stdout.txt
+            ${{ env.QPLOT_UNPRIVILEGED_TEMP }}/child-stderr.txt
