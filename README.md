@@ -1,6 +1,11 @@
 # QCoDeS-Plotter
 
 [![release](https://img.shields.io/github/v/release/lairdgrouplancaster/QCoDeS-Plotter?label=release)](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/releases/latest)
+[![CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/lairdgrouplancaster/QCoDeS-Plotter)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.11–3.14-blue?logo=python)](#requirements)
+[![PyPI](https://img.shields.io/pypi/v/qplotter)](https://pypi.org/project/qplotter/)
+
 [![pre-release](https://img.shields.io/github/v/release/lairdgrouplancaster/QCoDeS-Plotter?include_prereleases&label=pre-release&sort=semver)](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/releases)
 
 QCoDeS-Plotter, or qPlot, is a PyQt-based data viewer for QCoDeS databases. It
