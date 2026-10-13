@@ -258,6 +258,21 @@ class NativePlotDataItem(pg.PlotDataItem):
         self._qplot_range_dataset = None
         super().clear()
 
+    def axisDataBounds(self, ax, frac=1.0, orthoRange=None):
+        """Keep rejected mapped bounds available to qPlot's axis preflight."""
+        if self._qplot_precision_error != LINE_DISPLAY_RANGE_MESSAGE or self._datasetMapped is None:
+            return self.dataBounds(ax, frac, orthoRange)
+        # Hidden painting children report no bounds. Measure the processed
+        # samples in an unattached item so autoscale can reject the actual
+        # range without installing unsafe data on a scene renderer.
+        mapped = self._datasetMapped
+        bounds_item = pg.PlotCurveItem(
+            x=mapped.x, y=mapped.y, pen=self.opts["pen"],
+            shadowPen=self.opts["shadowPen"], fillLevel=self.opts["fillLevel"],
+            stepMode=self.opts["stepMode"],
+        )
+        return bounds_item.dataBounds(ax, frac, orthoRange)
+
     def viewChanged(self, view, oldView):
         super().viewChanged(view, oldView)
         self._watch_display_range(view if isinstance(view, pg.ViewBox) else None)

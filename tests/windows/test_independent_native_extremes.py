@@ -74,5 +74,21 @@ def test_native_fft_wide_finite_coordinate_span(measured_plots, no_callback_erro
     span = Fraction(float(x[-1])) - Fraction(float(x[0]))
     expected_x = np.array([float(Fraction(k * (len(x)-1), len(x)) / span)
                            for k in range(len(x)//2+1)])
-    np.testing.assert_allclose(host.line.getData()[0], expected_x, rtol=2e-15, atol=0)
-    np.testing.assert_array_equal(host.line.getData()[1], np.r_[1., np.zeros(len(x)//2)])
+    expected_y = np.r_[1., np.zeros(len(x)//2)]
+    if expected_x[-1] < np.finfo(float).tiny:
+        # Finite subnormal frequencies remain valid processing results even
+        # when the viewport scale needed to draw their span overflows Qt.
+        assert host.line.getData() == (None, None)
+        mapped = host.line._datasetMapped
+        np.testing.assert_allclose(mapped.x, expected_x, rtol=2e-15, atol=0)
+        np.testing.assert_array_equal(mapped.y, expected_y)
+        assert host.line.axisDataBounds(0) == (float(expected_x.min()), float(expected_x.max()))
+        assert host.line.axisDataBounds(1) == (0., 1.)
+        assert not host.line.curve.isVisible()
+        assert "coordinate range" in host.plot_state_overlay.title_label.text()
+        assert host.plot_state_overlay.frame.isVisible()
+    else:
+        np.testing.assert_allclose(host.line.getData()[0], expected_x, rtol=2e-15, atol=0)
+        np.testing.assert_array_equal(host.line.getData()[1], expected_y)
+    np.testing.assert_array_equal(host.line.getOriginalDataset()[0], x)
+    np.testing.assert_array_equal(host.line.getOriginalDataset()[1], y)

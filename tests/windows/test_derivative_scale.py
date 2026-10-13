@@ -1,5 +1,7 @@
 """Finite derivatives survive extreme but valid QCoDeS coordinate scales."""
 
+import math
+
 import numpy as np
 import pytest
 
@@ -27,12 +29,21 @@ integer_array_plot = _integer_array_plot_fixture
 ], indirect=True)
 def test_scaled_derivative_through_operations_controls(integer_array_plot):
     plot = integer_array_plot
+    plot.show()
     expected = exact_gradient(plot.axis_data["x"], plot.axis_data["y"])
     operation_option(plot, "dy/dx").input.click()
     _worker, finished, errors = apply_operations(plot)
     assert finished == [True] and errors == []
     np.testing.assert_allclose(plot.axis_data["y"], expected, rtol=2e-15, atol=0)
-    np.testing.assert_allclose(plot.line.getData()[1], expected, rtol=2e-15, atol=0)
+    np.testing.assert_allclose(plot.line.getOriginalDataset()[1], expected, rtol=2e-15, atol=0)
+    x = plot.axis_data["x"]
+    if math.isfinite(float(np.max(x)) - float(np.min(x))):
+        np.testing.assert_allclose(plot.line.getData()[1], expected, rtol=2e-15, atol=0)
+    else:
+        assert plot.line.getData() == (None, None)
+        assert not plot.line.curve.isVisible()
+        assert "coordinate range" in plot.plot_state_overlay.title_label.text()
+        assert plot.plot_state_overlay.frame.isVisible()
 
 
 @pytest.mark.parametrize("coordinates", [

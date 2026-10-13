@@ -530,6 +530,31 @@ All Python commands use the project venv; Matplotlib cache is
   hiding an unrenderable curve removed its bounds from existing axis validation.
   The repair retains processed bounds independently of drawing visibility.
   All failures must be resolved before fresh round 10 and final validation.
+- Run result: **22 failed, 4,861 passed, 44 skipped, 119 subtests**, 821.50 s.
+  Log: `/private/tmp/qplot-bug-hunt-post-display-full.log`. Additional failures
+  exercise centering/subnormal residuals; original-data and processed numerical
+  assertions must remain meaningful when a Qt display is explicitly rejected.
+  This run began at the frozen display-fix tree committed as `e05e43b` and
+  predates BH-023; the averaging fix has **137 passed, one expected skip** in its
+  author batch plus independent validation above. Final full rerun is required.
+- All 22 failures resolved and independently approved. Mapped bounds now support
+  rejection and ordinary Reset/Auto recovery after unsafe zoom, independently of
+  drawing visibility. Original 32 global-auto cases pass unchanged; combined
+  final line/global/filtered-auto coverage: **97 distinct cases passed**.
+  Broader author integration: **119 passed**; independent existing numeric/axis
+  integration: **72 passed**. Exact numerical/source assertions are retained.
+- Linux CI found one additional test-only issue: symlink resolution advances
+  `st_atime` while all identity/content/modification metadata stay unchanged.
+  Settings FIFO regression now ignores access time but checks nanosecond
+  modification/change times and the exact link target.
+
+### Fresh round 10
+
+- Rotated review started on combined fixes: final UI covers measurements and
+  performance; final safety covers UI/lifecycle; final measurement covers
+  database safety/native packaging/settings/generation/diagnostics/export.
+  Coordinator runs final full integration, actual startup and package checks.
+  Consecutive clean-round count remains **0** until all areas finish.
 
 ### Numerical scope note
 
@@ -553,15 +578,14 @@ All Python commands use the project venv; Matplotlib cache is
 
 ## Next tasks and continuation checkpoint
 
-1. Finish BH-021 display guard and independent review, including resize/recovery
-   and investigation of the 1D counterpart. Local committed head: `c6bb195`;
-   last pushed revision: `5be60f2`. BH-021 is currently uncommitted.
-2. Repair CI cancellation-test instrumentation and rerun current integration.
-   CI at `5be60f2` completed: all failing test jobs identify the same stale
-   `Fraction` monkeypatch after BH-018 moved scalar conversion to
-   `sample_fraction`. The cancellation assertion must count actual conversions.
-3. Complete fresh round 9 and subsequent complete rounds until two consecutive
-   rounds find no actionable bugs. Rounds 1–8 were not clean; count: **0**.
+1. Finish BH-022 axis/centering/FFT integration follow-up and independent review.
+   Local committed head: `a8b4163`; last pushed revision: `e05e43b`. BH-021,
+   BH-022's initial repair and BH-023 are committed and independently approved.
+2. Resolve all 22 post-display integration failures and rerun the complete suite.
+   The earlier CI cancellation instrumentation failure was repaired in
+   `2a36660`, preserving the 1,024-conversion cancellation assertion.
+3. Complete fresh round 10 and subsequent complete rounds until two consecutive
+   rounds find no actionable bugs. Rounds 1–9 were not clean; count: **0**.
 4. Finish final automated tests, actual qPlot startup, distribution checks and
    draft PR/CI status. No native source changed; rebuilt native artifact already
    passed architecture/ABI/package checks earlier in this campaign.

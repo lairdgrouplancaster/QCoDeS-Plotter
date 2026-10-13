@@ -177,6 +177,25 @@ def test_resize_and_unsafe_zoom_update_average_and_recover(tmp_path, monkeypatch
         assert plot.line.curve.isVisible()
 
 
+@pytest.mark.parametrize("axis", ["x", "y"])
+def test_auto_recovers_supported_samples_from_unsafe_viewport(
+        tmp_path, monkeypatch, qapplication, axis):
+    values = np.arange(3.)
+    with array_plot(tmp_path, monkeypatch, [{"x": values, "signal": values}]) as (_main, plot):
+        setter = plot.vb.setXRange if axis == "x" else plot.vb.setYRange
+        setter(-1e-309, 1e-309, padding=0)
+        _paint(plot, qapplication)
+        wait_for(lambda: plot.line._qplot_precision_error is not None)
+        assert not plot.line.curve.isVisible()
+        plot.force_all_axes_autoscale()
+        _paint(plot, qapplication)
+        wait_for(lambda: plot.line._qplot_precision_error is None)
+        assert plot.line.curve.isVisible()
+        assert not plot.plot_state_overlay.frame.isVisible()
+        np.testing.assert_array_equal(plot.line.getData()[0], values)
+        np.testing.assert_array_equal(plot.line.getData()[1], values)
+
+
 def test_native_log_processing_recovers_tiny_line(tmp_path, monkeypatch, qapplication):
     x, y = np.arange(3.), np.array([1., 2., 3.]) * 1e-309
     with array_plot(tmp_path, monkeypatch, [{"x": x, "signal": y}]) as (_main, plot):
