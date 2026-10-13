@@ -13,6 +13,7 @@ from qcodes.dataset import (
 )
 
 from qplot.windows import main as main_window
+from qplot.windows._native_transforms import _safe_secant
 from qplot.windows._plot1d_snap import _line_snap_data
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_complex_line_data import database_state
@@ -159,17 +160,43 @@ def integer_plots(tmp_path, monkeypatch, request):
         assert database_state(path) == protected
 
 
+def assert_raw_display(line, x, y):
+    for actual, expected in zip(line.getOriginalDataset(), (x, y), strict=True):
+        np.testing.assert_array_equal(actual, expected)
+    # Compare exact Python integers, independently of the display guard.
+    collapses = any(
+        len(set(map(float, values))) < len(set(map(int, values)))
+        for values in (x, y) if values.dtype.kind in "iuO"
+    )
+    if collapses:
+        assert line.getData()[0].size == 0
+        assert "display precision" in line._qplot_precision_error
+        assert _line_snap_data(line) is None
+    else:
+        assert_display(line, x, y)
+
+
 def assert_integer_mapping(plot, x, y, slopes, *, phase=False):
     mapped_x = y[:-1] if phase else x[:-1]
+    np.testing.assert_array_equal(_safe_secant(x, y), slopes)
+    collapses = (mapped_x.dtype.kind in "iuO" and
+                 len(set(map(float, mapped_x))) < len(set(map(int, mapped_x))))
     if mapped_x.dtype.kind == "O":
         mapped_x = mapped_x.astype(float)
     for line in getattr(plot, "lines", {None: plot.line}).values():
-        assert_display(line, mapped_x, slopes)
-        assert_display(line.curve, mapped_x, slopes)
+        if collapses:
+            assert line.getData()[0].size == 0
+            assert "display precision" in line._qplot_precision_error
+            assert _line_snap_data(line) is None
+        else:
+            assert_display(line, mapped_x, slopes)
+            assert_display(line.curve, mapped_x, slopes)
         original = line.getOriginalDataset()
         for actual, expected in zip(original, (x, y), strict=True):
             assert actual.dtype == expected.dtype
             np.testing.assert_array_equal(actual, expected)
+        if collapses:
+            continue
         samples = _line_snap_data(line)
         assert samples is not None
         np.testing.assert_array_equal(samples.x_raw, mapped_x)
@@ -238,7 +265,7 @@ def test_large_integer_mean_native_controls_and_fft(
     assert_centered()
     click_control(plot, "subtractMeanCheck")
     for line in (plot.line, plot.lines[key]):
-        np.testing.assert_array_equal(line.getData()[1], y)
+        assert_raw_display(line, x, y)
     click_control(plot, "subtractMeanCheck")
     assert_centered()
 
@@ -283,8 +310,7 @@ def test_integer_differences_and_raw_csv(integer_plots, no_callback_errors, cont
                 assert [convert(row[column]) for row in rows] == expected.tolist()
         click_control(plot, control)
         for line in plot.lines.values():
-            for actual, expected in zip(line.getData(), (x, y), strict=True):
-                np.testing.assert_array_equal(actual, expected)
+            assert_raw_display(line, x, y)
 
 
 @pytest.mark.parametrize("integer_plots", [("reported_uint_y", False)], indirect=True)

@@ -176,8 +176,9 @@ def test_axis_swap_renders_exact_mixed_integer_coordinates(tmp_path, monkeypatch
         wait_for(lambda: plot.worker is not prior and not plot.worker.running)
         plot.monitor.stop()
         assert plot.line.getOriginalDataset()[0].tolist() == expected
-        np.testing.assert_array_equal(plot.line.getData()[0], np.array(expected, dtype=float))
-        assert plot.line.getData()[0].dtype.kind == "f"
+        assert plot.line.getData()[0].size == 0
+        assert "display precision" in plot.line._qplot_precision_error
+        assert plot.plot_state_overlay.frame.isVisible()
         dialog = _open_csv_dialog(plot)
         rows = _export_from_dialog(monkeypatch, plot, dialog, tmp_path / "swapped.csv", ",")
         assert [int(row[0]) for row in rows[1:]] == expected

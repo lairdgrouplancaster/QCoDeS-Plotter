@@ -589,7 +589,8 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         window.hide_plot_state = lambda: None
         window._update_large_heatmap_state = lambda _worker: None
         window._has_plottable_heatmap_data = lambda: True
-        window._update_heatmap_geometry = lambda: None
+        window._update_heatmap_geometry = lambda: HeatmapGeometry.from_centres([0., 1.], [0., 1.])
+        window._primary_heatmap_viewbox = lambda: SimpleNamespace(width=lambda: 500., height=lambda: 300.)
         window.relevel_refresh = Toggle()
         window.bar = SimpleNamespace(levels=lambda: (1.0, 4.0), show=lambda: None)
         window._sync_colorbar_axis_scaling = lambda: None

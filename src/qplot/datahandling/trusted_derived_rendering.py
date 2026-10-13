@@ -8,6 +8,7 @@ import struct
 import zlib
 from bisect import bisect_left
 from collections.abc import Callable
+from fractions import Fraction
 from typing import Any, TypeAlias, cast
 
 from qplot.datahandling.trusted_live_queries import (
@@ -19,7 +20,7 @@ from qplot.datahandling.trusted_work_scheduler import (
     TrustedWorkKind,
 )
 
-TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v6"
+TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v7"
 TRUSTED_DERIVED_MAX_IMAGES = 8
 TRUSTED_DERIVED_MAX_IMAGE_WIDTH = 2_048
 TRUSTED_DERIVED_MAX_IMAGE_HEIGHT = 2_048
@@ -77,11 +78,10 @@ def _option_integer(
     return value
 
 
-def _finite_number(value: object) -> float | None:
+def _finite_number(value: object) -> int | float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    converted = float(value)
-    return converted if math.isfinite(converted) else None
+    return value if math.isfinite(value) else None
 
 
 def _source_identity(observation: TrustedDerivedSourceObservation) -> DerivedValue:
@@ -361,21 +361,13 @@ def _render_1d(
     y_values = tuple(point[1] for point in points)
     x_min, x_max = min(x_values), max(x_values)
     y_min, y_max = min(y_values), max(y_values)
-    x_span = x_max - x_min
-    y_span = y_max - y_min
-    if not math.isfinite(x_span) or not math.isfinite(y_span):
-        raise _UnsupportedNumericData(
-            "The bounded numeric sample exceeds the supported finite range."
-        )
-    x_span = x_span or 1.0
-    y_span = y_span or 1.0
     margin = max(2, min(width, height) // 20)
     prior: tuple[int, int] | None = None
     for index, (x, y) in enumerate(points):
         if index % 128 == 0:
             cancel_check()
-        raw_px = (x - x_min) * (width - 1 - 2 * margin) / x_span
-        raw_py = (y - y_min) * (height - 1 - 2 * margin) / y_span
+        raw_px = _normalised_position(x, x_min, x_max) * (width - 1 - 2 * margin)
+        raw_py = _normalised_position(y, y_min, y_max) * (height - 1 - 2 * margin)
         if not math.isfinite(raw_px) or not math.isfinite(raw_py):
             raise _UnsupportedNumericData(
                 "The bounded numeric sample exceeds the supported finite range."
@@ -512,11 +504,6 @@ def _render_2d(
     )
     finite = tuple(value for value in grid if value is not None)
     z_min, z_max = min(finite), max(finite)
-    z_span = z_max - z_min
-    if not math.isfinite(z_span):
-        raise _UnsupportedNumericData(
-            "The bounded numeric sample exceeds the supported finite range."
-        )
     source_rows = _nearest_sample_bins(
         height,
         vertical_count,
@@ -609,12 +596,33 @@ def _nearest_sample_bins(
     return tuple(output)
 
 
+def _normalised_position(value, low, high):
+    """Map finite samples before pixel scaling can overflow their range."""
+    if high == low:
+        return 0.
+    samples = (value, low, high)
+    integer_count = sum(isinstance(sample, int) for sample in samples)
+    if (any(isinstance(sample, Fraction) for sample in samples)
+            or (0 < integer_count < 3 and max(map(abs, samples)) >= 2**53)):
+        # Mixed array records can retain an integer between adjacent floats.
+        # Subtract exactly before normalizing, rather than rounding that
+        # integer to its neighbouring float and losing a recorded step.
+        # Repeated integer heatmap cells retain their exact fractional means.
+        value, low, high = map(Fraction, samples)
+        return float((value - low) / (high - low))
+    span = high - low
+    if math.isfinite(span):
+        return (value - low) / span
+    scale = max(abs(low), abs(high))
+    return (value / scale - low / scale) / (high / scale - low / scale)
+
+
 def _viridis_rgba(
     value: float,
     low: float,
     high: float,
 ) -> tuple[int, int, int, int]:
-    fraction = 0.5 if high == low else (value - low) / (high - low)
+    fraction = 0.5 if high == low else _normalised_position(value, low, high)
     fraction = max(0.0, min(1.0, fraction))
     color_index = min(255, int(fraction * 256.0))
     offset = color_index * 3

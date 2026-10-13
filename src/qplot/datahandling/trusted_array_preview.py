@@ -4,8 +4,11 @@ import io
 import math
 from bisect import bisect_left
 from dataclasses import replace
+from fractions import Fraction
 
 import numpy as np
+
+from qplot.tools.sample_statistics import finite_mean
 
 from .trusted_live_queries import TRUSTED_DERIVED_MAX_SAMPLE_ROWS
 
@@ -46,6 +49,7 @@ def render_array_preview(observation, dependencies, dependent, width, height, ch
     from .trusted_derived_rendering import (
         _MISSING_CELL_RGBA,
         _finite_number,
+        _normalised_position,
         _pixel,
         _render_1d,
         _UnsupportedNumericData,
@@ -71,8 +75,14 @@ def render_array_preview(observation, dependencies, dependent, width, height, ch
         for index in range(size):
             if index % 128 == 0:
                 check()
-            values = tuple(_finite_number(column[0 if column.size == 1 else index].item())
-                           for column in columns)
+            # NPY Boolean arrays are numeric acquired samples. Preserve
+            # integers too: rounding before grouping can merge adjacent
+            # recorded coordinates above float64's integer precision.
+            samples = (column[0 if column.size == 1 else index].item()
+                       for column in columns)
+            values = tuple(int(value) if isinstance(value, (bool, int))
+                           else _finite_number(value)
+                           for value in samples)
             if all(value is not None for value in values[:-1]):
                 points.append(values)
     if not points:
@@ -101,16 +111,27 @@ def render_array_preview(observation, dependencies, dependent, width, height, ch
     values = {}
     for key, samples in cells.items():
         check()
-        scale = max(abs(value) for value in samples)
-        values[key] = (math.fsum(value / scale / len(samples) for value in samples)
-                       * scale if scale else 0.)
+        if len(samples) == 1:
+            values[key] = samples[0]
+            continue
+        has_integers = any(isinstance(value, int) for value in samples)
+        if has_integers:
+            # A float mean would erase the small differences between nearby
+            # integer cells. Keep its exact offset until color normalization.
+            total = Fraction()
+            for index, value in enumerate(samples):
+                if index % 1024 == 0:
+                    check()
+                total += Fraction(value)
+            values[key] = total / len(samples)
+            continue
+        # Scaling every source cell by the largest loses small cancellation
+        # residuals. The common finite mean retains the original samples.
+        values[key] = finite_mean(np.array(samples), check_cancelled=check)
     low, high = min(values.values()), max(values.values())
 
     def pixel_axis(axis, count):
-        span = axis[-1] - axis[0]
-        if not math.isfinite(span):
-            raise _UnsupportedNumericData("Array coordinates exceed the finite range.")
-        normalized = [(value - axis[0]) / (span or 1.) for value in axis]
+        normalized = [_normalised_position(value, axis[0], axis[-1]) for value in axis]
         edges = [(left + right) / 2
                  for left, right in zip(normalized, normalized[1:], strict=False)]
         return [axis[bisect_left(edges, index / max(1, count - 1))]

@@ -646,7 +646,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
             self._refresh_pending_force = False
             return
         if getattr(getattr(self, "worker", None), "running", False):
-            self._schedule_pending_refresh()
+            # Another load can start after completion queues this callback.
+            # Its completion will schedule the retained request; repeatedly
+            # posting a zero-delay timer here otherwise spins the GUI thread
+            # for the entire lifetime of that worker.
             return
 
         force = bool(self.__dict__.get("_refresh_pending_force", False))

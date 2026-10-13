@@ -835,6 +835,8 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
     def cancel(self):
         self._cancel_read()
         self._new_runs_publication_ack.set()
+        if self.trusted_service is not None:
+            self.trusted_service.retry_refresh_statuses()
 
 
     def acknowledge_new_runs_published(self):
@@ -859,6 +861,7 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
     def run(self):
         new_runs = {}
         statuses = {}
+        trusted_refresh_succeeded = False
         try:
             if self._cancelled.is_set():
                 return
@@ -868,6 +871,7 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
                 new_runs, statuses = self._run_trusted_refresh()
                 self._require_current_database_instance()
                 self._emit_finished({}, statuses, None)
+                trusted_refresh_succeeded = not self._cancelled.is_set()
                 return
             new_runs = find_new_runs(
                 self.last_run_id,
@@ -902,6 +906,12 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
             log_exception("Database refresh worker failed", err, __name__)
             self._emit_finished(new_runs, statuses, err)
             return
+        finally:
+            if self.trusted_service is not None and not trusted_refresh_succeeded:
+                # A header accepts data_version before pages and statuses are
+                # collected. Any later failure/cancellation must leave a retry
+                # even if the writer has made its final commit already.
+                self.trusted_service.retry_refresh_statuses()
 
         self._emit_finished(new_runs, statuses, None)
 

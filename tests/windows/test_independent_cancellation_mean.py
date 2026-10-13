@@ -1,6 +1,7 @@
 """Keep measured cancellation residuals when removing a source mean."""
 
 from fractions import Fraction
+from math import isfinite
 
 import numpy as np
 import pytest
@@ -36,7 +37,15 @@ def test_native_mean_preserves_measured_cancellation_residual(
 ):
     _window, (host,), _x, values = measured_plots
     click_control(host, "subtractMeanCheck")
-    np.testing.assert_array_equal(host.line.getData()[1], centered_oracle(values))
+    expected = centered_oracle(values)
+    if isfinite(float(expected.max()) - float(expected.min())):
+        np.testing.assert_array_equal(host.line.getData()[1], expected)
+    else:
+        assert host.line.getData() == (None, None)
+        np.testing.assert_array_equal(host.line._datasetMapped.y, expected)
+        assert not host.line.curve.isVisible()
+        assert "coordinate range" in host.plot_state_overlay.title_label.text()
+        assert host.plot_state_overlay.frame.isVisible()
     np.testing.assert_array_equal(host.line.getOriginalDataset()[1], values)
 
 
@@ -71,16 +80,15 @@ def test_mixed_sign_mean_cancels_during_compensated_sum():
 def test_mixed_sign_mean_cancels_during_exact_fallback(monkeypatch):
     import qplot.tools.plot_tools as plot_tools
 
-    original_fraction = Fraction
+    original_sample_fraction = plot_tools.sample_fraction
     calls = 0
 
-    def fraction(*args):
+    def sample_fraction(value):
         nonlocal calls
-        if args:
-            calls += 1
-        return original_fraction(*args)
+        calls += 1
+        return original_sample_fraction(value)
 
-    monkeypatch.setattr(plot_tools, "Fraction", fraction)
+    monkeypatch.setattr(plot_tools, "sample_fraction", sample_fraction)
     values = np.r_[np.full(2048, 1e308), -1e308]
     with pytest.raises(InterruptedError, match="cancelled"):
         plot_tools._center_float_samples(values, cancelled_callback=lambda: calls >= 1024)

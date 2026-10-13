@@ -1,6 +1,7 @@
 """Floating FFT spectra through stored QCoDeS arrays and native Qt controls."""
 
 import csv
+import math
 from fractions import Fraction
 
 import numpy as np
@@ -83,7 +84,13 @@ def test_floating_fft_primary_secondary_refresh_and_raw_csv(
         assert [float(row[offset + 1]) for row in rows] == list(map(float, y))
     click_control(plot, "fftCheck")
     for line, raw in zip((plot.line, secondary), originals, strict=True):
-        np.testing.assert_array_equal(line.getData()[1], raw[1])
+        np.testing.assert_array_equal(line.getOriginalDataset()[1], raw[1])
+        if math.isfinite(float(np.max(raw[1])) - float(np.min(raw[1]))):
+            np.testing.assert_array_equal(line.getData()[1], raw[1])
+        else:
+            assert line.getData() == (None, None)
+            assert "coordinate range" in plot.plot_state_overlay.title_label.text()
+            assert plot.plot_state_overlay.frame.isVisible()
 
 
 @pytest.mark.parametrize("fft_plots", [_CASES[1], _CASES[3], _CASES[7]], indirect=True)
@@ -130,8 +137,11 @@ def test_unrepresentable_fft_frequency_axis_is_rejected(fft_plots, no_callback_e
         assert not plot.plot.ctrl.fftCheck.isChecked()
         assert not plot.line.opts["fftMode"]
         assert "FFT requires" in plot.plot_status.message
-        for observed, expected in zip(plot.line.getData(), raw, strict=True):
+        for observed, expected in zip(plot.line.getOriginalDataset(), raw, strict=True):
             np.testing.assert_array_equal(observed, expected)
+        assert plot.line.getData() == (None, None)
+        assert "coordinate range" in plot.plot_state_overlay.title_label.text()
+        assert plot.plot_state_overlay.frame.isVisible()
 
 
 @pytest.mark.parametrize("fft_plots", [
@@ -157,6 +167,8 @@ def test_refresh_to_unrepresentable_fft_coordinates_rolls_back_and_recovers(
 ):
     window, (plot, other), _x, _y = fft_plots
     _key, secondary = merge(window, plot, other, x_axis="Top", y_axis="Right")
+    originals = [tuple(value.copy() for value in line.getOriginalDataset())
+                 for line in (plot.line, secondary)]
     click_control(plot, "fftCheck")
     assert plot.plot.ctrl.fftCheck.isChecked()
     assert plot.set_plot_axes_swapped(True)
@@ -164,10 +176,13 @@ def test_refresh_to_unrepresentable_fft_coordinates_rolls_back_and_recovers(
     plot.monitor.stop()
     assert not plot.plot.ctrl.fftCheck.isChecked()
     assert "FFT requires" in plot.plot_status.message
-    for line in (plot.line, secondary):
+    for line, (raw_x, raw_y) in zip((plot.line, secondary), originals, strict=True):
         assert not line.opts["fftMode"]
-        for observed, raw in zip(line.getData(), line.getOriginalDataset(), strict=True):
-            np.testing.assert_array_equal(observed, raw)
+        assert line.getData() == (None, None)
+        np.testing.assert_array_equal(line.getOriginalDataset()[0], raw_y)
+        np.testing.assert_array_equal(line.getOriginalDataset()[1], raw_x)
+    assert "coordinate range" in plot.plot_state_overlay.title_label.text()
+    assert plot.plot_state_overlay.frame.isVisible()
     assert plot.set_plot_axes_swapped(False)
     wait_for(lambda: not plot.worker.running)
     plot.monitor.stop()

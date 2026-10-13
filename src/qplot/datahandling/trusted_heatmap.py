@@ -153,15 +153,16 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
         else:
             lo, hi = lower[axis], upper[axis]
             assert lo is not None and hi is not None
-            centres, edge, scale = spatial_axis_bins(float(lo), float(hi), counts[axis], size)
+            centres, edge, width, scale = spatial_axis_bins(float(lo), float(hi), counts[axis], size)
             axes.append(centres)
-            groups.append(f'MIN(CAST(({name} - ?) * ? AS INTEGER), ?)')
-            group_bindings.extend((edge, scale, size - 1))
+            groups.append(f'MIN(CAST(({name} / ? - ?) / ? AS INTEGER), ?)')
+            group_bindings.extend((scale, edge, width, size - 1))
     shape = (len(axes[1]), len(axes[0]))
     sums = np.zeros(shape)
     samples = np.zeros(shape, dtype=np.int64)
     minima, maxima = np.full(shape, np.inf), np.full(shape, -np.inf)
     integers = np.zeros(shape, dtype=bool)
+    fractional = np.zeros(shape, dtype=bool)
 
     def indices(gx, gy):
         return tuple(int(np.searchsorted(axes[axis], value))
@@ -189,14 +190,15 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
         sql, bindings = source(start, stop)
         rows = executor.query(
             'SELECT gx, gy, TOTAL(v), COUNT(*), MIN(v), MAX(v), '
-            f"MAX(typeof(v)='integer') FROM ({sql}) GROUP BY gx, gy LIMIT ?",
+            f"MAX(typeof(v)='integer'), MAX(v != CAST(v AS INTEGER)) "
+            f"FROM ({sql}) GROUP BY gx, gy LIMIT ?",
             (*bindings, MAX_GROUPS + 1),
         ).rows
         if len(rows) > MAX_GROUPS:
             middle = (start + stop) // 2
             pending.extend(((middle, stop), (start, middle)))
         else:
-            for number, (gx, gy, total, count, lo, hi, integer) in enumerate(rows):
+            for number, (gx, gy, total, count, lo, hi, integer, fraction) in enumerate(rows):
                 if number % 1024 == 0:
                     executor.check_cancelled()
                 key = indices(gx, gy)
@@ -205,6 +207,7 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
                 minima[key] = min(minima[key], lo)
                 maxima[key] = max(maxima[key], hi)
                 integers[key] |= bool(integer)
+                fractional[key] |= bool(fraction)
             aggregated_extent += stop - start
             executor.report_progress("Building heatmap", aggregated_extent, watermark, stage=2)
         yield
@@ -214,7 +217,9 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
         risky = (samples > 0) & (
             ~np.isfinite(sums) | ((minima < 0) & (maxima > 0))
             | (largest > (finite / 2) / np.maximum(samples, 1))
-            | (integers & (largest * samples >= 2**53)))
+            # Fractional page totals can round before division even below the
+            # exact-integer boundary. Match the streamed array mean policy.
+            | (integers & ((largest * samples >= 2**53) | fractional)))
     totals = {tuple(key): Fraction() for key in np.argwhere(risky)}
     if totals:
         executor.report_progress("Refining numerical precision", 0, watermark, stage=2)

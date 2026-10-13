@@ -763,6 +763,17 @@ class loader(QtCore.QRunnable):
         return acquired
 
 
+    def _any_object_sample(self, values, predicate):
+        """Inspect exact object cells without delaying a cancelled load."""
+        for index, value in enumerate(values.flat):
+            if index % 1024 == 0:
+                self._check_cancelled()
+            if predicate(value):
+                return True
+        self._check_cancelled()
+        return False
+
+
     def _normalise_array_records(self, data):
         """Flatten ragged QCoDeS records together, without touching the cache."""
 
@@ -774,7 +785,7 @@ class loader(QtCore.QRunnable):
         names = list(dict.fromkeys((self.param.name, *setpoints)))
         columns = [np.asarray(data[name]) for name in names]
         if not any(
-            column.dtype.kind == "O" and any(np.ndim(value) for value in column.flat)
+            column.dtype.kind == "O" and self._any_object_sample(column, np.ndim)
             for column in columns
         ):
             return data
@@ -1460,27 +1471,27 @@ class loader(QtCore.QRunnable):
             x_centres = np.array([], dtype=float)
             x_group_sql = x_column
         else:
-            x_centres, x_lower_edge, x_scale = self._spatial_axis_bins(
+            x_centres, x_lower_edge, x_width, x_scale = self._spatial_axis_bins(
                 float(x_min),
                 float(x_max),
                 x_count,
                 x_bins,
                 )
-            x_group_sql = f"MIN(CAST(({x_column} - ?) * ? AS INTEGER), ?)"
-            query_parameters.extend((x_lower_edge, x_scale, x_bins - 1))
+            x_group_sql = f"MIN(CAST(({x_column} / ? - ?) / ? AS INTEGER), ?)"
+            query_parameters.extend((x_scale, x_lower_edge, x_width, x_bins - 1))
 
         if y_exact:
             y_centres = np.array([], dtype=float)
             y_group_sql = y_column
         else:
-            y_centres, y_lower_edge, y_scale = self._spatial_axis_bins(
+            y_centres, y_lower_edge, y_width, y_scale = self._spatial_axis_bins(
                 float(y_min),
                 float(y_max),
                 y_count,
                 y_bins,
                 )
-            y_group_sql = f"MIN(CAST(({y_column} - ?) * ? AS INTEGER), ?)"
-            query_parameters.extend((y_lower_edge, y_scale, y_bins - 1))
+            y_group_sql = f"MIN(CAST(({y_column} / ? - ?) / ? AS INTEGER), ?)"
+            query_parameters.extend((y_scale, y_lower_edge, y_width, y_bins - 1))
 
         if (
                 (not x_exact and x_centres.size == 0)
@@ -1694,7 +1705,7 @@ class loader(QtCore.QRunnable):
 
         result = np.asarray(values)
         if np.iscomplexobj(result) or (
-            result.dtype.kind == "O" and any(np.iscomplexobj(value) for value in result.flat)
+            result.dtype.kind == "O" and self._any_object_sample(result, np.iscomplexobj)
         ):
             self._reject_complex_heatmap(
                 parameter_name,
@@ -1761,10 +1772,24 @@ class loader(QtCore.QRunnable):
         self._check_cancelled()
         values = np.asarray(values)
         if values.dtype.kind == "O":
-            values = np.frompyfunc(
-                lambda value: value.item() if isinstance(value, np.generic) else value,
-                1, 1,
-            )(values)
+            # Exact per-sample conversion also proves that distinct recorded
+            # positions cannot collapse. Avoid sorting the entire object array
+            # before cancellation can be observed on mixed QCoDeS records.
+            converted = np.empty(values.shape, dtype=float)
+            for index, original in enumerate(values.flat):
+                if index % 1024 == 0:
+                    self._check_cancelled()
+                original = original.item() if isinstance(original, np.generic) else original
+                display = float(original)
+                if np.isfinite(display) and original != display:
+                    raise ValueError(
+                        f"Heatmap coordinate precision is insufficient: parameter "
+                        f"'{parameter_name}' cannot be represented exactly as "
+                        "heatmap coordinates without rounding or merging distinct values."
+                    )
+                converted.flat[index] = display
+            self._check_cancelled()
+            return converted
         converted = np.asarray(values, dtype=float)
         if self._coordinate_conversion_may_round(values):
             unique = np.unique(values[numeric_isfinite(values)])
@@ -2285,13 +2310,22 @@ class loader(QtCore.QRunnable):
                 np.zeros(values.size, dtype=np.int64),
                 )
 
-        scaled = (values - lower) / (upper - lower)
+        # Rebase in binary-scaled units: a sweep spanning both finite float
+        # extremes can overflow its raw span before the ratio is formed.
+        # Power-of-two scaling retains ordinary coordinates exactly and also
+        # keeps subnormal coordinate spans usable without reciprocal widths.
+        magnitude = max(abs(lower), abs(upper))
+        exponent = math.frexp(magnitude)[1] - 1
+        coordinate_scale = math.ldexp(1.0, max(-1022, min(1023, exponent)))
+        scaled_lower, scaled_upper = lower / coordinate_scale, upper / coordinate_scale
+        span = scaled_upper - scaled_lower
+        scaled = (values / coordinate_scale - scaled_lower) / span
         self._check_cancelled()
         indices = np.floor(scaled * bin_count).astype(np.int64)
         self._check_cancelled()
         indices = np.clip(indices, 0, bin_count - 1)
-        step = (upper - lower) / bin_count
-        centres = lower + (np.arange(bin_count, dtype=float) + 0.5) * step
+        step = span / bin_count
+        centres = (scaled_lower + (np.arange(bin_count, dtype=float) + 0.5) * step) * coordinate_scale
 
         return centres, indices
 
@@ -2312,7 +2346,7 @@ class loader(QtCore.QRunnable):
 
         result = np.asarray(values)
         if np.iscomplexobj(result) or (
-            result.dtype.kind == "O" and any(np.iscomplexobj(value) for value in result.flat)
+            result.dtype.kind == "O" and self._any_object_sample(result, np.iscomplexobj)
         ):
             self._reject_complex_line(parameter_name)
         return result
@@ -2498,18 +2532,32 @@ class loader(QtCore.QRunnable):
         # arbitrary offset (for example, a GHz carrier), and can therefore
         # hide a genuine sub-Hz serpentine reversal.
         finite_values = values[np.isfinite(values)]
-        origin = finite_values[0]
-        centred_values = finite_values - origin
+        # Normalize before subtraction: opposite finite extremes otherwise
+        # become inf, and isclose(inf, inf) can hide different coordinates.
+        magnitude = float(np.max(np.abs(finite_values)))
+        exponent = math.frexp(magnitude)[1] - 1 if magnitude else 0
+        coordinate_scale = math.ldexp(1.0, max(-1022, min(1023, exponent)))
+        normalized_values = finite_values / coordinate_scale
+        origin = normalized_values[0]
+        centred_values = normalized_values - origin
         span = float(np.max(np.abs(centred_values)))
-        if not np.isfinite(span) or span == 0:
-            span = 1.0
+        if span == 0:
+            # The old zero-span fallback compares differences in original
+            # units. Do not make its absolute tolerance grow with the offset.
+            with np.errstate(over="ignore", invalid="ignore"):
+                return bool(np.all(np.isclose(
+                    param_data[valid], expected[valid], rtol=0., atol=1e-12,
+                )))
 
-        return bool(np.all(np.isclose(
-            (param_data[valid] - origin) / span,
-            (expected[valid] - origin) / span,
-            rtol=1e-10,
-            atol=1e-12,
-            )))
+        # A wildly different actual sample can overflow division by a tiny
+        # representative scale; it then correctly fails this finite reference.
+        with np.errstate(over="ignore", invalid="ignore"):
+            return bool(np.all(np.isclose(
+                (param_data[valid] / coordinate_scale - origin) / span,
+                (expected[valid] / coordinate_scale - origin) / span,
+                rtol=1e-10,
+                atol=1e-12,
+                )))
 
 
     def _shaped_data_grid(self, data, depvarData, axis_dimension, valid):

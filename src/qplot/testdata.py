@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import errno
+import io
 import math
 import os
 import re
@@ -25,6 +26,7 @@ from qcodes.dataset.sqlite.connection import AtomicConnection
 from qcodes.dataset.sqlite.database import connect
 from qcodes.parameters import ManualParameter
 
+from qplot._auxiliary_paths import ensure_safe_auxiliary_path
 from qplot.datahandling.file_identity import (
     QPLOT_GENERATED_DATABASE_APPLICATION_ID,
     QPLOT_GENERATION_LINEAGE_FORMAT_VERSION,
@@ -324,6 +326,10 @@ def read_specifications(csv_path):
     """Read and validate all nonblank rows in a generator CSV file."""
     csv_path = Path(csv_path)
     try:
+        # The GUI validates this input before starting its generation worker.
+        # A FIFO must not block that synchronous read waiting for a writer.
+        if not stat.S_ISREG(csv_path.stat().st_mode):
+            raise OSError("The instruction CSV source is not a regular file.")
         handle = csv_path.open("r", encoding="utf-8-sig", newline="")
     except OSError as error:
         raise SpecificationError(f"Could not open {csv_path}: {error}") from error
@@ -360,18 +366,67 @@ def read_specifications(csv_path):
     return specifications
 
 
+def _safe_instruction_destination(csv_path):
+    """Reject SQLite content and aliases before publishing instruction CSVs."""
+    ensure_safe_auxiliary_path(csv_path)
+    try:
+        status = csv_path.lstat()
+    except FileNotFoundError:
+        return None
+    if status.st_nlink != 1:
+        # SHM has no unique SQLite file header. Reject aliases even when its
+        # bytes cannot identify the measurement artifact behind a CSV name.
+        raise OSError("The instruction CSV destination has multiple hard links.")
+    return (
+        status.st_dev, status.st_ino, status.st_mode, status.st_size,
+        status.st_mtime_ns, status.st_ctime_ns,
+    )
+
+
+def _write_instruction_csv(csv_path, content, overwrite):
+    """Stage bytes privately, then publish only over the inspected CSV entry."""
+    expected = _safe_instruction_destination(csv_path)
+    if expected is not None and not overwrite:
+        raise FileExistsError(csv_path)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=".qplot-instructions-", suffix=".csv",
+            dir=csv_path.parent, delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if _safe_instruction_destination(csv_path) != expected:
+            raise OSError("The instruction CSV destination changed before publication.")
+        if expected is not None:
+            os.replace(temporary_path, csv_path)
+        else:
+            # Absence is not overwrite consent if another file appears now.
+            os.link(temporary_path, csv_path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def example_csv_contents():
+    """Return example CSV bytes for either CLI or guarded GUI publication."""
+    content = io.StringIO(newline="")
+    writer = csv.writer(content)
+    writer.writerow(CSV_COLUMNS)
+    writer.writerows(EXAMPLE_ROWS)
+    return content.getvalue().encode("utf-8-sig")
+
+
 def write_example_csv(csv_path, overwrite=False):
     """Write a ready-to-use example generator CSV and return its path."""
     csv_path = Path(csv_path)
     if csv_path.suffix.lower() != ".csv":
         raise SpecificationError("Example output path must end in .csv")
     csv_path.parent.mkdir(parents=True, exist_ok=True)
-    mode = "w" if overwrite else "x"
     try:
-        with csv_path.open(mode, encoding="utf-8-sig", newline="") as handle:
-            writer = csv.writer(handle)
-            writer.writerow(CSV_COLUMNS)
-            writer.writerows(EXAMPLE_ROWS)
+        _write_instruction_csv(csv_path, example_csv_contents(), overwrite)
     except FileExistsError as error:
         raise SpecificationError(
             f"{csv_path} already exists; use --overwrite to replace it"
@@ -402,14 +457,15 @@ def copy_instruction_collection(directory, overwrite=False):
             )
 
     try:
+        # Validate the whole collection before changing any existing CSV.
+        for output_path in output_paths:
+            _safe_instruction_destination(output_path)
         for output_path, (_name, content) in zip(
                 output_paths,
                 instruction_collection_contents(),
                 strict=True,
                 ):
-            mode = "wb" if overwrite else "xb"
-            with output_path.open(mode) as handle:
-                handle.write(content)
+            _write_instruction_csv(output_path, content, overwrite)
     except OSError as error:
         raise SpecificationError(
             f"Could not copy the instruction CSV collection to {directory}: {error}"
@@ -973,6 +1029,18 @@ def _sinusoid_sum_2d_row(v_sd_normalized, v_g_normalized, components):
     return values
 
 
+def _finite_sweep(start, stop, count):
+    """Keep finite sweep endpoints when their difference exceeds float64."""
+    if math.isfinite(stop - start):
+        return np.linspace(start, stop, count)
+    # An overflowing span requires large opposite-sign endpoints. Halving
+    # these is exact and bounds linspace's subtraction and multiplication;
+    # restoring their binary scale keeps every coordinate finite.
+    values = np.linspace(start / 2., stop / 2., count) * 2.
+    values[0], values[-1] = start, stop
+    return values
+
+
 def _write_run(
         experiment,
         run_number,
@@ -990,7 +1058,7 @@ def _write_run(
     measurement = Measurement(exp=experiment, name=f"run_{run_number}")
     measurement.register_parameter(v_sd)
 
-    v_sd_values = np.linspace(
+    v_sd_values = _finite_sweep(
         specification.v_sd_start,
         specification.v_sd_stop,
         specification.v_sd_points,
@@ -1025,7 +1093,7 @@ def _write_run(
     v_g = ManualParameter("V_G", label="Gate voltage", unit="V")
     measurement.register_parameter(v_g)
     measurement.register_parameter(measured, setpoints=(v_sd, v_g))
-    v_g_values = np.linspace(
+    v_g_values = _finite_sweep(
         specification.v_g_start,
         specification.v_g_stop,
         specification.v_g_points,
@@ -1060,13 +1128,16 @@ def _require_rollback_journal_database(database_path):
     """Reject destinations that cannot be locked without creating sidecars."""
     try:
         status = database_path.lstat()
+        # Inspect the entry before opening it: reading a FIFO blocks until a
+        # writer arrives, so the later header check cannot reject it safely.
+        if not stat.S_ISREG(status.st_mode):
+            raise _unsafe_publication_error(database_path)
         with database_path.open("rb") as handle:
             header = handle.read(20)
     except OSError as error:
         raise _unsafe_publication_error(database_path) from error
     if (
-            not stat.S_ISREG(status.st_mode)
-            or not header.startswith(_SQLITE_HEADER)
+            not header.startswith(_SQLITE_HEADER)
             or header[18:20] != _SQLITE_ROLLBACK_JOURNAL_VERSIONS
             ):
         # A persistent WAL-mode main can have no sidecars while quiescent, but

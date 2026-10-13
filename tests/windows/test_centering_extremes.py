@@ -51,7 +51,12 @@ def test_subnormal_native_mean_uses_exact_residuals(fft_plots, no_callback_error
         np.testing.assert_array_equal(plot.line.getData()[1], exact_residuals(y))
         np.testing.assert_array_equal(plot.line.getOriginalDataset()[1], y)
     click_control(plot, "subtractMeanCheck")
-    np.testing.assert_array_equal(plot.line.getData()[1], y)
+    assert plot.line.getData() == (None, None)
+    np.testing.assert_array_equal(plot.line.getOriginalDataset()[1], y)
+    np.testing.assert_array_equal(plot.line._datasetMapped.y, y)
+    assert not plot.line.curve.isVisible()
+    assert "coordinate range" in plot.plot_state_overlay.title_label.text()
+    assert plot.plot_state_overlay.frame.isVisible()
 
 
 @pytest.mark.parametrize("axis", ["x", "y"])
@@ -123,7 +128,12 @@ def test_real_mixed_record_mean_maps_overflow_through_qt_control(tmp_path, monke
         result = subtract_mean("x", {"z": raw_y[None, :]})["z"].ravel()
         np.testing.assert_array_equal(result, expected)
         click_control(plot, "subtractMeanCheck")
-        np.testing.assert_array_equal(plot.line.getData()[1], raw_y.astype(float))
+        assert plot.line.getData() == (None, None)
+        np.testing.assert_array_equal(plot.line.getOriginalDataset()[1], raw_y)
+        np.testing.assert_array_equal(plot.line._datasetMapped.y, raw_y.astype(float))
+        assert not plot.line.curve.isVisible()
+        assert "coordinate range" in plot.plot_state_overlay.title_label.text()
+        assert plot.plot_state_overlay.frame.isVisible()
     finally:
         close_main_window(window)
         assert database_state(path) == protected

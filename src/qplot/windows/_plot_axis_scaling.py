@@ -922,7 +922,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                 for item in items if items is not None else bounds_viewbox.addedItems:
                     if not isinstance(item, pg.PlotDataItem) or not item.isVisible():
                         continue
-                    sample_bounds = item.dataBounds(
+                    axis_bounds = getattr(item, "axisDataBounds", item.dataBounds)
+                    sample_bounds = axis_bounds(
                         axis_number, fractions[axis_number], orthogonal_ranges[axis_number],
                     )
                     if sample_bounds[0] is not None and sample_bounds[1] is not None:
@@ -936,6 +937,14 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                             # Qt rectangles cannot represent this finite pair;
                             # preserve it for explicit rejection by the guard.
                             return sample_lower, sample_upper
+                        if (isfinite(sample_lower) and isfinite(sample_upper)
+                                and all(value is None for value in item.dataBounds(
+                                    axis_number, fractions[axis_number], orthogonal_ranges[axis_number],
+                                ))):
+                            # A rejected viewport hides native painting items,
+                            # but supported mapped data can still restore Auto.
+                            # childrenBounds cannot see these unpainted bounds.
+                            ranges.append([sample_lower, sample_upper])
                 bounds = bounds_viewbox.childrenBounds(
                     frac=fractions,
                     orthoRange=orthogonal_ranges,
@@ -957,6 +966,13 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         if auto_pan or lower == upper:
             if not isfinite(current_span) or current_span <= 0:
                 current_span = 1.0
+            if lower == upper and not auto_pan:
+                pixels = viewbox.width() if axis_number == 0 else viewbox.height()
+                if not isfinite(max(1.0, pixels) / current_span):
+                    # A constant trace has no intrinsic scale. Do not inherit
+                    # an unusable viewport from its previous, rejected data:
+                    # it would keep valid processed samples hidden forever.
+                    current_span = 1.0
             center = lower * 0.5 + upper * 0.5
             # A narrow span at a large offset may collapse to one double.
             # Retain at least the backend's quantization allowance so that

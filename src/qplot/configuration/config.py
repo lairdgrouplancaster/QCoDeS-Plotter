@@ -275,6 +275,11 @@ class config:
             if config is missing
 
         """
+        # Settings are files, not streams. In particular, opening a named pipe
+        # for reading can block startup forever before JSON parsing begins.
+        # Follow ordinary symlinks as before, but reject special targets.
+        if not stat.S_ISREG(os.stat(path).st_mode):
+            raise OSError("The configuration source is not a regular file.")
         with open(path, encoding="utf-8") as fp:
             config = json.load(fp, parse_constant=_reject_json_constant)
         return config
@@ -544,13 +549,13 @@ class config:
         directory = path.dirname(self.default_file)
         stem, suffix = path.splitext(path.basename(self.default_file))
         candidate = path.join(directory, f"{stem}.invalid{suffix}")
-        if not path.exists(candidate):
+        if not path.lexists(candidate):
             return candidate
 
         index = 1
         while True:
             candidate = path.join(directory, f"{stem}.invalid.{index}{suffix}")
-            if not path.exists(candidate):
+            if not path.lexists(candidate):
                 return candidate
             index += 1
 

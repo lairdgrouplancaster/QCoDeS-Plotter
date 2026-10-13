@@ -5,6 +5,7 @@ from typing import cast
 
 import numpy as np
 import pyqtgraph as pg
+from PyQt6 import QtCore
 from pyqtgraph.graphicsItems.PlotDataItem import PlotDataset
 
 from qplot.datahandling.parameter_data import numeric_isfinite
@@ -14,7 +15,17 @@ from qplot.tools.plot_tools import (
     _integer_differences,
     _integer_samples,
 )
-from qplot.tools.sample_statistics import finite_mean
+from qplot.tools.sample_statistics import finite_mean, sample_fraction
+
+from ._display_precision import (
+    DISPLAY_PRECISION_MESSAGE,
+    float_display_loses_distinctions,
+)
+
+LINE_DISPLAY_RANGE_MESSAGE = (
+    "The line coordinate range cannot be displayed safely. "
+    "Recorded samples remain available for CSV export and processing."
+)
 
 
 def _safe_difference(values: np.ndarray) -> np.ndarray:
@@ -60,7 +71,7 @@ def _center_object_samples(values: np.ndarray) -> np.ndarray:
     numeric = values.astype(np.float64)
     if not np.all(np.isfinite(numeric)):
         return numeric - np.mean(numeric)
-    exact = [Fraction(value) for value in values]
+    exact = [sample_fraction(value) for value in values]
     mean = sum(exact) / len(exact)
     return np.fromiter(
         (_fraction_as_float(value - mean) for value in exact),
@@ -83,7 +94,7 @@ def _safe_secant(x: np.ndarray, y: np.ndarray) -> np.ndarray:
         # overflow and underflow while dividing by a huge coordinate span.
         cells = [value.item() if isinstance(value, np.generic) else value
                  for value in (x[index], x[index + 1], y[index], y[index + 1])]
-        left_x, right_x, left_y, right_y = map(Fraction, cells)
+        left_x, right_x, left_y, right_y = map(sample_fraction, cells)
         distance = right_x - left_x
         if distance:
             quotient = (right_y - left_y) / distance
@@ -177,12 +188,12 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
         # without unsigned/signed overflow.
         exact: np.ndarray = x.astype(object)
         if x.dtype.kind == "O" and not _integer_samples(x):
-            exact = cast(np.ndarray, np.frompyfunc(Fraction, 1, 1)(exact))
+            exact = cast(np.ndarray, np.frompyfunc(sample_fraction, 1, 1)(exact))
         with np.errstate(over="ignore", invalid="ignore"):
             try:
                 rebased = (exact - exact[0]).astype(np.float64)
             except (TypeError, OverflowError):
-                exact = cast(np.ndarray, np.frompyfunc(Fraction, 1, 1)(exact))
+                exact = cast(np.ndarray, np.frompyfunc(sample_fraction, 1, 1)(exact))
                 rebased = np.fromiter(
                     (_fraction_as_float(value - exact[0]) for value in exact),
                     dtype=np.float64, count=len(exact),
@@ -194,10 +205,10 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
             # Their finite span can exceed float64 before rebasing finishes.
             # Scale exact differences before converting them to float.
             coordinate_scale = float(np.max(np.abs(x.astype(np.float64))))
-            anchor = Fraction(exact[0])
+            anchor = sample_fraction(exact[0])
             scale = Fraction(coordinate_scale)
             x = np.fromiter(
-                (float((Fraction(value) - anchor) / scale) for value in exact),
+                (float((sample_fraction(value) - anchor) / scale) for value in exact),
                 dtype=np.float64, count=len(exact),
             )
             dx = np.diff(x)
@@ -238,8 +249,125 @@ def native_fft_coordinate_error(x: np.ndarray | None) -> str | None:
 class NativePlotDataItem(pg.PlotDataItem):
     """Keep acquisition order while preparing native derivatives and FFTs."""
 
+    sigDisplayChanged = QtCore.pyqtSignal(object)
     _datasetMapped: PlotDataset | None
     _qplot_fft_error: str | None = None
+    _qplot_precision_error: str | None = None
+
+    def clear(self):
+        self._qplot_range_dataset = None
+        super().clear()
+
+    def axisDataBounds(self, ax, frac=1.0, orthoRange=None):
+        """Keep rejected mapped bounds available to qPlot's axis preflight."""
+        if self._qplot_precision_error != LINE_DISPLAY_RANGE_MESSAGE or self._datasetMapped is None:
+            return self.dataBounds(ax, frac, orthoRange)
+        # Hidden painting children report no bounds. Measure the processed
+        # samples in an unattached item so autoscale can reject the actual
+        # range without installing unsafe data on a scene renderer.
+        mapped = self._datasetMapped
+        bounds_item = pg.PlotCurveItem(
+            x=mapped.x, y=mapped.y, pen=self.opts["pen"],
+            shadowPen=self.opts["shadowPen"], fillLevel=self.opts["fillLevel"],
+            stepMode=self.opts["stepMode"],
+        )
+        return bounds_item.dataBounds(ax, frac, orthoRange)
+
+    def viewChanged(self, view, oldView):
+        super().viewChanged(view, oldView)
+        self._watch_display_range(view if isinstance(view, pg.ViewBox) else None)
+
+    def _watch_display_range(self, viewbox):
+        prior = getattr(self, "_qplot_range_viewbox", None)
+        if prior is viewbox:
+            return
+        if prior is not None:
+            try:
+                prior.sigTransformChanged.disconnect(self._schedule_display_range_check)
+            except (RuntimeError, TypeError):
+                pass
+        self._qplot_range_viewbox = viewbox
+        timer = getattr(self, "_qplot_range_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._qplot_view_range_rejected = False
+        if viewbox is not None:
+            if not hasattr(self, "_qplot_range_timer"):
+                self._qplot_range_timer = QtCore.QTimer(self)
+                self._qplot_range_timer.setSingleShot(True)
+                self._qplot_range_timer.timeout.connect(self._check_display_range)
+            viewbox.sigTransformChanged.connect(self._schedule_display_range_check)
+            self._schedule_display_range_check()
+
+    def _schedule_display_range_check(self, *_args):
+        if not self._qplot_range_timer.isActive():
+            self._qplot_range_timer.start(0)
+
+    def _check_display_range(self):
+        # Mixed plots finish mirroring their axis owners after range signals.
+        # Inspect the composed drawing transform on the next event-loop turn.
+        if not isinstance(self.getViewBox(), pg.ViewBox):
+            return
+        transform = self.sceneTransform()
+        previous = self._qplot_precision_error
+        self._qplot_view_range_rejected = not bool(np.all(np.isfinite((
+            transform.m11(), transform.m12(), transform.m13(),
+            transform.m21(), transform.m22(), transform.m23(),
+            transform.m31(), transform.m32(), transform.m33(),
+        ))))
+        self._getDisplayDataset()
+        if previous != self._qplot_precision_error:
+            self.updateItems(styleUpdate=False)
+            self.sigDisplayChanged.emit(self)
+
+    def _mapped_range_is_displayable(self, dataset, viewbox):
+        # Cache extrema with the mapped dataset, not the viewport. Resizing
+        # and mouse movement must not repeatedly scan a large acquired trace.
+        if getattr(self, "_qplot_range_dataset", None) is not dataset:
+            x, y = dataset.x, dataset.y
+            if x.shape == y.shape:
+                paired = numeric_isfinite(x) & numeric_isfinite(y)
+                x, y = x[paired], y[paired]
+            span_values = []
+            for values in (x, y):
+                numeric = np.asarray(values, dtype=float)
+                finite = numeric[np.isfinite(numeric)]
+                span_values.append(float(np.max(finite)) - float(np.min(finite)) if finite.size else 0.)
+            self._qplot_range_spans = np.asarray(span_values)
+            self._qplot_range_dataset = dataset
+        spans = self._qplot_range_spans
+        pixels = np.array([max(1., viewbox.width()), max(1., viewbox.height())])
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            return bool(np.all(np.isfinite(spans))
+                        and np.all(np.isfinite(pixels[spans > 0] / spans[spans > 0])))
+
+    def viewRangeChanged(self, vb=None, ranges=None, changed=None):
+        super().viewRangeChanged(vb, ranges, changed)
+        self.sigDisplayChanged.emit(self)
+
+    def _precision_checked_samples(self, x, y):
+        self._qplot_precision_error = None
+        if x.dtype.kind not in "iuO" and y.dtype.kind not in "iuO":
+            return x, y
+        # Only paired finite samples can be drawn. Derivatives and phase maps
+        # can leave an exact coordinate opposite a missing slope; its rounded
+        # position must not reject unrelated finite plotted samples.
+        visible_x, visible_y = x, y
+        if x.shape == y.shape:
+            paired = numeric_isfinite(x) & numeric_isfinite(y)
+            for values, logarithmic in zip((x, y), self.opts["logMode"], strict=True):
+                if logarithmic:
+                    # Log mapping also hides nonpositive samples. Compare only
+                    # finite partners: Decimal NaN comparisons can raise.
+                    paired[paired] &= values[paired] > 0
+            visible_x, visible_y = x[paired], y[paired]
+        # Centre-step plots supply N+1 edges and N values. Keep their existing
+        # conservative precision check without inventing sample pairings.
+        if (float_display_loses_distinctions(visible_x)
+                or float_display_loses_distinctions(visible_y)):
+            self._qplot_precision_error = DISPLAY_PRECISION_MESSAGE
+            return np.array([], dtype=float), np.array([], dtype=float)
+        return x, y
 
     def _fourierTransform(self, x, y):
         """Prepare increasing FFT coordinates without changing source data.
@@ -279,7 +407,7 @@ class NativePlotDataItem(pg.PlotDataItem):
                 # FFT converts integer/object arrays to float. Remove their
                 # exact offset first so adjacent recorded integers survive;
                 # restore only DC after any nonuniform interpolation.
-                exact = [Fraction(value.item() if isinstance(value, np.generic) else value)
+                exact = [sample_fraction(value)
                          for value in y]
                 dc_offset = sum(exact, Fraction()) / len(exact)
                 y = np.array([float(value - dc_offset) for value in exact])
@@ -337,10 +465,35 @@ class NativePlotDataItem(pg.PlotDataItem):
         return frequencies, magnitudes
 
     def _getDisplayDataset(self) -> PlotDataset | None:
+        if self._datasetMapped is None:
+            # New data or processing can restore a representable range. Let
+            # native autorange consume those bounds before settled validation.
+            self._qplot_view_range_rejected = False
+        if self._qplot_precision_error == LINE_DISPLAY_RANGE_MESSAGE:
+            self._qplot_precision_error = None
+        dataset = self._get_mapped_display_dataset()
+        if getattr(self, "_qplot_range_dataset", None) is not self._datasetMapped:
+            self._qplot_range_dataset = None
+        viewbox = self.getViewBox()
+        if not isinstance(viewbox, pg.ViewBox):
+            viewbox = None
+        self._watch_display_range(viewbox)
+        if dataset is None or viewbox is None or self._qplot_precision_error:
+            return dataset
+        mapped = self._datasetMapped
+        if (getattr(self, "_qplot_view_range_rejected", False)
+                or (mapped is not None and not self._mapped_range_is_displayable(mapped, viewbox))):
+            self._qplot_precision_error = LINE_DISPLAY_RANGE_MESSAGE
+            return None
+        return dataset
+
+    def _get_mapped_display_dataset(self) -> PlotDataset | None:
         # Isolate the private PyQtGraph mapping hook here. Seed only the mapped
         # cache; upstream still owns log scaling, clipping, downsampling, curve
         # updates and cache invalidation through its ordinary native setters.
         source = self._dataset
+        if source is None:
+            self._qplot_precision_error = None
         if source is not None and self._datasetMapped is None:
             if self.opts["derivativeMode"] or self.opts["phasemapMode"]:
                 # Native derivative/phase mapping uses original samples,
@@ -348,8 +501,6 @@ class NativePlotDataItem(pg.PlotDataItem):
                 # mode replaces both coordinates, so FFT/log-X must not
                 # discard its first sample.
                 x = source.y[:-1] if self.opts["phasemapMode"] else source.x[:-1]
-                if self.opts["phasemapMode"] and x.dtype.kind == "O":
-                    x = x.astype(np.float64)
                 y = _safe_secant(source.x, source.y)
             elif self.opts["subtractMeanMode"] and source.y.dtype.kind in "iu":
                 x = source.x
@@ -370,7 +521,7 @@ class NativePlotDataItem(pg.PlotDataItem):
                 # Keep the original dataset exact for CSV/cursor access and
                 # map only the on-screen values to float.
                 x = source.x
-                y = source.y if self.opts["fftMode"] else source.y.astype(np.float64)
+                y = source.y
                 if self.opts["subtractMeanMode"]:
                     y = (_center_object_samples(source.y) if source.y.dtype.kind == "O"
                          else _center_float_samples(y))
@@ -379,9 +530,20 @@ class NativePlotDataItem(pg.PlotDataItem):
                     if self.opts["logMode"][0]:
                         x, y = x[1:], y[1:]
             else:
+                # Upstream retains dense integer samples until QPainter
+                # converts them to doubles. Reject only conversions that
+                # merge distinct values, keeping originals for processing.
+                self._qplot_precision_error = None
+                if not self.opts["fftMode"]:
+                    x, y = self._precision_checked_samples(source.x, source.y)
+                    if self._qplot_precision_error:
+                        self._datasetMapped = PlotDataset(x, y)
                 return super()._getDisplayDataset()
+            x, y = self._precision_checked_samples(x, y)
             if x.dtype.kind == "O":
                 x = x.astype(np.float64)
+            if y.dtype.kind == "O":
+                y = y.astype(np.float64)
             mapped = PlotDataset(x, y)
             if True in self.opts["logMode"]:
                 mapped.applyLogMapping(self.opts["logMode"])

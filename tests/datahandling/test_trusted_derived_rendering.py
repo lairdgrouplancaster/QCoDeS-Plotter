@@ -1105,11 +1105,10 @@ def test_cancellation_interrupts_sampling_rendering_and_encoding(
 @pytest.mark.parametrize(
     "rows",
     [
-        ((1, -1e308, 0.0), (2, 1e308, 1.0)),
         ((1, 0.0), (2, 1.0, 2.0)),
         ((1, float("nan"), 1.0), (2, float("inf"), 2.0)),
     ],
-    ids=("finite-extremes", "mismatched-vectors", "nan-infinity"),
+    ids=("mismatched-vectors", "nan-infinity"),
 )
 def test_numeric_pathologies_return_deterministic_unsupported_payload(
     rows: tuple[tuple[object, ...], ...],

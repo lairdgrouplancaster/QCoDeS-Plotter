@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from qplot.tools.plot_tools import differentiate, pass_filter
+from qplot.windows._native_transforms import NativePlotDataItem
 from tests.windows.test_differentiation_integration import (
     apply_operations,
     operation_option,
@@ -84,6 +85,48 @@ def test_duplicate_integer_cut_native_difference_preserves_holes(tmp_path, monke
         click_control(cut, control)
         assert cut.line.getOriginalDataset()[1][0] == raw[0]
         assert np.isnan(cut.line.getOriginalDataset()[1][1])
+
+
+@pytest.mark.parametrize("coordinate", ["x", "y"])
+def test_precision_guard_ignores_samples_with_missing_partner(qapplication, coordinate):
+    exact = np.array([2**63, 2**63 + 1, 2**63 + 2], dtype=np.uint64)
+    other = np.array([np.nan, 1., np.inf])
+    data = {coordinate: exact, "y" if coordinate == "x" else "x": other}
+    line = NativePlotDataItem(**data)
+    assert line._qplot_precision_error is None
+    np.testing.assert_array_equal(line.getData()[0], data["x"])
+    np.testing.assert_array_equal(line.getData()[1], data["y"])
+    np.testing.assert_array_equal(line.getOriginalDataset()[0], data["x"])
+    np.testing.assert_array_equal(line.getOriginalDataset()[1], data["y"])
+    # If those partners become finite, the collision is real and must reject.
+    data["y" if coordinate == "x" else "x"] = np.arange(3.)
+    line.setData(**data)
+    assert line._qplot_precision_error
+    assert line.getData()[0].size == 0
+
+
+@pytest.mark.parametrize("coordinate", ["x", "y"])
+def test_precision_guard_ignores_samples_outside_log_domain(qapplication, coordinate):
+    exact = np.array([-2**63, -2**63 + 1, 1, 2], dtype=np.int64)
+    other = np.arange(4.)
+    data = {coordinate: exact, "y" if coordinate == "x" else "x": other}
+    line = NativePlotDataItem(**data)
+    assert line._qplot_precision_error
+    line.setLogMode(coordinate == "x", coordinate == "y")
+    assert line._qplot_precision_error is None
+    displayed = line.getData()["xy".index(coordinate)]
+    np.testing.assert_array_equal(displayed[:2], [np.nan, np.nan])
+    np.testing.assert_allclose(displayed[2:], np.log10([1., 2.]))
+    np.testing.assert_array_equal(line.getOriginalDataset()["xy".index(coordinate)], exact)
+    line.setLogMode(False, False)
+    assert line._qplot_precision_error
+
+
+def test_precision_guard_preserves_center_step_edge_lengths(qapplication):
+    line = NativePlotDataItem(np.arange(3), np.arange(2), stepMode="center")
+    assert line._qplot_precision_error is None
+    np.testing.assert_array_equal(line.getData()[0], np.arange(3))
+    np.testing.assert_array_equal(line.getData()[1], np.arange(2))
 
 
 @pytest.mark.parametrize("which", ["low", "high"])

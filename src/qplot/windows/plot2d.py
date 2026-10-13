@@ -15,6 +15,12 @@ from qplot.tools.heatmap_geometry import (
 
 from . import _colorbar
 from ._commands import command_spec, create_action
+from ._display_precision import (
+    DISPLAY_PRECISION_MESSAGE,
+    HEATMAP_DISPLAY_RANGE_MESSAGE,
+    float_display_loses_distinctions,
+    heatmap_display_range_is_finite,
+)
 from ._mixed_plots import MixedPlotMixin
 from ._plot2d_sweeps import Plot2DSweepMixin
 from ._plot_axis_scaling import _install_flush_axis_draw_specs
@@ -414,7 +420,7 @@ class plot2d(
                 return
 
             try:
-                self._update_heatmap_geometry()
+                geometry = self._update_heatmap_geometry()
             except (TypeError, ValueError) as error:
                 self._invalidate_heatmap_geometry()
                 self._emit_heatmap_trace_updated()
@@ -429,6 +435,30 @@ class plot2d(
                     str(error),
                     kind="error",
                     )
+                return
+
+            viewbox = self._primary_heatmap_viewbox()
+            if not heatmap_display_range_is_finite(geometry, (viewbox.width(), viewbox.height())):
+                self._heatmap_view_reload_timer.stop()
+                self._reject_heatmap_color_range(
+                    message=HEATMAP_DISPLAY_RANGE_MESSAGE,
+                    title="Unsupported heatmap coordinate range",
+                )
+                self._emit_heatmap_trace_updated()
+                if self._refresh_publication_source_is_current(
+                        plot_worker, clear_display=clear_display):
+                    self._mark_display_synchronized(plot_worker)
+                return
+
+            if float_display_loses_distinctions(self.dataGrid):
+                self._reject_heatmap_color_range(
+                    message=DISPLAY_PRECISION_MESSAGE,
+                    title="Unsupported heatmap display precision",
+                )
+                self._emit_heatmap_trace_updated()
+                if self._refresh_publication_source_is_current(
+                        plot_worker, clear_display=clear_display):
+                    self._mark_display_synchronized(plot_worker)
                 return
 
             autoLevels = self.relevel_refresh.isChecked()
@@ -543,7 +573,7 @@ class plot2d(
             # Allow new workers after empty live loads or display errors.
             plot_worker.running = False
             self._ensure_refresh_monitor()
-            if full_sql_refresh:
+            if full_sql_refresh and not self.__dict__.get("_heatmap_color_range_rejected", False):
                 self._schedule_visible_heatmap_reload()
 
 
@@ -1518,7 +1548,8 @@ class plot2d(
         self.__dict__["axis_data"] = axis_data
         self.__dict__["dataGrid"] = data_grid
         self.__dict__["heatmap_geometry"] = geometry
-        self.__dict__["rect"] = QtCore.QRectF(*geometry.rect)
+        if heatmap_display_range_is_finite(geometry):
+            self.__dict__["rect"] = QtCore.QRectF(*geometry.rect)
         return geometry
 
 
@@ -1560,6 +1591,7 @@ class plot2d(
             self.image.setRect(QtCore.QRectF(*geometry.rect))
             self.heatmap_mesh.hide()
             self.image.show()
+            self._schedule_heatmap_view_validation()
             return
 
         mesh_data = np.asarray(data_grid, dtype=float).copy()
@@ -1579,6 +1611,7 @@ class plot2d(
             )
         self.image.hide()
         self.heatmap_mesh.show()
+        self._schedule_heatmap_view_validation()
 
 
     def _hide_heatmap_renderers(self) -> None:

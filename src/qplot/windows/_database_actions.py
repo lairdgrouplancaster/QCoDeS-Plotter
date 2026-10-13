@@ -44,10 +44,10 @@ from qplot.datahandling.trusted_presentation import bounded_presentation_error
 from qplot.diagnostics import log_event, log_exception
 from qplot.testdata import (
     GenerationCancelled,
+    example_csv_contents,
     generate_database,
     instruction_collection_contents,
     read_specifications,
-    write_example_csv,
 )
 
 from ._config_persistence import persist_config_value
@@ -777,7 +777,7 @@ class DatabaseActionsMixin:
                 return False
             write_export_atomically(
                 destination,
-                lambda temporary: write_example_csv(temporary, overwrite=True),
+                lambda temporary: _write_export_bytes(temporary, example_csv_contents()),
             )
         except Exception as err:
             log_exception("Example test-data CSV creation failed", err, __name__)
