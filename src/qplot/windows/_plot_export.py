@@ -209,6 +209,7 @@ class PlotExportMixin(_PlotExportBase):
         Opens the native print dialog and prints the visible plot area.
 
         """
+        dialog = None
         try:
             printer = self._create_plot_printer()
             dialog = QtPrintSupport.QPrintDialog(printer, self)
@@ -268,6 +269,16 @@ class PlotExportMixin(_PlotExportBase):
                     str(err),
                 )
             return False
+        finally:
+            # The parent keeps this one-shot dialog alive after exec returns.
+            # Release it on cancellation, success, and failed printing alike.
+            delete_later = getattr(dialog, "deleteLater", None)
+            if callable(delete_later):
+                try:
+                    delete_later()
+                except RuntimeError:
+                    # Closing the owner during the modal loop may delete it.
+                    pass
 
         self.show_status("Plot sent to printer.", 3000)
         return True

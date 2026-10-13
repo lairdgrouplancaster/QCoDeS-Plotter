@@ -627,6 +627,36 @@ All Python commands use the project venv; Matplotlib cache is
   two extra secondary-axis/AutoPan probes. Author focused validation:
   **123 passed**. Ruff, mypy, whitespace checks and actual qPlot startup pass.
 
+### Fresh round 12
+
+- Rotated safety review completed clean on `ecd2a9b`: **110 focused tests** and
+  six fresh live-QCoDeS cycles verified protected artifacts, cancellation,
+  checkpoint recovery and continued reading. Measurement review passed **314
+  focused tests**; UI review passed **199**. Their confirmed findings below make
+  round 12 **not clean**. Consecutive clean-round count remains **0**.
+
+### BH-026 — Eager marquee statistics block the GUI on integer traces
+
+- Actual current-QCoDeS 1,000,000-point int64 line, select all and call the normal
+  marquee context-menu path: **4.705 s before the menu exists**, compared with
+  1.068 s for the float control. Integer mean and standard deviation convert each
+  sample through Fraction; direct measurements attribute 1.298 s and 1.899 s.
+- Final measurement owns exact integer/mixed fast paths and meaningful
+  correctness/performance regressions; final safety independently reviews.
+  Probe: `/private/tmp/qplot_round12_stats_probe.py`. No source artifact changes.
+
+### BH-027 — Print dialogs survive completed print attempts
+
+- Actual QPrintDialog instances parented to a real QCoDeS plot remain after
+  cancelled calls and DeferredDelete processing: 1, 2, then 3 dialogs after
+  three attempts. Only the native modal result is substituted for the offscreen
+  probe. The print workflow lacks dialog deletion after cancel/success/error.
+- Final UI owns narrow finally cleanup and QObject lifetime regressions;
+  final safety independently approved. Printer/rendering behavior is preserved.
+  **25 print tests and 10 subtests passed**, including five new QObject lifetime
+  cases, with cleanup after rendering and handling already-deleted wrappers.
+  Ruff, mypy, whitespace and actual qPlot startup checks pass.
+
 ### Numerical scope note
 
 - Float-only summation can differ from an exact rational oracle by one floating
