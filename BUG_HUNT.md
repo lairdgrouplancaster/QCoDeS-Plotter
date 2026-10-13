@@ -685,6 +685,35 @@ All Python commands use the project venv; Matplotlib cache is
   subchat covers safety/native/packaging, safety subchat covers UI/lifecycle,
   and UI subchat covers measurement/results/performance.
 
+### Fresh round 13 — complete and clean
+
+- Safety/native/packaging: **307 passed, 33 platform skips, 28 subtests**;
+  fresh review and real-WAL, snapshot, publication, configuration, diagnostics,
+  generator and export checks found no new actionable defect.
+- Measurement: **274 passed, one platform skip**, plus 22 fresh exact-rational
+  summary oracles and 15 real-QCoDeS duplicate/missing-cell grid comparisons
+  across memory, buffered SQL and streamed SQL. A 300,000-sample integer summary
+  took 74 ms; derivative took 56 ms; requested cancellation was observed.
+- UI/lifecycle: **40 passed and 10 subtests**, including actual modal execution,
+  retained-source cleanup, pending previews/refresh, mixed promotion/cuts,
+  preferences, exports and shutdown. This review withdrew BH-027 as above.
+- Coordinator reviewed launcher/configuration/diagnostic integration and rebuilt
+  distribution evidence. No new actionable application bug. Consecutive clean
+  count: **1**. Fresh rotated round 14 is underway.
+
+### Integration-test timing correction
+
+- The one full-suite failure charged unconditional whole-process garbage
+  collection to an already-finished supervisor finalizer. Instrumentation found
+  the real finalizer took **1.17 ms** and all four terminal conditions were true
+  before unrelated GC. Delaying that unrelated collection reproduced the failure.
+- Check completion before requesting GC. The **five-second limit and every
+  weakref, job/error, receiver, thread, connection, child-process, protected
+  artifact and writer-recovery assertion remain unchanged**. No application fix.
+- Independent UI reviewer approved; all **eight partial-frame cases pass**.
+  The delayed-GC probe now passes with finalization **1.07 ms** and no unrelated
+  GC inside the measured interval. Full integration follows on this correction.
+
 ### Numerical scope note
 
 - Float-only summation can differ from an exact rational oracle by one floating
@@ -708,14 +737,13 @@ All Python commands use the project venv; Matplotlib cache is
 ## Next tasks and continuation checkpoint
 
 1. All confirmed findings BH-001 through BH-026 are fixed and independently
-   reviewed; BH-027 was withdrawn after fresh evidence review. Integrate the final statistics fix and push the dedicated branch.
-2. Finish the full suite started at `ecd2a9b`; report its scope accurately.
-   Revalidate final print/statistics integration and distribution artifacts.
-3. Complete fresh rounds 13 onward until two consecutive complete rounds find
-   no actionable bugs. Round 12 found BH-026; clean-round count: **0**.
-4. Finish automated tests, actual qPlot startup, distribution checks and
-   draft PR/CI status. No native source changed; rebuilt native artifact already
-   passed architecture/ABI/package checks earlier in this campaign.
+   reviewed; BH-027 was withdrawn after fresh evidence review.
+2. Run final full integration with the approved finalizer test correction.
+3. Finish round 14. Round 13 is complete and clean; clean-round count: **1**.
+   Any new actionable application defect resets that count.
+4. Finish final startup/distribution/static validation and draft PR/CI status.
+   No native source changed; the rebuilt native artifact already passed
+   architecture/ABI/package checks earlier in this campaign.
 
 Subchat usage limits interrupted BH-021 review. The user reported usage reset;
 all three final reviewers have been restarted with their existing file ownership.

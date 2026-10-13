@@ -228,7 +228,6 @@ def test_abandoned_partial_job_finalizer_reaps_process_and_receiver(
     del supervisor
     deadline = started + 5.0
     while time.monotonic() < deadline:
-        gc.collect()
         if (
             supervisor_reference() is None
             and job.done
@@ -239,6 +238,9 @@ def test_abandoned_partial_job_finalizer_reaps_process_and_receiver(
             )
         ):
             break
+        # Reference counting can finish cleanup immediately. Do not charge
+        # unrelated objects from earlier tests to the finalizer's deadline.
+        gc.collect()
         time.sleep(0.01)
 
     assert time.monotonic() - started < 5.0
