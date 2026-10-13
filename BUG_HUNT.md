@@ -466,10 +466,24 @@ All Python commands use the project venv; Matplotlib cache is
 
 ## Next tasks and continuation checkpoint
 
-1. Commit/push final approved integration changes and update draft PR for CI.
-2. Finish full integration run and resolve any remaining failures.
-3. Complete fresh round 7 and subsequent complete rounds until two consecutive
-   rounds find no actionable bugs. Current clean-round count: **0**.
+1. Finish BH-021 display guard and independent review, including resize/recovery
+   and investigation of the 1D counterpart. Local committed head: `c6bb195`;
+   last pushed revision: `5be60f2`. BH-021 is currently uncommitted.
+2. Repair CI cancellation-test instrumentation and rerun current integration.
+   CI at `5be60f2` completed: all failing test jobs identify the same stale
+   `Fraction` monkeypatch after BH-018 moved scalar conversion to
+   `sample_fraction`. The cancellation assertion must count actual conversions.
+3. Complete fresh round 9 and subsequent complete rounds until two consecutive
+   rounds find no actionable bugs. Rounds 1–8 were not clean; count: **0**.
 4. Finish final automated tests, actual qPlot startup, distribution checks and
    draft PR/CI status. No native source changed; rebuilt native artifact already
    passed architecture/ABI/package checks earlier in this campaign.
+
+Subchat usage limits interrupted BH-021 review. The user reported usage reset;
+all three final reviewers have been restarted with their existing file ownership.
+No unfinished fix or fresh review round was marked approved during interruption.
+
+CI follow-up: cancellation instrumentation now wraps the real `sample_fraction`
+helper and still requires interruption at exactly 1,024 converted samples.
+All six cancellation/residual regressions pass; final UI independently approved
+and reran both cancellation cases. No application cancellation change was needed.

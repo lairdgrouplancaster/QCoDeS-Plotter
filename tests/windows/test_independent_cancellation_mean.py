@@ -71,16 +71,15 @@ def test_mixed_sign_mean_cancels_during_compensated_sum():
 def test_mixed_sign_mean_cancels_during_exact_fallback(monkeypatch):
     import qplot.tools.plot_tools as plot_tools
 
-    original_fraction = Fraction
+    original_sample_fraction = plot_tools.sample_fraction
     calls = 0
 
-    def fraction(*args):
+    def sample_fraction(value):
         nonlocal calls
-        if args:
-            calls += 1
-        return original_fraction(*args)
+        calls += 1
+        return original_sample_fraction(value)
 
-    monkeypatch.setattr(plot_tools, "Fraction", fraction)
+    monkeypatch.setattr(plot_tools, "sample_fraction", sample_fraction)
     values = np.r_[np.full(2048, 1e308), -1e308]
     with pytest.raises(InterruptedError, match="cancelled"):
         plot_tools._center_float_samples(values, cancelled_callback=lambda: calls >= 1024)
