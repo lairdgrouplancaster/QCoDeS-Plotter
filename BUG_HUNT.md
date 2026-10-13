@@ -607,9 +607,25 @@ All Python commands use the project venv; Matplotlib cache is
 - Full `1798979` integration result: **1 failed, 4,898 passed, 44 skipped,
   119 subtests**, 830.59 s. The sole failure is subnormal line-mean recovery:
   processed values are representable signed zeros but the range guard can leave
-  drawing rejected after processing/refresh. Final UI owns this event-ordering
-  follow-up; final measurement independently reviews. Final full validation and
+  drawing rejected after processing/refresh. Isolated diagnosis: constant-data
+  Auto reuses the previous subnormal-width range, rejects that range and disables
+  Auto. Final UI owns a narrow representable constant-data recovery fix;
+  final measurement independently reviews. Final full validation and
   two subsequent complete clean rounds remain required.
+
+### BH-025 — Constant-data Auto retains an unusable previous span
+
+- The final integration failure exposed an Auto-range defect: centering
+  `[tiny, tiny, 2*tiny, 2*tiny]` correctly produces signed zeros, but Auto
+  inherits the prior subnormal span, rejects it and leaves supported data hidden.
+  The original numerical test is unchanged; this is an axis-recovery repair.
+- A seven-line guard chooses a representable default span only for constant-data
+  Auto when the inherited viewport scale overflows. Manual ranges and AutoPan
+  remain unchanged. Five new real-QCoDeS regressions cover X/Y, tiny/min-subnormal
+  ranges, explicit Auto, mean processing and settled refresh callbacks.
+- Final measurement independently approved **126 passed** checks, including
+  two extra secondary-axis/AutoPan probes. Author focused validation:
+  **123 passed**. Ruff, mypy, whitespace checks and actual qPlot startup pass.
 
 ### Numerical scope note
 
@@ -633,14 +649,14 @@ All Python commands use the project venv; Matplotlib cache is
 
 ## Next tasks and continuation checkpoint
 
-1. Finish BH-022 axis/centering/FFT integration follow-up and independent review.
-   Local committed head: `a8b4163`; last pushed revision: `e05e43b`. BH-021,
-   BH-022's initial repair and BH-023 are committed and independently approved.
-2. Resolve all 22 post-display integration failures and rerun the complete suite.
-   The earlier CI cancellation instrumentation failure was repaired in
-   `2a36660`, preserving the 1,024-conversion cancellation assertion.
-3. Complete fresh round 10 and subsequent complete rounds until two consecutive
-   rounds find no actionable bugs. Rounds 1–9 were not clean; count: **0**.
+1. Finish independent review of constant-data Auto recovery (BH-022 follow-up).
+   Local committed head: `bb170bc`; last pushed revision: `1798979`. BH-024
+   cancellation fix is committed and independently approved.
+2. Rerun full integration with that recovery fix and BH-024. The prior 22
+   failures are resolved; the latest full suite has only the reproduced
+   constant-Auto recovery failure (4,898 other tests passed).
+3. Complete fresh rounds 12 onward until two consecutive complete rounds find
+   no actionable bugs. Round 10 was clean; round 11 found BH-024. Count: **0**.
 4. Finish final automated tests, actual qPlot startup, distribution checks and
    draft PR/CI status. No native source changed; rebuilt native artifact already
    passed architecture/ABI/package checks earlier in this campaign.

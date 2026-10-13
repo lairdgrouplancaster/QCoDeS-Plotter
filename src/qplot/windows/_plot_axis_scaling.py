@@ -966,6 +966,13 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         if auto_pan or lower == upper:
             if not isfinite(current_span) or current_span <= 0:
                 current_span = 1.0
+            if lower == upper and not auto_pan:
+                pixels = viewbox.width() if axis_number == 0 else viewbox.height()
+                if not isfinite(max(1.0, pixels) / current_span):
+                    # A constant trace has no intrinsic scale. Do not inherit
+                    # an unusable viewport from its previous, rejected data:
+                    # it would keep valid processed samples hidden forever.
+                    current_span = 1.0
             center = lower * 0.5 + upper * 0.5
             # A narrow span at a large offset may collapse to one double.
             # Retain at least the backend's quantization allowance so that
