@@ -50,7 +50,19 @@ def test_csv_input_rejects_fifo_without_blocking_or_changing_it(tmp_path, symlin
     os.mkfifo(fifo)
     if symlink:
         source.symlink_to(fifo)
-    before = {entry.name: entry.lstat() for entry in tmp_path.iterdir()}
+
+    def artifact_state():
+        # Resolving the input symlink can update its access time on Linux.
+        # Retain identity, permissions and nanosecond modification/change times.
+        fields = ("st_mode", "st_ino", "st_dev", "st_nlink", "st_uid", "st_gid",
+                  "st_size", "st_mtime_ns", "st_ctime_ns")
+        state = {}
+        for entry in tmp_path.iterdir():
+            status = entry.lstat()
+            state[entry.name] = tuple(getattr(status, field) for field in fields)
+        return state
+
+    before = artifact_state()
     result = subprocess.run(
         [sys.executable, "-c", """
 import sys
@@ -65,8 +77,11 @@ else:
         capture_output=True, text=True, timeout=10,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert {entry.name: entry.lstat() for entry in tmp_path.iterdir()} == before
+    assert artifact_state() == before
     assert fifo.is_fifo()
+    assert source.is_symlink() == symlink
+    if symlink:
+        assert os.readlink(source) == str(fifo)
 
 
 def test_regular_csv_input_symlink_still_loads(tmp_path):

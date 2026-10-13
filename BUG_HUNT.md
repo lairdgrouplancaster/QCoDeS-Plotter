@@ -847,6 +847,22 @@ All Python commands use the project venv; Matplotlib cache is
   Final full-suite validation subsequently passed as recorded at the top.
   Cross-platform required checks and the final report are attached to draft PR #84.
 
+### Final CI test-portability correction
+
+- Linux coverage on `af7eec6` passed 4,958 tests but failed the CSV-input FIFO
+  symlink metadata assertion. The job showed only symlink access time changed;
+  all other metadata and the FIFO target were unchanged. Read-only resolution
+  can update Linux symlink atime; this is not an application write or regression.
+  [Failure evidence](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/38381171331/job/115242879883).
+- The test now compares identity, type, permissions, link count, ownership, size,
+  and nanosecond mtime/ctime, plus explicit symlink target/type. Only access time
+  is excluded. The rejection and ten-second subprocess limit are unchanged.
+- Independent safety review approved; **25 related FIFO cases passed**. Adjacent
+  generator-destination validation rejects symlinks before following them and
+  remains unchanged; snapshot/config tests already handle allowed access times.
+- No application source changed. Two clean application-review rounds remain
+  valid. Final exact-head CI includes this portable oracle correction.
+
 ### Numerical scope note
 
 - Float-only summation can differ from an exact rational oracle by one floating
