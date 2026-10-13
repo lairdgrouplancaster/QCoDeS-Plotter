@@ -1,5 +1,28 @@
 # qPlot bug-hunt campaign
 
+## Final campaign result
+
+- **27 confirmed findings repaired and independently reviewed**: BH-001–026
+  and BH-028. BH-027 was withdrawn after a mocked reproduction was disproved;
+  its speculative change and tests were removed.
+- **Two consecutive complete clean review rounds: 15 and 16**, with rotated
+  safety, measurement and UI reviewers plus coordinator integration review.
+- Final application revision: `f6a9d3f372a3c7d1e635dd8362c0580eb5649a60`.
+  Full suite: **4,963 passed, 44 skipped, 119 subtests passed** in 782.96 s.
+  Log: `/private/tmp/qplot-bug-hunt-bh028-full.log`.
+- Ruff, mypy (**88 source files**), whitespace checks and actual qPlot startup
+  pass. The window becomes visible, Qt's event loop runs, and shutdown exits 0.
+- Rebuilt application wheel/sdist pass inventory and twine checks: 370 sdist
+  files including 208 test modules plus conftest; 129 wheel files including
+  123 runtime files, all byte-identical to the final source. Artifacts:
+  `/private/tmp/qplot-bug-hunt-f6a9d3f-dist`.
+- Native sources are unchanged. The earlier rebuilt universal2 cp311-abi3 wheel
+  passed ARM64/x86_64 architecture, package and pinned runtime checks.
+- Branch: `codex/qplot-bug-hunt`. [Draft PR #84](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/84)
+  holds the changes and exact-head cross-platform CI results. No merge/release.
+- Database-access invariant preserved; current QCoDeS format supported; no
+  settings migrations added. Findings, evidence and review history follow.
+
 ## Baseline and scope
 
 - Intended baseline: `2ece4436608a98580a540ecaafcba2781db4043f`, head of
@@ -17,10 +40,10 @@
 
 | Investigator | Initial coverage | State |
 | --- | --- | --- |
-| Database subchat | Native VFS, read-only/live database access, cancellation, services and scheduling | Initial audit complete |
-| Measurement subchat | Extraction, dimensional interpretation, rendering, numeric operations and transforms | Initial audit complete; final numeric follow-up |
-| UI/lifecycle subchat | Windows, mixed plots, refresh, removal, shutdown, worker lifetime | Initial audit complete |
-| Coordinator | Settings, entry points, diagnostics, synthetic generation, packaging and integration | Initial audit complete; integration running |
+| Database subchat | Native VFS, read-only/live database access, cancellation, services and scheduling | Complete; two final clean rounds |
+| Measurement subchat | Extraction, dimensional interpretation, rendering, numeric operations and transforms | Complete; two final clean rounds |
+| UI/lifecycle subchat | Windows, mixed plots, refresh, removal, shutdown, worker lifetime | Complete; two final clean rounds |
+| Coordinator | Settings, entry points, diagnostics, synthetic generation, packaging and integration | Complete; final validation passed |
 
 Parallel edits use explicit disjoint file ownership. Coordinator owns this log
 and integration commits. Substantive fixes require review by a different subchat.
@@ -43,7 +66,8 @@ and integration commits. Substantive fixes require review by a different subchat
 
 ## Validation
 
-Baseline cross-platform CI passed as recorded above. Campaign validation pending.
+Baseline cross-platform CI passed as recorded above. Detailed campaign and final
+validation results are recorded below.
 All Python commands use the project venv; Matplotlib cache is
 `/private/tmp/qplot-matplotlib-cache`.
 
@@ -781,6 +805,48 @@ All Python commands use the project venv; Matplotlib cache is
   normal-exit checks pass. No native source changed. There are now **27 confirmed
   repaired findings** (BH-001–026 and BH-028); BH-027 remains withdrawn.
 
+### Fresh round 15 — complete and clean
+
+- Safety/native/packaging: **20 focused checks passed**, including three fresh
+  real-QCoDeS cancel/read/writer-commit/checkpoint/reuse cycles; protected files
+  unchanged, cancellation responses 0.265–0.422 ms. Fresh source audit covered
+  physical read-only access, exact SHM handling, IPC/transactions/snapshots,
+  settings/logging/export protection, generator publication and package pins.
+- Measurement: **220 passed, one platform skip**, plus 18 exact irregular-
+  derivative oracles and 12 new-seed QCoDeS grid comparisons across extraction
+  routes. Source hashes unchanged; caches, numeric operations, statistics,
+  previews, averages, rendering and CSV semantics reviewed afresh.
+- UI/lifecycle: **19 passed**, including actual cancellation→export→retry→close
+  for duplicate means and Fill Right. Previous grids and byte-identical CSV
+  survived cancellation; no unexpected Qt callbacks. Mixed promotion, retained
+  ownership, cuts, pending previews, SVG protection and preferences also checked.
+- Coordinator integration/package review found no new issue. Rebuilt f6a9d3f
+  sdist/wheel inventories and twine checks pass; all 123 wheel runtime files
+  byte-match source. Ruff/mypy/startup pass. Full integration and CI are running.
+- Consecutive complete clean-round count: **1**. Round 16 has rotated ownership
+  again and is underway on the same application source.
+
+### Fresh round 16 — complete and clean
+
+- UI/lifecycle: **16 fresh checks passed**, including both real-QCoDeS mixed
+  plot hosts through settings, averaging/centering, resize, PDF/clipboard,
+  refresh, unchanged-sample comparison, layer removal and shutdown. Main-window
+  cancellation/reentry, live CSV freshness, cuts and retained editors also pass.
+- Measurement: **32 passed**, including six fresh signed/unsigned/mixed QCoDeS
+  ragged-duplicate cases against independent Fraction mean, centering, derivative
+  and standard-deviation oracles. Rounded SQL overview semantics and subsequent
+  full-resolution operation reload were checked alongside source invariance.
+- Safety/native/packaging: **27 checks passed**, including a fresh live-QCoDeS
+  materialized-batch cancellation (0.220 ms), no partial publication, rejected
+  mutation, unchanged protected hashes/identities, successful writer commit and
+  TRUNCATE checkpoint, and zero native handles after close. Full source audit
+  includes snapshots, IPC/cleanup, SHM, auxiliary writes, generation and packaging.
+- Coordinator integration/package review has no new actionable finding.
+  **Rounds 15 and 16 are consecutive complete clean rounds** on application
+  revision `f6a9d3f`. The requested independent-review stopping condition is met.
+  Final full-suite validation subsequently passed as recorded at the top.
+  Cross-platform required checks and the final report are attached to draft PR #84.
+
 ### Numerical scope note
 
 - Float-only summation can differ from an exact rational oracle by one floating
@@ -803,13 +869,14 @@ All Python commands use the project venv; Matplotlib cache is
 
 ## Next tasks and continuation checkpoint
 
-1. BH-001–026 and BH-028 are fixed and independently reviewed; BH-027 was
-   withdrawn after fresh evidence review. Push the integrated cancellation batch.
-2. Finish final full integration, startup/static/distribution validation and CI.
-3. Complete fresh rounds 15 onward until two consecutive whole-application rounds
-   are clean. Round 14 found BH-028; clean-round count: **0**.
-4. Keep the PR draft. Do not merge or release. Native sources remain unchanged;
-   rebuilt native artifacts passed architecture/ABI/package checks earlier.
+- Investigation, confirmed repairs, independent reviews and local validation
+  are complete. Rounds 15 and 16 satisfy the requested stopping condition.
+- The only publishing follow-up is exact-head CI verification on draft PR #84;
+  its live check results and final PR description record that outcome. If a CI
+  failure appears, inspect that job's evidence and repair a confirmed issue
+  before treating validation as complete.
+- Keep the PR draft for user review. No merge or release is authorized. No
+  unresolved manual test or known confirmed application defect remains.
 
 Subchat usage limits interrupted BH-021 review. The user reported usage reset;
 all three final reviewers have been restarted with their existing file ownership.
