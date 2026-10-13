@@ -71,9 +71,8 @@ fields and an unavailable detail state without starting a selected-detail
 reader or preparing an additional selected-detail snapshot. That claim applies
 only to row selection: fallback metadata and retained preview paths can still
 create private snapshots. Plot and CSV actions also acquire action-owned
-snapshots. Automatic trusted live
-previews and thumbnails are disabled until the Stage 5 scheduler and disk cache
-are implemented. See
+snapshots. Trusted live previews and thumbnails load progressively through a bounded
+scheduler and application cache. See
 [Trusted live QCoDeS reader](docs/trusted-live-reader.md).
 
 ## Packages
@@ -103,7 +102,7 @@ source builds, and release validation.
 ## Install
 
 Install qPlot inside a supported Python virtual environment. This checkout
-prepares the unreleased application beta `1.6.0b3`, with native `1.0.0`.
+prepares the stable application release `1.6.0`, with native `1.0.0`.
 The installation examples below work after publication; until then, use
 validated local artifacts as described in [Distribution](docs/distribution.md).
 
@@ -134,9 +133,9 @@ For ordinary installation after a stable PyPI release is available:
 python -m pip install --only-binary=:all: qplotter
 ```
 
-For the first split beta, explicitly select the prerelease:
+To select version 1.6.0 explicitly after publication:
 ```console
-python -m pip install --only-binary=:all: qplotter==1.6.0b3
+python -m pip install --only-binary=:all: qplotter==1.6.0
 ```
 
 Both commands install the full runtime dependency set as wheels, with no C
@@ -158,7 +157,7 @@ installing the new packages:
 
 ```console
 python -m pip uninstall -y qplot qcodes-plotter qcodes-plotter-native qplotter qplotter-native
-python -m pip install --only-binary=:all: qplotter==1.6.0b3
+python -m pip install --only-binary=:all: qplotter==1.6.0
 python -m pip check
 ```
 
