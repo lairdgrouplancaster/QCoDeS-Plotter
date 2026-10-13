@@ -494,6 +494,43 @@ All Python commands use the project venv; Matplotlib cache is
   covering mixed/source promotion, cuts, trusted-live interactions, delayed
   refresh/cancellation, bounded shutdown, dialog ownership and free-cursor axes.
 
+### BH-023 — Ordinary mixed-sign float averaging blocks the GUI
+
+- Fresh round 9 actual `NativePlotItem` probe: enabling averaging for 12
+  ordinary float traces with 300,000 points each (`1., -1.1, 1.2, -1.3, ...,
+  -2.1`) takes **14.605 s synchronously**, preventing Qt event processing.
+  Three all-positive curves take 5 ms versus 1.271 s for mixed signs. Clearing
+  the plot also repeatedly recomputes shrinking averages.
+- The mixed-sign pure-float path replays every source separately for every
+  displayed cell on each update. BH-013's existing binary-integer total path
+  currently applies only to integer/mixed provenance. Final measurement owns a
+  narrow reuse of that path for mixed signs; final UI independently reviews.
+  Correctness/fallback/weighted replacement and before/after latency probes are
+  required. Round 9 is **not clean**; consecutive clean-round count remains **0**.
+- Initial candidate reduces the 12-trace probe to 0.826 s (about 18x faster).
+  Review then identified missing-data boundaries: a later NaN must invalidate
+  promoted totals correctly, and one missing cell must not force per-cell
+  replay for all good cells. Both are repaired. Independent missing-data timing:
+  **14.248 s → 1.188 s**; **49 tests passed, 3 expected skips**, plus 40
+  exact-result/nonfinite oracle probes. Raw samples and fallback behavior remain.
+- Explicit `NativePlotItem.clear()` separately took 3.061 s recomputing every
+  shrinking group. Bulk removal now suppresses those intermediate averages,
+  cancels queued work and retains the averaging preference/single-removal
+  behavior. Measured clear time: **0.006 s**. This is not a measured window-close
+  improvement. Final UI independently approved the follow-up with **57 tests
+  passed**, including 14 new performance/lifecycle cases.
+- Round 9 safety/native/packaging completed without another finding:
+  **435 passed, 28 subtests, one Windows-only skip**, against `e05e43b`.
+
+### Post-display integration follow-up
+
+- Full suite begun with the display fixes at `e05e43b` exposed axis auto-scale,
+  derivative and additional extreme FFT failures. Final safety owns diagnosis;
+  final UI independently reviews. A confirmed runtime interaction is that
+  hiding an unrenderable curve removed its bounds from existing axis validation.
+  The repair retains processed bounds independently of drawing visibility.
+  All failures must be resolved before fresh round 10 and final validation.
+
 ### Numerical scope note
 
 - Float-only summation can differ from an exact rational oracle by one floating

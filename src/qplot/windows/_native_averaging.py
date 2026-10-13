@@ -65,7 +65,11 @@ def _binary_integer_samples(values):
     return np.frompyfunc(int, 1, 1)(scaled), shift
 
 
-def _add_binary_total(total, shift, values, weight=1):
+def _add_binary_total(total, shift, values, weight=1, *, finite_cells=None):
+    if finite_cells is not None:
+        # Nonfinite cells keep the ordinary running result. Exclude only
+        # those positions from exact encoding, not the entire source trace.
+        values = np.where(finite_cells, values, 0)
     encoded = _binary_integer_samples(values)
     if encoded is None:
         return None, 0
@@ -140,6 +144,20 @@ class NativePlotItem(pg.PlotItem):
         super().removeItem(item)
         if source:
             self.recomputeAverages()
+
+    def clear(self):
+        # Removing every source is one action. Intermediate averages cannot
+        # be displayed and can otherwise stall clearing a large grouped plot.
+        recomputing = self._qplot_recomputing_averages
+        self._qplot_recomputing_averages = True
+        try:
+            super().clear()
+        finally:
+            self._qplot_recomputing_averages = recomputing
+        self._qplot_average_display_sources = ()
+        timer = getattr(self, "_qplot_average_refresh_timer", None)
+        if timer is not None:
+            timer.stop()
 
     def recomputeAverages(self, *_args):
         if not self.ctrl.averageGroup.isChecked():
@@ -251,29 +269,37 @@ class NativePlotItem(pg.PlotItem):
             sources = average._qplot_mean_sources
             exact_cells = any(values.dtype.kind in "iuO" for _weight, values in sources)
             mixed_sign = (average._qplot_minimum < 0) & (average._qplot_maximum > 0)
-            # Integer and mixed binary means can round at intermediate
+            # Integer and cancelling binary means can round at intermediate
             # updates. Retain integer totals in common binary units, then
-            # round their final ratio once. This also avoids Fraction replay
-            # across every displayed cell on the GUI thread.
+            # round their final ratio once. This also avoids per-cell replay
+            # across ordinary mixed-sign float traces on the GUI thread.
             integer_total = average._qplot_integer_total
             shift = average._qplot_total_shift
-            if exact_cells:
-                if integer_total is None:
-                    # An integer may follow floating sources. Encode their
-                    # retained samples once, then update the total per curve.
+            finite_cells = (np.isfinite(average._qplot_minimum)
+                            & np.isfinite(average._qplot_maximum))
+            finite_mask = None if np.all(finite_cells) else finite_cells
+            if exact_cells or integer_total is not None or np.any(mixed_sign):
+                if not np.any(finite_cells):
+                    integer_total, shift = None, 0
+                elif integer_total is None:
+                    # A later integer or sign change can require exact totals.
+                    # Encode retained samples once, then update per curve.
                     for weight, values in sources:
-                        integer_total, shift = _add_binary_total(integer_total, shift, values, weight)
+                        integer_total, shift = _add_binary_total(
+                            integer_total, shift, values, weight, finite_cells=finite_mask,
+                        )
                         if integer_total is None:
                             break
                 else:
-                    integer_total, shift = _add_binary_total(integer_total, shift, sources[-1][1])
+                    integer_total, shift = _add_binary_total(
+                        integer_total, shift, sources[-1][1], finite_cells=finite_mask,
+                    )
             average._qplot_integer_total = integer_total
             average._qplot_total_shift = shift
             if integer_total is not None:
-                y = _integer_average(integer_total, count * (1 << shift))
-            repair = ((mixed_sign | exact_cells)
-                      & np.isfinite(average._qplot_minimum)
-                      & np.isfinite(average._qplot_maximum))
+                exact_average = _integer_average(integer_total, count * (1 << shift))
+                y = exact_average if finite_mask is None else np.where(finite_cells, exact_average, y)
+            repair = (mixed_sign | exact_cells) & finite_cells
             if integer_total is not None:
                 repair[:] = False
             for cell_index in np.flatnonzero(repair):
