@@ -80,3 +80,15 @@ def test_pytest_cannot_shadow_the_installed_pair(workflow):
         assert commands and all('-o pythonpath=' in command for command in commands)
     windows = text.split('Run full test suite as a standard Windows user\n', 1)[1]
     assert '"-m", "pytest", "-o", "pythonpath="' in windows
+
+
+def test_published_recheck_has_no_publishing_permissions_or_steps(workflow):
+    _, repository = workflow
+    text = (repository / '.github/workflows/revalidate-published.yml').read_text()
+    assert 'workflow_dispatch:' in text
+    assert 'contents: read' in text and 'actions: read' in text
+    assert 'id-token:' not in text and 'pypi-publish' not in text
+    assert 'environment:' not in text
+    assert 'path: release-source' in text and 'ref: ${{ inputs.release-tag }}' in text
+    assert 'run-id: ${{ inputs.release-run-id }}' in text
+    assert 'run-unprivileged-windows.ps1' in text

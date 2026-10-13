@@ -444,7 +444,10 @@ protections. Editable acceptance additionally observes a Python edit without
 reinstalling and checks that the native binary's bytes, identity and timestamp
 remain unchanged. Windows uses the standard-user wrapper for both paths.
 Publication is irreversible; failures in these post-publication checks must
-be reported and fixed in a new release, rather than described as acceptance.
+be reported. Changes to published package contents require a new release.
+A defect confined to the validation tools can instead be corrected and the
+existing release rechecked as described below; the failed original run remains
+part of the release record.
 
 ### One-time account configuration
 
@@ -544,6 +547,33 @@ was only partial, stop and resolve that incomplete release before proceeding;
 the application remains blocked. Once the complete native release is verified,
 an application-only tag for the still-unpublished application version can also
 recover a failed paired release after a new validation run.
+
+### Recheck an existing published release
+
+If post-publication acceptance fails because of a validation-tool defect,
+fix and review the tools, then merge them to `main`. Do not move the release
+tag or rerun a successful publication job. In GitHub Actions, select
+**Revalidate published qPlot release**, then **Run workflow**, using branch
+`main`. Supply the original release tag and publication workflow run ID.
+For the 1.6.0 resource-inventory correction these are `v1.6.0` and
+`38429734516`.
+
+This manual workflow uses the corrected tools from `main`, but checks out
+the original release source separately. It downloads the `qplot-release`
+artifact from the original publication run, verifies its tag, commit, run ID,
+and hashes, and checks the published PyPI bytes against those receipts. The
+artifact must still be available; a missing/expired receipt is a failed gate,
+not permission to substitute a new build. The receipts are comparison inputs;
+ordinary and editable dependencies are still installed from public PyPI.
+All four platforms and CPython 3.11-3.14 run both installation paths, including
+GUI startup and the trusted live reader/database-protection smokes. Windows
+runs unprivileged. The workflow has only read permissions and no publishing
+jobs or deployment approvals.
+
+Wait for all 16 matrix jobs to pass before reporting corrected acceptance.
+Link both the original publication run and the new validation run in the
+release notes. If any failure requires an application or native package change,
+use a new package version and the normal release workflow.
 
 ### Local and hosted results
 

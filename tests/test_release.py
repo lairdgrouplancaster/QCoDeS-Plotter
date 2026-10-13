@@ -13,6 +13,7 @@ from unittest.mock import Mock
 import pytest
 
 from scripts import release
+from scripts import revalidate_published_release as revalidation
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 IDENTITY = dict(revision="a" * 40, ref="refs/tags/native-and-app/v1.6.0", run_id="42")
@@ -96,6 +97,42 @@ def test_public_comparison_selects_only_matching_validated_wheels(artifact_set, 
     assert native.read_bytes() == (artifacts / native.name).read_bytes()
     with pytest.raises(AssertionError, match='another workflow run'):
         release.select_platform(bundle, platform, bundle.parent / 'wrong', **{**IDENTITY, 'run_id': '0'})
+
+
+@pytest.mark.parametrize('mode', ['wheel', 'editable'])
+@pytest.mark.parametrize('fault', [None, 'wrong-run', 'wrong-source', 'wrong-tag',
+                                  'changed-artifact', 'changed-pypi'])
+def test_published_recheck_binds_source_receipts_and_public_bytes(artifact_set, monkeypatch,
+                                                               mode, fault):
+    repository, artifacts, bundle = artifact_set
+    release.stage(repository, artifacts, bundle, **IDENTITY)
+    revision = 'b' * 40 if fault == 'wrong-source' else IDENTITY['revision']
+    monkeypatch.setattr(revalidation.subprocess, 'check_output', lambda *a, **kw: revision)
+    public_check = Mock()
+    if fault == 'changed-pypi':
+        public_check.side_effect = AssertionError('published bytes differ')
+    monkeypatch.setattr(release, 'verify_pypi', public_check)
+    accept = Mock()
+    monkeypatch.setattr(revalidation.acceptance, 'accept_installation', accept)
+    if fault == 'changed-artifact':
+        next((bundle / 'application/dist').glob('*.whl')).write_bytes(b'changed bytes')
+    arguments = dict(tag='v1.7.0' if fault == 'wrong-tag' else 'native-and-app/v1.6.0',
+                     run_id='41' if fault == 'wrong-run' else '42',
+                     platform='windows-x64', mode=mode)
+    if fault:
+        with pytest.raises(AssertionError):
+            revalidation.validate_installation(repository, bundle, **arguments)
+        accept.assert_not_called()
+    else:
+        revalidation.validate_installation(repository, bundle, **arguments)
+        assert public_check.call_count == 2
+        accept.assert_called_once()
+        args, kwargs = accept.call_args
+        assert args[0] == repository.resolve()
+        assert set(args[1]) == {'qplotter_wheel', 'qplotter_native_wheel'}
+        assert 'win_amd64' in args[1]['qplotter_native_wheel'].name
+        assert not args[2].is_relative_to(repository)
+        assert kwargs == dict(editable=mode == 'editable', public_pypi=True)
 
 
 @pytest.mark.parametrize("change", ["missing", "unrepaired", "extra", "wrong-version", "sdist-upload"])
