@@ -7,7 +7,7 @@ import pandas as pd
 from numpy.typing import ArrayLike
 from qcodes import dataset
 
-from qplot.tools.sample_statistics import finite_mean
+from qplot.tools.sample_statistics import finite_mean, sample_fraction
 
 
 def data2matrix(indep1 : ArrayLike,
@@ -61,7 +61,12 @@ def data2matrix(indep1 : ArrayLike,
             if len(samples) == 1:
                 grid[position] = samples[0]
             else:
-                mean = sum((Fraction(value) for value in samples), Fraction()) / len(samples)
+                total = Fraction()
+                for sample_index, value in enumerate(samples):
+                    if sample_index % 1024 == 0:
+                        check_cancelled()
+                    total += sample_fraction(value)
+                mean = total / len(samples)
                 if mean.denominator == 1:
                     grid[position] = int(mean)
                 else:

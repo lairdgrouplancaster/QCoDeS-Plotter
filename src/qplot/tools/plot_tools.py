@@ -27,7 +27,7 @@ from qplot.tools.sample_statistics import sample_fraction
 def _integer_differences(values, axis=0, step=1, *, cancelled_callback=None):
     """Subtract before conversion; int64 and uint64 gaps can exceed int64."""
     exact_values = np.moveaxis(values.astype(object), axis, -1)
-    if values.dtype.kind == "O" and not _integer_samples(values):
+    if values.dtype.kind == "O" and not _integer_samples(values, cancelled_callback):
         # Python also rounds integers before subtracting binary floats.
         # Exact mixed cells preserve steps above 2**53 and allow subtraction
         # between decimal clipping bounds and original binary floats.
@@ -70,21 +70,29 @@ def _integer_differences(values, axis=0, step=1, *, cancelled_callback=None):
     return np.moveaxis(numeric, -1, axis)
 
 
-def _integer_samples(values):
+def _checked_samples(values, cancelled_callback):
+    for index, value in enumerate(values.flat):
+        if index % 1024 == 0:
+            _check_cancelled(cancelled_callback)
+        yield value
+    _check_cancelled(cancelled_callback)
+
+
+def _integer_samples(values, cancelled_callback=None):
     if values.dtype.kind in "iu":
         return True
     # Joined QCoDeS records can use object cells to retain mixed int64/uint64.
     return values.dtype.kind == "O" and all(
         isinstance(value, (int, np.integer)) and not isinstance(value, (bool, np.bool_))
-        for value in values.flat
+        for value in _checked_samples(values, cancelled_callback)
     )
 
 
-def _numeric_object_samples(values):
+def _numeric_object_samples(values, cancelled_callback=None):
     return values.dtype.kind == "O" and all(
         isinstance(value, (int, float, Decimal, Fraction, np.integer, np.floating))
         and not isinstance(value, (bool, np.bool_))
-        for value in values.flat
+        for value in _checked_samples(values, cancelled_callback)
     )
 
 
@@ -92,7 +100,7 @@ def _gradient_with_integer_samples(
         data, coordinates, spacing, axis, integer_data, *, cancelled_callback=None):
     """Use gradient's first-order edges and three-point interior stencil."""
     samples = np.moveaxis(np.asarray(data), axis, -1)
-    mixed_objects = samples.dtype.kind == "O" and not _integer_samples(samples)
+    mixed_objects = samples.dtype.kind == "O" and not _integer_samples(samples, cancelled_callback)
     dtype = np.float64 if integer_data else np.result_type(samples.dtype, np.float64)
     result = np.empty(samples.shape, dtype=dtype)
     if integer_data:
@@ -559,7 +567,8 @@ def differentiate(
     coordinates = np.asarray(data_dict[dx])
     if coordinates.ndim != 1 or coordinates.size < 2:
         raise ValueError("Differentiation requires at least two axis coordinates.")
-    integer_coordinates = _integer_samples(coordinates) or _numeric_object_samples(coordinates)
+    integer_coordinates = (_integer_samples(coordinates, cancelled_callback)
+                           or _numeric_object_samples(coordinates, cancelled_callback))
     if integer_coordinates:
         spacing = _integer_differences(coordinates, cancelled_callback=cancelled_callback)
     else:
@@ -579,7 +588,8 @@ def differentiate(
         )
 
     _check_cancelled(cancelled_callback)
-    integer_data = _integer_samples(data) or _numeric_object_samples(data)
+    integer_data = (_integer_samples(data, cancelled_callback)
+                    or _numeric_object_samples(data, cancelled_callback))
     new_data = _gradient_with_integer_samples(
         data, coordinates, spacing, axis_num, integer_data,
         cancelled_callback=cancelled_callback,
@@ -611,6 +621,8 @@ def fill_heatmap(
         _check_cancelled(cancelled_callback)
         position = 0
         while position < len(line):
+            if position % 1024 == 0:
+                _check_cancelled(cancelled_callback)
             if not numeric_isnan(line[position]):
                 position += 1
                 continue

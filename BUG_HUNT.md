@@ -714,6 +714,73 @@ All Python commands use the project venv; Matplotlib cache is
   The delayed-GC probe now passes with finalization **1.07 ms** and no unrelated
   GC inside the measured interval. Full integration follows on this correction.
 
+### Integration validation at `42355f9`
+
+- Full suite: **4,931 passed, 44 skipped, 119 subtests passed**, 805.25 s.
+  The corrected finalizer test passes without changing its deadline or cleanup
+  assertions. Log: `/private/tmp/qplot-bug-hunt-final-clean-full.log`.
+  This run started before BH-028 edits and does not claim validation of that fix.
+- Ruff, mypy (**88 files**), actual qPlot startup/window/event-loop/normal exit,
+  rebuilt sdist/wheel inventory and `twine check` all pass. All **123 runtime
+  wheel files byte-match the source**. Sdist includes 204 test modules plus
+  conftest. Artifacts: `/private/tmp/qplot-bug-hunt-42355f9-dist`.
+
+### Fresh round 14 — not clean
+
+- UI/lifecycle: **81 passed**, including fresh actual-QCoDeS line and heatmap
+  compositions through mixed drops, appearance, resize/axis swap, refresh,
+  SVG export, source promotion and resource release.
+- Safety/native/packaging: **144 passed, two Windows-only skips**, plus fresh
+  live-QCoDeS settings/logging/export source-protection probes. Protected main,
+  WAL and journal identities, metadata and contents remained unchanged.
+- Measurement review found BH-028 below. Consecutive clean count resets to
+  **0**; fresh complete rounds resume after repair and independent review.
+
+### BH-028 — Long extraction and fill loops miss cancellation checks
+
+- Real current-QCoDeS int64 array heatmap at the normal 2,000,000-point limit,
+  with repeated coordinates, uses `general.data2matrix`'s exact duplicate mean.
+  Cancellation requested 28.6 ms into Fraction aggregation returned only at
+  1.455 s: **1.427 s after cancellation**, with no intermediate cancellation check.
+  The worker correctly avoids publication and source mutation, but responds late.
+- Reproduction: `/private/tmp/qplot_round14_duplicate_cancel_probe.py`;
+  output: `/private/tmp/qplot-round14-duplicate-cancel.log`.
+- The same-class audit confirmed normalization of two current-QCoDeS records
+  (1,000,000 int64 samples followed by 1,000,000 uint64 samples) spends 1.166 s
+  classifying the object array, despite cancellation requested at 35.5 ms.
+  Probe: `/private/tmp/qplot_round14_cancel_sweep.py`. Both paths preserve source
+  data and avoid publication, but delay cancellation.
+- Adjacent real-value classification has the same mixed-record defect:
+  cancellation at 35.4 ms returns at 1.106 s. An actual registered Fill Right
+  operation on a fully populated default-limit row returns 1.016 s after cancel;
+  its finite-sample loop polls only at row boundaries. Source data remains intact.
+  Logs: `/private/tmp/qplot-round14-cancel-classify.log` and
+  `/private/tmp/qplot-round14-fill-cancel.log`.
+- Duplicate aggregation now polls every 1,024 samples, preserving exact means
+  and Decimal CSV cells. **62 author tests and 41 independent checks pass**;
+  actual two-million-sample cancellation response improves to **18–22 ms**.
+- The registered `dz/dx` operation on the same mixed-record two-million-point
+  heatmap also delayed cancellation (26.4 ms request, 1.345 s return) in repeated
+  object/integer classification. Probe: `/private/tmp/qplot_round14_derivative_probe.py`.
+- Worker normalization and complex-value classification now poll every 1,024
+  samples. Independent review: **101 cases passed**; actual cancellation responses
+  are **0.45 ms and 0.43 ms**, with no publication or source mutation.
+- Object-coordinate conversion also spent 1.578 s sorting before its next
+  cancellation check. Exact per-sample conversion now proves the same existing
+  lossless-coordinate policy without that sort; dense numeric paths are unchanged.
+- All repairs are frozen and independently approved. Author tests: **75** for
+  aggregation/fill and **123** for worker/derivative paths. Independent batches:
+  **41** aggregation, **101** classification, **17** fill, **34** precision, and
+  **94** derivative/integration cases passed (batch counts may overlap).
+- Independent actual default-limit cancellation responses: **18.1 ms** duplicate
+  mean, **0.45 ms** normalization, **0.43 ms** classification, **0.47 ms** fill,
+  **0.50 ms** coordinate conversion and **0.12 ms** derivative. No partial result
+  was published; source measurements remained unchanged. Nine adversarial
+  coordinate comparisons confirmed identical baseline/fixed acceptance and values.
+- Coordinator Ruff, mypy, whitespace and actual qPlot startup/window/event-loop/
+  normal-exit checks pass. No native source changed. There are now **27 confirmed
+  repaired findings** (BH-001–026 and BH-028); BH-027 remains withdrawn.
+
 ### Numerical scope note
 
 - Float-only summation can differ from an exact rational oracle by one floating
@@ -736,14 +803,13 @@ All Python commands use the project venv; Matplotlib cache is
 
 ## Next tasks and continuation checkpoint
 
-1. All confirmed findings BH-001 through BH-026 are fixed and independently
-   reviewed; BH-027 was withdrawn after fresh evidence review.
-2. Run final full integration with the approved finalizer test correction.
-3. Finish round 14. Round 13 is complete and clean; clean-round count: **1**.
-   Any new actionable application defect resets that count.
-4. Finish final startup/distribution/static validation and draft PR/CI status.
-   No native source changed; the rebuilt native artifact already passed
-   architecture/ABI/package checks earlier in this campaign.
+1. BH-001–026 and BH-028 are fixed and independently reviewed; BH-027 was
+   withdrawn after fresh evidence review. Push the integrated cancellation batch.
+2. Finish final full integration, startup/static/distribution validation and CI.
+3. Complete fresh rounds 15 onward until two consecutive whole-application rounds
+   are clean. Round 14 found BH-028; clean-round count: **0**.
+4. Keep the PR draft. Do not merge or release. Native sources remain unchanged;
+   rebuilt native artifacts passed architecture/ABI/package checks earlier.
 
 Subchat usage limits interrupted BH-021 review. The user reported usage reset;
 all three final reviewers have been restarted with their existing file ownership.

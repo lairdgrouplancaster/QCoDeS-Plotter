@@ -763,6 +763,17 @@ class loader(QtCore.QRunnable):
         return acquired
 
 
+    def _any_object_sample(self, values, predicate):
+        """Inspect exact object cells without delaying a cancelled load."""
+        for index, value in enumerate(values.flat):
+            if index % 1024 == 0:
+                self._check_cancelled()
+            if predicate(value):
+                return True
+        self._check_cancelled()
+        return False
+
+
     def _normalise_array_records(self, data):
         """Flatten ragged QCoDeS records together, without touching the cache."""
 
@@ -774,7 +785,7 @@ class loader(QtCore.QRunnable):
         names = list(dict.fromkeys((self.param.name, *setpoints)))
         columns = [np.asarray(data[name]) for name in names]
         if not any(
-            column.dtype.kind == "O" and any(np.ndim(value) for value in column.flat)
+            column.dtype.kind == "O" and self._any_object_sample(column, np.ndim)
             for column in columns
         ):
             return data
@@ -1694,7 +1705,7 @@ class loader(QtCore.QRunnable):
 
         result = np.asarray(values)
         if np.iscomplexobj(result) or (
-            result.dtype.kind == "O" and any(np.iscomplexobj(value) for value in result.flat)
+            result.dtype.kind == "O" and self._any_object_sample(result, np.iscomplexobj)
         ):
             self._reject_complex_heatmap(
                 parameter_name,
@@ -1761,10 +1772,24 @@ class loader(QtCore.QRunnable):
         self._check_cancelled()
         values = np.asarray(values)
         if values.dtype.kind == "O":
-            values = np.frompyfunc(
-                lambda value: value.item() if isinstance(value, np.generic) else value,
-                1, 1,
-            )(values)
+            # Exact per-sample conversion also proves that distinct recorded
+            # positions cannot collapse. Avoid sorting the entire object array
+            # before cancellation can be observed on mixed QCoDeS records.
+            converted = np.empty(values.shape, dtype=float)
+            for index, original in enumerate(values.flat):
+                if index % 1024 == 0:
+                    self._check_cancelled()
+                original = original.item() if isinstance(original, np.generic) else original
+                display = float(original)
+                if np.isfinite(display) and original != display:
+                    raise ValueError(
+                        f"Heatmap coordinate precision is insufficient: parameter "
+                        f"'{parameter_name}' cannot be represented exactly as "
+                        "heatmap coordinates without rounding or merging distinct values."
+                    )
+                converted.flat[index] = display
+            self._check_cancelled()
+            return converted
         converted = np.asarray(values, dtype=float)
         if self._coordinate_conversion_may_round(values):
             unique = np.unique(values[numeric_isfinite(values)])
@@ -2321,7 +2346,7 @@ class loader(QtCore.QRunnable):
 
         result = np.asarray(values)
         if np.iscomplexobj(result) or (
-            result.dtype.kind == "O" and any(np.iscomplexobj(value) for value in result.flat)
+            result.dtype.kind == "O" and self._any_object_sample(result, np.iscomplexobj)
         ):
             self._reject_complex_line(parameter_name)
         return result
