@@ -26,7 +26,7 @@ from ._dragdrop import (
 )
 from ._help import add_help_menu
 from ._native_averaging import NativePlotItem, is_native_source_curve
-from ._native_transforms import native_fft_coordinate_error
+from ._native_transforms import LINE_DISPLAY_RANGE_MESSAGE, native_fft_coordinate_error
 from ._plot1d_snap import _line_snap_data
 from ._plot_annotation import PlotAnnotationMixin
 from ._plot_axis_scaling import (
@@ -681,12 +681,17 @@ class plotWidget(
                       and getattr(line, "_qplot_precision_error", None)), None)
         if error:
             self._qplot_native_precision_error_text = error
-            self.show_plot_state("Cannot display recorded distinctions", error, kind="error")
+            title = ("Unsupported line coordinate range" if error == LINE_DISPLAY_RANGE_MESSAGE
+                     else "Cannot display recorded distinctions")
+            self.show_plot_state(title, error, kind="error")
+            if self.__dict__.get("_qplot_native_fft_error_text"):
+                self.show_status(self._qplot_native_fft_error_text, 0)
         elif self.__dict__.get("_qplot_native_precision_error_text"):
             previous = self._qplot_native_precision_error_text
             self._qplot_native_precision_error_text = None
             overlay = self.plot_state_overlay
-            if (overlay.title_label.text() == "Cannot display recorded distinctions"
+            if (overlay.title_label.text() in {"Cannot display recorded distinctions",
+                                              "Unsupported line coordinate range"}
                     and overlay.detail_label.text() == previous):
                 overlay.hide()
                 if not self.__dict__.get("_qplot_native_fft_error_text"):
@@ -723,6 +728,7 @@ class plotWidget(
         if line is None or getattr(line, "_qplot_transform_label_handler", False):
             return
         line.sigPlotChanged.connect(self._native_transform_labels_changed)
+        line.sigDisplayChanged.connect(self._update_native_precision_status)
         line._qplot_transform_label_handler = True
 
     def _sync_native_trace_transforms(self, line):

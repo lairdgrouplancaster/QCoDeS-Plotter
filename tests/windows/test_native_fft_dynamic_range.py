@@ -112,7 +112,13 @@ def test_stored_dynamic_range_fft_native_control(
                 np.testing.assert_array_equal(current, recorded)
             np.testing.assert_array_equal(plot.worker.axis_data["y"], y)
         click_control(plot, "fftCheck")
-        np.testing.assert_array_equal(plot.line.getData()[1], y)
+        np.testing.assert_array_equal(plot.line.getOriginalDataset()[1], y)
+        if math.isfinite(float(np.max(y)) - float(np.min(y))):
+            np.testing.assert_array_equal(plot.line.getData()[1], y)
+        else:
+            assert plot.line.getData() == (None, None)
+            assert "coordinate range" in plot.plot_state_overlay.title_label.text()
+            assert plot.plot_state_overlay.frame.isVisible()
     finally:
         close_main_window(window)
     assert database_state(path) == protected

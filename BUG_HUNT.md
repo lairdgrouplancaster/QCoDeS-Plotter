@@ -464,7 +464,35 @@ All Python commands use the project venv; Matplotlib cache is
 - Final safety owns the focused line guard and regressions; final UI will
   independently review. Shared precision-helper changes are coordinated with
   BH-021's author. Raw samples/export and recovery through processing must remain
-  available. Repair and validation are in progress; no clean round is claimed.
+  available. The focused guard now preserves original/mapped data, checks settled
+  drawing transforms, disconnects on removal/reparenting and releases obsolete
+  bounds caches. Final UI independently approved **18 new regression cases**;
+  an earlier new-tests/averaging batch passed **55 tests** and the author's
+  broader native/precision/merge batch passed **197 tests**. Actual module
+  startup passed (visible window, active event loop, clean exit 0).
+- Broad measurement integration found eight existing FFT fixture assumptions
+  expecting extreme raw data to be drawable before enabling FFT. Those fixtures
+  are being updated to assert original-data preservation and explicit initial
+  rejection, retaining the actual transformed-results assertions. Three also
+  exposed status precedence: the range explanation masked the active FFT error.
+  The follow-up retains the range overlay and specific FFT status explanation.
+  Source and fixture adaptations are frozen for full integration. Final UI
+  independently approved the follow-up and **47 FFT cases**; spectrum assertions
+  remain intact. Ruff and configured mypy (88 files) pass.
+
+### Fresh round 9
+
+- Measurement/data interpretation/performance: final measurement; UI/lifecycle:
+  final UI; safety/native/packaging: final safety after FFT fixture integration.
+  Coordinator owns full integration, startup, distributions and CI. All areas
+  must finish against the combined fixes before the round can count as clean.
+- Independent measurement probes: 12 randomized real-QCoDeS ragged mixed-integer
+  heatmaps across initial/cache/buffered/streamed routes and 500
+  clipping/centering/nonuniform-derivative oracle pipelines passed. No new
+  actionable finding yet. Current consecutive clean-round count remains **0**.
+- UI/lifecycle portion complete with no new actionable bug: **193 tests passed**
+  covering mixed/source promotion, cuts, trusted-live interactions, delayed
+  refresh/cancellation, bounded shutdown, dialog ownership and free-cursor axes.
 
 ### Numerical scope note
 

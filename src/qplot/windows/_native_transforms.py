@@ -22,6 +22,11 @@ from ._display_precision import (
     float_display_loses_distinctions,
 )
 
+LINE_DISPLAY_RANGE_MESSAGE = (
+    "The line coordinate range cannot be displayed safely. "
+    "Recorded samples remain available for CSV export and processing."
+)
+
 
 def _safe_difference(values: np.ndarray) -> np.ndarray:
     """Subtract samples before narrowing arithmetic can overflow or wrap."""
@@ -249,6 +254,78 @@ class NativePlotDataItem(pg.PlotDataItem):
     _qplot_fft_error: str | None = None
     _qplot_precision_error: str | None = None
 
+    def clear(self):
+        self._qplot_range_dataset = None
+        super().clear()
+
+    def viewChanged(self, view, oldView):
+        super().viewChanged(view, oldView)
+        self._watch_display_range(view if isinstance(view, pg.ViewBox) else None)
+
+    def _watch_display_range(self, viewbox):
+        prior = getattr(self, "_qplot_range_viewbox", None)
+        if prior is viewbox:
+            return
+        if prior is not None:
+            try:
+                prior.sigTransformChanged.disconnect(self._schedule_display_range_check)
+            except (RuntimeError, TypeError):
+                pass
+        self._qplot_range_viewbox = viewbox
+        timer = getattr(self, "_qplot_range_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._qplot_view_range_rejected = False
+        if viewbox is not None:
+            if not hasattr(self, "_qplot_range_timer"):
+                self._qplot_range_timer = QtCore.QTimer(self)
+                self._qplot_range_timer.setSingleShot(True)
+                self._qplot_range_timer.timeout.connect(self._check_display_range)
+            viewbox.sigTransformChanged.connect(self._schedule_display_range_check)
+            self._schedule_display_range_check()
+
+    def _schedule_display_range_check(self, *_args):
+        if not self._qplot_range_timer.isActive():
+            self._qplot_range_timer.start(0)
+
+    def _check_display_range(self):
+        # Mixed plots finish mirroring their axis owners after range signals.
+        # Inspect the composed drawing transform on the next event-loop turn.
+        if not isinstance(self.getViewBox(), pg.ViewBox):
+            return
+        transform = self.sceneTransform()
+        previous = self._qplot_precision_error
+        self._qplot_view_range_rejected = not bool(np.all(np.isfinite((
+            transform.m11(), transform.m12(), transform.m13(),
+            transform.m21(), transform.m22(), transform.m23(),
+            transform.m31(), transform.m32(), transform.m33(),
+        ))))
+        self._getDisplayDataset()
+        if previous != self._qplot_precision_error:
+            self.updateItems(styleUpdate=False)
+            self.sigDisplayChanged.emit(self)
+
+    def _mapped_range_is_displayable(self, dataset, viewbox):
+        # Cache extrema with the mapped dataset, not the viewport. Resizing
+        # and mouse movement must not repeatedly scan a large acquired trace.
+        if getattr(self, "_qplot_range_dataset", None) is not dataset:
+            x, y = dataset.x, dataset.y
+            if x.shape == y.shape:
+                paired = numeric_isfinite(x) & numeric_isfinite(y)
+                x, y = x[paired], y[paired]
+            span_values = []
+            for values in (x, y):
+                numeric = np.asarray(values, dtype=float)
+                finite = numeric[np.isfinite(numeric)]
+                span_values.append(float(np.max(finite)) - float(np.min(finite)) if finite.size else 0.)
+            self._qplot_range_spans = np.asarray(span_values)
+            self._qplot_range_dataset = dataset
+        spans = self._qplot_range_spans
+        pixels = np.array([max(1., viewbox.width()), max(1., viewbox.height())])
+        with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+            return bool(np.all(np.isfinite(spans))
+                        and np.all(np.isfinite(pixels[spans > 0] / spans[spans > 0])))
+
     def viewRangeChanged(self, vb=None, ranges=None, changed=None):
         super().viewRangeChanged(vb, ranges, changed)
         self.sigDisplayChanged.emit(self)
@@ -373,6 +450,29 @@ class NativePlotDataItem(pg.PlotDataItem):
         return frequencies, magnitudes
 
     def _getDisplayDataset(self) -> PlotDataset | None:
+        if self._datasetMapped is None:
+            # New data or processing can restore a representable range. Let
+            # native autorange consume those bounds before settled validation.
+            self._qplot_view_range_rejected = False
+        if self._qplot_precision_error == LINE_DISPLAY_RANGE_MESSAGE:
+            self._qplot_precision_error = None
+        dataset = self._get_mapped_display_dataset()
+        if getattr(self, "_qplot_range_dataset", None) is not self._datasetMapped:
+            self._qplot_range_dataset = None
+        viewbox = self.getViewBox()
+        if not isinstance(viewbox, pg.ViewBox):
+            viewbox = None
+        self._watch_display_range(viewbox)
+        if dataset is None or viewbox is None or self._qplot_precision_error:
+            return dataset
+        mapped = self._datasetMapped
+        if (getattr(self, "_qplot_view_range_rejected", False)
+                or (mapped is not None and not self._mapped_range_is_displayable(mapped, viewbox))):
+            self._qplot_precision_error = LINE_DISPLAY_RANGE_MESSAGE
+            return None
+        return dataset
+
+    def _get_mapped_display_dataset(self) -> PlotDataset | None:
         # Isolate the private PyQtGraph mapping hook here. Seed only the mapped
         # cache; upstream still owns log scaling, clipping, downsampling, curve
         # updates and cache invalidation through its ordinary native setters.
