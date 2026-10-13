@@ -58,7 +58,15 @@ def test_config_fifo_uses_defaults_without_blocking_or_modifying_source(tmp_path
     os.mkfifo(fifo)
     if symlink:
         settings.symlink_to(fifo)
-    before = {entry.name: entry.lstat() for entry in settings_directory.iterdir()}
+    def artifact_state():
+        # Resolving a symlink may update its access time on Linux. Identity,
+        # permissions, contents and modification/change times must stay intact.
+        fields = ("st_mode", "st_ino", "st_dev", "st_nlink", "st_uid", "st_gid",
+                  "st_size", "st_mtime_ns", "st_ctime_ns")
+        return {entry.name: tuple(getattr(entry.lstat(), field) for field in fields)
+                for entry in settings_directory.iterdir()}
+
+    before = artifact_state()
 
     result = subprocess.run(
         [sys.executable, "-c", """
@@ -76,6 +84,8 @@ assert "Could not read configuration" in recovered.startup_warning
         capture_output=True, text=True, timeout=15,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert {entry.name: entry.lstat() for entry in settings_directory.iterdir()} == before
+    assert artifact_state() == before
     assert fifo.is_fifo()
     assert settings.is_symlink() == symlink
+    if symlink:
+        assert os.readlink(settings) == str(fifo)
