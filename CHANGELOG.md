@@ -2,15 +2,20 @@
 
 All notable user-facing changes are recorded here.
 
-Historical releases used GitHub source tags. The prepared split beta uses the
-PyPI distributions `qplotter` and `qplotter-native`; publication requires the
-release workflow and its validation gates. See `docs/distribution.md`.
+## 1.6.0
 
-## Unreleased
+### Highlights ###
 
-## 1.6.0 - Unreleased
+- More improvements in handling large databases and datasets.
+- Multiple heatmaps and traces can share the same plot window.
+- Program now installs as a PyPi distribution for the first time, instead of via GitHub source tags.
+- Numerous small improvements to the UI.
+- Numerous bugs found by Codex Astra have been fixed. In particular, Codex now claims to rigorously enforce the rule that the database will never be modified by `qplot`. After about 30 rounds of automated bug searches, the last two rounds uncovered no bugs.
+- To implement this database safety, the installation contains a small C extension 'qplotter-native' for reading live databases through SQLite.
 
-### Highlights since 1.5.0
+### Main changes since 1.5.0
+
+(Everything in this section is AI-generated)
 
 - Read supported local QCoDeS databases live without copying the whole
   database. Main database, WAL, and rollback-journal handles remain physically
