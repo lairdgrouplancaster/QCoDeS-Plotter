@@ -641,9 +641,16 @@ All Python commands use the project venv; Matplotlib cache is
   marquee context-menu path: **4.705 s before the menu exists**, compared with
   1.068 s for the float control. Integer mean and standard deviation convert each
   sample through Fraction; direct measurements attribute 1.298 s and 1.899 s.
-- Final measurement owns exact integer/mixed fast paths and meaningful
-  correctness/performance regressions; final safety independently reviews.
-  Probe: `/private/tmp/qplot_round12_stats_probe.py`. No source artifact changes.
+- Exact bounded integer sums and common binary denominators remove per-cell
+  Fraction allocation while preserving integer endpoints and mixed residuals.
+  Same-process million-point menu timing improved from **3.330 to 0.319 s**
+  for int64, **3.031 to 0.790 s** for mixed integer/float, and **2.377 to
+  0.596 s** for mixed signed/unsigned records. Source samples remain unchanged.
+- Ten new real-QCoDeS, exactness and bounded-cancellation regressions pass.
+  Author validation: **89 passed**; independent final-safety review: **64
+  distinct cases passed**, including fresh exact rational oracles. Ruff, mypy,
+  whitespace checks and actual qPlot startup pass. No native source changed.
+  Probe: `/private/tmp/qplot_round12_stats_probe.py`.
 
 ### BH-027 — Print dialogs survive completed print attempts
 
@@ -679,15 +686,13 @@ All Python commands use the project venv; Matplotlib cache is
 
 ## Next tasks and continuation checkpoint
 
-1. Finish independent review of constant-data Auto recovery (BH-022 follow-up).
-   Local committed head: `bb170bc`; last pushed revision: `1798979`. BH-024
-   cancellation fix is committed and independently approved.
-2. Rerun full integration with that recovery fix and BH-024. The prior 22
-   failures are resolved; the latest full suite has only the reproduced
-   constant-Auto recovery failure (4,898 other tests passed).
-3. Complete fresh rounds 12 onward until two consecutive complete rounds find
-   no actionable bugs. Round 10 was clean; round 11 found BH-024. Count: **0**.
-4. Finish final automated tests, actual qPlot startup, distribution checks and
+1. All confirmed findings BH-001 through BH-027 are fixed and independently
+   reviewed. Integrate the final statistics fix and push the dedicated branch.
+2. Finish the full suite started at `ecd2a9b`; report its scope accurately.
+   Revalidate final print/statistics integration and distribution artifacts.
+3. Complete fresh rounds 13 onward until two consecutive complete rounds find
+   no actionable bugs. Round 12 found BH-026/BH-027; clean-round count: **0**.
+4. Finish automated tests, actual qPlot startup, distribution checks and
    draft PR/CI status. No native source changed; rebuilt native artifact already
    passed architecture/ABI/package checks earlier in this campaign.
 
