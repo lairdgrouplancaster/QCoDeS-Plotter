@@ -652,17 +652,38 @@ All Python commands use the project venv; Matplotlib cache is
   whitespace checks and actual qPlot startup pass. No native source changed.
   Probe: `/private/tmp/qplot_round12_stats_probe.py`.
 
-### BH-027 — Print dialogs survive completed print attempts
+### BH-027 — Withdrawn: mocked print-dialog lifetime false positive
 
-- Actual QPrintDialog instances parented to a real QCoDeS plot remain after
-  cancelled calls and DeferredDelete processing: 1, 2, then 3 dialogs after
-  three attempts. Only the native modal result is substituted for the offscreen
-  probe. The print workflow lacks dialog deletion after cancel/success/error.
-- Final UI owns narrow finally cleanup and QObject lifetime regressions;
-  final safety independently approved. Printer/rendering behavior is preserved.
-  **25 print tests and 10 subtests passed**, including five new QObject lifetime
-  cases, with cleanup after rendering and handling already-deleted wrappers.
-  Ruff, mypy, whitespace and actual qPlot startup checks pass.
+- The initial reproduction replaced `QPrintDialog.exec` with a result stub.
+  That left parent-owned dialogs alive, but bypassed real PyQt ownership behavior.
+- Fresh round 13 independently challenged this evidence. The installed PyQt
+  `QtPrintSupport/qprintdialog.sip` calls `sipTransferBack(sipSelf)` before the
+  native modal loop, returning ownership to Python so the dialog is destroyed
+  when its wrapper is released. Actual generic modal-dialog cycles confirmed
+  automatic destruction; native print execution is unsupported offscreen.
+- The author and independent reviewer withdrew the finding and approval. The
+  speculative cleanup and its mocked-only regressions are reverted. There are
+  **26 confirmed repaired defects**, not 27; this identifier is retained solely
+  to document the evidence correction. No manual printer test is required to
+  justify an unrelated change.
+
+### Final integration checkpoint at `28ae787`
+
+- All 26 confirmed fixes are committed and independently approved; BH-027 is
+  withdrawn as recorded above. Dedicated
+  branch pushed; draft PR #84 remains open and unmerged.
+- Full run started at `ecd2a9b`: **4,920 passed, 44 skipped, 119 subtests passed**;
+  one partial-frame helper-finalizer timing failure (6.77 s against 5 s bound)
+  is under investigation. This run does not claim full coverage of the subsequent
+  print/statistics commits. Log: `/private/tmp/qplot-bug-hunt-ecd2a9b-full.log`.
+- Final-code Ruff and mypy (**88 files**) pass. Actual `python -m qplot`
+  starts, shows its window, runs the Qt event loop and exits normally (**0**).
+- Rebuilt application sdist and wheel pass source/runtime inventory validation
+  and `twine check`: **367 sdist files, 205 test modules plus conftest; 129 wheel
+  files, 123 runtime files**. Artifacts: `/private/tmp/qplot-bug-hunt-28ae787-dist`.
+- Fresh independent round 13 is underway with rotated ownership: measurement
+  subchat covers safety/native/packaging, safety subchat covers UI/lifecycle,
+  and UI subchat covers measurement/results/performance.
 
 ### Numerical scope note
 
@@ -686,12 +707,12 @@ All Python commands use the project venv; Matplotlib cache is
 
 ## Next tasks and continuation checkpoint
 
-1. All confirmed findings BH-001 through BH-027 are fixed and independently
-   reviewed. Integrate the final statistics fix and push the dedicated branch.
+1. All confirmed findings BH-001 through BH-026 are fixed and independently
+   reviewed; BH-027 was withdrawn after fresh evidence review. Integrate the final statistics fix and push the dedicated branch.
 2. Finish the full suite started at `ecd2a9b`; report its scope accurately.
    Revalidate final print/statistics integration and distribution artifacts.
 3. Complete fresh rounds 13 onward until two consecutive complete rounds find
-   no actionable bugs. Round 12 found BH-026/BH-027; clean-round count: **0**.
+   no actionable bugs. Round 12 found BH-026; clean-round count: **0**.
 4. Finish automated tests, actual qPlot startup, distribution checks and
    draft PR/CI status. No native source changed; rebuilt native artifact already
    passed architecture/ABI/package checks earlier in this campaign.
