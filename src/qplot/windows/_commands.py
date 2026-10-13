@@ -290,34 +290,34 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "plot.toggle_operations": CommandSpec(
         "plot.toggle_operations",
-        "View Operations",
-        "Show or hide the operations panel",
+        "View data operations",
+        "Show or hide the data operations panel",
     ),
     "toolbar.refresh": CommandSpec(
         "toolbar.refresh",
-        "Refresh Timer",
-        "Show or hide the refresh toolbar",
+        "Refresh and status",
+        "Show or hide the refresh and status toolbar",
         "Ctrl+Alt+R",
         help_section="Plot Windows",
     ),
     "toolbar.coordinates": CommandSpec(
         "toolbar.coordinates",
-        "Co-ordinates",
-        "Show or hide the coordinate toolbar",
+        "Coordinates",
+        "Show or hide the coordinates toolbar",
         "Ctrl+Alt+C",
         help_section="Plot Windows",
     ),
     "toolbar.axis_control": CommandSpec(
         "toolbar.axis_control",
-        "Data axes",
-        "Show or hide the data-axis panel",
+        "Cut controls",
+        "Show or hide the cut controls panel",
         "Ctrl+Alt+A",
         help_section="Plot Windows",
     ),
     "toolbar.operations": CommandSpec(
         "toolbar.operations",
-        "Operations",
-        "Show or hide the operations dock",
+        "Data operations",
+        "Show or hide the data operations panel",
         "Ctrl+Alt+O",
         help_section="Plot Windows",
     ),
@@ -393,10 +393,10 @@ def toolbar_toggle_command_spec(title: str) -> CommandSpec | None:
 
     """
     by_title = {
-        "Refresh Timer": "toolbar.refresh",
-        "Co-ordinates": "toolbar.coordinates",
-        "Data axes": "toolbar.axis_control",
-        "Operations": "toolbar.operations",
+        "Refresh and status": "toolbar.refresh",
+        "Coordinates": "toolbar.coordinates",
+        "Cut controls": "toolbar.axis_control",
+        "Data operations": "toolbar.operations",
     }
     command_id = by_title.get(title)
     if command_id is None:

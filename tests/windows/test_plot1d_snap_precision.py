@@ -228,8 +228,8 @@ def test_real_ghz_plot_toolbar_and_marker_follow_pointer(ghz_plot, method, logar
                 window.plot.scene().sigMouseMoved.emit(point)
                 assert window.pos_labels["index"].text() == f"[{index}]"
                 assert f"snapped to point {index})" in window.trace_label.text()
-                assert window.pos_labels["x"].text() == f"x = {window.formatNum(raw_x[index])};"
-                assert window.pos_labels["y"].text() == f"y = {window.formatNum(raw_y[index])}"
+                assert window.pos_labels["x"].text() == f"x = {window.format_cursor_number(raw_x[index])}"
+                assert window.pos_labels["y"].text() == f"y = {window.format_cursor_number(raw_y[index])}"
                 assert window._snap_marker_view is owner
                 np.testing.assert_array_equal(window.snap_marker.getData(), [[x[index]], [y[index]]])
 

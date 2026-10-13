@@ -1,12 +1,14 @@
 """Closing real QCoDeS plots also closes their owned editors."""
 
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from PyQt6 import QtCore
+from PyQt6 import QtCore, sip
 from PyQt6 import QtWidgets as qtw
 
+from qplot.datahandling.plot_progress import PlotProgress
 from qplot.diagnostics import configure_logging
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
@@ -78,6 +80,31 @@ def dialog_plot(tmp_path, monkeypatch, request, qapplication):
         _assert_reader_artifact_invariant(database, original)
 
 
+@pytest.mark.parametrize("dialog_plot", ["line"], indirect=True)
+def test_hidden_source_deletion_releases_canvas_and_progress_timer(dialog_plot):
+    window, _plot, app, guids = dialog_plot
+    count = len(window.windows)
+    window.openPlot(guid=guids[1], show=False)
+    wait_for(lambda: len(window.windows) > count)
+    source = window.windows[-1]
+    wait_for(lambda: hasattr(source, "axis_data") and not source.worker.running)
+    source.monitor.stop()
+    assert not source.visible
+    overlay = source.plot_state_overlay
+    overlay.track(SimpleNamespace(
+        progress=PlotProgress("Reading hidden source", 1, 2),
+        is_cancelled=lambda: False,
+    ))
+    assert overlay.progress_timer.isActive()
+    owned = (source, source.widget, overlay, overlay.progress_timer,
+             source.plot_status, overlay.elapsed_label)
+    source.close()
+    source.deleteLater()
+    app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    app.processEvents()
+    assert all(sip.isdeleted(item) for item in owned)
+
+
 @pytest.mark.parametrize("dialog_plot,editor", [
     ("heatmap", "appearance"),
     ("heatmap", "color_scale"),
@@ -87,8 +114,8 @@ def dialog_plot(tmp_path, monkeypatch, request, qapplication):
 def test_plot_close_closes_owned_editor(dialog_plot, editor):
     window, plot, app, _guids = dialog_plot
     if editor == "appearance":
-        plot.heatmap_appearance_action.trigger()
-        dialog = plot._heatmap_appearance_dialog
+        plot.appearance_action.trigger()
+        dialog = plot._plot_appearance_dialog
     elif editor == "color_scale":
         plot.colorbar_scale_action.trigger()
         dialog = plot.colorbar_scale_dialog
@@ -148,7 +175,7 @@ def test_cut_close_closes_axis_scale_editor(dialog_plot):
 @pytest.mark.parametrize("close_action", ["database", "application"])
 def test_database_or_application_close_closes_plot_editors(dialog_plot, close_action):
     window, plot, app, _guids = dialog_plot
-    plot.heatmap_appearance_action.trigger()
+    plot.appearance_action.trigger()
     plot.colorbar_scale_action.trigger()
     plot.open_axis_scale_dialog("Bottom")
     dialogs = [plot._heatmap_appearance_dialog, plot.colorbar_scale_dialog, plot._axis_scale_dialog]

@@ -3,13 +3,16 @@ import threading
 from types import SimpleNamespace
 
 import pytest
-from PyQt6 import QtWidgets
+from PyQt6 import QtCore, QtGui, QtTest, QtWidgets
 
 from qplot.configuration.config import config
 from qplot.datahandling import trusted_plot
 from qplot.datahandling.plot_progress import PlotProgress
+from qplot.windows._plot_feedback import PlotWindowFeedbackMixin
 from qplot.windows._plot_refresh import PlotRefreshMixin
 from qplot.windows._plot_state import PlotStateOverlay
+from qplot.windows._plot_status import PlotStatusWidget
+from qplot.windows._plotWin import plotWidget
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
 from tests.datahandling.test_trusted_plot import make_run, prohibit_snapshots
@@ -20,12 +23,29 @@ def worker(progress):
     return SimpleNamespace(progress=progress, is_cancelled=lambda: False)
 
 
+def test_toolbar_status_reserves_visible_right_padding(qapplication):
+    status = PlotStatusWidget()
+    status.resize(600, 40)
+    status.show()
+    try:
+        for progress in (False, True):
+            if progress:
+                status.start_progress()
+            else:
+                status.show_message("Loaded points.")
+            qapplication.processEvents()
+            displayed = status.stack.currentWidget()
+            assert status.width() - (displayed.x() + displayed.width()) == 16
+    finally:
+        status.close()
+
+
 def test_stage_progress_unknown_work_and_stale_completion(qapplication, monkeypatch):
     clock = [100.0]
     monkeypatch.setattr('qplot.windows._plot_state.perf_counter', lambda: clock[0])
     widget = QtWidgets.QWidget()
     widget.resize(600, 400)
-    overlay = PlotStateOverlay(widget)
+    overlay = PlotStateOverlay(widget, PlotStatusWidget(widget))
     first = worker(PlotProgress('Scanning coordinates', 25, 100))
     first.started_at = 98.0  # Include time spent queued before tracking began.
     second = worker(PlotProgress('Processing plot data', stage=2))
@@ -34,29 +54,35 @@ def test_stage_progress_unknown_work_and_stale_completion(qapplication, monkeypa
         overlay.track(first)
         assert overlay.progress_bar.value() == 250
         assert overlay.progress_bar.maximum() == 1000
-        assert overlay.progress_bar.format() == '%p% of scan'
+        assert overlay.progress_bar.format() == '%p%'
         assert overlay.detail_label.text() == 'Stage 1/2: Scanning coordinates'
+        assert overlay.feedback.stage_label.text() == 'Stage 1/2'
+        assert 'Scanning coordinates' in overlay.feedback.progress_panel.toolTip()
+        assert '25 / 100 (scan)' in overlay.feedback.progress_panel.toolTip()
+        assert overlay.frame.isHidden()
         assert overlay.progress_timer.isActive()
-        assert overlay.elapsed_label.text() == 'Elapsed: 2s'
+        assert overlay.elapsed_label.text() == '2s'
         clock[0] = 163.0
         overlay._poll_progress()  # Elapsed time advances even without new progress.
-        assert overlay.elapsed_label.text() == 'Elapsed: 1m 05s'
+        assert overlay.elapsed_label.text() == '1m 05s'
         first.progress = PlotProgress('Building heatmap', 50, 100, stage=2)
         overlay._poll_progress()
-        assert overlay.elapsed_label.text() == 'Elapsed: 1m 05s'
+        assert overlay.elapsed_label.text() == '1m 05s'
         overlay.track(second)
-        assert overlay.elapsed_label.text() == 'Elapsed: 0s'
+        assert overlay.elapsed_label.text() == '0s'
         overlay.finish(first)
         assert overlay._worker is second
+        assert overlay.feedback.stack.currentWidget() is overlay.feedback.progress_panel
         assert overlay.detail_label.text() == 'Stage 2/2: Processing plot data'
         assert overlay.progress_bar.maximum() == 0
         overlay.rendering(second)
         assert overlay.detail_label.text() == 'Stage 2/2: Rendering plot'
         clock[0] += 3661
         overlay._poll_progress()
-        assert overlay.elapsed_label.text() == 'Elapsed: 1h 01m 01s'
+        assert overlay.elapsed_label.text() == '1h 01m 01s'
         assert overlay.detail_label.text() == 'Stage 2/2: Rendering plot'
         overlay.finish(second)
+        assert overlay.feedback.message == 'Plot load complete.'
         assert overlay.frame.isHidden()
         assert overlay.elapsed_label.isHidden()
         assert not overlay.progress_timer.isActive()
@@ -66,7 +92,7 @@ def test_stage_progress_unknown_work_and_stale_completion(qapplication, monkeypa
 
 def test_cancel_error_and_close_stop_progress(qapplication):
     widget = QtWidgets.QWidget()
-    overlay = PlotStateOverlay(widget)
+    overlay = PlotStateOverlay(widget, PlotStatusWidget(widget))
     current = worker(PlotProgress('Reading plot data', 10, 100))
     try:
         overlay.show('Loading measurement', kind='loading')
@@ -74,6 +100,7 @@ def test_cancel_error_and_close_stop_progress(qapplication):
         current.is_cancelled = lambda: True
         overlay._poll_progress()
         assert overlay.title_label.text() == 'Plot load cancelled'
+        assert overlay.feedback.message == 'Plot load cancelled'
         assert overlay.progress_bar.isHidden()
         assert overlay.elapsed_label.isHidden()
         assert not overlay.progress_timer.isActive()
@@ -85,6 +112,7 @@ def test_cancel_error_and_close_stop_progress(qapplication):
         overlay.show('Source changed', kind='error')
         overlay.finish(current)
         assert overlay.title_label.text() == 'Source changed'
+        assert overlay.feedback.message == 'Source changed'
         assert not overlay.progress_timer.isActive()
         overlay.show('Loading measurement', kind='loading')
         overlay.track(current)
@@ -144,15 +172,36 @@ def test_real_plot_keeps_progress_until_display_commit(tmp_path, monkeypatch, di
         window.openPlot(guid, show=True)
         wait_for(lambda: reached.is_set() and window.windows)
         plot = window.windows[-1]
+        plot.resize(1000, 600)
+        qapplication = QtWidgets.QApplication.instance()
+        qapplication.processEvents()
         overlay = plot.plot_state_overlay
+        assert plot.toolbarRef.isVisible()  # This fixture is a completed run.
+        assert plot.toolbarRef.actions()[-1] is plot.plotStatusAction
+        assert plot.plot_status.parentWidget() is plot.toolbarRef
+        assert plot.findChildren(QtWidgets.QStatusBar) == []
         wait_for(lambda: overlay.progress_bar.maximum() == 1000 and overlay.progress_bar.value() > 0)
         assert 0 < overlay.progress_bar.value() < 1000
         assert overlay.detail_label.text().startswith('Stage 1/2: Reading ')
         assert plot.worker.running
+        assert overlay.frame.isHidden()
+        assert plot.plot_status.progress_panel.isVisible()
+        plot.toolbarRef.toggleViewAction().trigger()
+        assert plot.toolbarRef.isHidden()
+        overlay._poll_progress()
+        assert plot.toolbarRef.isHidden()
         release.set()
         wait_for(lambda: not plot.worker.running)
         assert committed == [plot.worker]
         assert overlay.frame.isHidden() and not overlay.progress_timer.isActive()
+        assert plot.toolbarRef.isHidden()
+        plot.toolbarRef.toggleViewAction().trigger()
+        assert plot.plot_status.status_label.isVisible()
+        expected_points = 12 if dimensions == 2 or arrays else 3
+        assert plot.plot_status.message.startswith(f'Loaded {expected_points:,} points for z in ')
+        QtWidgets.QApplication.sendEvent(plot, QtGui.QStatusTipEvent('Menu hint'))
+        assert plot.findChildren(QtWidgets.QStatusBar) == []
+        assert plot.plot_status.message.startswith(f'Loaded {expected_points:,} points for z in ')
 
         # A renderer exception must also remove the busy indicator; exercise
         # the concrete callback directly so the exception stays in this test.
@@ -172,3 +221,47 @@ def test_real_plot_keeps_progress_until_display_commit(tmp_path, monkeypatch, di
     finally:
         release.set()
         close_main_window(window)
+
+
+def test_toolbar_messages_persist_and_fit_narrow_windows(qapplication):
+    class Window(PlotWindowFeedbackMixin, QtWidgets.QMainWindow):
+        visible = True
+        monitorIntervalChanged = lambda *args: None
+        refreshWindow = lambda *args: None
+
+    window = Window()
+    window.monitor = QtCore.QTimer(window)
+    plotWidget.initRefresh(window, 1.0)
+    feedback = window.plot_status
+    overlay = PlotStateOverlay(window, feedback)
+    message = 'Loaded 135,751 points for a measurement with a very long name in 0.08 seconds.'
+    try:
+        window.resize(550, 120)
+        window.show()
+        window.show_status(message, timeout=1)
+        QtTest.QTest.qWait(20)
+        assert feedback.message == message
+        assert feedback.status_label.toolTip().startswith(message + '\nCreated: ')
+        assert feedback.status_label.width() < feedback.status_label.fontMetrics().horizontalAdvance(message)
+        assert feedback.isVisible() and window.spinBox.isVisible()
+        assert feedback.geometry().left() > window.spinBox.geometry().right()
+        assert window.width() == 550
+
+        current = worker(PlotProgress('Reading coordinates', 1, 10))
+        overlay.show('Loading measurement', kind='loading')
+        overlay.track(current)
+        assert feedback.message == ''  # Do not resurrect the previous load's message.
+        assert feedback.stack.currentWidget() is feedback.progress_panel
+        window.show_status('A new message', timeout=1)
+        assert feedback.stack.currentWidget() is feedback.status_label
+        overlay.rendering(current)
+        assert feedback.stack.currentWidget() is feedback.progress_panel
+        window.show_status('Loaded new data', timeout=1)
+        overlay.finish(current)
+        QtTest.QTest.qWait(20)
+        assert feedback.message == 'Loaded new data'
+        assert feedback.stack.currentWidget() is feedback.status_label
+        assert window.findChildren(QtWidgets.QStatusBar) == []
+    finally:
+        overlay.hide()
+        window.close()

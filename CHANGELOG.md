@@ -12,6 +12,16 @@ release workflow and its validation gates. See `docs/distribution.md`.
 
 ### Added
 
+- Combine line traces and heatmaps in one plot, with axis-aware preview drops
+  and a shared Appearance dialog. Removing the original dataset promotes a
+  remaining source while retaining the plot's appearance and state.
+- Identify plotted databases, run IDs, and parameters in a shaded annotation
+  strip included in exports. A saved Show source annotation preference controls
+  visibility and is enabled by default.
+- Add saved plot-tiling and cursor-precision preferences, and limit the graph
+  font-size preference to graph text.
+- Add Help -> About qPlot with the running version, source commit and local
+  changes, plus commit and PR provenance in CI-built application packages.
 - Split pure-Python application distribution `qplotter` from native reader
   distribution `qplotter-native`, retaining the qPlot name, `qplot` imports and
   commands. Ordinary and editable application installation use prebuilt native
@@ -22,6 +32,9 @@ release workflow and its validation gates. See `docs/distribution.md`.
 
 ### Changed
 
+- Consolidate plot feedback and loading progress in the refresh toolbar, with
+  accurate initial point counts and stable cursor readouts.
+- Clarify refresh controls and incompatible-axis confirmations.
 - Load and refresh explicit plots through the trusted, physically read-only
   reader without copying the whole database. Small runs can open while a large
   run is loading, including with a single processing thread.
@@ -32,6 +45,13 @@ release workflow and its validation gates. See `docs/distribution.md`.
 - Clarify full-resolution and downsampled heatmap dimensions, explaining when
   exact source dimensions are not retained during downsampling. Right-align
   resolution information while keeping cursor coordinates left-aligned.
+
+### Fixed
+
+- Preserve coordinate ownership, drawing order, native transforms, and specific
+  FFT validation messages when combining or replacing plot sources.
+- Stabilize GUI test waits and release plot windows and background workers
+  during teardown.
 
 ## 1.6.0b1 - 2026-09-28
 

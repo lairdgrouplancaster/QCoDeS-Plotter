@@ -15,8 +15,7 @@ from qplot.tools.heatmap_geometry import (
 
 from . import _colorbar
 from ._commands import command_spec, create_action
-from ._plot2d_colorbar import Plot2DColorbarMixin
-from ._plot2d_layers import Plot2DLayerMixin
+from ._mixed_plots import MixedPlotMixin
 from ._plot2d_sweeps import Plot2DSweepMixin
 from ._plot_axis_scaling import _install_flush_axis_draw_specs
 from ._plotWin import plotWidget
@@ -28,8 +27,7 @@ _HEATMAP_VIEW_RELOAD_MIN_FRACTION = 0.95
 
 class plot2d(
         Plot2DSweepMixin,
-        Plot2DColorbarMixin,
-        Plot2DLayerMixin,
+        MixedPlotMixin,
         plotWidget,
         ):
     """
@@ -43,6 +41,7 @@ class plot2d(
         
     """
     operation_kind = "plot2d"
+    get_mergables = QtCore.pyqtSignal()
     open_subplot = QtCore.pyqtSignal([object, object, tuple])
     sweep_moved = QtCore.pyqtSignal([int, float])
     close_sweeps_requested = QtCore.pyqtSignal([object, object])
@@ -60,6 +59,12 @@ class plot2d(
         self.__dict__["_colorbar_manual_levels"] = None
 
         
+    def initAxes(self) -> None:
+        """Keep axis-selection state; expose swaps through Appearance."""
+        super().initAxes()
+        self.axes_dock.toggleViewAction().setVisible(False)
+
+
     def initFrame(self) -> None:
         """
         Sets up the initial plot and starting data.
@@ -265,15 +270,11 @@ class plot2d(
     def initRefresh(self, refresh: Any) -> None:
         super().initRefresh(refresh)
         
-        self.toolbarRef.addSeparator()
-        self.toolbarRef.addWidget(qtw.QLabel("On refresh:  "))
-        
-        self.toolbarRef.addWidget(qtw.QLabel("Re-Map Colors "))
-        
-        self.relevel_refresh = qtw.QCheckBox()
+        self.relevel_refresh = qtw.QCheckBox("Autoscale colors on refresh")
         self.relevel_refresh.setToolTip("Autoscale the heatmap colour range on each refresh")
         self.relevel_refresh.toggled.connect(self._colorbar_auto_refresh_changed)
-        self.toolbarRef.addWidget(self.relevel_refresh)
+        self.toolbarRef.insertWidget(self.plotStatusAction, self.relevel_refresh)
+        self.toolbarRef.insertSeparator(self.plotStatusAction)
      
     
     def initContextMenu(self) -> None:
@@ -325,11 +326,10 @@ class plot2d(
         self._install_plot_control_view_range_preserver()
         self.__dict__["z_index"] = None
         
-        self.pos_labels["y"].setText(self.pos_labels["y"].text() + ";")
-        
         posLabelx = qtw.QLabel("z= ")
         self.toolbarCo_ord.addWidget(posLabelx)
         self.pos_labels["z"] = posLabelx
+        self.apply_cursor_label_widths()
         self._init_heatmap_downsample_warning_button()
         
 ###############################################################################
@@ -371,6 +371,7 @@ class plot2d(
                 return
             self._update_large_heatmap_state(plot_worker)
             self.refresh_secondary_heatmaps()
+            self.refresh_secondary_lines()
             if not self._refresh_publication_source_is_current(
                     plot_worker,
                     clear_display=clear_display,

@@ -28,6 +28,7 @@ from ._help import add_help_menu
 from ._native_averaging import NativePlotItem, is_native_source_curve
 from ._native_transforms import native_fft_coordinate_error
 from ._plot1d_snap import _line_snap_data
+from ._plot_annotation import PlotAnnotationMixin
 from ._plot_axis_scaling import (
     PlotAxisScalingMixin,
     _PowerScaledAxisItem,
@@ -37,14 +38,18 @@ from ._plot_feedback import PlotWindowFeedbackMixin
 from ._plot_marquee import PlotMarqueeMixin
 from ._plot_refresh import PlotRefreshMixin
 from ._plot_state import PlotStateOverlay
+from ._plot_status import PlotStatusWidget
+from ._plot_tiling import plot_tile_size
 from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
     AXIS_MAJOR_TICK_COUNT_KEY,
+    CURSOR_SIGNIFICANT_FIGURES_KEY,
     MOUSE_MODE_KEY,
     PreferencesDialog,
     create_preferences_action,
 )
 from ._refresh_interval import (
+    RefreshIntervalSpinBox,
     connect_refresh_interval_edits,
     refresh_interval_value,
     remember_refresh_interval,
@@ -407,6 +412,7 @@ def _plot_area_size_icon(size):
 
 
 class plotWidget(
+    PlotAnnotationMixin,
     PlotWindowFeedbackMixin,
     PlotAxisScalingMixin,
     PlotMarqueeMixin,
@@ -484,6 +490,9 @@ class plotWidget(
         self._dataset_key = dataset_key
         self._guid = dataset_key.guid
         self.param = param
+        self._plot_source_info = (
+            dataset_key.database_path, self.ds.run_id, param.label or param.name,
+        )
         self._qplot_display_synchronized = False
         self._qplot_display_uses_direct_sql = False
         self.name = str(self)
@@ -498,7 +507,6 @@ class plotWidget(
         self._merged_trace_users = 0
         self.operations = {}
         self._last_error_text = None
-        self.show_status("Working, please wait", 0)
         
         ### WIDGETS
         self._window_layout = qtw.QVBoxLayout()
@@ -507,7 +515,6 @@ class plotWidget(
         self._window_layout.setContentsMargins(0, 0, 0, 0)
         
         self.widget = pg.GraphicsLayoutWidget()
-        self.plot_state_overlay = PlotStateOverlay(self.widget)
         self._install_preview_drop_target()
         # Overwrite default viewbox to give more flexibility
         self.vb = custom_viewbox() # Mainly for linking secondary axis
@@ -533,7 +540,10 @@ class plotWidget(
         self.initAxes()
         self.initOperations()
         self.initRefresh(refrate)
+        self.plot_state_overlay = PlotStateOverlay(self.widget, self.plot_status)
+        self.show_status("Working, please wait", 0)
         self.initFrame() # See plot1d, plot2d
+        self._init_plot_annotation()
         self._init_native_transform_labels()
         
         if self.visible: #dont run non essential GUI functions if not displaying
@@ -551,21 +561,27 @@ class plotWidget(
             self.plot.getAxis('right').setStyle(showValues=False)
             
             screenrect = qtw.QApplication.primaryScreen().availableGeometry()
-            sizeFrac = self.config.get("GUI.plot_frame_fraction")
-    
-            initial_width = int(sizeFrac * screenrect.width())
-            initial_height = int(sizeFrac * screenrect.height())
+            initial_width, initial_height = plot_tile_size(self.config, screenrect)
             self.resize(initial_width, initial_height)
             
-            w = qtw.QFrame()
-            w.setLayout(self._window_layout)
-            self.setCentralWidget(w)
+        # Hidden source plots also own their canvas and progress timer. Their
+        # toolbar must not be destroyed while an unparented canvas keeps polling.
+        w = qtw.QFrame()
+        w.setLayout(self._window_layout)
+        self.setCentralWidget(w)
         
         # Keep the timer alive through this plot's own terminal display commit,
         # even if another parameter publishes shared dataset completion first.
         if self._refresh_monitor_required(self.ds):
             self.monitorIntervalChanged(refresh_interval_value(self.spinBox))
 
+
+    def event(self, event):
+        # Menu hover tips must not create a bottom status bar or overwrite the
+        # persistent operation message in the refresh toolbar.
+        if event.type() == QtCore.QEvent.Type.StatusTip:
+            return True
+        return super().event(event)
 
     def _install_preview_drop_target(self):
         """Receive preview drops at the window, outside pyqtgraph's view.
@@ -789,13 +805,11 @@ class plotWidget(
         operation_kind = getattr(self, "operation_kind", None)
         if operation_kind == "plot1d":
             return (
-                f"Cannot add {parameter_name}; line traces need the same "
-                "independent variable."
+                f"Cannot add {parameter_name}; plots support 1D or 2D measurements."
             )
         if operation_kind == "plot2d":
             return (
-                f"Cannot add {parameter_name}; heatmaps need the same two "
-                "independent variables."
+                f"Cannot add {parameter_name}; plots support 1D or 2D measurements."
             )
         return "Drop previews onto a compatible line plot or heatmap."
 
@@ -846,19 +860,30 @@ class plotWidget(
             Default value for the refresh timer.
 
         """
-        self.toolbarRef = qtw.QToolBar("Refresh Timer")
+        self.toolbarRef = qtw.QToolBar("Refresh and status")
+        self.toolbarRef.setObjectName("plotRefreshToolbar")
         self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, self.toolbarRef)
         
-        if not self.ds.running:
-            self.toolbarRef.hide()
-        
-        self.spinBox = qtw.QDoubleSpinBox()
+        self.spinBox = RefreshIntervalSpinBox()
+        self.spinBox.setObjectName("refreshIntervalSpin")
         self.spinBox.setRange(0.0, 10_000.0)
         self.spinBox.setSingleStep(0.1)
         self.spinBox.setDecimals(1)
 
+        self.refreshPlotButton = qtw.QToolButton()
+        self.refreshPlotButton.setObjectName("refreshPlotButton")
+        self.refreshPlotButton.setIcon(
+            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_BrowserReload)
+        )
+        self.refreshPlotButton.setToolTip("Refresh plot data now (R)")
+        self.refreshPlotButton.setAccessibleName("Refresh plot data")
+        self.refreshPlotButton.setFixedSize(28, 26)
+        self.refreshPlotButton.clicked.connect(lambda: self.refreshWindow(force=True))
+        self.toolbarRef.addWidget(self.refreshPlotButton)
         self.toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
         self.toolbarRef.addWidget(self.spinBox)
+        self.plot_status = PlotStatusWidget(self.toolbarRef)
+        self.plotStatusAction = self.toolbarRef.addWidget(self.plot_status)
         
         if refrate is not None and refrate > 0:
             set_refresh_interval(self.spinBox, refrate)
@@ -876,28 +901,25 @@ class plotWidget(
         Sets up bottom toolbar which displays cursor point.
 
         """
-        self.toolbarCo_ord = qtw.QToolBar("Co-ordinates")
+        self.toolbarCo_ord = qtw.QToolBar("Coordinates")
         self.addToolBar(QtCore.Qt.ToolBarArea.BottomToolBarArea, self.toolbarCo_ord)
         
-        labelWidth = self._label_width #About the size of 3 s.f. scientific
         self.pos_labels = {}
 
         posLabelIndex = qtw.QLabel("")
-        posLabelIndex.setMinimumWidth(45)
         self.toolbarCo_ord.addWidget(posLabelIndex)
         self.pos_labels["index"] = posLabelIndex
         
         posLabelx = qtw.QLabel("x= ")
-        posLabelx.setMinimumWidth(labelWidth)
         self.toolbarCo_ord.addWidget(posLabelx)
         self.pos_labels["x"] = posLabelx
         
         posLabely = qtw.QLabel("y= ")
-        posLabely.setMinimumWidth(labelWidth)
         self.toolbarCo_ord.addWidget(posLabely)
         self.pos_labels["y"] = posLabely
         
         self.toolbarCo_ord.addWidget(qtw.QLabel("  "))
+        self.apply_cursor_label_widths()
         
         self.plot.scene().sigMouseMoved.connect(self.mouseMoved)
     
@@ -1278,7 +1300,7 @@ class plotWidget(
             qplot.tools.plot_tools for functions
 
         """
-        self.oper_dock = QDock_context("Operations", self)
+        self.oper_dock = QDock_context("Data operations", self)
         self.addDockWidget(QtCore.Qt.DockWidgetArea.RightDockWidgetArea, self.oper_dock)
         self.oper_dock.setVisible(False)# Large window so toggle off by default
         
@@ -1369,7 +1391,7 @@ class plotWidget(
         main_menu.addAction(refreshAction)
         
         toolbar_menu = self.createPopupMenu()
-        toolbar_menu.setTitle("Toolbars")
+        toolbar_menu.setTitle("Panels and toolbars")
         main_menu.addMenu(toolbar_menu)
         add_help_menu(self)
     
@@ -1414,6 +1436,41 @@ class plotWidget(
         if rounded_exponent != exponent:
             return f"{num:.{precision}e}"
         return formatted
+
+
+    def format_cursor_number(self, value: float) -> str:
+        """Format a coordinate using the current cursor precision preference."""
+        return self.formatNum(value, sf=self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY))
+
+
+    def apply_cursor_label_widths(self) -> None:
+        """Reserve equal coordinate widths independent of the current values."""
+        labels = self.__dict__.get("pos_labels", {})
+        index_label = labels.get("index")
+        if index_label is not None:
+            index_width = max(
+                index_label.fontMetrics().horizontalAdvance(
+                    f"[{digit * 7},{digit * 7}]"
+                ) + 12
+                for digit in "0123456789"
+            )
+            index_label.setFixedWidth(index_width)
+        coordinates = [labels[axis] for axis in ("x", "y", "z") if axis in labels]
+        if not coordinates:
+            return
+        figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
+        # Allow a sign, decimal point, three exponent digits.
+        # Measure every digit so proportional fonts also fit their widest one.
+        width = max(
+            label.fontMetrics().horizontalAdvance(
+                f"{axis} = -{digit}.{digit * (figures - 1)}e+{digit * 3}"
+            ) + 12
+            for label in coordinates
+            for axis in ("x", "y", "z")
+            for digit in "0123456789"
+        )
+        for label in coordinates:
+            label.setFixedWidth(max(self._label_width, width))
 
 
     def _set_cursor_index_label(self, text: str) -> None:
@@ -1483,6 +1540,7 @@ class plotWidget(
         
         self.setStyleSheet(self.config.theme.main)
         self.config.theme.style_plotItem(self)
+        plotWidget.apply_cursor_label_widths(self)
 
 
     def apply_current_settings(self):
@@ -1496,6 +1554,9 @@ class plotWidget(
         apply_colorbar_width = getattr(self, "apply_colorbar_width_preference", None)
         if callable(apply_colorbar_width):
             apply_colorbar_width()
+        cursor_pos = self.__dict__.get("_last_cursor_scene_pos")
+        if cursor_pos is not None:
+            self.mouseMoved(cursor_pos)
 
 
     def _configured_mouse_mode(self):
@@ -1822,6 +1883,7 @@ class plotWidget(
             The cursor position object.
 
         """
+        self._last_cursor_scene_pos = pos
         # Ignore if not in plot widget
         if not self.plot.sceneBoundingRect().contains(pos):
             self._set_cursor_index_label("")
@@ -1834,7 +1896,10 @@ class plotWidget(
     
         # get x, y values.
         try:
-            viewbox_getter = getattr(self, "_primary_heatmap_viewbox", None)
+            viewbox_getter = (
+                getattr(self, "_primary_heatmap_viewbox", None)
+                if getattr(self, "operation_kind", None) == "plot2d" else None
+            )
         except RuntimeError:
             viewbox_getter = None
         coordinate_viewbox = (
@@ -1862,7 +1927,7 @@ class plotWidget(
                 self,
                 "_primary_heatmap_semantic_axes",
                 None,
-            )
+            ) if getattr(self, "operation_kind", None) == "plot2d" else None
         except RuntimeError:
             semantic_axes_getter = None
         semantic_x, semantic_y = (
@@ -1875,12 +1940,11 @@ class plotWidget(
         
         # Format text into a easy to read format
         index_txt = ""
-        x_txt = f"x = {self.formatNum(physical_x)};"
-        y_txt = f"y = {self.formatNum(physical_y)}"
+        x_txt = f"x = {self.format_cursor_number(physical_x)}"
+        y_txt = f"y = {self.format_cursor_number(physical_y)}"
         
         # For 2d plots.
         if self.pos_labels.get("z", 0):
-            y_txt += ";"
             sample_at = getattr(self, "heatmap_sample_at", None)
             sample = (
                 sample_at(mousePoint.x(), mousePoint.y())
@@ -1890,9 +1954,9 @@ class plotWidget(
             if sample is not None:
                 i, j, x, y, z = sample
                 index_txt = f"[{i},{j}]"
-                x_txt = f"x = {self.formatNum(x)};"
-                y_txt = f"y = {self.formatNum(y)};"
-                self.pos_labels["z"].setText(f"z = {self.formatNum(z)}")
+                x_txt = f"x = {self.format_cursor_number(x)}"
+                y_txt = f"y = {self.format_cursor_number(y)}"
+                self.pos_labels["z"].setText(f"z = {self.format_cursor_number(z)}")
                 if hasattr(self, "show_hover_pixel_outline"):
                     self.show_hover_pixel_outline(i, j)
                 else:

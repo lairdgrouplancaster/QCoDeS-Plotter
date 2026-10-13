@@ -38,7 +38,9 @@ from ._dataset_handle import (
 )
 from ._export_paths import choose_export_path, write_export_atomically
 from ._plot2d_layers import _heatmap_layer_compatibility, _window_display_unit
-from ._plot_refresh import plot_refresh_required
+from ._plot_drop_axes import plan_drop_axes
+from ._plot_source_promotion import promote_plot_source
+from ._plot_tiling import place_plot_window
 from ._refresh_interval import refresh_interval_value
 from ._subplots.subplot1d import (
     _subplot_axis_order,
@@ -937,33 +939,26 @@ class PlotActionsMixin:
             )
         win.make_ds.connect(self.add_ds_at)
         win.previewTraceDropRequested.connect(self.add_dropped_preview_to_plot)
+        if window_type in {"plot1d", "plot2d"}:
+            win._plot_source_replacement_request = lambda selected, target_window=win: promote_plot_source(
+                self, target_window, selected,
+            )
+            win._trace_candidate_provider = lambda target_window=win: self._trace_candidates_for_plot(target_window)
+            win._heatmap_candidate_provider = lambda target_window=win: self._heatmap_candidates_for_plot(target_window)
+            win._trace_add_request = lambda key, name, target_window=win: self.add_trace_to_plot(
+                target_window, key, name, axes_from_drop=True,
+            )
+            win._heatmap_add_request = lambda key, name, target_window=win: self.add_heatmap_to_plot(
+                target_window, key, name, axes_from_drop=True,
+            )
         if window_type == "plot1d":
             win.get_mergables.connect(lambda: self.get_1d_wins(win))
             win.remove_dataset.connect(self.remove_ds_at)
-            win._trace_candidate_provider = (
-                lambda target_window=win: self._trace_candidates_for_plot(target_window)
-            )
-            win._trace_add_request = (
-                lambda source_key, parameter_name, target_window=win:
-                self.add_trace_to_plot(target_window, source_key, parameter_name)
-            )
 
         elif window_type == "plot2d":
+            win.get_mergables.connect(lambda: self.get_1d_wins(win))
             win.open_subplot.connect(self.openWin)
             win.close_sweeps_requested.connect(self.close_sweeps_from_plot)
-            win._heatmap_candidate_provider = (
-                lambda target_window=win: self._heatmap_candidates_for_plot(
-                    target_window
-                )
-            )
-            win._heatmap_add_request = (
-                lambda source_key, parameter_name, target_window=win:
-                self.add_heatmap_to_plot(
-                    target_window,
-                    source_key,
-                    parameter_name,
-                )
-            )
             remove_dataset = getattr(win, "remove_dataset", None)
             if remove_dataset is not None:
                 remove_dataset.connect(self.remove_ds_at)
@@ -981,19 +976,8 @@ class PlotActionsMixin:
         if show:
             win.update_theme(self.config)
 
-            win.move(self._next_plot_x, self._next_plot_y)
+            place_plot_window(self, win)
             win.show()
-
-            tolerance = 30
-            plot_width = win.width()
-            plot_height = win.height()
-            self._next_plot_x += plot_width
-            if self._next_plot_x + plot_width - tolerance > self.screenrect.right():
-                self._next_plot_x = self.screenrect.left()
-                self._next_plot_y += plot_height
-
-                if self._next_plot_y + plot_height - tolerance > self.screenrect.bottom():
-                    self._next_plot_y = self.screenrect.top()
 
 
     @QtCore.pyqtSlot(object, object)
@@ -1767,7 +1751,7 @@ class PlotActionsMixin:
 
         """
         # The plot is normally in front of the main window when a drop occurs.
-        # Keep its status bar in sync with the main-window feedback produced by
+        # Keep its toolbar in sync with the main-window feedback produced by
         # ``add_trace_to_plot`` so a post-drop rejection is visible where the
         # user performed the action.
         previous_target = getattr(self, "_preview_drop_feedback_window", None)
@@ -1777,13 +1761,15 @@ class PlotActionsMixin:
                 target_win,
                 source_identity,
                 parameter_name,
+                axes_from_drop=True,
             )
         finally:
             self._preview_drop_feedback_window = previous_target
 
 
     @_trusted_plot_action
-    def add_trace_to_plot(self, target_win, source_identity, parameter_name, param=None):
+    def add_trace_to_plot(self, target_win, source_identity, parameter_name, param=None,
+                          *, axes_from_drop=False):
         """
         Add a compatible parameter to an existing plot.
 
@@ -1792,14 +1778,6 @@ class PlotActionsMixin:
         layer workflow; line targets retain the existing secondary-trace path.
 
         """
-        if getattr(target_win, "operation_kind", None) == "plot2d":
-            return self.add_heatmap_to_plot(
-                target_win,
-                source_identity,
-                parameter_name,
-                param=param,
-                )
-
         source_path = (
             source_identity.database_path
             if isinstance(source_identity, DatasetKey)
@@ -1811,7 +1789,9 @@ class PlotActionsMixin:
                 "adding a preview trace",
                 ):
             return False
-        if target_win is None or not hasattr(target_win, "option_boxes"):
+        if target_win is None or not (
+            hasattr(target_win, "option_boxes") or getattr(target_win, "operation_kind", None) == "plot2d"
+        ):
             self.show_status("Drop traces onto a compatible line plot.", 5000)
             return False
 
@@ -1836,11 +1816,18 @@ class PlotActionsMixin:
             self.show_status(f"No preview plot found for {parameter_name}.", 5000)
             return False
 
+        if len(getattr(param, "depends_on_", ())) == 2:
+            return self.add_heatmap_to_plot(
+                target_win, source_key, parameter_name, param=param,
+                axes_from_drop=axes_from_drop or getattr(target_win, "operation_kind", None) == "plot1d",
+            )
+        if getattr(target_win, "operation_kind", None) == "plot2d":
+            axes_from_drop = True
         if len(getattr(param, "depends_on_", ())) != 1:
             self.show_status("Only 1D measurements can be added as traces.", 5000)
             return False
 
-        if tuple(param.depends_on_) != tuple(target_win.param.depends_on_):
+        if not axes_from_drop and tuple(param.depends_on_) != tuple(target_win.param.depends_on_):
             self.show_status(
                 f"Cannot add {parameter_name}; the plot axes do not match.",
                 5000,
@@ -1856,6 +1843,17 @@ class PlotActionsMixin:
             from_win = self._open_hidden_trace_window(source_key, param, target_win)
             if from_win is None:
                 return False
+
+        if axes_from_drop:
+            try:
+                if target_win._has_trace_window(from_win):
+                    self.show_status(f"Skipped {parameter_name}; that trace is already shown.", 5000)
+                    return False
+                plan = plan_drop_axes(target_win, from_win)
+                return plan.approve(target_win, from_win) and target_win.add_preview_trace(from_win, plan)
+            finally:
+                if not getattr(from_win, "visible", False):
+                    from_win.close()
 
         self.get_1d_wins(target_win)
         if target_win.option_boxes[-1].isEnabled():
@@ -1889,7 +1887,7 @@ class PlotActionsMixin:
         target_axes = tuple(
             getattr(getattr(target_win, "param", None), "depends_on_", ())
         )
-        if len(target_axes) != 1:
+        if len(target_axes) not in (1, 2):
             return []
 
         run_list = getattr(self, "RunList", None)
@@ -1900,7 +1898,8 @@ class PlotActionsMixin:
         candidates = []
         primary_trace_key = TraceKey(target_win._dataset_key, target_win.param.name)
         for run_id, metadata in all_run_metadata().items():
-            if tuple(metadata.get("sweep_parameters") or ()) != target_axes:
+            axes = tuple(metadata.get("sweep_parameters") or ())
+            if len(axes) != 1:
                 continue
             guid = metadata.get("guid")
             if not guid:
@@ -1923,7 +1922,7 @@ class PlotActionsMixin:
         target_axes = tuple(
             getattr(getattr(target_win, "param", None), "depends_on_", ())
         )
-        if len(target_axes) != 2:
+        if len(target_axes) not in (1, 2):
             return []
 
         run_list = getattr(self, "RunList", None)
@@ -1936,7 +1935,7 @@ class PlotActionsMixin:
         plotted = getattr(target_win, "heatmaps", {})
         for run_id, metadata in all_run_metadata().items():
             axes = tuple(metadata.get("sweep_parameters") or ())
-            if len(axes) != 2 or set(axes) != set(target_axes):
+            if len(axes) != 2:
                 continue
             guid = metadata.get("guid")
             if not guid:
@@ -1959,6 +1958,8 @@ class PlotActionsMixin:
             source_identity,
             parameter_name,
             param=None,
+            *,
+            axes_from_drop=False,
             ):
         """Add a compatible 2D parameter as a layer on an existing heatmap."""
 
@@ -1977,7 +1978,9 @@ class PlotActionsMixin:
         add_heatmap = getattr(target_win, "add_heatmap", None)
         if (
                 target_win is None
-                or getattr(target_win, "operation_kind", None) != "plot2d"
+                or getattr(target_win, "operation_kind", None) not in (
+                    {"plot1d", "plot2d"} if axes_from_drop else {"plot2d"}
+                )
                 or not callable(add_heatmap)
                 ):
             self.show_status("Drop heatmaps onto a compatible heatmap plot.", 5000)
@@ -2010,7 +2013,7 @@ class PlotActionsMixin:
         if len(source_axes) != 2:
             self.show_status("Only 2D measurements can be added as heatmaps.", 5000)
             return False
-        if len(target_axes) != 2 or set(source_axes) != set(target_axes):
+        if not axes_from_drop and (len(target_axes) != 2 or set(source_axes) != set(target_axes)):
             self.show_status(
                 f"Cannot add {parameter_name}; the heatmap axes do not match.",
                 5000,
@@ -2053,7 +2056,7 @@ class PlotActionsMixin:
             target_win,
             from_win,
         )
-        if compatibility_error is not None:
+        if not axes_from_drop and compatibility_error is not None:
             if compatibility_error == "the displayed value units do not match":
                 compatibility_error += (
                     f" (source: {_window_display_unit(from_win) or 'unitless'};"
@@ -2068,7 +2071,13 @@ class PlotActionsMixin:
             return False
 
         try:
-            added = bool(add_heatmap(from_win))
+            if axes_from_drop:
+                plan = plan_drop_axes(target_win, from_win)
+                if not plan.approve(target_win, from_win):
+                    return False
+                added = bool(add_heatmap(from_win, axis_plan=plan))
+            else:
+                added = bool(add_heatmap(from_win))
         except Exception as err:
             log_exception("Heatmap layer construction failed", err, __name__)
             self.show_error(
@@ -2077,9 +2086,9 @@ class PlotActionsMixin:
                 str(err),
             )
             added = False
-
-        if not getattr(from_win, "visible", False):
-            from_win.close()
+        finally:
+            if not getattr(from_win, "visible", False):
+                from_win.close()
 
         if not added:
             self.show_status(
@@ -2164,8 +2173,6 @@ class PlotActionsMixin:
                 continue
             try:
                 if win._dataset_key == source_key and win.param.name == param.name:
-                    if plot_refresh_required(win):
-                        target_win.toolbarRef.show()
                     return win
             except AttributeError:
                 continue
@@ -2665,7 +2672,7 @@ class PlotActionsMixin:
 
         """
         for item in self.windows:
-            if isinstance(item, plot1d):
+            if isinstance(item, (plot1d, plot2d)):
                 self.get_1d_wins(item)
 
 
@@ -2687,7 +2694,8 @@ class PlotActionsMixin:
                         ),
                     shared_parameter=_subplot_shared_parameter(win),
                     )
-                if compatible is not None and not _plot_has_trace_window(win, item):
+                if (getattr(item, "operation_kind", item.__class__.__name__) in {"plot1d", "sweeper"}
+                        and compatible is not None and not _plot_has_trace_window(win, item)):
                     wins.append(item)
             except (AttributeError, RuntimeError):
                 continue

@@ -22,6 +22,7 @@ from qplot.windows._colorbar import (
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey, TraceKey
 from qplot.windows._plot2d_sweeps import Plot2DSweepMixin
 from qplot.windows._plot_state import PlotStateOverlay
+from qplot.windows._plot_status import PlotStatusWidget
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
@@ -959,7 +960,7 @@ class CutAxisTransactionQtIntegrationTestCase(unittest.TestCase):
 
         overlay_target = qtw.QWidget(cut)
         overlay_target.resize(400, 240)
-        cut.plot_state_overlay = PlotStateOverlay(overlay_target)
+        cut.plot_state_overlay = PlotStateOverlay(overlay_target, PlotStatusWidget(overlay_target))
         cut.monitor = QtCore.QTimer(cut)
         cut.spinBox = qtw.QDoubleSpinBox(cut)
         cut.spinBox.setValue(0.2)
@@ -2065,7 +2066,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             "y": qtw.QLabel(),
             "z": qtw.QLabel(),
             }
-        window.formatNum = lambda value: str(value)
+        window.format_cursor_number = lambda value: str(value)
         shown_indices = []
         window.show_hover_pixel_outline = lambda i, j: shown_indices.append((i, j))
         window.hide_hover_pixel_outline = lambda: shown_indices.append(None)
@@ -2075,8 +2076,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
         self.assertEqual(shown_indices, [(1, 1)])
         self.assertEqual(window.pos_labels["index"].text(), "[1,1]")
-        self.assertEqual(window.pos_labels["x"].text(), "x = 1.0;")
-        self.assertEqual(window.pos_labels["y"].text(), "y = 1.0;")
+        self.assertEqual(window.pos_labels["x"].text(), "x = 1.0")
+        self.assertEqual(window.pos_labels["y"].text(), "y = 1.0")
         self.assertEqual(window.pos_labels["z"].text(), "z = 4.0")
 
     def test_nonuniform_hover_reports_recorded_setpoint(self):
@@ -2102,7 +2103,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             "y": qtw.QLabel(),
             "z": qtw.QLabel(),
             }
-        window.formatNum = lambda value: str(value)
+        window.format_cursor_number = lambda value: str(value)
         window.show_hover_pixel_outline = lambda _i, _j: None
         window.hide_hover_pixel_outline = lambda: None
         scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.0, 12.0))
@@ -2111,8 +2112,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             plotWidget.mouseMoved(window, scene_pos)
 
             self.assertEqual(window.pos_labels["index"].text(), "[1,1]")
-            self.assertEqual(window.pos_labels["x"].text(), "x = 1.0;")
-            self.assertEqual(window.pos_labels["y"].text(), "y = 13.0;")
+            self.assertEqual(window.pos_labels["x"].text(), "x = 1.0")
+            self.assertEqual(window.pos_labels["y"].text(), "y = 13.0")
             self.assertEqual(window.pos_labels["z"].text(), "z = 5.0")
         finally:
             widget.deleteLater()
@@ -2141,7 +2142,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             "y": qtw.QLabel(),
             "z": qtw.QLabel(),
             }
-        window.formatNum = lambda value: str(value)
+        window.format_cursor_number = lambda value: str(value)
         hidden = []
         window.show_hover_pixel_outline = lambda _i, _j: None
         window.hide_hover_pixel_outline = lambda: hidden.append(True)
@@ -2279,7 +2280,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             "y": qtw.QLabel(),
             "z": qtw.QLabel(),
             }
-        window.formatNum = lambda value: str(value)
+        window.format_cursor_number = lambda value: str(value)
         window.show_hover_pixel_outline = lambda _i, _j: None
         window.hide_hover_pixel_outline = lambda: None
         scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.2, 1.4))
@@ -2288,8 +2289,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             plotWidget.mouseMoved(window, scene_pos)
 
             self.assertEqual(window.pos_labels["index"].text(), "[2,1]")
-            self.assertEqual(window.pos_labels["x"].text(), "x = 2.5;")
-            self.assertEqual(window.pos_labels["y"].text(), "y = 1.5;")
+            self.assertEqual(window.pos_labels["x"].text(), "x = 2.5")
+            self.assertEqual(window.pos_labels["y"].text(), "y = 1.5")
             self.assertEqual(window.pos_labels["z"].text(), "z = 6.0")
         finally:
             widget.deleteLater()

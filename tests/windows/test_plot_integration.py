@@ -72,7 +72,10 @@ def wait_for(predicate, timeout=12):
         app.processEvents()
         if predicate():
             app.processEvents()
-            return
+            # A queued refresh can replace the publication during this drain.
+            # Return only while the state the caller will inspect still holds.
+            if predicate():
+                return
         time.sleep(0.03)
     raise AssertionError("Timed out waiting for GUI integration state")
 
@@ -1532,9 +1535,7 @@ def test_toggling_plot_controls_preserves_heatmap_view_range(tmp_path, monkeypat
         # Reproduce the layout race by exposing the initially hidden controls
         # before the first heatmap worker has published its data.
         for control in (
-            heatmap_window.axes_dock,
             heatmap_window.oper_dock,
-            heatmap_window.toolbarRef,
         ):
             assert control.isHidden()
             control.toggleViewAction().trigger()
@@ -1547,7 +1548,7 @@ def test_toggling_plot_controls_preserves_heatmap_view_range(tmp_path, monkeypat
         )
         qtw.QApplication.processEvents()
 
-        assert heatmap_window.axes_dock.windowTitle() == "Data axes"
+        assert not heatmap_window.axes_dock.toggleViewAction().isVisible()
         assert not heatmap_window.axes_dock.findChildren(
             qtw.QWidget,
             "heatmapLayerRow",
@@ -1572,8 +1573,8 @@ def test_toggling_plot_controls_preserves_heatmap_view_range(tmp_path, monkeypat
             padding=0,
         )
         heatmap_window.worker.running = True
-        heatmap_window.axes_dock.toggleViewAction().trigger()
-        assert heatmap_window.axes_dock.isHidden()
+        heatmap_window.oper_dock.toggleViewAction().trigger()
+        assert heatmap_window.oper_dock.isHidden()
         heatmap_window.vb.setRange(
             xRange=expected_range[0],
             yRange=expected_range[1],
@@ -1587,11 +1588,10 @@ def test_toggling_plot_controls_preserves_heatmap_view_range(tmp_path, monkeypat
             err_msg="a control layout restored a stale pre-refresh range",
         )
 
-        heatmap_window.axes_dock.toggleViewAction().trigger()
-        wait_for(heatmap_window.axes_dock.isVisible)
+        heatmap_window.oper_dock.toggleViewAction().trigger()
+        wait_for(heatmap_window.oper_dock.isVisible)
 
         for control in (
-            heatmap_window.axes_dock,
             heatmap_window.oper_dock,
             heatmap_window.toolbarRef,
             heatmap_window.toolbarCo_ord,
@@ -1613,7 +1613,6 @@ def test_toggling_plot_controls_preserves_heatmap_view_range(tmp_path, monkeypat
         )
         manual_range = np.asarray(heatmap_window.vb.viewRange(), dtype=float)
         for control in (
-            heatmap_window.axes_dock,
             heatmap_window.oper_dock,
             heatmap_window.toolbarRef,
             heatmap_window.toolbarCo_ord,
@@ -3767,6 +3766,7 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
             )
         )
 
+        assert errors == []
         replacement_instance = database_instance(database_path)
         assert replacement_instance != original_instance
         assert window._loaded_database_instance == replacement_instance
@@ -3788,7 +3788,6 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
         assert window._test_database_generation_worker is None
         assert window.monitor.isActive()
         assert window.monitor.interval() == expected_monitor_interval
-        assert errors == []
 
         replacement_guid = window._selected_run_guid
         assert replacement_guid

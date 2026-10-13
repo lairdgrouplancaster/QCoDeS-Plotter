@@ -6,9 +6,10 @@ from qplot.windows._commands import command_spec
 from qplot.windows._help import (
     add_help_menu,
     copy_diagnostic_log_path,
+    show_about,
     show_keyboard_shortcuts,
     show_quick_start,
-    )
+)
 
 
 class HelpMenuTestCase(unittest.TestCase):
@@ -37,6 +38,84 @@ class HelpMenuTestCase(unittest.TestCase):
                 actions["copyDiagnosticLogPathAction"].text(),
                 "Copy &Diagnostic Log Path",
                 )
+            self.assertEqual(actions["aboutQplotAction"].text(), "&About qPlot")
+            self.assertEqual(
+                actions["aboutQplotAction"].menuRole(),
+                actions["aboutQplotAction"].MenuRole.NoRole,
+            )
+        finally:
+            window.deleteLater()
+
+    def test_about_action_shows_version_and_development_provenance(self):
+        from unittest.mock import patch
+
+        window = qtw.QMainWindow()
+        try:
+            window.show()
+            window.activateWindow()
+            qtw.QApplication.processEvents()
+            with patch("qplot.windows._help.version_info", return_value={
+                "version": "2.0.0", "commit": "a" * 40,
+                "released": False, "dirty": True, "pull_request": "123",
+            }):
+                menu = add_help_menu(window)
+                next(a for a in menu.actions() if a.objectName() == "aboutQplotAction").trigger()
+            dialog = window._help_dialogs[-1]
+            text = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser").toPlainText()
+            self.assertEqual(dialog.windowTitle(), "About qPlot")
+            self.assertIn("Version: 2.0.0", text)
+            self.assertIn("Unreleased development build (local changes)", text)
+            self.assertIn("a" * 40, text)
+            self.assertIn("Pull request: #123", text)
+            dialog.close()
+        finally:
+            window.close()
+            window.deleteLater()
+
+    def test_each_help_menu_has_one_about_action_after_closing_another_window(self):
+        from PyQt6 import sip
+
+        first = qtw.QMainWindow()
+        second = qtw.QMainWindow()
+        try:
+            menus = [add_help_menu(window) for window in (first, second)]
+            actions = [
+                next(a for a in menu.actions() if a.objectName() == "aboutQplotAction")
+                for menu in menus
+            ]
+            for menu, action, window in zip(menus, actions, (first, second), strict=True):
+                self.assertEqual(
+                    sum(a.objectName() == "aboutQplotAction" for a in menu.actions()), 1,
+                )
+                self.assertIs(action.parent(), window)
+                self.assertEqual(action.menuRole(), action.MenuRole.NoRole)
+            sip.delete(first)
+            second.show()
+            second.activateWindow()
+            qtw.QApplication.processEvents()
+            actions[1].trigger()
+            dialog = second._help_dialogs[-1]
+            self.assertEqual(dialog.windowTitle(), "About qPlot")
+            self.assertIs(dialog.parent(), second)
+            dialog.close()
+        finally:
+            if not sip.isdeleted(first):
+                first.deleteLater()
+            second.close()
+            second.deleteLater()
+
+    def test_about_without_provenance_still_shows_release_number(self):
+        from unittest.mock import patch
+
+        window = qtw.QMainWindow()
+        try:
+            with patch("qplot.windows._help.version_info", return_value={"version": "2.0.0"}):
+                dialog = show_about(window)
+            text = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser").toPlainText()
+            self.assertIn("Version: 2.0.0", text)
+            self.assertNotIn("Unreleased", text)
+            self.assertNotIn("Commit:", text)
+            dialog.close()
         finally:
             window.deleteLater()
 

@@ -71,11 +71,11 @@ class CommandRegistryTestCase(unittest.TestCase):
         self.assertEqual(spec.status_tip, "Plot measurement 3 in the selected run")
 
     def test_toolbar_toggle_lookup_uses_registered_shortcuts(self):
-        spec = toolbar_toggle_command_spec("Operations")
+        spec = toolbar_toggle_command_spec("Data operations")
 
         self.assertIsNotNone(spec)
         self.assertEqual(spec.resolved_shortcuts()[0].toString(), "Ctrl+Alt+O")
-        self.assertEqual(spec.status_tip, "Show or hide the operations dock")
+        self.assertEqual(spec.status_tip, "Show or hide the data operations panel")
 
     def test_operations_panel_has_one_canonical_shortcut(self):
         self.assertEqual(

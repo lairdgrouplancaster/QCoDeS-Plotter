@@ -13,6 +13,7 @@ from PyQt6 import (
 )
 
 from qplot import config
+from qplot._metadata import version_info
 from qplot.datahandling.database import (
     DatabaseDetailWorker as DatabaseDetailWorker,
 )
@@ -534,8 +535,6 @@ class MainWindow(
         self._retired_service_reaper_timer.timeout.connect(
             self._reap_retired_trusted_read_services
         )
-        self._next_plot_x = 0
-        self._next_plot_y = 0
         self.localLastFile = None
         self.startup_database_path = startup_database_path
         
@@ -569,15 +568,13 @@ class MainWindow(
             max(configured_width, MAIN_WINDOW_READABLE_WIDTH),
             configured_height,
             )
-        self.setWindowTitle("qPlot")
+        self.setWindowTitle(f"qPlot-{version_info()['version']}")
         startup_elapsed = perf_counter() - startup_start
         self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
         
         # Get user's window dimensions to control new window position
         primary_screen = cast(QtGui.QScreen, qtw.QApplication.primaryScreen())
         self.screenrect = primary_screen.availableGeometry()
-        self._next_plot_x = self.screenrect.left()
-        self._next_plot_y = self.screenrect.top()
         
         # Try to bring window to top 
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.WindowType.WindowStaysOnTopHint)

@@ -4,6 +4,10 @@ from dataclasses import asdict, dataclass
 from string import Template
 
 import pyqtgraph as pg
+from PyQt6 import QtGui
+from PyQt6 import QtWidgets as qtw
+
+from ..fonts import FONT_SIZE_KEY
 
 
 @dataclass(frozen=True)
@@ -109,6 +113,9 @@ _STYLESHEET_TEMPLATE = Template(
         padding-right: 7px;
         background-color: $menu_hover_bg;
     }
+    QLabel#plotStatusMessage {
+        color: $status_text;
+    }
     QStatusBar {
         background-color: $window_bg;
         color: $status_text;
@@ -123,6 +130,10 @@ _STYLESHEET_TEMPLATE = Template(
     }
     QToolBar QLabel {
         color: $text;
+    }
+    QToolBar#plotRefreshToolbar {
+        /* Qt uses the largest padding edge as the toolbar frame width. */
+        padding: 2px;
     }
     QPushButton {
         min-height: 20px;
@@ -221,11 +232,6 @@ _STYLESHEET_TEMPLATE = Template(
     QLineEdit#databasePathField {
         background-color: $field_alt_bg;
         color: $muted_text;
-    }
-    QDoubleSpinBox#refreshIntervalSpin {
-        /* Windows 11 places both native step buttons side by side. Its
-           stylesheet edit-field geometry otherwise overlaps the up button. */
-        padding-right: 32px;
     }
     QSpinBox#heatmapAppearanceOpacity {
         padding: 0 16px 0 4px;
@@ -542,11 +548,15 @@ class PlotTheme:
 
         width = plot_win.config.get("user_preference.axis_tick_width")
         pen = pg.mkPen(cls.plot_foreground, width=width)
+        font = QtGui.QFont(qtw.QApplication.font())
+        font.setPointSize(plot_win.config.get(FONT_SIZE_KEY))
 
         def style_axis(axis):
             axis.setPen(pen)
             axis.setTickPen(pen)
             axis.setTextPen(pen)
+            axis.setTickFont(font)
+            axis.label.setFont(font)
             # pyqtgraph otherwise halves the opacity at each successive tick
             # level. Keep minor and subminor ticks visibly at the selected
             # line weight rather than blending them into the heatmap.
@@ -571,6 +581,9 @@ class PlotTheme:
 
         plot_item.vb.gridPen = pg.mkPen(color=cls.plot_grid)
         cls.set_line_colours(plot_item)
+        update_annotation = getattr(plot_win, "_update_plot_annotation", None)
+        if callable(update_annotation):
+            update_annotation()
 
     @classmethod
     def set_line_colours(cls, plot_item):

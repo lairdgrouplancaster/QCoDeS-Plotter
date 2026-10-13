@@ -29,7 +29,11 @@ virtual environment with:
 python -m pip install --only-binary=:all: qplotter
 ```
 
-The first prepared application release is the beta `1.6.0b3`, with exact native
+The current development target is the unreleased application beta `1.6.0b3`,
+with exact native dependency `1.0.0`. Existing candidate tags do not establish
+that publication succeeded. Preparing a PR does not publish either package.
+
+The first prepared split application release is beta `1.6.0b3`, with exact native
 dependency `1.0.0`. Once published, install that prerelease explicitly:
 
 ```console

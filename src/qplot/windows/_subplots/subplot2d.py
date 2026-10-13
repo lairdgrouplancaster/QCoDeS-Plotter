@@ -129,6 +129,7 @@ class sweeper(plotWidget):
 
         # Got back to default before line picker
         super().initAxes()
+        self.axes_dock.setWindowTitle("Cut controls")
         
         # Set correct display on axis picker
         with _blocked_signals(self.axis_dropdown["x"]):
@@ -145,7 +146,7 @@ class sweeper(plotWidget):
             self.axis_dropdown["y"].setDisabled(True)
             self.axis_dropdown["y"].setCurrentText(self.param.name)
         
-        # Add cut-axis controls to the Data axes dock.
+        # Add cut-axis controls to the cut dock.
         main_line = picker_1d(self, self.config, [self.label])
         main_line.option_box.setCurrentIndex(0)
         main_line.option_box.setDisabled(True)

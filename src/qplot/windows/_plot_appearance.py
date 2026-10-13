@@ -9,7 +9,11 @@ from PyQt6 import QtWidgets as qtw
 
 
 class CenteredPreviewDelegate(qtw.QStyledItemDelegate):
-    """Paint an icon-only plot preview in the centre of its table cell."""
+    """Paint an icon in the centre of its cell, optionally limiting its size."""
+
+    def __init__(self, parent=None, *, icon_size: QtCore.QSize | None = None):
+        super().__init__(parent)
+        self.icon_size = icon_size
 
     def paint(self, painter, option, index):
         icon = index.data(QtCore.Qt.ItemDataRole.DecorationRole)
@@ -34,7 +38,10 @@ class CenteredPreviewDelegate(qtw.QStyledItemDelegate):
             widget,
         )
 
-        icon_size = icon.actualSize(styled_option.rect.size())
+        available = styled_option.rect.size()
+        if self.icon_size is not None:
+            available = available.boundedTo(self.icon_size)
+        icon_size = icon.actualSize(available)
         icon_rect = QtCore.QRect(QtCore.QPoint(), icon_size)
         icon_rect.moveCenter(styled_option.rect.center())
         icon.paint(painter, icon_rect, QtCore.Qt.AlignmentFlag.AlignCenter)

@@ -713,7 +713,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 worker.running = False
                 self.show_plot_state(
                     "Plot load failed",
-                    "Check the status bar or diagnostic log for details.",
+                    "Check the diagnostic log for details.",
                     kind="error",
                     )
                 return False
@@ -808,13 +808,18 @@ class PlotRefreshMixin(_PlotRefreshBase):
                         )
                 self.show_status(
                     f"Loaded {point_text} for {self.param.name} "
-                    f"in {elapsed:.2f} seconds",
+                    f"in {elapsed:.2f} seconds.",
                     5000,
                     )
             else:
+                loaded_points = getattr(worker, "loaded_point_count", None)
+                if loaded_points is None:
+                    loaded_points = getattr(worker, "dataset_length_at_start", None)
+                if loaded_points is None:
+                    loaded_points = self.ds.number_of_results
                 self.show_status(
-                    f"Loaded {self.ds.number_of_results:,} points for {self.param.name} "
-                    f"in {elapsed:.2f} seconds",
+                    f"Loaded {loaded_points:,} points for {self.param.name} "
+                    f"in {elapsed:.2f} seconds.",
                     5000,
                     )
             dataset_length = getattr(worker, "dataset_length_at_start", None)

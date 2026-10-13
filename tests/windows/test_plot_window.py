@@ -34,6 +34,7 @@ from qplot.windows._colorbar import (
 )
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
 from qplot.windows._plot_state import PlotStateOverlay
+from qplot.windows._plot_status import PlotStatusWidget
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
@@ -1055,17 +1056,17 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
 class PlotStateOverlayTestCase(unittest.TestCase):
     def test_overlay_shows_inside_target_and_tracks_resize(self):
         target = pg.GraphicsLayoutWidget()
-        overlay = PlotStateOverlay(target)
+        overlay = PlotStateOverlay(target, PlotStatusWidget(target))
 
         try:
             target.resize(500, 300)
             target.show()
             qtw.QApplication.processEvents()
-            overlay.show("Loading data", "signal", kind="loading")
+            overlay.show("Waiting for data", "signal", kind="empty")
             first_geometry = overlay.frame.geometry()
 
             self.assertTrue(overlay.frame.isVisible())
-            self.assertEqual(overlay.title_label.text(), "Loading data")
+            self.assertEqual(overlay.title_label.text(), "Waiting for data")
             self.assertEqual(overlay.detail_label.text(), "signal")
             self.assertGreater(overlay.title_label.font().pointSize(), 0)
             self.assertGreater(overlay.detail_label.font().pointSize(), 0)

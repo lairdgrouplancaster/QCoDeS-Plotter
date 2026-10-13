@@ -11,6 +11,7 @@ from ._config_persistence import (
 
 CONFIRM_CLOSE_ALL_KEY = "user_preference.confirm_close_all"
 CONFIRM_QUIT_KEY = "user_preference.confirm_close"
+CONFIRM_INCOMPATIBLE_AXES_KEY = "user_preference.confirm_incompatible_axes"
 DO_NOT_ASK_AGAIN_LABEL = "Don't ask again"
 
 _WINDOW_LIST_ACTIONS_ATTRIBUTE = "_qplot_window_list_actions"

@@ -314,7 +314,7 @@ def test_layer_visibility_preserves_current_manual_color_levels(color_plot):
     plot.colorbar_max_text.editingFinished.emit()
     assert tuple(plot.image.getLevels()) == (0.25, 1.25)
     plot.open_heatmap_appearance_dialog(plot._primary_heatmap_key)
-    dialog = plot._heatmap_appearance_dialog
+    dialog = plot._heatmap_appearance_dialog.heatmap_controls
     dialog.visible.setChecked(False)
     assert not plot.image.isVisible()
     dialog.visible.setChecked(True)

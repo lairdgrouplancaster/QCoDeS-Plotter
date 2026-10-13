@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tarfile
 import tempfile
@@ -263,6 +264,11 @@ def validate_wheel(
         not in NATIVE_BUILD_SUFFIXES | COMPILED_NATIVE_SUFFIXES
         and not ignored_member(path)
     } | native_members
+    # CI generates provenance after the clean-checkout gate. Validation jobs
+    # start from a fresh checkout, so this file is absent from their inventory.
+    build_info_path = "qplot/_build_info.json"
+    if not native and build_info_path in actual_runtime:
+        expected_runtime.add(build_info_path)
     missing = sorted(expected_runtime - actual_runtime)
     stale = sorted(actual_runtime - expected_runtime)
     if missing or stale:
@@ -286,6 +292,15 @@ def validate_wheel(
             assert metadata["Version"] == PINNED_NATIVE_VERSION
         else:
             assert f"qplotter-native=={PINNED_NATIVE_VERSION}" in requirements
+            if build_info_path in actual_runtime:
+                build_info = json.loads(archive.read(build_info_path))
+                assert isinstance(build_info, dict), "invalid build provenance"
+                assert build_info.get("version") == metadata["Version"], "build version mismatch"
+                assert re.fullmatch(r"[0-9a-fA-F]{40,64}", str(build_info.get("commit", ""))), "invalid build commit"
+                assert build_info.get("dirty") is False, "build provenance must describe a clean checkout"
+                assert isinstance(build_info.get("released"), bool), "invalid release status"
+                if "pull_request" in build_info:
+                    assert re.fullmatch(r"[1-9][0-9]*", str(build_info["pull_request"])), "invalid build PR"
         wheel_path = metadata_paths[0].removesuffix("METADATA") + "WHEEL"
         wheel_metadata = Parser().parsestr(archive.read(wheel_path).decode())
         assert wheel_metadata["Root-Is-Purelib"] == ("false" if native else "true")

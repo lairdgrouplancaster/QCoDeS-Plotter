@@ -102,7 +102,10 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         """Return the coordinate owner for marquee graphics and navigation."""
 
         try:
-            heatmap_viewbox = getattr(self, "_primary_heatmap_viewbox", None)
+            heatmap_viewbox = (
+                getattr(self, "_primary_heatmap_viewbox", None)
+                if getattr(self, "operation_kind", None) == "plot2d" else None
+            )
         except RuntimeError:
             heatmap_viewbox = None
         if callable(heatmap_viewbox):
