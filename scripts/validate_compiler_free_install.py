@@ -355,8 +355,10 @@ def start_qplot(environment: Path, temporary: Path, env: dict[str, str]) -> None
     hook.mkdir()
     (hook / 'sitecustomize.py').write_text(STARTUP_HOOK)
     startup_env = dict(env, PYTHONPATH=str(hook), QPLOT_STARTUP_ROOT=str(hook))
+    # Fresh installations may build Matplotlib's font cache on their first
+    # launch. Slow hosted macOS runners can exceed a minute doing that work.
     result = subprocess.run([str(validator.console_script(environment, 'qplot'))],
-                            cwd=hook, env=startup_env, check=True, timeout=60)
+                            cwd=hook, env=startup_env, check=True, timeout=180)
     assert result.returncode == 0
     assert json.loads((hook / 'startup.json').read_text()) == {'visible': True, 'event_loop': True}
     print('Installed qplot command displayed its MainWindow, entered Qt, and shut down cleanly.', flush=True)

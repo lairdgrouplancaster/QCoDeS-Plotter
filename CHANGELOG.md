@@ -2,11 +2,56 @@
 
 All notable user-facing changes are recorded here.
 
-Historical releases used GitHub source tags. The prepared split beta uses the
-PyPI distributions `qplotter` and `qplotter-native`; publication requires the
-release workflow and its validation gates. See `docs/distribution.md`.
+## 1.6.0
 
-## Unreleased
+### Highlights ###
+
+- More improvements in handling large databases and datasets.
+- Multiple heatmaps and traces can share the same plot window.
+- Program now installs as a PyPi distribution for the first time, instead of via GitHub source tags.
+- Numerous small improvements to the UI.
+- Numerous bugs found by Codex Astra have been fixed. In particular, Codex now claims to rigorously enforce the rule that the database will never be modified by `qplot`. After about 30 rounds of automated bug searches, the last two rounds uncovered no bugs.
+- To implement this database safety, the installation contains a small C extension 'qplotter-native' for reading live databases through SQLite.
+
+### Main changes since 1.5.0
+
+(Everything in this section is AI-generated)
+
+- Read supported local QCoDeS databases live without copying the whole
+  database. Main database, WAL, and rollback-journal handles remain physically
+  read-only; SQLite may update only the exact colocated SHM coordination file.
+  Reader work is bounded and cancellable.
+- Load run metadata, thumbnails, previews, and explicit plots progressively,
+  prioritising selected and visible runs. Show clearer plot-loading progress
+  and keep cancellation, database switching, and shutdown responsive.
+- Combine line traces and heatmaps in one plot, with axis-aware drag-and-drop,
+  shared appearance controls, and source annotations included in exports.
+- Add system printing, configurable heatmap display grid limits, optional saved
+  run-table columns, plot tiling, cursor precision, and version/build information
+  in Help -> About qPlot and the main window title.
+- Improve QCoDeS variable-shaped array support, missing-data handling, numerical
+  precision, native transforms, averaging, autoscaling, and live run refresh.
+  Reject drawing ranges that cannot faithfully represent recorded values.
+- Fix CSV alignment and precision, standalone-measurement exports, SVG output,
+  and PDF publication. Strengthen protection against auxiliary outputs
+  overwriting database files and against blocking special-file inputs.
+- Split the application into `qplotter` and the separately versioned
+  `qplotter-native==1.0.0`. Supported installations use prebuilt native wheels
+  without a compiler; imports and commands remain `qplot`. Release validation
+  covers CPython 3.11-3.14, Windows x64, macOS ARM64/Intel, and headless Linux
+  x86_64. Windows and macOS remain the supported desktop platforms.
+- Strengthen application/helper shutdown and settings recovery, and save
+  configuration changes transactionally.
+
+### Upgrading
+
+- Older or incompatible settings are reset to current defaults. Settings
+  migration is not supported.
+- The old `qplot` distribution and `qplotter` share imports and commands and
+  must not coexist. Prefer a fresh virtual environment, or follow the removal
+  and reinstall instructions in `docs/distribution.md`.
+- This entry is draft release text. Publication still requires the tagged
+  release workflow and all validation gates; this PR does not publish packages.
 
 ## 1.6.0b3 - Unreleased
 
