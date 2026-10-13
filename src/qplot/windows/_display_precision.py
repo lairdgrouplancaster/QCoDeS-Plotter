@@ -8,6 +8,22 @@ DISPLAY_PRECISION_MESSAGE = (
     "The original samples remain available for CSV export and processing."
 )
 
+HEATMAP_DISPLAY_RANGE_MESSAGE = (
+    "The heatmap coordinate range cannot be displayed safely. "
+    "Recorded samples remain available for CSV export and processing."
+)
+
+
+def heatmap_display_range_is_finite(geometry, pixel_size=(1., 1.)):
+    """Require finite image and viewport scales before installing Qt transforms."""
+    if not np.all(np.isfinite(geometry.rect)):
+        return False
+    spans = np.asarray(geometry.rect[2:])
+    cells = np.asarray((geometry.x.count, geometry.y.count))
+    with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+        return bool(np.all(np.isfinite(spans / cells))
+                    and np.all(np.isfinite(np.maximum(pixel_size, cells) / spans)))
+
 
 def float_display_loses_distinctions(values):
     """Check exact integer/object values before a renderer converts to float.

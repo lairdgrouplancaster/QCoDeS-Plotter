@@ -436,6 +436,15 @@ All Python commands use the project venv; Matplotlib cache is
   measurement, retaining correct raw grid/axes and CSV behavior. Explicit
   unsupported display status must survive normal completion callbacks. Semantic
   bin geometry should remain usable; no unrelated axis rebasing redesign.
+- Author regressions: 21 actual UI cases passed; broader plotting batch:
+  196 passed and 10 subtests. Independent review reproduced a follow-up:
+  the 450 ms viewport reload timer can start another worker after range
+  rejection and hide the explanation. Timer cancellation/scheduling behavior
+  now stops the pending timer and skips automatic reload while rejected.
+  The regression waits 650 ms and asserts unchanged worker, grid and warning
+  before explicit safe recovery. Final UI independently approved the final
+  patch and reran all **21 cases** (29.47 s), including line-host overlays,
+  secondary axes, resize/zoom, explicit recovery and layer removal.
 
 ### Integrated suite result
 
@@ -443,6 +452,19 @@ All Python commands use the project venv; Matplotlib cache is
   860.01 s. This resolves all previous 26 integration failures. Subsequent
   BH-016–BH-019 repairs have the focused validation recorded above; BH-020 and
   final review rounds remain pending before the campaign can finish.
+
+### BH-022 — Extreme line coordinates silently produce an invalid drawing
+
+- Real QCoDeS UI probe with X or Y `[-1, 0, 1] * 1e-309` / `1e-320`
+  paints and resizes a 500 px window to 1,500 px. The curve scene transform
+  contains infinite scale and NaN translation while retaining three displayed
+  samples, no unsupported-range explanation and no callback exception.
+- With scale `1e308`, autorange retains the default `[0, 1]` on the affected
+  axis, again without explanation. Probe: `/private/tmp/qplot_probe_line_ranges.log`.
+- Final safety owns the focused line guard and regressions; final UI will
+  independently review. Shared precision-helper changes are coordinated with
+  BH-021's author. Raw samples/export and recovery through processing must remain
+  available. Repair and validation are in progress; no clean round is claimed.
 
 ### Numerical scope note
 

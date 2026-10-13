@@ -27,7 +27,9 @@ from ._colorbar import (
 )
 from ._display_precision import (
     DISPLAY_PRECISION_MESSAGE,
+    HEATMAP_DISPLAY_RANGE_MESSAGE,
     float_display_loses_distinctions,
+    heatmap_display_range_is_finite,
 )
 from ._plot_appearance import ReorderAppearanceTable, configure_appearance_table
 from ._plot_drop_axes import DroppedAxisMapping, displayed_axis_parameter
@@ -320,8 +322,15 @@ class HeatmapLayer:
             "y": np.asarray(y_data),
         }
         self.data_grid = np.asarray(data_grid)
-        if float_display_loses_distinctions(self.data_grid):
-            self._report_compatibility_error(DISPLAY_PRECISION_MESSAGE)
+        viewbox = self.image.getViewBox()
+        pixel_size = (viewbox.width(), viewbox.height()) if viewbox is not None else (1., 1.)
+        display_error = (
+            HEATMAP_DISPLAY_RANGE_MESSAGE if not heatmap_display_range_is_finite(geometry, pixel_size)
+            else DISPLAY_PRECISION_MESSAGE if float_display_loses_distinctions(self.data_grid)
+            else None
+        )
+        if display_error:
+            self._report_compatibility_error(display_error)
             # Retain exact copied samples for inspection/export, but do not
             # expose a misleading renderer or include it in colour scaling.
             self.geometry = None
@@ -331,6 +340,9 @@ class HeatmapLayer:
             return False
         self.geometry = geometry
         self._render()
+        schedule_validation = getattr(self.parent, "_schedule_heatmap_view_validation", None)
+        if callable(schedule_validation):
+            schedule_validation()
         if sync_colorbar:
             self._sync_parent_colorbar()
         return True
@@ -575,6 +587,53 @@ class Plot2DLayerMixin:
     """Registry, controls, colour-bar sync, and cleanup for heatmap layers."""
 
     heatmaps: dict[Any, Any]
+
+    def _watch_heatmap_view_transform(self, viewbox):
+        watched = self.__dict__.setdefault("_heatmap_transform_viewboxes", set())
+        if viewbox not in watched:
+            viewbox.sigTransformChanged.connect(self._schedule_heatmap_view_validation)
+            watched.add(viewbox)
+
+    def _schedule_heatmap_view_validation(self, *_args):
+        # Mixed plots mirror coordinate owners into drawing ViewBoxes. Check
+        # after their signal handlers have installed the final scene mapping.
+        if self.__dict__.get("_heatmap_view_validation_pending", False):
+            return
+        self._heatmap_view_validation_pending = True
+        QtCore.QTimer.singleShot(0, self._validate_heatmap_view_transforms)
+
+    def _validate_heatmap_view_transforms(self, *_args) -> None:
+        """Hide unsafe drawing transforms after viewport resize or zoom."""
+        self._heatmap_view_validation_pending = False
+        if self.__dict__.get("_checking_heatmap_view_transforms", False):
+            return
+        self._checking_heatmap_view_transforms = True
+        try:
+            layers = list(self.__dict__.get("heatmaps", {}).values())
+            for layer in layers:
+                geometry = self._heatmap_geometry() if layer is self else layer.geometry
+                if geometry is None:
+                    continue
+                if layer is self and self.__dict__.get("_heatmap_color_range_rejected", False):
+                    continue
+                renderer = layer.image if geometry.is_uniform else layer.heatmap_mesh
+                transform = renderer.sceneTransform()
+                if np.all(np.isfinite((transform.m11(), transform.m12(), transform.m13(),
+                                       transform.m21(), transform.m22(), transform.m23(),
+                                       transform.m31(), transform.m32(), transform.m33()))):
+                    continue
+                if layer is self:
+                    self._heatmap_view_reload_timer.stop()
+                    self._reject_heatmap_color_range(
+                        message=HEATMAP_DISPLAY_RANGE_MESSAGE,
+                        title="Unsupported heatmap coordinate range",
+                    )
+                else:
+                    layer._report_compatibility_error(HEATMAP_DISPLAY_RANGE_MESSAGE)
+                    layer.geometry = None
+                    layer._hide_renderers()
+        finally:
+            self._checking_heatmap_view_transforms = False
 
     def initMenu(self) -> None:
         """Add Heatmap Appearance to the standard View menu."""
@@ -824,6 +883,7 @@ class Plot2DLayerMixin:
             self.__dict__["_heatmap_renderer_viewboxes"] = renderer_viewboxes
         primary_viewbox = self.__dict__.get("vb")
         if primary_viewbox is not None:
+            self._watch_heatmap_view_transform(primary_viewbox)
             for item in self._primary_heatmap_axis_items():
                 renderer_viewboxes.setdefault(id(item), primary_viewbox)
 
@@ -1444,12 +1504,15 @@ class Plot2DLayerMixin:
         auto_range: bool = True,
     ) -> None:
         target = self._heatmap_axis_viewbox(layer)
+        if target is not None:
+            self._watch_heatmap_view_transform(target)
         for item in self._heatmap_axis_items(layer):
             self._move_heatmap_item_to_viewbox(item, target)
         self._sync_heatmap_axis_visibility()
         if auto_range and target is not None:
             target.autoRange()
         self._sync_secondary_heatmap_view_ranges(layer=None if layer is self else layer)
+        self._schedule_heatmap_view_validation()
 
     def _set_layer_axes(self, layer: Any, x_axis: str, y_axis: str) -> None:
         """Assign one heatmap to any of the four displayed axis pairs."""
