@@ -93,7 +93,7 @@ def test_public_comparison_selects_only_matching_validated_wheels(artifact_set, 
     files = list(selected.iterdir())
     assert len(files) == 2 and all(path.suffix == '.whl' for path in files)
     native = next(path for path in files if path.name.startswith('qplotter_native'))
-    assert release.native_platform(native.name, '1.0.0') == platform
+    assert release.native_platform(native.name, release.validator.PINNED_NATIVE_VERSION) == platform
     assert native.read_bytes() == (artifacts / native.name).read_bytes()
     with pytest.raises(AssertionError, match='another workflow run'):
         release.select_platform(bundle, platform, bundle.parent / 'wrong', **{**IDENTITY, 'run_id': '0'})
@@ -146,7 +146,7 @@ def test_publication_rejects_incomplete_or_unexpected_artifacts(artifact_set, ch
     elif change == "extra":
         (artifacts / "random.txt").write_text("unvalidated input")
     elif change == "wrong-version":
-        native.rename(artifacts / native.name.replace("1.0.0", "0.9.0"))
+        native.rename(artifacts / native.name.replace(release.validator.PINNED_NATIVE_VERSION, "0.9.0"))
     else:
         release.stage(repository, artifacts, output, **IDENTITY)
         shutil.copyfile(next(artifacts.glob("qplotter_native*.tar.gz")), output / "native/dist/unwanted.tar.gz")
@@ -258,7 +258,7 @@ def test_native_index_verification_uses_exact_binary_pin_without_cache(artifact_
     command, options = calls[0]
     assert "--only-binary=:all:" in command and "--no-cache-dir" in command
     assert "--no-deps" in command and "--abi" in command and "abi3" in command
-    assert command[-1] == "qplotter-native==1.0.0"
+    assert command[-1] == f"qplotter-native=={release.validator.PINNED_NATIVE_VERSION}"
     assert command[command.index("--index-url") + 1] == "https://pypi.org/simple"
     assert "PIP_EXTRA_INDEX_URL" not in options["env"]
     assert options["cwd"] == destination

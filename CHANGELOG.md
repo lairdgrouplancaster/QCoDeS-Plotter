@@ -2,6 +2,33 @@
 
 All notable user-facing changes are recorded here.
 
+## 1.6.1
+
+This patch release improves live acquisition viewing and release validation.
+
+### Fixed
+
+- Restore Auto-plot in trusted live mode. Newly detected runs open automatically,
+  and enabling Auto-plot opens the newest incomplete run. Requests survive
+  selection changes and refreshes, retry while run metadata becomes available,
+  and cancel when Auto-plot is disabled, the database changes, or qPlot closes.
+- Reduce unnecessary WAL coordination overhead that could cause deferred QCoDeS
+  writes to fail with `SQLITE_BUSY` during live viewing. Existing database
+  protections remain enforced.
+- Display the main window title as `qPlot - <version>` without a duplicated
+  application-name suffix.
+- Correct editable-install validation for source checkouts without generated
+  build metadata.
+
+### Maintenance
+
+- Release the native-reader fix as `qplotter-native==1.0.1`, installed
+  automatically by the application's updated dependency pin.
+- Add a workflow to revalidate published releases against their original
+  artifacts.
+- Update live-reader, Auto-plot, and release-validation documentation and add
+  README badges.
+
 ## 1.6.0
 
 ### Highlights ###

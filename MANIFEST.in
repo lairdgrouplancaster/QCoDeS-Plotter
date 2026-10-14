@@ -27,6 +27,7 @@ prune src/qplotter.egg-info
 
 global-exclude .DS_Store
 global-exclude *.py[cod]
+global-exclude *.py[cod].*
 global-exclude *.dll
 global-exclude *.dylib
 global-exclude *.pyd
