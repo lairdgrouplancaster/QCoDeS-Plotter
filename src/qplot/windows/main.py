@@ -568,7 +568,7 @@ class MainWindow(
             max(configured_width, MAIN_WINDOW_READABLE_WIDTH),
             configured_height,
             )
-        self.setWindowTitle(f"qPlot-{version_info()['version']}")
+        self.setWindowTitle(f"qPlot - {version_info()['version']}")
         startup_elapsed = perf_counter() - startup_start
         self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
         

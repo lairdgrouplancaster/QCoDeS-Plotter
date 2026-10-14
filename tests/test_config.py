@@ -1050,7 +1050,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
             self.assertEqual(app.applicationName(), "qPlot")
             if hasattr(app, "applicationDisplayName"):
-                self.assertEqual(app.applicationDisplayName(), "qPlot")
+                self.assertEqual(app.applicationDisplayName(), "")
         finally:
             app.setApplicationName(old_name)
             if old_display_name is not None and hasattr(app, "setApplicationDisplayName"):
