@@ -3,6 +3,7 @@
 import json
 import runpy
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -47,6 +48,65 @@ def test_checkout_without_git_executable_still_reports_source_version(checkout, 
         raise FileNotFoundError("git")
     monkeypatch.setattr(_metadata.subprocess, "run", missing)
     assert _metadata.checkout_info(checkout) == {"version": "2.0.0", "checkout": True}
+
+
+def test_checkout_reports_provenance_when_git_startup_takes_over_one_second(checkout, monkeypatch):
+    run = subprocess.run
+    delayed = False
+
+    def slow_startup(command, **kwargs):
+        nonlocal delayed
+        if not delayed:
+            delayed = True
+            command = [
+                sys.executable, "-c",
+                "import subprocess, sys, time; time.sleep(1.2); "
+                "raise SystemExit(subprocess.call(sys.argv[1:]))",
+                *command,
+            ]
+        return run(command, **kwargs)
+
+    expected_commit = git(checkout, "rev-parse", "HEAD")
+    monkeypatch.setattr(_metadata.subprocess, "run", slow_startup)
+    assert _metadata.checkout_info(checkout) == {
+        "version": "2.0.0", "checkout": True, "commit": expected_commit,
+        "dirty": False, "released": False,
+    }
+
+
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_checkout_git_reads_share_one_deadline_and_do_not_guess_release_status(
+    checkout, monkeypatch, exhausted,
+):
+    now = 100.0
+    calls = []
+
+    def run(command, **kwargs):
+        nonlocal now
+        calls.append(kwargs["timeout"])
+        if len(calls) == 1:
+            now += 6 if exhausted else 4
+            return SimpleNamespace(stdout="a" * 40)
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(_metadata.time, "monotonic", lambda: now)
+    monkeypatch.setattr(_metadata.subprocess, "run", run)
+    assert _metadata.checkout_info(checkout) == {"version": "2.0.0", "checkout": True}
+    assert calls == ([5.0] if exhausted else [5.0, 1.0])
+
+
+def test_ci_stamp_rejects_incomplete_git_provenance(checkout, monkeypatch):
+    script = Path(__file__).resolve().parents[1] / "scripts/write_build_info.py"
+    main = runpy.run_path(str(script))["main"]
+    monkeypatch.setitem(main.__globals__, "ROOT", checkout)
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired("git", 5)
+
+    monkeypatch.setattr(_metadata.subprocess, "run", timeout)
+    with pytest.raises(RuntimeError, match="clean Git checkout"):
+        main()
+    assert not (checkout / "src/qplot/_build_info.json").exists()
 
 
 def installed_package(tmp_path, monkeypatch):
