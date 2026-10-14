@@ -329,9 +329,14 @@ Common actions:
   on macOS and `Ctrl+Q` on Windows and Linux.
 * The refresh interval controls how often qPlot checks for new runs. Set it to
   `0.0 s` to disable automatic checks.
-* `Auto-plot` retains its existing behavior for snapshot fallback sessions.
-  Trusted live Stage 4 does not materialise an action-owned plot dataset
-  automatically; use an explicit plot action instead.
+* `Auto-plot` opens every newly detected run, including runs already complete,
+  in both trusted live and snapshot fallback sessions. Enabling it also opens
+  the newest incomplete run already listed. Trusted live requests use the
+  asynchronous reader and survive selection changes and subsequent refreshes.
+  An empty plot waits for its first data. Missing descriptions are retried with
+  backoff (eight attempts); after that, a run metadata change wakes the request,
+  or you can open it manually. Disabling Auto-plot, changing databases, or
+  quitting cancels pending automatic requests.
 
 Where a legacy preview is available, its double-click and context-menu actions
 can still request a plot or export. Trusted live sessions do not generate those

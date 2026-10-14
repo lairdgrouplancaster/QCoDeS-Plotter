@@ -6,6 +6,7 @@ import argparse
 import re
 import subprocess
 import tempfile
+import tomllib
 from pathlib import Path
 
 if __package__:
@@ -18,6 +19,24 @@ else:
 
 def validate_installation(repository: Path, bundle: Path, *, tag: str,
                           run_id: str, platform: str, mode: str) -> None:
+    """Use the original release's native pin with the corrected validation tools.
+
+    Publishing still requires the current pin. Only this read-only recheck
+    scopes the pin to the tagged source; the current APSW/SQLite ABI checks,
+    receipt identities, public hashes and installed-reader smokes remain intact.
+    """
+    native = tomllib.loads((repository / 'native/pyproject.toml').read_text())['project']
+    current_pin = release.validator.PINNED_NATIVE_VERSION
+    try:
+        release.validator.PINNED_NATIVE_VERSION = native['version']
+        _validate_installation(repository, bundle, tag=tag, run_id=run_id,
+                               platform=platform, mode=mode)
+    finally:
+        release.validator.PINNED_NATIVE_VERSION = current_pin
+
+
+def _validate_installation(repository: Path, bundle: Path, *, tag: str,
+                           run_id: str, platform: str, mode: str) -> None:
     """Bind original receipts to the tagged source and public package bytes."""
     repository = repository.resolve()
     assert mode in ('wheel', 'editable'), mode

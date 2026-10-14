@@ -1,4 +1,4 @@
-"""Explicit plot data captured through the application's trusted broker.
+"""Plot data captured through the application's trusted broker.
 
 Only a run's result table is staged, never database pages or unrelated runs.
 The private spool lets the existing precision-preserving QCoDeS decoder and
@@ -24,6 +24,14 @@ RECORD_PROGRESS_UNITS = 1_000_000
 MAX_PARAMETERS = 256
 
 
+class PlotMetadataUnavailableError(TrustedLiveQueryError):
+    """Run creation/start has not yet published a usable plot description.
+
+    This is an operation-local data condition, not a fatal reader failure.
+    The broker session must remain usable for other runs and later attempts.
+    """
+
+
 def identifier(name):
     return '"' + str(name).replace('"', '""') + '"'
 
@@ -46,10 +54,17 @@ class TrustedPlotDataset:
         self.service = service
         self.path_to_db = service.database_instance.logical_path
         self.description_json = description
-        self.description = from_json_to_current(description)
-        self._parameters = list(new_to_old(self.description.interdeps).paramspecs)
-        if not 0 < len(self._parameters) <= MAX_PARAMETERS:
-            raise ValueError("Plot parameter count exceeds the supported bound.")
+        if not description:
+            raise PlotMetadataUnavailableError("The run description is not available yet.")
+        try:
+            self.description = from_json_to_current(description)
+            self._parameters = list(new_to_old(self.description.interdeps).paramspecs)
+        except (ValueError, TypeError, KeyError) as error:
+            raise PlotMetadataUnavailableError("The run description is not usable yet.") from error
+        if not self._parameters:
+            raise PlotMetadataUnavailableError("The run has no plot parameters yet.")
+        if len(self._parameters) > MAX_PARAMETERS:
+            raise TrustedLiveQueryError("Plot parameter count exceeds the supported bound.")
         self._completed = bool(completed)
         self.number_of_results = 0
         # Only qPlot's cache accessors are used; no DataSet database methods.
@@ -80,7 +95,7 @@ def plot_dataset(executor, service, guid):
         "WHERE r.guid=? LIMIT 2", (guid,),
     ).rows
     if len(rows) != 1:
-        raise ValueError("The requested plot GUID does not identify one run.")
+        raise TrustedLiveQueryError("The requested plot GUID does not identify one run.")
     return TrustedPlotDataset(service, rows[0])
 
 

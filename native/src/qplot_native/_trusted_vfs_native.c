@@ -154,6 +154,10 @@ typedef struct QpAudit {
   QpU64 shm_map_extend;
   QpU64 shm_map_rejected;
   QpU64 shm_lock;
+  QpU64 shm_write_lock_attempts;
+  QpU64 shm_write_lock_acquired;
+  QpU64 shm_write_lock_ticks;
+  QpU64 shm_write_lock_max_ticks;
   QpU64 shm_unmap_delete_requested;
   QpU64 temp_redirect;
   QpU64 temp_write;
@@ -336,6 +340,7 @@ typedef struct QpFile {
   int source_proved;
   int shm_proved;
   int shm_active;
+  QpU64 shm_write_lock_started;
   int wal_placeholder;
   int sticky_failure_rc;
   int listed;
@@ -1734,7 +1739,8 @@ static int qp_validate_source_binding_now(QpFile *file,
    * checked on EVERY read. The trusted parent namespace cannot redirect an
    * already-open handle. Full source/SHM/path validation brackets the operation
    * and rejects replacement before any materialised result can be published.
-   * All other callbacks (including SHM coordination) retain their full checks. */
+   * SHM mapping also validates fully; locks and barriers use that established
+   * binding without filesystem work in SQLite's WAL critical sections. */
   qp_lock();
   reuse_path = qp_state.read_scope &&
                (strcmp(operation, "read_pre") == 0 ||
@@ -3225,18 +3231,46 @@ static int qp_shm_map(sqlite3_file *sqlite_file, int region, int region_size,
 static int qp_shm_lock(sqlite3_file *sqlite_file, int offset, int count,
                        int flags) {
   QpFile *file = (QpFile *)sqlite_file;
-  int rc = qp_before_callback(file, "shm_lock_source_pre");
-  if (rc != SQLITE_OK || file->kind != QP_FILE_SOURCE || !file->shm_active ||
+  int rc;
+  if (file->kind != QP_FILE_SOURCE || file->artifact != QP_ARTIFACT_MAIN ||
+      !file->shm_active || !file->shm_proved || file->real == NULL ||
+      file->real->pMethods == NULL ||
       file->real->pMethods->xShmLock == NULL) return SQLITE_IOERR;
-  rc = qp_validate_shm_binding(file, "shm_lock_pre");
-  if (rc != SQLITE_OK) return rc;
+  /* xShmMap proves the actual mapping/lock handles before exposing them.
+   * Full validation also brackets every finite operation, before publication.
+   * The trusted namespace cannot redirect an already-open handle. Do not do
+   * filesystem work here: even a reader can hold WAL_WRITE_LOCK while SQLite
+   * retries a raced WAL-index header. Post-lock or pre-unlock validation would
+   * stretch that critical section and break a writer's deferred upgrade.
+   * Always forward unlocks, including cleanup after a latched identity error. */
+  if (!(flags & SQLITE_SHM_UNLOCK)) {
+    if (!qp_file_is_current(file)) return SQLITE_IOERR;
+    rc = qp_file_sticky_failure(file);
+    if (rc != SQLITE_OK) return rc;
+  }
   QP_AUDIT_INC(shm_lock);
   rc = file->real->pMethods->xShmLock(file->real, offset, count, flags);
-  {
-    int validation_rc = qp_validate_shm_binding(file, "shm_lock_post");
-    if (validation_rc != SQLITE_OK) return validation_rc;
+  /* WAL_WRITE_LOCK is byte 0 in the pinned SQLite SHM lock domain. */
+  if (offset == 0 && count > 0) {
+    QpU64 now = qp_clock_ticks();
+    qp_lock();
+    if (flags == (SQLITE_SHM_LOCK | SQLITE_SHM_EXCLUSIVE)) {
+      qp_state.audit.shm_write_lock_attempts++;
+      if (rc == SQLITE_OK) {
+        file->shm_write_lock_started = now;
+        qp_state.audit.shm_write_lock_acquired++;
+      }
+    } else if ((flags & SQLITE_SHM_UNLOCK) && rc == SQLITE_OK &&
+               file->shm_write_lock_started != 0) {
+      QpU64 held = now - file->shm_write_lock_started;
+      qp_state.audit.shm_write_lock_ticks += held;
+      if (held > qp_state.audit.shm_write_lock_max_ticks)
+        qp_state.audit.shm_write_lock_max_ticks = held;
+      file->shm_write_lock_started = 0;
+    }
+    qp_unlock();
   }
-  return qp_after_source_callback(file, "shm_lock_source_post", rc);
+  return rc;
 }
 
 static void qp_shm_barrier(sqlite3_file *sqlite_file) {
@@ -3244,13 +3278,12 @@ static void qp_shm_barrier(sqlite3_file *sqlite_file) {
   int current = qp_file_is_current(file);
   if (current && file->kind == QP_FILE_SOURCE && file->shm_active &&
       file->real->pMethods->xShmBarrier != NULL) {
-    (void)qp_validate_source_binding(file, "shm_barrier_source_pre");
-    (void)qp_validate_shm_binding(file, "shm_barrier_pre");
-    /* Never omit SQLite's required memory fence.  This callback is void, so
-     * any validation failure is latched for the next error-returning call. */
+    /* walIndexTryHdr calls this between copying the two WAL-index headers.
+     * Filesystem validation here turns an ordinary concurrent commit into a
+     * header mismatch, forcing SQLite to acquire WAL_WRITE_LOCK to retry.
+     * Keep the platform fence, even after a latched error. Mapping and finite
+     * operation boundaries retain full source/SHM identity validation. */
     file->real->pMethods->xShmBarrier(file->real);
-    (void)qp_validate_shm_binding(file, "shm_barrier_post");
-    (void)qp_validate_source_binding(file, "shm_barrier_source_post");
   }
 }
 
@@ -3733,6 +3766,8 @@ static void qp_audit_sql(sqlite3_context *context, int argc,
       "\"source_writable_map\":%llu,\"shm_map_readonly\":%llu,"
       "\"shm_map_writable\":%llu,\"shm_map_extend\":%llu,"
       "\"shm_map_rejected\":%llu,\"shm_lock\":%llu,"
+      "\"shm_write_lock_attempts\":%llu,\"shm_write_lock_acquired\":%llu,"
+      "\"shm_write_lock_ns\":%llu,\"shm_write_lock_max_ns\":%llu,"
       "\"shm_unmap_delete_requested\":%llu,\"temp_redirect\":%llu,"
       "\"temp_write\":%llu,\"temp_write_bytes\":%llu,"
       "\"temp_delete\":%llu,\"stale_callback_rejected\":%llu,"
@@ -3751,7 +3786,10 @@ static void qp_audit_sql(sqlite3_context *context, int argc,
       audit.source_sync, audit.source_delete, audit.source_fetch,
       audit.source_writable_map, audit.shm_map_readonly,
       audit.shm_map_writable, audit.shm_map_extend, audit.shm_map_rejected,
-      audit.shm_lock, audit.shm_unmap_delete_requested, audit.temp_redirect,
+      audit.shm_lock, audit.shm_write_lock_attempts, audit.shm_write_lock_acquired,
+      qp_ticks_to_ns(audit.shm_write_lock_ticks),
+      qp_ticks_to_ns(audit.shm_write_lock_max_ticks),
+      audit.shm_unmap_delete_requested, audit.temp_redirect,
       audit.temp_write, audit.temp_write_bytes, audit.temp_delete,
       audit.stale_callback_rejected, audit.identity_verified,
       audit.identity_rejected, audit.proof_open, audit.proof_close,

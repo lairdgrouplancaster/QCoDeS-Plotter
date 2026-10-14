@@ -62,7 +62,8 @@ def _configure_application_identity(app):
     """
     app.setApplicationName("qPlot")
     if hasattr(app, "setApplicationDisplayName"):
-        app.setApplicationDisplayName("qPlot")
+        # Window titles already identify qPlot; suppress Qt's automatic suffix.
+        app.setApplicationDisplayName("")
 
 
 def _finalize_confirmed_process_shutdown(

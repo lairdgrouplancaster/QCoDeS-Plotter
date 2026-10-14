@@ -15,6 +15,7 @@ import pytest
 from scripts.validate_distribution import (
     ENTRYPOINT_DELEGATION_SITECUSTOMIZE,
     NATIVE_EXTENSION_MEMBERS,
+    PINNED_NATIVE_VERSION,
     find_artifacts,
     install_wheels,
     validate_wheel,
@@ -387,9 +388,9 @@ PACKAGING_SOURCE = {
 }
 
 
-def _split_wheel(tmp_path, *, native=False, extra_files=(), native_pin="1.0.0"):
+def _split_wheel(tmp_path, *, native=False, extra_files=(), native_pin=PINNED_NATIVE_VERSION):
     name = "qplotter_native" if native else "qplotter"
-    version = "1.0.0" if native else "1.6.0b3"
+    version = PINNED_NATIVE_VERSION if native else "1.6.0b3"
     tag = "cp311-abi3-test_platform" if native else "py3-none-any"
     artifact = tmp_path / f"{name}-{version}-{tag}.whl"
     info = f"{name}-{version}.dist-info"
@@ -524,7 +525,7 @@ def test_import_audit_detects_stale_files_and_shadow_packages(tmp_path, monkeypa
         module_paths['qplot'] = tmp_path / 'checkout/qplot/__init__.py'
 
     def installed_distribution(name):
-        version = '1.0.0' if name == 'qplotter-native' else '1.6.0b3'
+        version = PINNED_NATIVE_VERSION if name == 'qplotter-native' else '1.6.0b3'
         if fault == 'old-version' and name == 'qplotter-native':
             version = '0.9.0'
         return SimpleNamespace(version=version, locate_file=lambda relative: prefix / relative)

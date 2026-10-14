@@ -50,6 +50,7 @@ from qplot.testdata import (
     read_specifications,
 )
 
+from ._auto_plot import cancel_auto_plot, enqueue_auto_plot, update_auto_plot
 from ._config_persistence import persist_config_value
 from ._dataset_handle import (
     canonical_database_path,
@@ -1158,6 +1159,7 @@ class DatabaseActionsMixin:
         Clears the current database from the main window state.
 
         """
+        cancel_auto_plot(self)
         worker = getattr(self, "_database_load_worker", None)
         if worker is not None:
             worker.cancel()
@@ -1836,6 +1838,7 @@ class DatabaseActionsMixin:
         if new_runs:
             DatabaseActionsMixin._apply_basic_new_runs(self, new_runs)
 
+        update_auto_plot(self, updated_runs)
         self._sync_empty_state()
         if not new_runs:
             if self.RunList.topLevelItemCount() == 0:
@@ -1848,12 +1851,8 @@ class DatabaseActionsMixin:
         noun = "run" if count == 1 else "runs"
         self.show_status(f"Found {count} new {noun}.", 5000)
 
-        if (
-                getattr(self, "_database_access_mode", None) != TRUSTED_LIVE_MODE
-                and self.autoPlotBox.isChecked()
-                ):
-            for run in new_runs.values():
-                self.openPlot(run["guid"])
+        if self.autoPlotBox.isChecked():
+            enqueue_auto_plot(self, [run["guid"] for run in new_runs.values()])
 
 
     def _apply_basic_new_runs(
@@ -3349,6 +3348,7 @@ class DatabaseActionsMixin:
                 # service immediately, before signal restoration or control
                 # synchronisation in the enclosing finally can raise.
                 if old_service is not new_service:
+                    cancel_auto_plot(self)
                     # The old coordinator may still own a bounded read against
                     # A.  Retire it at the same commit boundary that transfers
                     # the trusted service, before the queued Stage 5C bind
@@ -4097,6 +4097,7 @@ class DatabaseActionsMixin:
         if DatabaseActionsMixin._database_generation_transaction_blocks_path(self):
             return
         updated_runs = self.RunList.updateRuns(runs)
+        update_auto_plot(self, updated_runs)
         if not updated_runs:
             return
 

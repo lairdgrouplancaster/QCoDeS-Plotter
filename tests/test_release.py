@@ -93,7 +93,7 @@ def test_public_comparison_selects_only_matching_validated_wheels(artifact_set, 
     files = list(selected.iterdir())
     assert len(files) == 2 and all(path.suffix == '.whl' for path in files)
     native = next(path for path in files if path.name.startswith('qplotter_native'))
-    assert release.native_platform(native.name, '1.0.0') == platform
+    assert release.native_platform(native.name, release.validator.PINNED_NATIVE_VERSION) == platform
     assert native.read_bytes() == (artifacts / native.name).read_bytes()
     with pytest.raises(AssertionError, match='another workflow run'):
         release.select_platform(bundle, platform, bundle.parent / 'wrong', **{**IDENTITY, 'run_id': '0'})
@@ -135,6 +135,34 @@ def test_published_recheck_binds_source_receipts_and_public_bytes(artifact_set, 
         assert kwargs == dict(editable=mode == 'editable', public_pypi=True)
 
 
+@pytest.mark.parametrize('mode', ['wheel', 'editable'])
+@pytest.mark.parametrize('failed_acceptance', [False, True])
+def test_published_recheck_scopes_original_native_pin_and_restores_tools(
+        artifact_set, monkeypatch, mode, failed_acceptance):
+    repository, artifacts, bundle = artifact_set
+    original_pin = release.validator.PINNED_NATIVE_VERSION
+    release.stage(repository, artifacts, bundle, **IDENTITY)
+    monkeypatch.setattr(revalidation.subprocess, 'check_output', lambda *a, **kw: IDENTITY['revision'])
+    monkeypatch.setattr(release, 'verify_pypi', Mock())
+    monkeypatch.setattr(release.validator, 'PINNED_NATIVE_VERSION', '99.0.0')
+
+    def accept(*args, **kwargs):
+        assert revalidation.acceptance.validator.PINNED_NATIVE_VERSION == original_pin
+        assert kwargs == dict(editable=mode == 'editable', public_pypi=True)
+        if failed_acceptance:
+            raise RuntimeError('acceptance failed')
+
+    monkeypatch.setattr(revalidation.acceptance, 'accept_installation', accept)
+    arguments = dict(tag='native-and-app/v1.6.0', run_id='42',
+                     platform='windows-x64', mode=mode)
+    if failed_acceptance:
+        with pytest.raises(RuntimeError, match='acceptance failed'):
+            revalidation.validate_installation(repository, bundle, **arguments)
+    else:
+        revalidation.validate_installation(repository, bundle, **arguments)
+    assert release.validator.PINNED_NATIVE_VERSION == '99.0.0'
+
+
 @pytest.mark.parametrize("change", ["missing", "unrepaired", "extra", "wrong-version", "sdist-upload"])
 def test_publication_rejects_incomplete_or_unexpected_artifacts(artifact_set, change):
     repository, artifacts, output = artifact_set
@@ -146,7 +174,7 @@ def test_publication_rejects_incomplete_or_unexpected_artifacts(artifact_set, ch
     elif change == "extra":
         (artifacts / "random.txt").write_text("unvalidated input")
     elif change == "wrong-version":
-        native.rename(artifacts / native.name.replace("1.0.0", "0.9.0"))
+        native.rename(artifacts / native.name.replace(release.validator.PINNED_NATIVE_VERSION, "0.9.0"))
     else:
         release.stage(repository, artifacts, output, **IDENTITY)
         shutil.copyfile(next(artifacts.glob("qplotter_native*.tar.gz")), output / "native/dist/unwanted.tar.gz")
@@ -258,7 +286,7 @@ def test_native_index_verification_uses_exact_binary_pin_without_cache(artifact_
     command, options = calls[0]
     assert "--only-binary=:all:" in command and "--no-cache-dir" in command
     assert "--no-deps" in command and "--abi" in command and "abi3" in command
-    assert command[-1] == "qplotter-native==1.0.0"
+    assert command[-1] == f"qplotter-native=={release.validator.PINNED_NATIVE_VERSION}"
     assert command[command.index("--index-url") + 1] == "https://pypi.org/simple"
     assert "PIP_EXTRA_INDEX_URL" not in options["env"]
     assert options["cwd"] == destination

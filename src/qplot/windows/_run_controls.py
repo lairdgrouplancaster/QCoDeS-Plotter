@@ -14,6 +14,7 @@ from qplot.datahandling.file_identity import (
 )
 from qplot.datahandling.trusted_live_service import TRUSTED_LIVE_MODE
 
+from ._auto_plot import cancel_auto_plot, enqueue_auto_plot
 from ._commands import create_action, plot_measurement_command_spec
 from ._config_persistence import (
     persist_config_value,
@@ -449,17 +450,14 @@ class RunControlsMixin:
             return
         if checked:
             self._auto_plot_current_running_run()
+        else:
+            cancel_auto_plot(self)
 
     def _auto_plot_current_running_run(self):
         """
         Opens the newest incomplete run already present in the run list.
 
         """
-        # Stage 4 leaves plot-data materialisation on the legacy snapshot path.
-        # A trusted session may enter that path only through an explicit plot or
-        # export action; enabling a persisted preference is not such an action.
-        if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
-            return None
         generation_gate = getattr(
             self,
             "_database_generation_transaction_blocks_path",
@@ -483,7 +481,7 @@ class RunControlsMixin:
             running_runs,
             key=_run_timestamp_sort_key,
             )
-        self.openPlot(metadata["guid"])
+        enqueue_auto_plot(self, [metadata["guid"]])
         return metadata["guid"]
 
     def _apply_refresh_interval(self, interval):

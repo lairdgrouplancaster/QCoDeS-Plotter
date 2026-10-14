@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qplotter"
-version = "1.6.0"
+version = "1.6.1"
 description = "PyQt-based viewer for completed and running QCoDeS database experiments"
 readme = "README.md"
 authors = [{name="Ben Wordsworth", email="b.wordsworth@lancaster.ac.uk"},{name="Edward Laird", email="e.a.laird@lancaster.ac.uk"}]
@@ -27,7 +27,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = [
-    "qplotter-native==1.0.0",
+    "qplotter-native==1.0.1",
     "apsw==3.53.4.0",
     "jsonschema>=4.23.0",
     "numpy>=2.3.1",

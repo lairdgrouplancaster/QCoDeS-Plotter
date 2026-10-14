@@ -42,7 +42,7 @@ def test_public_install_uses_exact_index_versions_and_no_local_native(tmp_path, 
     assert command[command.index('--index-url') + 1] == 'https://pypi.org/simple'
     assert str((tmp_path / 'native.whl').resolve()) not in command
     if editable:
-        assert 'qplotter-native==1.0.0' in command
+        assert f'qplotter-native=={validator.PINNED_NATIVE_VERSION}' in command
         assert command[-2:] == ['--editable', str((tmp_path / 'fresh-checkout').resolve()) + '[dev]']
     else:
         assert command[-1] == 'qplotter==1.6.0b3'

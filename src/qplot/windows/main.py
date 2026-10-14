@@ -37,6 +37,7 @@ from qplot.datahandling.database import (
 )
 from qplot.diagnostics import get_logger, log_bounded_shutdown, log_user_error
 
+from ._auto_plot import cancel_auto_plot
 from ._commands import create_action
 from ._config_persistence import (
     persist_config_action,
@@ -568,7 +569,7 @@ class MainWindow(
             max(configured_width, MAIN_WINDOW_READABLE_WIDTH),
             configured_height,
             )
-        self.setWindowTitle(f"qPlot-{version_info()['version']}")
+        self.setWindowTitle(f"qPlot - {version_info()['version']}")
         startup_elapsed = perf_counter() - startup_start
         self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
         
@@ -977,6 +978,7 @@ class MainWindow(
     def _cancel_plot_work(self):
         """Cancel running plot loads and remove work that has not started."""
 
+        cancel_auto_plot(self)
         workers = set(getattr(self, "_plot_workers", ()))
         for window in list(getattr(self, "windows", ())):
             worker = getattr(window, "worker", None)

@@ -50,7 +50,7 @@ NATIVE_EXTENSION_MEMBERS = {
     f"{NATIVE_EXTENSION_STEM}.pyd",
 }
 PINNED_APSW_VERSION = "3.53.4.0"
-PINNED_NATIVE_VERSION = "1.0.0"
+PINNED_NATIVE_VERSION = "1.0.1"
 CONSOLE_SCRIPTS = {
     "qplot": "qplot.__main__:run",
     "qplot-cfg": "qplot.configuration.scripts:scripts",

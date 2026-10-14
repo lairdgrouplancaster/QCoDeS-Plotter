@@ -25,7 +25,7 @@ def test_native_extension_is_located_in_separate_import_package():
     assert path.name in {"_trusted_vfs_native.abi3.so", "_trusted_vfs_native.pyd"}
 
 
-@pytest.mark.parametrize("installed_version", [None, "0.9.0", "1.0.1"])
+@pytest.mark.parametrize("installed_version", [None, "1.0.0", "99.0.0"])
 def test_native_missing_or_wrong_version_fails_before_import(monkeypatch, installed_version):
     def metadata_version(name):
         assert name == "qplotter-native"

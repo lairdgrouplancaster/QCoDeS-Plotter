@@ -48,6 +48,8 @@ from qplot.datahandling.trusted_work_scheduler import (
     WorkPublication,
 )
 
+from ._auto_plot import update_auto_plot
+
 if TYPE_CHECKING:
     from qplot.windows.main import MainWindow
 
@@ -825,6 +827,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             self._snapshot_session_token = snapshot_token
             self._snapshot_session_cancel = threading.Event()
         self._window.RunList.updateRuns({publication.run_id: merged_run})
+        update_auto_plot(self._window, {publication.run_id: merged_run})
         self._selected_detail_publication = publication
         self._detail_display_guid = publication.run_guid
         self._window.infoBox.set_snapshot_run_detail(detail)
@@ -918,6 +921,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self._parameters_by_guid[guid] = parameters
         self._summaries_by_guid[guid] = summaries
         self._window.RunList.updateRuns({run_id: run_fields})
+        update_auto_plot(self._window, {run_id: run_fields})
         # PreviewTab replaces each run record, while RunList merges patches.
         # Give both consumers the same accepted facts, including omitted fields
         # retained by RunList and explicit clears from this publication.

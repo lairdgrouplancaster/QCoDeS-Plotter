@@ -92,6 +92,42 @@ def protected_state(path):
     return result
 
 
+@pytest.mark.parametrize("description", [None, "{}", "empty"])
+def test_unavailable_plot_description_does_not_retire_reader(tmp_path, monkeypatch, description):
+    from qcodes.dataset.descriptions.dependencies import InterDependencies_
+    from qcodes.dataset.descriptions.rundescriber import RunDescriber
+    from qcodes.dataset.descriptions.versioning.serialization import to_json_for_storage
+
+    from qplot.datahandling.trusted_plot import PlotMetadataUnavailableError
+
+    path = tmp_path / "not-started.db"
+    run_id, guid, _ = make_run(path, dimensions=1)
+    _, other_guid, _ = make_run(path, dimensions=1)
+    writer = sqlite3.connect(path)
+    original = writer.execute("SELECT run_description FROM runs WHERE run_id=?", (run_id,)).fetchone()[0]
+    if description == "empty":
+        description = to_json_for_storage(RunDescriber(InterDependencies_()))
+    writer.execute("UPDATE runs SET run_description=? WHERE run_id=?", (description, run_id))
+    writer.commit()
+    before = protected_state(path)
+    prohibit_snapshots(monkeypatch)
+    service = TrustedLiveReadService(path)
+    try:
+        with pytest.raises(PlotMetadataUnavailableError):
+            service.submit_plot_dataset(guid).wait()
+        assert not service.closed and not service.closing
+        assert service.submit_plot_dataset(other_guid).wait().guid == other_guid
+        assert protected_state(path) == before
+        writer.execute("UPDATE runs SET run_description=? WHERE run_id=?", (original, run_id))
+        writer.commit()
+        after_write = protected_state(path)
+        assert service.submit_plot_dataset(guid).wait().guid == guid
+        assert protected_state(path) == after_write
+    finally:
+        service.close()
+        writer.close()
+
+
 @pytest.mark.parametrize("finish", ["subscriber_cancel", "deadline", "close"])
 def test_suspended_capture_lifecycle_and_shared_subscribers(tmp_path, monkeypatch, finish):
     from qplot.datahandling import trusted_plot

@@ -4419,7 +4419,8 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
             ("Found 1 new run.", 5000),
         )
 
-    def test_trusted_refresh_never_auto_materializes_plot_dataset(self):
+    @patch.object(database_actions, "enqueue_auto_plot")
+    def test_trusted_refresh_queues_new_runs(self, enqueue):
         new_runs = {
             11: {"guid": "guid-11", "run_timestamp": 11.0},
         }
@@ -4427,7 +4428,7 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
         harness._database_access_mode = database_actions.TRUSTED_LIVE_MODE
         harness._apply_database_refresh_result(new_runs, {})
 
-        self.assertEqual(harness.plotted_guids, [])
+        enqueue.assert_called_once_with(harness, ["guid-11"])
 
 
 class AutoPlotToggleTestCase(unittest.TestCase):
@@ -4508,7 +4509,8 @@ class AutoPlotToggleTestCase(unittest.TestCase):
         self.assertEqual(harness.config.updates, [(AUTO_PLOT_KEY, False)])
         self.assertEqual(harness.plotted_guids, [])
 
-    def test_enabling_auto_plot_does_not_open_trusted_running_run(self):
+    @patch("qplot.windows._run_controls.enqueue_auto_plot")
+    def test_enabling_auto_plot_queues_trusted_running_run(self, enqueue):
         harness = self.Harness(
             {
                 1: {
@@ -4523,7 +4525,7 @@ class AutoPlotToggleTestCase(unittest.TestCase):
         harness._auto_plot_changed(True)
 
         self.assertEqual(harness.config.updates, [(AUTO_PLOT_KEY, True)])
-        self.assertEqual(harness.plotted_guids, [])
+        enqueue.assert_called_once_with(harness, ["running"])
 
 
 class CloudDatabasePrefetchTestCase(unittest.TestCase):
