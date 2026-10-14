@@ -135,6 +135,34 @@ def test_published_recheck_binds_source_receipts_and_public_bytes(artifact_set, 
         assert kwargs == dict(editable=mode == 'editable', public_pypi=True)
 
 
+@pytest.mark.parametrize('mode', ['wheel', 'editable'])
+@pytest.mark.parametrize('failed_acceptance', [False, True])
+def test_published_recheck_scopes_original_native_pin_and_restores_tools(
+        artifact_set, monkeypatch, mode, failed_acceptance):
+    repository, artifacts, bundle = artifact_set
+    original_pin = release.validator.PINNED_NATIVE_VERSION
+    release.stage(repository, artifacts, bundle, **IDENTITY)
+    monkeypatch.setattr(revalidation.subprocess, 'check_output', lambda *a, **kw: IDENTITY['revision'])
+    monkeypatch.setattr(release, 'verify_pypi', Mock())
+    monkeypatch.setattr(release.validator, 'PINNED_NATIVE_VERSION', '99.0.0')
+
+    def accept(*args, **kwargs):
+        assert revalidation.acceptance.validator.PINNED_NATIVE_VERSION == original_pin
+        assert kwargs == dict(editable=mode == 'editable', public_pypi=True)
+        if failed_acceptance:
+            raise RuntimeError('acceptance failed')
+
+    monkeypatch.setattr(revalidation.acceptance, 'accept_installation', accept)
+    arguments = dict(tag='native-and-app/v1.6.0', run_id='42',
+                     platform='windows-x64', mode=mode)
+    if failed_acceptance:
+        with pytest.raises(RuntimeError, match='acceptance failed'):
+            revalidation.validate_installation(repository, bundle, **arguments)
+    else:
+        revalidation.validate_installation(repository, bundle, **arguments)
+    assert release.validator.PINNED_NATIVE_VERSION == '99.0.0'
+
+
 @pytest.mark.parametrize("change", ["missing", "unrepaired", "extra", "wrong-version", "sdist-upload"])
 def test_publication_rejects_incomplete_or_unexpected_artifacts(artifact_set, change):
     repository, artifacts, output = artifact_set

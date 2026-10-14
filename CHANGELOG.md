@@ -25,7 +25,7 @@ This patch release improves live acquisition viewing and release validation.
 - Release the native-reader fix as `qplotter-native==1.0.1`, installed
   automatically by the application's updated dependency pin.
 - Add a workflow to revalidate published releases against their original
-  artifacts.
+  artifacts, retaining each release's original native dependency pin.
 - Update live-reader, Auto-plot, and release-validation documentation and add
   README badges.
 

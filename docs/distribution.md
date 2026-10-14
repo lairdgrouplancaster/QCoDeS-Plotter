@@ -558,8 +558,10 @@ For the 1.6.0 resource-inventory correction these are `v1.6.0` and
 `38429734516`.
 
 This manual workflow uses the corrected tools from `main`, but checks out
-the original release source separately. It downloads the `qplot-release`
-artifact from the original publication run, verifies its tag, commit, run ID,
+the original release source separately. It checks the native package version
+pinned by that original source while retaining the tools' supported APSW/SQLite
+ABI checks. It downloads the `qplot-release` artifact from the original
+publication run, verifies its tag, commit, run ID,
 and hashes, and checks the published PyPI bytes against those receipts. The
 artifact must still be available; a missing/expired receipt is a failed gate,
 not permission to substitute a new build. The receipts are comparison inputs;
