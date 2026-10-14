@@ -37,6 +37,7 @@ from qplot.datahandling.database import (
 )
 from qplot.diagnostics import get_logger, log_bounded_shutdown, log_user_error
 
+from ._auto_plot import cancel_auto_plot
 from ._commands import create_action
 from ._config_persistence import (
     persist_config_action,
@@ -977,6 +978,7 @@ class MainWindow(
     def _cancel_plot_work(self):
         """Cancel running plot loads and remove work that has not started."""
 
+        cancel_auto_plot(self)
         workers = set(getattr(self, "_plot_workers", ()))
         for window in list(getattr(self, "windows", ())):
             worker = getattr(window, "worker", None)

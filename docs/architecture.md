@@ -245,8 +245,16 @@ unavailable detail state: ordinary selection starts no selected-detail worker
 and prepares no additional selected-detail snapshot. A trusted detail failure
 also does not trigger an automatic fallback copy. This is a property of the
 selection action, not the whole fallback session: fallback metadata and retained
-preview paths can still create private snapshots. Only explicit plot and CSV
-actions materialise a DataSet.
+preview paths can still create private snapshots. Fallback plot actions
+(including Auto-plot) and CSV actions can materialise a DataSet.
+
+Trusted Auto-plot owns a deduplicated queue independently of selected-detail
+and refresh requests. It submits one bounded plot-metadata request at a time,
+then uses the same asynchronous plot pipeline as manual plotting. Unavailable
+descriptions are operation-local failures that leave the reader session usable.
+Retries use bounded backoff; later run-metadata changes wake exhausted requests.
+Disabling Auto-plot, committing a database switch, closing the database, and
+shutdown cancel the queue. Source identity checks still guard publication.
 
 Stage 5A's `trusted_work_scheduler.py` owns the exact derived priority key
 `(run tier, work kind, stable run index)` without materialising one task per

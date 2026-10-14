@@ -51,7 +51,7 @@ from .plot2d import plot2d
 
 
 def _trusted_plot_action(method):
-    """Resume an explicit UI action only after broker metadata is available."""
+    """Resume a plot action only after broker metadata is available."""
     call_signature = signature(method)
 
     @wraps(method)
@@ -235,12 +235,7 @@ class PlotActionsMixin:
                 return
             try:
                 dataset = request.wait(0)
-                ready = self.__dict__.setdefault("_trusted_plot_ready", {})
-                ready[key] = dataset
-                try:
-                    resume()
-                finally:
-                    ready.pop(key, None)
+                self._resume_trusted_plot_action(key, dataset, resume)
             except Exception as error:
                 log_exception("Trusted plot launch failed", error, __name__)
                 self.show_error("Plot Load Failed", "Could not load the selected run.", str(error))
@@ -249,6 +244,15 @@ class PlotActionsMixin:
         timer.start()
         self.show_status("Loading plot metadata...", 0)
         return True
+
+    def _resume_trusted_plot_action(self, key, dataset, resume):
+        """Share broker metadata with the existing plot construction path."""
+        ready = self.__dict__.setdefault("_trusted_plot_ready", {})
+        ready[key] = dataset
+        try:
+            resume()
+        finally:
+            ready.pop(key, None)
 
     def _generation_gate_allows_action(self, database_path=None, operation=None):
         gate = getattr(self, "_database_generation_read_allowed", None)
@@ -500,13 +504,11 @@ class PlotActionsMixin:
 
 
     def _release_trusted_action_dataset(self, dataset):
-        """End an explicit trusted-mode DataSet's GUI-thread ownership.
+        """End a trusted plot/export dataset's GUI-thread ownership.
 
-        Stage 4 permits legacy DataSet materialisation only at an explicit plot
-        or export boundary.  A plot window retains its DataSet through
-        ``dataset_holder``; an unused or failed action must close its unowned
-        handle here so a later ordinary row selection has no SQLite cleanup to
-        perform.
+        A plot window retains its dataset through ``dataset_holder``. An
+        unused or failed action releases its unowned dataset here; ordinary
+        row selection never owns plot data.
         """
         if (
                 dataset is None

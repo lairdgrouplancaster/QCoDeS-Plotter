@@ -9,7 +9,11 @@ from PyQt6 import QtWidgets
 from qplot.configuration.config import config
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
-from tests.datahandling.test_trusted_plot import make_run, prohibit_snapshots
+from tests.datahandling.test_trusted_plot import (
+    make_run,
+    prohibit_snapshots,
+    protected_state,
+)
 
 
 def wait_for(predicate, timeout=20):
@@ -21,6 +25,238 @@ def wait_for(predicate, timeout=20):
             return
         time.sleep(0.005)
     raise AssertionError("Timed out waiting for trusted plot display")
+
+
+@pytest.fixture
+def auto_plot_window(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "default_path", str(tmp_path / "settings"))
+    monkeypatch.setattr(config, "default_file", str(tmp_path / "settings" / config.config_file_name))
+    prohibit_snapshots(monkeypatch)
+    window = MainWindow()
+    errors = []
+    monkeypatch.setattr(window, "show_error", lambda *args: errors.append(args))
+    window.startupDatabaseTimer.stop()
+    window.config.config["user_preference"]["confirm_close"] = False
+    window.config.config["user_preference"]["confirm_close_all"] = False
+    window.close_database(status=False)
+    window.autoPlotBox.setChecked(False)
+    yield window, errors
+    close_main_window(window)
+
+
+@pytest.mark.parametrize("dimensions", [1, 2])
+def test_auto_plot_real_qcodes_run_waits_for_first_results(
+        tmp_path, monkeypatch, auto_plot_window, dimensions):
+    """A real Measurement creates its run before its first flushed result."""
+    from qcodes.dataset import Measurement, load_or_create_experiment
+
+    from qplot.datahandling import trusted_plot
+
+    window, errors = auto_plot_window
+    path = tmp_path / "delayed-data.db"
+    seed_id, seed_guid, _ = make_run(path, dimensions=dimensions)
+    writer = sqlite3.connect(path)
+    writer.execute("SELECT count(*) FROM runs").fetchone()
+    try:
+        assert window.load_file(str(path))
+        wait_for(lambda: not window._database_load_active and window.selected_run_id == seed_id)
+        window.monitor.stop()
+        window.autoPlotBox.setChecked(True)
+        assert not window.windows  # The already-listed seed is complete.
+        experiment = load_or_create_experiment("plots", sample_name="disposable")
+        measurement = Measurement(exp=experiment)
+        measurement.register_custom_parameter("x")
+        if dimensions == 2:
+            measurement.register_custom_parameter("y")
+        measurement.register_custom_parameter(
+            "z", setpoints=("x", "y") if dimensions == 2 else ("x",),
+        )
+        original = trusted_plot.plot_dataset
+        metadata_threads = []
+        def record_thread(*args):
+            metadata_threads.append(threading.get_ident())
+            return original(*args)
+        monkeypatch.setattr(trusted_plot, "plot_dataset", record_thread)
+        try:
+            with measurement.run() as saver:
+                guid = saver.dataset.guid
+                before = protected_state(path)
+                window.refreshMain()
+                wait_for(lambda: len(window.windows) == 1 and not window.windows[0].worker.running)
+                plot = window.windows[0]
+                assert plot._dataset_key.guid == guid
+                assert plot.monitor.isActive()
+                assert protected_state(path) == before
+                # Selection and another refresh do not own the automatic plot.
+                window.updateSelected(seed_guid)
+                window.refreshMain()
+                wait_for(lambda: not window._database_refresh_active)
+                values = [("x", 2), ("z", 7)]
+                if dimensions == 2:
+                    values.append(("y", 3))
+                saver.add_result(*values)
+                saver.flush_data_to_database(block=True)
+            saver.dataset.conn.close()
+        finally:
+            experiment.conn.close()
+        after_write = protected_state(path)
+        wait_for(lambda: not plot.worker.running)
+        plot.load_data()
+        wait_for(lambda: not plot.worker.running)
+        if dimensions == 1:
+            np.testing.assert_array_equal(plot.axis_data["y"], [7])
+        else:
+            np.testing.assert_array_equal(plot.dataGrid, [[7]])
+        assert len(window.windows) == 1
+        assert metadata_threads and threading.get_ident() not in metadata_threads
+        assert protected_state(path) == after_write
+        assert not errors
+    finally:
+        writer.close()
+
+
+@pytest.mark.parametrize("complete_when_ready", [False, True])
+def test_auto_plot_delayed_description_and_completed_batch(
+        tmp_path, monkeypatch, auto_plot_window, complete_when_ready):
+    window, errors = auto_plot_window
+    path = tmp_path / "delayed-description.db"
+    seed_id, seed_guid, _ = make_run(path, dimensions=1)
+    writer = sqlite3.connect(path)
+    writer.execute("SELECT count(*) FROM runs").fetchone()
+    try:
+        assert window.load_file(str(path))
+        wait_for(lambda: not window._database_load_active and window.selected_run_id == seed_id)
+        window.monitor.stop()
+        window.autoPlotBox.setChecked(True)
+        late_id, late_guid, _ = make_run(path, dimensions=1)
+        _, complete_guid, _ = make_run(path, dimensions=1)
+        description = writer.execute("SELECT run_description FROM runs WHERE run_id=?", (late_id,)).fetchone()[0]
+        # Model QCoDeS's separate run-creation and run-start commits.
+        writer.execute("UPDATE runs SET run_description=NULL, is_completed=0, completed_timestamp=NULL WHERE run_id=?", (late_id,))
+        writer.commit()
+        before = protected_state(path)
+        from qplot.windows import _auto_plot
+        monkeypatch.setattr(_auto_plot, "RETRY_DELAYS", (0.05,))
+        window.refreshMain()
+        wait_for(lambda: getattr(window, "_auto_plot_queue", None) is not None and
+                 late_guid in window._auto_plot_queue.runs and
+                 window._auto_plot_queue.runs[late_guid].due == float("inf"))
+        wait_for(lambda: len(window.windows) == 1 and not window.windows[0].worker.running)
+        assert window.windows[0]._dataset_key.guid == complete_guid
+        assert protected_state(path) == before
+        assert not errors
+        writer.execute("UPDATE runs SET run_description=?, is_completed=? WHERE run_id=?",
+                       (description, complete_when_ready, late_id))
+        writer.commit()
+        after_write = protected_state(path)
+        window.updateSelected(seed_guid)
+        window.refreshMain()
+        wait_for(lambda: len(window.windows) == 2 and all(not win.worker.running for win in window.windows))
+        assert {win._dataset_key.guid for win in window.windows} == {late_guid, complete_guid}
+        window.refreshMain()
+        wait_for(lambda: not window._database_refresh_active)
+        assert len(window.windows) == 2
+        assert protected_state(path) == after_write
+        assert not errors
+    finally:
+        writer.close()
+
+
+@pytest.mark.parametrize("action", ["disable", "switch", "close", "shutdown"])
+def test_auto_plot_pending_metadata_is_cancelled_by_lifecycle(
+        tmp_path, monkeypatch, auto_plot_window, action):
+    window, errors = auto_plot_window
+    path = tmp_path / "pending.db"
+    run_id, guid, _ = make_run(path, dimensions=1)
+    other_path = tmp_path / "other.db"
+    make_run(other_path, dimensions=1)
+    assert window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active and window.selected_run_id == run_id)
+    window.monitor.stop()
+    service = window._trusted_read_service
+    submit = service.submit_plot_dataset
+    held = []
+
+    class HeldRequest:
+        # Delay GUI publication of a real broker request, even if it completes.
+        done = False
+        cancelled = False
+
+        def __init__(self, request):
+            self.request = request
+
+        def cancel(self):
+            self.cancelled = True
+            return self.request.cancel()
+
+        def wait(self, timeout):
+            return self.request.wait(timeout)
+
+    def hold_first_request(*args, **kwargs):
+        request = submit(*args, **kwargs)
+        if not held:
+            request = HeldRequest(request)
+            held.append(request)
+        return request
+
+    monkeypatch.setattr(service, "submit_plot_dataset", hold_first_request)
+    window.autoPlotBox.setChecked(True)
+    from qplot.windows._auto_plot import enqueue_auto_plot
+    enqueue_auto_plot(window, [guid])
+    wait_for(lambda: bool(held))
+    if action == "disable":
+        # A manual request for the same run remains independently owned.
+        window.openPlot(guid)
+        window.autoPlotBox.setChecked(False)
+        wait_for(lambda: len(window.windows) == 1 and not window.windows[0].worker.running)
+    elif action == "switch":
+        assert window.load_file(str(other_path))
+        wait_for(lambda: not window._database_load_active)
+    elif action == "close":
+        window.close_database(status=False)
+    else:
+        window._cancel_plot_work()
+    assert held[0].cancelled
+    assert window._auto_plot_queue is None
+    held[0].done = True
+    QtWidgets.QApplication.instance().processEvents()
+    assert len(window.windows) == (1 if action == "disable" else 0)
+    assert not errors
+
+
+def test_auto_plot_toggle_uses_newest_incomplete_run_and_manual_plot_still_works(
+        tmp_path, auto_plot_window):
+    window, errors = auto_plot_window
+    path = tmp_path / "toggle.db"
+    _, old_guid, _ = make_run(path, dimensions=1)
+    new_id, new_guid, _ = make_run(path, dimensions=1)
+    writer = sqlite3.connect(path)
+    try:
+        writer.execute("UPDATE runs SET is_completed=0, completed_timestamp=NULL")
+        writer.commit()
+        before = protected_state(path)
+        assert window.load_file(str(path))
+        wait_for(lambda: not window._database_load_active and window.selected_run_id == new_id)
+        window.monitor.stop()
+        assert not window.windows
+        window.autoPlotBox.setChecked(True)
+        wait_for(lambda: len(window.windows) == 1 and not window.windows[0].worker.running)
+        assert window.windows[0]._dataset_key.guid == new_guid
+        assert protected_state(path) == before
+        window.autoPlotBox.setChecked(False)
+        assert window._auto_plot_queue is None
+        _, disabled_guid, _ = make_run(path, dimensions=1)
+        after_write = protected_state(path)
+        window.refreshMain()
+        wait_for(lambda: not window._database_refresh_active)
+        assert len(window.windows) == 1
+        window.openPlot(disabled_guid)
+        window.openPlot(old_guid)
+        wait_for(lambda: len(window.windows) == 3 and all(not win.worker.running for win in window.windows))
+        assert protected_state(path) == after_write
+        assert not errors
+    finally:
+        writer.close()
 
 
 @pytest.mark.parametrize("action", ["all", "double_click", "run", "preview", "run_preview", "index", "live", "switch", "aggregate"])
