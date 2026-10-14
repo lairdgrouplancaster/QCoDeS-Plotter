@@ -1,6 +1,7 @@
 import json
 import re
 import subprocess
+import time
 import tomllib
 from importlib.metadata import PackageNotFoundError, distribution, version
 from pathlib import Path
@@ -17,11 +18,14 @@ def package_version():
         return "0+unknown"
 
 
-def _git(root: Path, *arguments: str) -> str:
+def _git(root: Path, *arguments: str, deadline: float) -> str:
     """Read bounded local Git metadata without refreshing the index."""
+    timeout = deadline - time.monotonic()
+    if timeout <= 0:
+        raise subprocess.TimeoutExpired("git", timeout=0)
     return subprocess.run(
         ["git", "--no-optional-locks", "-C", str(root), *arguments],
-        capture_output=True, text=True, check=True, timeout=1,
+        capture_output=True, text=True, check=True, timeout=timeout,
     ).stdout.strip()
 
 
@@ -35,9 +39,14 @@ def checkout_info(root: Path) -> dict:
         if project["name"] != "qplotter":
             return {}
         info = {"version": project["version"], "checkout": True}
-        commit = _git(root, "rev-parse", "HEAD")
-        dirty = bool(_git(root, "status", "--porcelain", "--untracked-files=normal"))
-        tags = _git(root, "tag", "--points-at", "HEAD").splitlines()
+        # Cold Git startup can exceed one second on Windows. Share one budget
+        # across all three reads so startup and About remain bounded.
+        deadline = time.monotonic() + 5
+        commit = _git(root, "rev-parse", "HEAD", deadline=deadline)
+        dirty = bool(_git(
+            root, "status", "--porcelain", "--untracked-files=normal", deadline=deadline,
+        ))
+        tags = _git(root, "tag", "--points-at", "HEAD", deadline=deadline).splitlines()
         release_tags = {f"v{project['version']}", f"native-and-app/v{project['version']}"}
         info.update(commit=commit, dirty=dirty, released=bool(release_tags.intersection(tags)) and not dirty)
         return info
