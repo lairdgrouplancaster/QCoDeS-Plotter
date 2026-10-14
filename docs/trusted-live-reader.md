@@ -265,8 +265,19 @@ proof handles, actual SQLite handles, source pathnames, rollback-journal absence
 and active SHM bindings. Only after that succeeds may page reads reuse pathname
 proofs until operation cleanup. Every page read still validates the retained and
 actual handle identities and their physically read-only permissions, before and
-after delegation. Other callbacks, including SHM mapping/locking, retain their
-full existing checks. Newly opened or promoted WAL handles are fully validated.
+after delegation. SHM mapping and newly opened or promoted WAL handles retain
+their full checks. SHM locks and memory barriers use the binding already proved
+by mapping and operation-boundary validation, without filesystem calls inside
+SQLite's WAL critical sections. Unlocks are forwarded even after a latched
+validation error, allowing SQLite to release its coordination locks on cleanup.
+
+SQLite reads the two WAL-index header copies around `xShmBarrier`. Filesystem
+checks in that callback widen the race with a commit and can force even a
+read-only connection to acquire `WAL_WRITE_LOCK` to retry the header. Checks
+after acquisition or before release then prolong that lock, causing a QCoDeS
+deferred read-to-write upgrade to fail with `SQLITE_BUSY`. The native callbacks
+retain the platform memory fence and real SHM locking, including legitimate
+WAL-index recovery; they neither suppress locks nor bypass them.
 
 Cleanup disables pathname reuse and performs full native validation before any
 materialised result is published, including error, deadline and cancellation
@@ -279,6 +290,11 @@ transaction. Reads outside the explicit finite scope retain per-read path checks
 Native audit counters include `read_path_reused`, `read_validation_ns` and
 `read_io_ns`. The timings separate page-read validation from the delegated OS VFS
 read, not total SQL or IPC time, and never govern safety checks or deadlines.
+`shm_write_lock_attempts`, `shm_write_lock_acquired`, `shm_write_lock_ns` and
+`shm_write_lock_max_ns` expose transient WAL write-lock contention. The durations
+run from successful acquisition return through successful release return; these
+diagnostics do not control locking. A read-only connection can legitimately
+acquire this lock to coordinate the writable WAL index.
 `scripts/profile_trusted_reads.py DATABASE RUN_ID` profiles finite 65,536-row
 intervals through the pinned reader and checks protected-file sizes/timestamps.
 It does not clear OS caches or modify the selected database. Use the actual plot
