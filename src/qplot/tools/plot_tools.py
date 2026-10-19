@@ -276,6 +276,29 @@ def _sample_fraction(value):
     return sample_fraction(value)
 
 
+def _fraction_as_extended_float(value, dtype):
+    """Round an exact residual to a binary dtype, including halfway ties."""
+    numerator, denominator = abs(value.numerator), value.denominator
+    if not numerator:
+        return dtype.type(0)
+    exponent = numerator.bit_length() - denominator.bit_length()
+    below_power = (numerator < denominator << exponent if exponent >= 0
+                   else numerator << -exponent < denominator)
+    exponent -= int(below_power)
+    info = np.finfo(dtype)
+    # Subnormal values all share the smallest exponent's mantissa unit.
+    unit = max(exponent - info.nmant, info.minexp - info.nmant)
+    if unit < 0:
+        numerator <<= -unit
+    else:
+        denominator <<= unit
+    significand, remainder = divmod(numerator, denominator)
+    if 2 * remainder > denominator or (2 * remainder == denominator and significand % 2):
+        significand += 1
+    rounded = np.ldexp(dtype.type(significand), unit)
+    return -rounded if value < 0 else rounded
+
+
 def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callback=None):
     """Remove a float mean without rounding a large offset into the result.
 
@@ -286,6 +309,7 @@ def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callba
     """
     values = np.asarray(values)
     dtype = np.result_type(values.dtype, np.float64)
+    extended_float = dtype.kind == "f" and dtype.itemsize > 8
     samples = np.moveaxis(values.astype(dtype, copy=False), axis, -1)
     if samples.shape[-1] == 0:
         return values.astype(dtype, copy=True)
@@ -299,7 +323,7 @@ def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callba
         finite = np.isfinite(chunk)
         indices = np.argmax(finite, axis=1)
         anchors = chunk[np.arange(len(chunk)), indices, None]
-        with np.errstate(over="ignore", invalid="ignore"):
+        with np.errstate(over="ignore", invalid="ignore", under="ignore"):
             shifted = chunk - anchors
             offset_mean = mean_func(shifted, axis=1, keepdims=True)
             result = shifted - offset_mean
@@ -335,13 +359,15 @@ def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callba
                     for index, value in enumerate(values):
                         if index % 1024 == 0:
                             _check_cancelled(cancelled_callback)
-                        yield float(value)
+                        yield value
 
                 nonzero = np.abs(original[original != 0])
                 # With more than a mantissa's range between samples, rounding
                 # the mean itself can change the small residual by one ULP.
                 # Subtract exact means in just these sensitive rows.
-                exact_required = (subnormal[row_index]
+                # math.fsum narrows each extended sample before summation,
+                # erasing recorded residuals between opposite-sign readings.
+                exact_required = (extended_float or subnormal[row_index]
                                   or np.max(nonzero) / (2. ** 53) > np.min(nonzero))
                 if not exact_required:
                     try:
@@ -357,12 +383,17 @@ def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callba
                         exact_values.append(exact_value)
                         total += exact_value
                     exact_mean = total / len(original)
-                    residuals = np.empty(len(original))
+                    residuals = np.empty(len(original), dtype=dtype)
                     for index, value in enumerate(exact_values):
                         if index % 1024 == 0:
                             _check_cancelled(cancelled_callback)
                         difference = value - exact_mean
-                        residuals[index] = _fraction_as_float(difference)
+                        if extended_float:
+                            # Convert only the final residual, retaining the
+                            # source dtype's exponent range and precision.
+                            residuals[index] = _fraction_as_extended_float(difference, dtype)
+                        else:
+                            residuals[index] = _fraction_as_float(difference)
                     result[row_index, finite[row_index]] = residuals
                 else:
                     result[row_index] = chunk[row_index] - mean
