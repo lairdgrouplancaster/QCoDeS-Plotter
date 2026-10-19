@@ -45,8 +45,9 @@ def _configure_external_storage(kind, root, monkeypatch):
             qcodes.config.dataset, "raw_data_backend", "sqlite_per_dataset_db",
         )
         monkeypatch.setitem(
-            qcodes.config.dataset.raw_data_backend_config.sqlite_per_dataset_db,
-            "raw_data_path", str(root / "unselected-raw"),
+            qcodes.config.dataset, "raw_data_backend_config", {
+                "sqlite_per_dataset_db": {"raw_data_path": str(root / "unselected-raw")},
+            },
         )
         return "raw_data_backend"
 

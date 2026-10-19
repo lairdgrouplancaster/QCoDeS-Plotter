@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import qcodes
 
 from qplot.datahandling.readonly import (
     ReadOnlyDatabaseAccessError,
@@ -72,6 +73,9 @@ def _family_state(path):
 
 @pytest.fixture
 def mixed_database(tmp_path):
+    backends = qcodes.config.defaults["dataset"].get("raw_data_backend_config", {})
+    if "sqlite_per_dataset_db" not in backends:
+        pytest.skip("The installed QCoDeS does not support the sqlite_per_dataset_db backend.")
     main = tmp_path / "mixed.db"
     created = subprocess.run(
         [sys.executable, "-c", _CREATE_MIXED_DATABASE, str(main)],
