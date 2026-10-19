@@ -2,6 +2,7 @@
 
 import io
 import math
+import sys
 from bisect import bisect_left
 from dataclasses import replace
 from fractions import Fraction
@@ -13,6 +14,9 @@ from qplot.tools.sample_statistics import finite_mean
 from .trusted_live_queries import TRUSTED_DERIVED_MAX_SAMPLE_ROWS
 
 MAX_SAMPLES = 131_072
+# Exact extended ratios can be much larger than their stored NPY samples.
+# Bound retained Fraction/integer storage before adding each decoded cell.
+MAX_EXACT_SAMPLE_BYTES = 64 * 1024 * 1024
 
 
 def _decode(value):
@@ -60,6 +64,28 @@ def render_array_preview(observation, dependencies, dependent, width, height, ch
                for name in (*dependencies, dependent)]
     points = []
     expanded_count = 0
+    exact_sample_bytes = 0
+
+    def preview_number(value):
+        nonlocal exact_sample_bytes
+        if isinstance(value, np.floating):
+            if not np.isfinite(value):
+                return None
+            narrowed = float(value)
+            if value == narrowed:
+                return narrowed
+            # longdouble.item() remains a NumPy scalar on platforms with
+            # extended precision. Preserve its ratio until normalization;
+            # narrowing can merge cells or lose a finite exponent range.
+            exact = Fraction(*value.as_integer_ratio())
+            exact_sample_bytes += sum(map(sys.getsizeof, (
+                exact, exact.numerator, exact.denominator,
+            )))
+            if exact_sample_bytes > MAX_EXACT_SAMPLE_BYTES:
+                raise _UnsupportedNumericData("The array preview exceeds its precision storage budget.")
+            return exact
+        return int(value) if isinstance(value, (bool, int)) else _finite_number(value)
+
     for row in observation.sample_rows:
         check()
         if any(row[index] is None for index in indexes):
@@ -80,9 +106,7 @@ def render_array_preview(observation, dependencies, dependent, width, height, ch
             # recorded coordinates above float64's integer precision.
             samples = (column[0 if column.size == 1 else index].item()
                        for column in columns)
-            values = tuple(int(value) if isinstance(value, (bool, int))
-                           else _finite_number(value)
-                           for value in samples)
+            values = tuple(preview_number(value) for value in samples)
             if all(value is not None for value in values[:-1]):
                 points.append(values)
     if not points:
@@ -114,10 +138,11 @@ def render_array_preview(observation, dependencies, dependent, width, height, ch
         if len(samples) == 1:
             values[key] = samples[0]
             continue
-        has_integers = any(isinstance(value, int) for value in samples)
-        if has_integers:
+        exact_samples = any(isinstance(value, (int, Fraction)) for value in samples)
+        if exact_samples:
             # A float mean would erase the small differences between nearby
-            # integer cells. Keep its exact offset until color normalization.
+            # integer or extended cells. Keep their exact offset until color
+            # normalization.
             total = Fraction()
             for index, value in enumerate(samples):
                 if index % 1024 == 0:

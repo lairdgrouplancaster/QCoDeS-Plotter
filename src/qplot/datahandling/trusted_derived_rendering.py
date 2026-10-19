@@ -20,7 +20,7 @@ from qplot.datahandling.trusted_work_scheduler import (
     TrustedWorkKind,
 )
 
-TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v7"
+TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v8"
 TRUSTED_DERIVED_MAX_IMAGES = 8
 TRUSTED_DERIVED_MAX_IMAGE_WIDTH = 2_048
 TRUSTED_DERIVED_MAX_IMAGE_HEIGHT = 2_048
@@ -78,7 +78,11 @@ def _option_integer(
     return value
 
 
-def _finite_number(value: object) -> int | float | None:
+def _finite_number(value: object) -> int | float | Fraction | None:
+    # Array previews construct exact finite ratios internally. These never
+    # enter the captured source or exported primitive/PNG payload format.
+    if isinstance(value, Fraction):
+        return value
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return value if math.isfinite(value) else None
@@ -342,7 +346,7 @@ def _render_1d(
     cancel_check: CancelCheck,
 ) -> tuple[bytearray, int]:
     indexes = {name: index for index, name in enumerate(observation.sample_columns)}
-    points: list[tuple[float, float]] = []
+    points: list[tuple[int | float | Fraction, int | float | Fraction]] = []
     for index, row in enumerate(observation.sample_rows):
         if index % 128 == 0:
             cancel_check()

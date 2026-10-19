@@ -39,7 +39,8 @@
   interactions. Require concrete reproductions and meaningful regression tests.
 - Finish with integrated checks/startup and fresh rotated independent review
   rounds until **two consecutive complete rounds find no actionable bugs**.
-- Current clean-round count: **0**. Historical results below are not counted.
+- Current clean-round count: **0** (round 9 found C19-026 after clean round 8).
+  Historical results below are not counted.
 
 ### Findings and validation
 
@@ -637,18 +638,122 @@
   transforms, SVG/PDF/clipboard, promotion, retained cuts, editor closure,
   close/reopen, cancelled reload/retry and paused acquisition. Source protection
   held. Four sandbox-blocked IPC checks passed on unprivileged external rerun.
+- Fresh measurement acquisition probe passed 96 SQL/cache comparisons across
+  scalar/array expansion, incremental mixed records, planned-shape overflow,
+  duplicate coordinates and axis reversal. No additional actionable finding.
+
+#### Frozen-source integration at `bc1f4fd`
+
+- Rebuilt application artifacts: 396 sdist files including all 232 test modules;
+  wheel has 130 files and all 124 runtime files match committed source bytes.
+  Native wheel/sdist inventory and pinned metadata pass; native source remains
+  unchanged, using this campaign's previously rebuilt universal2 binary.
+- All four artifacts pass twine. Exact source and SHA-256 receipt:
+  `/private/tmp/qplot-bh20261019-bc1f4fd-artifact-manifest.json`.
+- Fresh compiler-free wheel and editable acceptance both passed: exact installed
+  wheel bytes/native identity, console version, actual GUI startup, live Python
+  edit for editable mode, installed workflows and operational trusted live
+  reader. No compiler build attempted. Logs:
+  `/private/tmp/qplot-bh20261019-bc1f4fd-wheel-install.log` and
+  `/private/tmp/qplot-bh20261019-bc1f4fd-editable-install.log`.
+- Fresh round 8 was complete and clean. The candidate final full suite is being
+  gracefully interrupted after round 9 confirmed C19-026; no complete result
+  is claimed. Final Ruff/mypy (88 files), dependency check and project-venv
+  startup passed: `/private/tmp/qplot-bh20261019-final-startup-fy7w3ik2`.
+
+#### Round 8 — first complete clean round
+
+- Three fresh independent subchats and coordinator integration review found
+  no new actionable bug; no source or test edits. Clean-round count is one.
+- Safety: 86 focused checks; two real WAL sources, eight newly created scalar/
+  array runs, six simultaneous helpers plus eight restarts, eight snapshots
+  and 36 protected-file checks. Eight cancellations and eight deadlines released
+  intentionally blocked checkpoints (maximum combined release 0.404 s), ten
+  writer checkpoints succeeded, and generator hardlink/sidecar/cancel guards
+  passed. Native forbidden-operation/proof-handle counters ended at zero; all
+  helpers/threads/endpoints were reaped. Pins, slices and linkage remain valid.
+- Measurement: 182 focused checks. On each of ARM and Intel, 12 actual runs
+  passed 144 grid-route comparisons, 48 protected-file checks, 240 exact
+  derivatives, 480 native derivative/mean comparisons, 240 statistics oracles
+  and 1,926 CSV cells. Intel additionally passed 120 independent interpolation/
+  DFT comparisons (max normalized error 3.93e-16) and 240 fill/row/column means.
+- UI: 10 fresh composed workflows plus 208 focused checks passed, with 33
+  expected Windows-specific skips. Covered distinct databases sharing GUIDs,
+  repeated promotions with independent old/new cuts, CSV, editor/pending-drop
+  closure during reload, reopen, real WAL auto-plot and replay suppression.
+  All protected-file checks and cleanup passed; sandbox IPC cases passed on
+  unprivileged external rerun.
+
+#### C19-026 — Extended numeric arrays lose trusted previews
+
+- Actual Intel current-QCoDeS runs storing ordinary `[0,1,2]` values as
+  longdouble in each possible 1D/2D coordinate/signal column return unsupported
+  preview status; identical float64 controls return ok. Five actual runs prove
+  the failure, without extreme magnitudes or unrepresentable drawing coordinates.
+  Protected main/WAL/journal hashes/mtimes hold and resources close normally.
+- Array scalar `.item()` retains np.longdouble, which `_finite_number` rejects
+  because it accepts only Python int/float. Measurement reviewer owns the two
+  trusted rendering modules and `test_campaign_extended_float_previews.py` for
+  a bounded precision-preserving repair; separate safety reviewer will approve.
+- Round 9 is not clean; the streak resets to zero. Candidate full suite stopped
+  for the newly required source repair: 2,268 passed, 34 skipped, no failures,
+  in 255.61 s. Repeat fresh complete rounds afterward.
+- Final repair preserves wider finite ratios internally and uses the normal
+  float path for exact binary64 round trips. Independent review identified
+  possible memory amplification for full-size extended-subnormal arrays;
+  a 64 MiB retained-ratio budget and exhaustion/cancellation regressions now
+  pass. Renderer version v8 invalidates stale unsupported previews.
+- Independent safety reviewer approved the final repair. All 32 new regressions
+  pass; author Intel 105 passed, ARM 86 passed/19 expected extended-only skips,
+  plus the initially excluded IPC converter check passed separately outside the
+  sandbox. Actual project-venv startup passed (visible/event loop/exit 0).
+- Independent Intel batch: 130 passed. Seventy-two exact affine/duplicate-mean
+  oracles passed across 1D/2D, mixed integer/extended coordinates and exponents
+  -16440 through +16000, with unchanged source arrays and primitive-only output
+  payloads. Maximum subnormal fixture stops safely at the storage budget in
+  0.394 s with 56,864,768-byte peak RSS increase; cancellation takes 0.024 s.
+  Ruff, configured mypy (88 source files) and whitespace checks pass.
+- Both subchats were interrupted by a usage limit. The user explicitly asked
+  to continue; author and reviewer resumed with existing file ownership and
+  checkpoints. No unfinished review was counted as approved or clean.
+
+#### Round 9 completion and CI follow-up
+
+- C19-026 is this round's sole application finding. All 25 confirmed findings
+  are repaired and independently approved. Round 9 is not clean; streak zero.
+- Fresh safety review: 38 focused tests and two real QCoDeS sources with 12
+  acquisition/SAVEPOINT/schema transactions, six helpers, 48 broker requests,
+  12 each of deadlines/interrupts/snapshots, 72 mutation refusals, 12 writer
+  checkpoints, 40 protected-file comparisons, 10 export and eight auxiliary
+  refusals. Native forbidden counters zero, proof handles balanced, all reaped.
+- Fresh measurement probe on both architectures: eight real runs, 176 raw/
+  cache/SQL grid comparisons, 368 raw-export samples, 32 row/column means,
+  32 protected-file checks, 150 Fraction stencils, 300 native derivative/mean
+  comparisons, 150 statistics oracles and 1,036 CSV cells per architecture.
+- Fresh UI review: six real Qt compositions passed, including queued swaps,
+  native operations, preferences, cached export, promotion during loading,
+  actual incompatible-drop modal cancellation/closure, redraw/removal and
+  clipboard. Source protection and cleanup held; no additional finding.
+- CI at `bc1f4fd`: 40 checks succeeded; six jobs plus Required checks failed.
+  Python 3.11 uses QCoDeS 0.58, whose absent split-storage configuration breaks
+  new test setup before application invocation. Windows manual-refresh test
+  captures missing `_heatmap_geometry` callbacks on an incomplete `_LayerHost`
+  test fixture. One Intel shutdown assertion overshot its 0.2 s allowance by
+  0.029 s. Three subchats are investigating these separately; no broad skip,
+  deadline relaxation or application change is accepted without evidence.
 
 ### Latest repair checkpoint
 
 Initial coverage and rounds 1/2/3 complete. First 17 confirmed findings are fixed
 and independently approved, pushed at `b8fb173`; C19-014 was withdrawn.
 Round 4 found C19-019 and C19-020; both repaired and independently approved.
-All 24 confirmed repairs are complete and independently approved, including
-round 7 C19-025. Start fresh round 8 on the repaired source, then repeat
-fresh/rotated reviews until two consecutive complete rounds are clean.
+All 25 confirmed repairs are complete and independently approved, including
+round 9 C19-026. Finish the CI follow-up investigations, then begin fresh round
+10. Round 8 was clean but round 9 was not; clean-round streak is zero.
 Complete transitional suites: 5,073 passed/44 skipped, then 5,178 passed/52
-skipped. Integrated startup/static checks pass. Final full suite/application rebuild and
-exact-head CI remain required. No fresh complete clean round yet.
+skipped. Integrated startup/static checks, final application rebuild and wheel/
+editable compiler-free acceptance pass. Final full suite and exact-head CI remain
+required after the preview repair. Two new complete clean rounds are necessary.
 Draft PR #90 only; no merge/release.
 
 ## Previous campaign archive
