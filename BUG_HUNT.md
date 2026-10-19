@@ -39,7 +39,7 @@
   interactions. Require concrete reproductions and meaningful regression tests.
 - Finish with integrated checks/startup and fresh rotated independent review
   rounds until **two consecutive complete rounds find no actionable bugs**.
-- Current clean-round count: **0** (round 10 found C19-027/028).
+- Current clean-round count: **0** (round 11 found C19-029).
   Historical results below are not counted.
 
 ### Findings and validation
@@ -906,16 +906,95 @@
   Final source CI remains required after C19-028; old passing jobs are not
   claimed as final validation.
 
+#### Frozen-source candidate `7326849`
+
+- All 27 application repairs and four CI test follow-ups are independently
+  reviewed, committed and pushed to draft PR #90. Three fresh subchats have
+  begun round 11; current clean-round count remains zero until it completes.
+- Rebuilt application wheel/sdist: 130 wheel files including 124 runtime files,
+  399 sdist files including all 235 test modules. All tracked archive and runtime
+  bytes match the exact committed revision. Native artifacts retain the verified
+  rebuilt 1.0.1 binary/source; no native source changes. All four pass twine.
+  Receipt: `/private/tmp/qplot-bh20261019-7326849-artifact-manifest.json`.
+- Fresh compiler-free wheel and editable install acceptance both pass against
+  these artifacts, including exact installed bytes/native identity, actual GUI
+  startup, trusted reader and editable live-edit checks. No compiler builds
+  attempted. Logs: `/private/tmp/qplot-bh20261019-7326849-wheel-install.log`
+  and `/private/tmp/qplot-bh20261019-7326849-editable-install.log`.
+  Final full suite and exact-head CI are still pending.
+
+#### Round 11 — scalar expansion finding
+
+- Fresh safety remit is clean: 64 focused checks, four actual QCoDeS runs,
+  14 acquisition/metadata/SAVEPOINT cycles, 24 exact array BLOB boundaries,
+  80 mutation refusals, eight each deadlines/cancellations/scalar cap refusals,
+  16 snapshots, eight helpers, four brokers with 48 selected-run subscribers,
+  four private prefixes, 12 writer checkpoints and 18 protected-file comparisons.
+  Ten native audits have zero forbidden operations and balanced proof handles;
+  auxiliary/export/live-generator refusals and all resource cleanup pass.
+- Fresh UI review is clean: 130 focused checks and six actual WAL/inferred-
+  array compositions across line/heatmap, shaped/unshaped and new auto-plot
+  acquisition. Retained sources, cancellation/retry, clipping/native mean,
+  swaps, promotion/cuts, preferences/statistics, clipboard, eight CSV exports,
+  four reopens and two cancelled reloads pass. All 21 protected-file comparisons
+  and owned-resource cleanup pass.
+- Fresh measurement format probe passed 24 actual runs, 48 grids/416 cells,
+  24 raw-tree comparisons and 96 incremental cache steps. Package inventories
+  and both installation modes pass. C19-029 is the new actionable finding.
+
+#### C19-029 — Scalar array expansion allocates before the budget check
+
+- Actual trusted worker reproduction uses two valid public QCoDeS DataSet rows
+  with 8,192-element x/converted arrays, one 1,024-character text basis and
+  missing sibling basis cells. Trusted prefix estimate is 333,440 bytes.
+- With the existing cap reduced to 8 MiB for a bounded test, QCoDeS expands
+  the text into a 33,554,432-byte column before the materialization guard runs.
+  Traced peak reaches 34,287,311 bytes before the correct budget refusal.
+  No final column assembler runs, and shared cache identities/status remain
+  unchanged. Protected source and all service cleanup checks pass.
+- Reproduction: `/private/tmp/qplot-r11-trusted-expansion.py`. No giant
+  allocation was attempted. This confirms the earlier scalar expansion must
+  also be preflighted, not merely final column/cache construction.
+- Repair projects QCoDeS scalar/singleton expansion using allocation-free
+  views, then applies the existing cumulative/cache/planned budget before any
+  expansion. Missing/empty records and every acquired sample retain their
+  existing semantics. No cap changes or additional database operations.
+- Different safety subchat independently approved the final source and tests:
+  85 related tests and all 20 final durable regression cases pass. ARM and Intel
+  each pass 1,200 exact QCoDeS shape/dtype/value comparisons and 9,600 matching
+  cumulative/planned budget decisions. Review caught and resolved a singleton
+  rank regression before commit; tests cover ranks zero through three on both
+  input and output sides, plus cancellation before expansion and exact retry.
+- Independent trusted-worker reproduction now refuses before every expansion
+  call; traced peak falls from 34,287,366 to 741,190 bytes. Shared cache state,
+  source hashes/mtime and service cleanup remain intact.
+- Separate UI integration passes actual modal refusal, three timer retries
+  without repeated dialogs, pause/cancellation, full 16,384-sample retry at
+  96 MiB, close during reload and reopen. Eight worker starts, no callback
+  errors, protected files unchanged and all resources released.
+  Log: `/private/tmp/qplot-c29-ui-integration.log`.
+- Coordinator Ruff, configured mypy (88 files), whitespace and actual project
+  module startup pass: visible window, running event loop, normal exit zero.
+  Startup receipt: `/private/tmp/qplot-c29-final-startup-xratvw2y/startup.json`.
+- Author focused validation: 102 passed, including the 20 durable cases. The
+  trusted-worker regression fails against the pre-repair decoder loaded only
+  in memory: two expansions precede refusal. Both incremental cases also fail
+  before repair. Author startup separately passes with normal Qt teardown.
+- Final runtime-neutral local tuple/list typing correction was separately
+  reviewed; all 20 cases rerun successfully, targeted decoder mypy and Ruff
+  pass. Final approved decoder SHA-256:
+  `b6ce21246929fe8c8a1055bb774b334d710a8ecc46d96457aed94324c370970d`.
+- Round 11 is not clean. Clean-round streak remains zero.
+
 ### Latest repair checkpoint
 
 Initial coverage and rounds 1/2/3 complete. First 17 confirmed findings are fixed
 and independently approved, pushed at `b8fb173`; C19-014 was withdrawn.
 Round 4 found C19-019 and C19-020; both repaired and independently approved.
-All 27 confirmed application repairs are complete and independently approved,
-including round 10 C19-027/028. All four test-only CI follow-ups are independently
-approved. Begin fresh rounds 11 and 12; continue until two complete rounds are
-clean. Run the final full suite after that point to avoid another superseded
-run. Clean-round streak is zero.
+All 28 confirmed application repairs are complete and independently approved,
+including round 11 C19-029. All four test-only CI follow-ups are independently
+approved. Begin fresh rounds 12 and 13 and continue until two complete rounds are
+clean. Run the final full suite after that point. Clean-round streak is zero.
 Complete transitional suites: 5,073 passed/44 skipped, then 5,178 passed/52
 skipped. Integrated startup/static checks, final application rebuild and wheel/
 editable compiler-free acceptance pass for earlier candidates. Rebuild artifacts

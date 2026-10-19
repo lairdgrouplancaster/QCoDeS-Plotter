@@ -77,6 +77,54 @@ def _record_column(values, dtype, check_cancelled, *, preserve_integers=True):
     return column
 
 
+def _restore_missing_record_fields(record, specs, expanded, check_cancelled):
+    # The selected output is always first and non-NULL. Its expanded shape
+    # includes the zero-sample case, so absent cells cannot create samples.
+    shape = np.shape(expanded[0])
+    values = iter(expanded)
+    restored = []
+    for value, spec in zip(record, specs, strict=True):
+        check_cancelled()
+        if value is not None:
+            restored.append(next(values))
+        else:
+            missing = (None if spec.type == "text" else
+                       complex(np.nan, np.nan) if spec.type == "complex" else np.nan)
+            # Retain only a scalar until the final column is assembled. This
+            # avoids allocating a second full buffer for every absent field.
+            restored.append(np.broadcast_to(np.asarray(missing), shape))
+    return tuple(restored)
+
+
+def _project_record_expansion(record, specs, check_cancelled):
+    """Apply QCoDeS' broadcast shapes and dtypes using allocation-free views."""
+    present = [(value, spec) for value, spec in zip(record, specs, strict=True)
+               if value is not None]
+    array_shapes = [np.shape(value) for value, spec in present if spec.type == "array"]
+    if not array_shapes:
+        projected = [value for value, _spec in present]
+    else:
+        # QCoDeS first expands scalar storage to the first present array's
+        # shape, then expands one-element arrays to the first largest shape.
+        # A view has the same dtype/size without allocating its repeated cells.
+        projected = []
+        for value, spec in present:
+            check_cancelled()
+            if spec.type == "array":
+                projected.append(np.asarray(value))
+            else:
+                dtype = (np.float64 if spec.type == "numeric" else
+                         np.complex128 if spec.type == "complex" else f"U{len(value)}")
+                projected.append(np.broadcast_to(np.asarray(value, dtype=dtype), array_shapes[0]))
+        largest = max(projected, key=lambda value: value.size)
+        if largest.size > 1:
+            # np.full accepts a singleton of any rank as its fill value;
+            # broadcast_to alone rejects extra leading singleton dimensions.
+            projected = [np.broadcast_to(value.reshape(()), largest.shape) if value.size == 1 else value
+                         for value in projected]
+    return _restore_missing_record_fields(record, specs, projected, check_cancelled)
+
+
 def _expand_record(record, specs, check_cancelled):
     """Expand acquired fields before restoring absent ancillary cells."""
     if all(value is not None for value in record):
@@ -92,22 +140,7 @@ def _expand_record(record, specs, check_cancelled):
                if value is not None]
     expanded = [tuple(value for value, _spec in present)]
     _expand_data_to_arrays(expanded, tuple(spec for _value, spec in present))
-    # The selected output is always first and non-NULL. Its expanded shape
-    # includes the zero-sample case, so absent cells cannot create samples.
-    shape = np.shape(expanded[0][0])
-    values = iter(expanded[0])
-    restored = []
-    for value, spec in zip(record, specs, strict=True):
-        check_cancelled()
-        if value is not None:
-            restored.append(next(values))
-        else:
-            missing = (None if spec.type == "text" else
-                       complex(np.nan, np.nan) if spec.type == "complex" else np.nan)
-            # Retain only a scalar until the final column is assembled. This
-            # avoids allocating a second full buffer for every absent field.
-            restored.append(np.broadcast_to(np.asarray(missing), shape))
-    return tuple(restored)
+    return _restore_missing_record_fields(record, specs, expanded[0], check_cancelled)
 
 
 def _column_layout(parts, check_cancelled):
@@ -211,15 +244,25 @@ def get_parameter_data_for_one_paramtree(
     if specs[0].name != output_param:
         raise ValueError("The output parameter must be first in its parameter tree.")
 
+    # Scalar text and one-element arrays can expand far beyond their stored
+    # size. Check the complete projected tree before QCoDeS allocates any of
+    # those broadcasts, including retained cache data and planned padding.
+    if max_decode_bytes is not None:
+        projected = []
+        for record in records:
+            check_cancelled()
+            projected.append(_project_record_expansion(record, specs, check_cancelled))
+        _check_materialization_budget(
+            projected, specs, rundescriber, output_param, existing_data, written_count,
+            max_decode_bytes, check_cancelled,
+        )
+        del projected
+
     # Expand within each acquisition record, never across record boundaries.
     for index, record in enumerate(records):
         check_cancelled()
         records[index] = _expand_record(record, specs, check_cancelled)
 
-    _check_materialization_budget(
-        records, specs, rundescriber, output_param, existing_data, written_count,
-        max_decode_bytes, check_cancelled,
-    )
     data = {}
     for index, spec in enumerate(specs):
         check_cancelled()
