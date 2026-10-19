@@ -408,9 +408,10 @@
   `python -m qplot` startup passed with visible window, running event loop and
   normal exit; temporary observer/settings at
   `/private/tmp/qplot-bh20261019-integrated-startup-6x1o99q_`.
-- Final candidate full suite is running with two xdist workers, log
-  `/private/tmp/qplot-bh20261019-final-full.log`. Source must stay unchanged for
-  this run to count as final validation. Native source remains unchanged.
+- The next complete full suite finished with two xdist workers: 5,178 passed,
+  52 skipped in 869.02 s, log `/private/tmp/qplot-bh20261019-final-full.log`.
+  It began at the profiling-fix source; later C19-019/020 changes make this
+  transitional validation. Native source remains unchanged.
 
 #### C19-019 — Clipping mixed extended-float records fails
 
@@ -435,8 +436,8 @@
   (124 application runtime files), and twine. Application sdist contains 389
   files including all 225 test modules. Compiler-free wheel acceptance passed:
   installed runtime matches wheels, actual startup/live reader work, no compiler
-  builds attempted. Full suite is still running; after C19-019 these count as
-  transitional validation.
+  builds attempted. These artifacts and the 5,178-test full suite predate
+  C19-019/020 and count as transitional validation.
 
 #### C19-020 — Promoting a source resumes a paused plot
 
@@ -465,15 +466,95 @@
 - Fresh round 5 UI, measurement and safety subchats review the repaired source.
   Clean-round count remains zero. Integrated Ruff/configured mypy pass.
 
-### Latest continuation checkpoint
+#### C19-021 — Extended nonuniform FFT raises from interpolation
+
+- Fresh Intel real-QCoDeS/Qt cases: `x=[0,1,3]`, `y=[1,2,4]`, with either X
+  or Y stored as longdouble. Clicking FFT raises an uncaught `np.interp`
+  TypeError refusing the float128-to-float64 safe cast. Both cases fail before
+  repair; protected database and normal lifecycle checks pass.
+- Expected spectrum follows uniform resampling `[1,2.5,4]`: frequencies
+  `[0,2/9]`, magnitudes `[2.5,sqrt(3)/2]`. Measurement subchat owns narrow
+  coordinate/interpolation changes in `_native_transforms.py` and real-control
+  regressions. Independent safety review follows. Round 5 is not clean.
+- Initial repair passed 12 Intel cases. Independent review caught a repair
+  regression: rebasing `[-1e308,0,1e308]` makes a later binary64 scale infinite
+  and rejects a previously supported FFT. Author is preserving the original
+  scaling path for wide spans and adding forward/reversed uniform/nonuniform
+  regressions. Revised fix is independently approved: 92 Intel tests passed
+  (all 35 new cases plus related suites), and 240 deterministic Fraction
+  resampling cases passed with exact expected binary64 DC and maximum relative
+  AC error 3.31e-16. Raw recorded samples stay unchanged.
+
+#### C19-022 — Delayed drop attaches a source after its target closes
+
+- Drop an unloaded run preview onto a plot, then close the target before the
+  existing trusted-metadata poll runs. The callback later attaches a hidden
+  retained source and live dataset reference to the closed target.
+- Deterministic actual QCoDeS/Qt reproduction fails all four host/source
+  line/heatmap combinations without timing monkeypatches. Protected source
+  files remain unchanged. UI subchat owns the target-lifetime check in
+  `_plot_actions.py` and `test_campaign_ui_pending_drop.py`; different safety
+  subchat will review before commit.
+- Separate failed-before resource probe confirmed all four leaks: no visible
+  plot windows remain, but the closed source has one merged-trace user, its
+  dataset-holder reference count is one, and it still accepts refresh work.
+- Narrow fix rejects closed targets before dispatch and cancels their delayed
+  metadata requests through existing stale-request cleanup. Eighteen new
+  regressions cover close/Close All, completed-before-poll requests, independent
+  targets sharing a source, and target replacement by promotion. Author total:
+  75 passed; real qPlot startup and Ruff pass. Independent safety reviewer
+  approved after all 18 new cases plus 6 additional checks, including cancelled
+  Close All retaining its still-valid drop and ordinary unloaded previews.
+  Other-target requests remain isolated; completed metadata owns no SQLite
+  connection. Committed separately from the numeric repairs.
+
+#### C19-023 — Operations derivative narrows extended coordinates
+
+- Actual Intel QCoDeS/Qt data `x=y=longdouble(1)+[.4,.6]*eps64` remains
+  visibly distinct. Operations dy/dx returns `[0.2001953125,0.2001953125]`
+  instead of `[1,1]`; native derivative correctly returns 1. The operation
+  narrows dense floating coordinates to float64 before subtraction.
+- Measurement subchat owns the narrow coordinate-dtype repair in
+  `plot_tools.differentiate` and dedicated actual-control regressions, separate
+  from FFT changes. Independent safety subchat will review. Protected source
+  bytes/mtimes held in the failed-before reproduction.
+- Final narrow repair widens narrow coordinates to binary64 while retaining
+  extended coordinates before subtraction. All 32 new cases pass; author Intel
+  batch: 167 passed, independent Intel batch: 147 passed. Independent 360-case
+  Fraction stencil oracle has maximum relative error 1.05e-16, inputs unchanged.
+- Unrepresentable extended heatmap coordinates are intentionally rejected by
+  existing validation, so that initially blocked fixture was removed as bug
+  evidence. Actual heatmap checks use accepted coordinates, with separate exact
+  both-axis stencils. Both obsolete test processes/helpers were reaped.
+- Independent safety reviewer approved. Integrated Ruff/configured mypy and
+  actual project-venv qPlot startup pass with visible window, event loop, exit 0.
+
+#### Round 5 completion
+
+- Round 5 found C19-021/022/023; all are now fixed and independently approved.
+  All 22 confirmed campaign findings are repaired. C19-014 remains withdrawn.
+- Fresh safety/native review found no additional issue: 40 WAL commit/rollback/
+  checkpoint cycles, 10 deadlines, 10 cross-thread interrupts, 10 result-limit
+  failures, 40 private snapshots, 12 concurrent helper wait/cancel-or-close
+  cycles, and 8 broker close_async cycles. Every protected-file check passed;
+  writer checkpoints succeeded and all resources released (max helper shutdown
+  0.126 s). Native audit counters for forbidden source operations stayed zero.
+- A real crash fixture retained a 185,864-byte hot rollback journal and 10,012
+  QCoDeS rows. Trusted open refused it; private SQLite/QCoDeS snapshots recovered
+  the exact count/sum while original main/journal stayed unchanged.
+- Fresh round 6 will review the frozen repaired source. Clean-round count is
+  still zero; two consecutive complete clean rounds remain necessary.
+
+### Latest repair checkpoint
 
 Initial coverage and rounds 1/2/3 complete. First 17 confirmed findings are fixed
 and independently approved, pushed at `b8fb173`; C19-014 was withdrawn.
 Round 4 found C19-019 and C19-020; both repaired and independently approved.
-All 19 confirmed repairs are complete. Round 5 underway. Repeat
+All 22 confirmed repairs are complete and independently approved. Round 5 is
+complete; round 6 starts on the frozen source. Repeat
 fresh/rotated reviews until two consecutive complete rounds are clean.
-Transitional full suite: 5,073 passed, 44 skipped. Final candidate suite is
-running; integrated startup/static checks pass. Final application rebuild and
+Complete transitional suites: 5,073 passed/44 skipped, then 5,178 passed/52
+skipped. Integrated startup/static checks pass. Final full suite/application rebuild and
 exact-head CI remain required. No fresh complete clean round yet.
 Draft PR #90 only; no merge/release.
 
