@@ -383,18 +383,44 @@
   AttributeError and exits with a Qt cleanup segmentation fault.
 - The numeric reader profiler accepts an array run, aggregates array BLOBs,
   then raises `TypeError: bytes is not JSON serializable` while checksumming.
-- Measurement subchat owns narrow script fixes and actual subprocess
-  regressions, including protected-source invariance. Independent review pending.
+- Plot benchmark now reports line sample counts alongside heatmap grids and
+  uses the application's bounded shutdown before deleting Qt objects. Numeric
+  profiler selects declared scalar numeric parameters and explains array-only
+  rejection through its CLI parser.
+- Six actual subprocess regressions pass: repeated line/heatmap paint,
+  invalid-run shutdown, scalar/mixed profiling and array-only refusal, all with
+  unchanged protected database hashes, sizes and mtimes. Independent UI
+  subchat reviewed both fixes and reran all six cases successfully. Additional
+  reviewer WAL fixtures were refused by existing preconditions before the
+  workload; those attempts are not counted as WAL validation.
+
+#### Round 3 completion and round 4 integration
+
+- Round 3 is complete and not clean: C19-015 through C19-018 were confirmed,
+  repaired and independently approved. C19-014 remains withdrawn.
+- Measurement/generator/package review: 692 tests passed, 2 platform skips;
+  bounded-capture/CSV/native-transform integration: 336 passed. Independent
+  Fraction grid oracle passed 140 real QCoDeS loads. Two-million-row benchmark
+  again passed (500 x 500 grid, aggregation 2.328 s, preview 1.577 s locally).
+- Fresh round 4 reviewers cover safety/native, measurement/performance and
+  UI/lifecycle; coordinator owns integration and final artifacts.
+- Integrated Ruff and configured mypy pass (88 files). Actual project-venv
+  `python -m qplot` startup passed with visible window, running event loop and
+  normal exit; temporary observer/settings at
+  `/private/tmp/qplot-bh20261019-integrated-startup-6x1o99q_`.
+- Final candidate full suite is running with two xdist workers, log
+  `/private/tmp/qplot-bh20261019-final-full.log`. Source must stay unchanged for
+  this run to count as final validation. Native source remains unchanged.
 
 ### Continuation checkpoint
 
-Initial coverage and rounds 1/2 complete. C19-001 through C19-013 are fixed and
-independently approved; first twelve are pushed at `f292920`. Round 3 found
-C19-015/016 (now fixed and approved), C19-017/018 (repair/review underway).
-C19-014 was withdrawn. Repeat fresh/rotated reviews until two consecutive
-complete rounds are clean. Transitional full suite: 5,073 passed, 44 skipped.
-Final exact-source validation/startup/application
-rebuild and exact-head CI remain required. No fresh complete clean round yet.
+Initial coverage and rounds 1/2/3 complete. All 17 confirmed findings are fixed
+and independently approved; C19-014 was withdrawn. First fifteen fixes are
+pushed at `009a241`; profiling fixes are ready for the next commit. Repeat
+fresh/rotated reviews until two consecutive complete rounds are clean.
+Transitional full suite: 5,073 passed, 44 skipped. Final candidate suite is
+running; integrated startup/static checks pass. Final application rebuild and
+exact-head CI remain required. No fresh complete clean round yet.
 Draft PR #90 only; no merge/release.
 
 ## Previous campaign archive

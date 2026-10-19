@@ -208,7 +208,9 @@ def main():
                     "iteration": iteration + 1,
                     "display_ms": (time.perf_counter() - started) * 1000,
                     "paint_ms": [(value - started) * 1000 for value in painted.values()],
-                    "grids": [list(plot.dataGrid.shape) for plot in plots],
+                    "grids": [list(plot.dataGrid.shape) for plot in plots if hasattr(plot, "dataGrid")],
+                    "line_samples": [int(plot.axis_data["y"].size) for plot in plots
+                                     if not hasattr(plot, "dataGrid")],
                     "capture": list(timings),
                     "broker_queries": [{"run_id": run, "phase": phase, **record}
                                        for (run, phase), record in list(phase_times.items())],
@@ -220,13 +222,15 @@ def main():
                 window.close_plot_windows(confirm=False, status=False)
                 wait_for(lambda: not window._plot_workers)
         finally:
-            window.close_plot_windows(confirm=False, status=False)
-            window._cancel_plot_work()
-            window.threadPool.waitForDone(10_000)
-            window.close_database(status=False)
-            window.hide()
-            wait_for(lambda: not window._retired_trusted_read_services,
-                     timeout=20, check_errors=False)
+            # Use the application's bounded shutdown for every worker pool,
+            # preview and broker, including a failed measurement iteration.
+            window.close()
+            wait_for(lambda: window._shutdown_ready, timeout=20, check_errors=False)
+            if window._shutdown_background_work_active():
+                raise RuntimeError("Plot benchmark background work did not stop")
+            window.deleteLater()
+            app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+            app.processEvents()
     after = source_state()
     print(json.dumps({"database_bytes": args.database.stat().st_size,
                       "database_open_ms": open_ms, "run_id": args.run_id,
