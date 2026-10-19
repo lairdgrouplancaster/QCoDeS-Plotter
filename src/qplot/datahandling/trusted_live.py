@@ -2314,7 +2314,9 @@ class TrustedLiveReader:
             cleanup_errors.append(error)
 
         if not cleanup_errors and publication_pending:
-            if control.cancel_event is not None and control.cancel_event.is_set():
+            if self._operation_abort_reason(control) == "cancelled" or (
+                control.cancel_event is not None and control.cancel_event.is_set()
+            ):
                 return TrustedLiveCancelledError(
                     "The trusted database read was cancelled before publication."
                 )
