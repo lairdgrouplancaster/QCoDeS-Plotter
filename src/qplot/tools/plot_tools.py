@@ -116,7 +116,7 @@ def _gradient_with_integer_samples(
         # Mixed QCoDeS integer/float records use object cells. Their finite
         # floating differences can overflow too; divide the exact recorded
         # difference before rounding, including the first-order edge slopes.
-        repair = ((~np.isfinite(differences) | mixed_objects)
+        repair = ((~np.isfinite(differences) | ~np.isfinite(spacing) | mixed_objects)
                   & numeric_isfinite(samples[..., 1:])
                   & numeric_isfinite(samples[..., :-1]))
         for index, position in enumerate(zip(*np.nonzero(repair), strict=True)):
@@ -138,6 +138,21 @@ def _gradient_with_integer_samples(
             slopes[repair] = (
                 samples[..., 1:][repair] / 2. - samples[..., :-1][repair] / 2.
             ) / (distances[repair] / 2.)
+
+        # The coordinates themselves can be finite while their separation
+        # exceeds float64. Divide the original exact differences; scaling
+        # an already-overflowed spacing would turn valid slopes into zero.
+        repair = (~np.isfinite(spacing) & np.isfinite(samples[..., 1:])
+                  & np.isfinite(samples[..., :-1]))
+        for index, position in enumerate(zip(*np.nonzero(repair), strict=True)):
+            if index % 1024 == 0:
+                _check_cancelled(cancelled_callback)
+            left = position[-1]
+            row = position[:-1]
+            distance = _sample_fraction(coordinates[left + 1]) - _sample_fraction(coordinates[left])
+            difference = (_sample_fraction(samples[row][left + 1])
+                          - _sample_fraction(samples[row][left]))
+            slopes[position] = _fraction_as_float(difference / distance)
 
     if np.all(spacing == spacing[0]):
         dx = spacing[0]
@@ -190,9 +205,9 @@ def _gradient_with_integer_samples(
         # coefficients, and subtraction still precedes weighting so stored
         # offsets cannot erase representable differences.
         scale = np.maximum(np.abs(dx1), np.abs(dx2))
-        before, after = dx1 / scale, dx2 / scale
-        total = before + after
         with np.errstate(over="ignore", invalid="ignore"):
+            before, after = dx1 / scale, dx2 / scale
+            total = before + after
             left_term = (after / total) * slopes[..., :-1]
             right_term = (before / total) * slopes[..., 1:]
             central = left_term + right_term
@@ -573,9 +588,9 @@ def differentiate(
         spacing = _integer_differences(coordinates, cancelled_callback=cancelled_callback)
     else:
         coordinates = coordinates.astype(float)
-        spacing = np.diff(coordinates)
-    if ((not integer_coordinates and not np.all(np.isfinite(coordinates)))
-            or not np.all(np.isfinite(spacing))):
+        with np.errstate(over="ignore", invalid="ignore"):
+            spacing = np.diff(coordinates)
+    if not np.all(numeric_isfinite(coordinates)):
         raise ValueError("Differentiation axis coordinates must be finite.")
     if np.any(spacing == 0):
         raise ValueError("Differentiation axis coordinates must not repeat.")
