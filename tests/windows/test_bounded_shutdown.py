@@ -263,8 +263,9 @@ _SUPERVISOR_DRIVER = textwrap.dedent(
     # Parent communicate()/scheduling latency is not the time of the kill.
     if termination_times:
         started, completed = termination_times[0]
+        # The terminated child may have left shared stdout mid-line.
         print(
-            f"TREE_TERMINATED started={started:.9f} completed={completed:.9f}",
+            f"\\nTREE_TERMINATED started={started:.9f} completed={completed:.9f}",
             flush=True,
         )
     raise SystemExit(exit_code)
@@ -808,6 +809,41 @@ def test_blocked_diagnostic_io_cannot_delay_external_launcher_kill(
     )
     assert completed_at - terminated_at >= observation_delay
     assert "DIAGNOSTIC_IO_BLOCKED" in completed.stdout
+    assert "CHILD_EXITING_WITHOUT_LAUNCHER" not in completed.stdout
+
+
+def test_external_termination_record_follows_unterminated_child_stdout() -> None:
+    script = textwrap.dedent(
+        """
+        import os
+        import sys
+        import time
+
+        from qplot._shutdown_supervisor import ShutdownSupervisorClient
+
+        client = ShutdownSupervisorClient.from_environment().connect()
+        print(f"GUI_PID={os.getpid()}", flush=True)
+        hard_deadline = time.monotonic() + 0.45
+        assert client.arm(hard_deadline) is None
+        print(f"SHUTDOWN_ARMED hard={hard_deadline:.9f}", flush=True)
+        # The child cannot supply the newline after the launcher kills it.
+        sys.stdout.write("CHILD_PARTIAL_STDOUT")
+        sys.stdout.flush()
+        time.sleep(5.0)
+        print("CHILD_EXITING_WITHOUT_LAUNCHER", flush=True)
+        """
+    )
+    completed, completed_at, launcher_pid = _run_supervised_probe(script)
+
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == main_window._APPLICATION_FORCED_SHUTDOWN_EXIT_CODE, (
+        output
+    )
+    hard_deadline = float(_probe_value(completed.stdout, "SHUTDOWN_ARMED", "hard"))
+    _assert_external_termination(
+        completed, completed_at, launcher_pid, hard_deadline,
+    )
+    assert "CHILD_PARTIAL_STDOUT\nTREE_TERMINATED " in completed.stdout
     assert "CHILD_EXITING_WITHOUT_LAUNCHER" not in completed.stdout
 
 

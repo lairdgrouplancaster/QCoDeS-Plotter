@@ -844,6 +844,27 @@
   precision, row alignment, cancellation and database protection. Repair pending.
 - Round 10 is not clean; clean streak zero.
 
+#### Additional CI fixture follow-up
+
+- At `a7036eb`, Windows 3.13 compatibility reports one test failure after
+  640 passes: its shutdown receipt parser cannot find `TREE_TERMINATED` at
+  the start of a line. The actual receipt contains valid termination times,
+  appended to the child's last partial stdout message after forced exit.
+  No late application termination is shown by this failure.
+- UI subchat owns a narrow test-harness correction to frame the post-reap
+  receipt on its own line, with a deterministic partial-child-output regression.
+  Existing deadline and process-disappearance assertions must remain intact.
+  No application change proposed. Evidence:
+  `/private/tmp/qplot-ci-118265310237-failure.txt`.
+- Deterministic real-process regression failed before repair, despite actual
+  termination at deadline+0.000325 s. Final repair adds a leading newline to
+  the launcher's post-reap receipt; strict parsing and the original deadline,
+  exit-status and both process-disappearance checks remain unchanged.
+- Author validation: all 17 bounded-shutdown tests pass on ARM, six actual
+  process cases pass on Intel. Independent safety reviewer approved and passed
+  five selected real-process cases, including both delayed-parent controls
+  and the unterminated-child-output regression. All resources reaped.
+
 ### Latest repair checkpoint
 
 Initial coverage and rounds 1/2/3 complete. First 17 confirmed findings are fixed
