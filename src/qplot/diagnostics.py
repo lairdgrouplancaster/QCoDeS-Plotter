@@ -1,7 +1,10 @@
 import logging
+import os
 import sys
+from io import BufferedWriter
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import cast
 
 from qplot._auxiliary_paths import ensure_safe_auxiliary_path
 
@@ -22,19 +25,49 @@ class _DatabaseSafeRotatingFileHandler(RotatingFileHandler):
         ensure_safe_auxiliary_path(self.baseFilename)
         return super()._open()
 
-    def emit(self, record):
+    def _discard_stream(self):
+        stream, self.stream = self.stream, None
+        if stream is not None:
+            # FileHandler opens a buffered text stream. Closing its raw file
+            # first discards any pending text without flushing it into a file
+            # which may now belong to a QCoDeS database.
+            cast(BufferedWriter, stream.buffer).raw.close()
+
+    def _prepare_stream(self):
         try:
             ensure_safe_auxiliary_path(self.baseFilename)
-        except OSError:
             if self.stream is not None:
-                self.stream.close()
-                self.stream = None
+                try:
+                    current = os.path.samestat(
+                        os.stat(self.baseFilename), os.fstat(self.stream.fileno()),
+                    )
+                except FileNotFoundError:
+                    current = False
+                if not current:
+                    self._discard_stream()
+        except (OSError, ValueError):
+            self._discard_stream()
+            return False
+        return True
+
+    def emit(self, record):
+        if not self._prepare_stream():
             return
         super().emit(record)
 
-    def doRollover(self):
+    def flush(self):
+        self.acquire()
         try:
-            ensure_safe_auxiliary_path(self.baseFilename)
+            # FileHandler.close() and logging.shutdown() call flush too.
+            if self.stream is not None and self._prepare_stream():
+                super().flush()
+        finally:
+            self.release()
+
+    def doRollover(self):
+        if not self._prepare_stream():
+            return
+        try:
             for index in range(1, self.backupCount + 1):
                 ensure_safe_auxiliary_path(self.rotation_filename(
                     f"{self.baseFilename}.{index}",
