@@ -74,8 +74,10 @@
 - Obsolete integration batch 1 was gracefully interrupted after **226 passed**
   because C19-004/005 landed after its start. A coverage-instrumented restart
   was also stopped to avoid repeating expensive per-row instrumentation.
-  The complete local suite now runs with `--no-cov` in
-  `/private/tmp/qplot-bh20261019-full.log`; PR CI retains required coverage.
+  The subsequent complete local suite finished: **5,073 passed, 44 skipped**
+  in 1,645.53 s, log `/private/tmp/qplot-bh20261019-full.log`. It began after
+  the initial five repairs; later source changes mean this is a transitional
+  integration result, not final exact-source validation. PR CI retains coverage.
 
 #### C19-001 — Generator CLI leaks CSV decoding/parser exceptions
 
@@ -303,19 +305,95 @@
 - Fresh real QCoDeS array-grid probes on Intel reproduce a pandas
   `TypeError: No matching signature found` in `data2matrix`'s grouped mean /
   pivot path for unshaped longdouble heatmaps. Forced SQL heatmap route works.
-- Measurement author owns the narrow aggregation repair and real-data
-  regressions; a different, fresh UI subchat will independently review it.
+- Repair routes extended floats through existing exact-cell aggregation and
+  represents singleton/duplicate extended cells consistently as Decimal, avoiding
+  unsupported NumPy longdouble/Decimal ordering in mixed grids. Narrow floating
+  fast paths stay unchanged. Source samples are preserved.
+- Final 19 regressions pass on ARM and Intel, including real Qt plotting, CSV,
+  row-mean processing and cancellation. Another 32 deterministic real-QCoDeS
+  grids agree with an independent exact-group oracle; related 199 tests pass.
+- Fresh round 3 UI subchat independently approved and reran all 19 Intel cases.
+  Ruff, mypy and actual qPlot startup pass.
 - Fresh round 3 safety/UI reviews have started. Its measurement review and
   complete-round result must use the completed C19-013 repair.
 
+#### Round 3 progress and rejected hypotheses
+
+- Three fresh contexts now cover safety/native/entrypoints, UI/configuration,
+  and measurement/generator/performance/packaging, with coordinator integration.
+- C19-014 was reserved for a marquee-overflow hypothesis, then **withdrawn**:
+  reproducing coordinates exceed PyQtGraph's visible linear range and qPlot's
+  existing guards reject them. The probe drove unreachable offscreen positions;
+  no normal workflow bug was established. Temporary test removed, no code edit.
+- UI/configuration/CLI/entrypoint validation so far: 103 tests and 25 subtests;
+  lifecycle 138 tests plus 4 sandbox-IPC cases passing when rerun unprivileged
+  outside the sandbox. Complete UI round: 264 tests including the 19-case
+  independent C19-013 review; no new UI bug established.
+- Fresh native/live probe: 8 direct-reader cycles, 40 prohibited-query refusals,
+  8 deadlines, 8 event cancellations, 8 query-error recoveries; 4 broker
+  lifecycles with 48 coalesced/cancelled subscribers and exact 10,009+ row
+  captures. All helpers/threads/endpoints reaped, 12 writer checkpoints,
+  protected main/WAL/journal bytes and mtimes unchanged.
+
+#### C19-015 — Synthetic generation inherits external QCoDeS side effects
+
+- Actual QCoDeS configuration can redirect generator results into separate
+  per-dataset databases outside its selected output; the resulting main is
+  unsupported for measurement viewing. Automatic CSV export is more serious:
+  an existing disposable QCoDeS main at the unselected export pathname was
+  replaced by CSV bytes (32,768 SQLite bytes became 67 CSV bytes).
+- The public Measurement API has no per-run backend/automatic-export override.
+  Narrow preflight repair: reject non-main storage and enabled
+  automatic exports before any generator directory/temp-file creation, without
+  changing global QCoDeS settings used by a concurrent writer. Nonempty default
+  subscribers are also refused; an actual callback-factory marker reproduction
+  confirms those run during generation.
+- Independent UI review found a further real path: inherited `Station.default`
+  snapshots read invalid parameter caches, invoking acquisition callbacks.
+  Generation now supplies a private empty `Station(default=False)` through the
+  public Measurement API; global station identity and caches stay unchanged.
+- Final 11 new cases plus broader generator/GUI suite: 163 passed. Independent
+  UI reviewer approved after 30 tests. Existing unselected QCoDeS data remains
+  unchanged; rejected settings create no destination directory/raw files/marker;
+  standard output remains readable. `docs/demo-data.md` documents requirements.
+- An additional `DataSaver.default_callback` hypothesis was disproved: current
+  QCoDeS raises before invoking it and cleans temporary files, including with
+  the final station repair. No speculative callback guard was added.
+- Round 3 cannot count as clean. Native packaging/launcher/shutdown review
+  completed with no new safety finding beyond C19-015.
+
+#### C19-016 — Mixed-sign mean subtraction erases extended residuals
+
+- Actual Intel QCoDeS/Qt native Subtract Mean and shaped-heatmap Row/Column
+  Mean controls turn the centered zero sample of `[1+eps80,-1,0]` into zero;
+  the exact result is `-3.614007241618348e-20`. The mixed-sign fallback narrowed
+  each source sample before summing, losing the recorded cancellation residual.
+- Repair retains exact original samples until final binary residual rounding,
+  preserving the source dtype's precision, exponent range and subnormals.
+  Ordinary floating paths and cancellation remain covered.
+- Independent UI review caught halfway tie errors in an initial Decimal
+  conversion. Final direct binary conversion is approved: 35 Intel tests,
+  including 150 halfway cases, plus an independent 1,684-residual nearest-
+  neighbor Fraction oracle across binary exponents -16,445 through 16,000.
+
+#### C19-017/018 — Profiling helpers fail on current QCoDeS run types
+
+- Actual subprocess reproduction: the plot-launch benchmark paints a valid
+  three-point line then accesses nonexistent `plot1d.dataGrid`, raises
+  AttributeError and exits with a Qt cleanup segmentation fault.
+- The numeric reader profiler accepts an array run, aggregates array BLOBs,
+  then raises `TypeError: bytes is not JSON serializable` while checksumming.
+- Measurement subchat owns narrow script fixes and actual subprocess
+  regressions, including protected-source invariance. Independent review pending.
+
 ### Continuation checkpoint
 
-Initial coverage and round 1 complete. C19-001 through C19-012 are fixed and
-independently approved; first eight are pushed. Round 2 additionally found
-C19-013; finish its repair, tests and independent review. Round 3 has begun.
-Repeat fresh/rotated reviews until
-two consecutive complete rounds are clean. The running full suite covers the
-initial five-fix source. Final exact-source validation/startup/application
+Initial coverage and rounds 1/2 complete. C19-001 through C19-013 are fixed and
+independently approved; first twelve are pushed at `f292920`. Round 3 found
+C19-015/016 (now fixed and approved), C19-017/018 (repair/review underway).
+C19-014 was withdrawn. Repeat fresh/rotated reviews until two consecutive
+complete rounds are clean. Transitional full suite: 5,073 passed, 44 skipped.
+Final exact-source validation/startup/application
 rebuild and exact-head CI remain required. No fresh complete clean round yet.
 Draft PR #90 only; no merge/release.
 
