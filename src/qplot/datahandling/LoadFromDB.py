@@ -82,7 +82,8 @@ def append_shaped_parameter_data_to_existing_arrays(
         # Object cells count records; shaped cache offsets count samples.
         # Flatten only the new records so QCoDeS' usual padding and offsets
         # still apply, including the same missing-value handling.
-        if any(values.dtype.kind == "O" for values in new_data_1_tree.values()):
+        if (any(values.dtype.kind == "O" for values in new_data_1_tree.values())
+                or len({values.shape for values in new_data_1_tree.values()}) > 1):
             new_data_1_tree = flatten_record_columns(new_data_1_tree, check_cancelled)
         private_data = {}
         for name, values in existing_data_1_tree.items():

@@ -39,7 +39,7 @@
   interactions. Require concrete reproductions and meaningful regression tests.
 - Finish with integrated checks/startup and fresh rotated independent review
   rounds until **two consecutive complete rounds find no actionable bugs**.
-- Current clean-round count: **0** (round 11 found C19-029).
+- Current clean-round count: **0** (round 12 found C19-030).
   Historical results below are not counted.
 
 ### Findings and validation
@@ -986,14 +986,109 @@
   `b6ce21246929fe8c8a1055bb774b334d710a8ecc46d96457aed94324c370970d`.
 - Round 11 is not clean. Clean-round streak remains zero.
 
+#### Round 12 — singleton-array preview finding
+
+- Three fresh independent subchats review frozen application commit `f899ecf`:
+  safety/native/live, measurement/operations/preview, and actual UI lifecycle.
+  Coordinator covers configuration, entry points, scripts and packaging.
+- Fresh safety composition passes three public-QCoDeS runs and nine acquisition/
+  checkpoint cycles: 54 newly opened source/proof handles physically read-only,
+  24 native audits with no forbidden operation and balanced final proofs,
+  45 mutation refusals, nine deadlines, 18 cancellations, 36 detail reads,
+  54 exact raw prefix rows, nine disk-cache reconfiguration cycles, 36 auxiliary
+  refusals, 15 snapshots and nine unmarked-live-WAL refusals. Thirty protected
+  file comparisons and all three helper/thread/prefix cleanups pass.
+- Safety focused checks: 43 passed across operation cleanup, subscriber/cache
+  ownership, deadlines, helper failures, reconciliation and stale completions.
+  Fresh source audit confirms pinned native ABI, read-only main/WAL opens,
+  rejection of journal recovery/write/truncate/sync/delete, and exact SHM scope.
+- Fresh UI remit is clean: seven composed real-QCoDeS/Qt scenarios and 134
+  focused tests plus three subtests pass. Actual drag/drop, preferences,
+  promotion with exporter open, cuts, auto-plot, cancelled database switch,
+  retained old-source refresh, inline operation recovery, raw CSV cancellation,
+  metadata Copy/Close and shortcuts work. Close during workers/modeless editors
+  reaches shutdown-ready with no handles/windows/workers or callback errors;
+  protected files remain unchanged. Probe: `/private/tmp/test_qplot_round12_ui.py`.
+- Coordinator's fresh CLI/settings composition passes: eight persisted current
+  settings roundtrips, nine atomic invalid-value refusals and three malformed
+  settings recoveries; generated three tiny runs at a Unicode/URI-special path,
+  refused unconfirmed replacement, ran all three numeric profilers and actual
+  plot launch via GUID, double-click and Run actions. Expected sample counts,
+  generator's 5-by-3 sweep order, painting and seven protected-file comparisons
+  pass. Actual plot command runtimes were 1.94–2.20 seconds locally.
+  Receipt: `/private/tmp/qplot-r12-coordinator-frty0ymx/receipt.json`.
+  Initial probe used the wrong generator axis order; no application issue.
+
+#### C19-030 — Singleton/empty array records disagree across viewing routes
+
+- Public QCoDeS DataSaver records an array-typed x
+  setpoint supplied as scalar 2.0 alongside signal `[0., 1., 2.]`. QCoDeS and
+  qPlot raw decoding correctly expand x to `[2., 2., 2.]`; trusted preview
+  instead reports "Array measurement and setpoint sizes differ." Its strict
+  BLOB-size equality rejects valid singleton broadcasting. Protected source
+  files remain unchanged. Measurement subchat authored the repair; separate
+  safety subchat independently reviewed semantics, bounds and cancellation.
+- Same semantic issue also affects the full heatmap preflight: public DataSet
+  records x `[0,1,2]`, slow `[0]`, signal `[2]`; QCoDeS correctly expands three
+  aligned samples, but `_array_heatmap_records` hard-codes output array length
+  and refuses.
+- Independent review confirms the empty-record boundary is also publicly
+  reachable: DataSaver writes array-typed x supplied as scalar 2.0 and empty
+  signal, then scalar x 3.0 with signal `[4,5,6]`. Existing unshaped worker
+  correctly skips the empty acquisition; declared-shape worker and raw CSV
+  both refuse its zero/one sample-size mismatch. C19-030 repair scope therefore
+  includes exact `flatten_record_columns` and `_csv_scalar_columns` paths.
+  No invented samples or omission of nonempty measurements is acceptable.
+- Separate actual-Qt C19-030 integration passes six WAL scenarios across
+  singleton ranks zero/one/three and planned/unplanned grids: thumbnails,
+  details previews, thumbnail double-click, full plots, writer append, both
+  refresh controls and close/reopen. No callback errors; protected files and
+  every retained service cleanup pass. These checks precede the additional
+  empty-record repair. Probe: `/private/tmp/test_qplot_c19030_ui.py`.
+- Independent cache check passes: retained v8 unsupported payload misses under
+  v9, and both exact keys coexist without touching the measurement source.
+- Fix broadcasts singleton fields by indexing existing samples or existing
+  bounded chunks. Empty selected outputs contribute zero samples; incompatible
+  nonempty records still refuse. Shaped-cache flattening also handles dense
+  zero/one shape mismatches, preserving acquired-row versus sample offsets.
+  CSV uses explicit output identity, and empty slices retain dtype promotion.
+  Renderer version v9 invalidates old negative previews. No cap increases,
+  added source I/O, settings migrations or unrelated refactoring.
+- Final independent review approved: 99 tests pass, including all 68 new
+  regressions, the 20 C19-029 budget cases and existing array-preview cases.
+  Separate oracle matrix passes 28 actual QCoDeS previews and 28 bounded
+  workers across singleton positions/ranks, C/Fortran layout and numeric
+  outputs. Four additional real empty-record workflows pass all routes.
+- Incremental regression proves empty-only acquisition advances read count to
+  one but leaves written samples zero; cancellation leaves cache unchanged,
+  valid append reaches read two/write three, and stale empty-prefix publication
+  is rejected. Selected-output authority, exact uint64, cumulative caps,
+  cancellation/retry and protected source/cleanup checks pass.
+- Empty-record actual-Qt extension passes both shaped/unshaped cases: normal
+  Plot/refresh and raw CSV preserve exactly x `[3,3,3]`, signal `[4,5,6]`,
+  including after close/reopen. Thumbnails/details and cleanup pass.
+  Probe: `/private/tmp/test_qplot_c19030_empty_ui.py`.
+- Coordinator Ruff, configured mypy (88 files), whitespace and actual project
+  startup pass: visible window, event loop running, exit zero. Receipt:
+  `/private/tmp/qplot-c30-final-startup-it4ogmwx/startup.json`.
+- Author's final ARM batch: 247 passed across the 68 new cases, inferred/missing
+  cells, expansion budgets, variable records, integer caches, full/bounded
+  heatmaps and previews. Failed-before evidence includes four singleton viewing
+  routes, two empty raw/shaped routes, and actual incremental read-one/write-one
+  corruption followed by four coordinates against three measurements. Earlier
+  Intel numeric/preview batch: 192 passed, one deselected; final Intel follow-up
+  after empty alignment is pending and not claimed as final validation.
+- Round 12 is not clean; repair and independent review are complete. Begin
+  two new complete fresh rounds; current clean-round streak remains zero.
+
 ### Latest repair checkpoint
 
 Initial coverage and rounds 1/2/3 complete. First 17 confirmed findings are fixed
 and independently approved, pushed at `b8fb173`; C19-014 was withdrawn.
 Round 4 found C19-019 and C19-020; both repaired and independently approved.
-All 28 confirmed application repairs are complete and independently approved,
-including round 11 C19-029. All four test-only CI follow-ups are independently
-approved. Begin fresh rounds 12 and 13 and continue until two complete rounds are
+All 29 confirmed application repairs are complete and independently approved,
+including round 12 C19-030. All four test-only CI follow-ups are independently
+approved. Begin fresh rounds 13 and 14 and continue until two complete rounds are
 clean. Run the final full suite after that point. Clean-round streak is zero.
 Complete transitional suites: 5,073 passed/44 skipped, then 5,178 passed/52
 skipped. Integrated startup/static checks, final application rebuild and wheel/

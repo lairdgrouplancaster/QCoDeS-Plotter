@@ -290,20 +290,28 @@ def parameter_data_for_export(dataset, parameter_name):
 
 def flatten_record_columns(data, check_cancelled=_check_noop):
     """Flatten aligned record cells before inserting into a planned scan shape."""
-    for record in zip(*data.values(), strict=True):
+    empty_records = set()
+    for index, record in enumerate(zip(*data.values(), strict=True)):
         check_cancelled()
-        if len({np.size(value) for value in record}) > 1:
+        sizes = [np.size(value) for value in record]
+        # Decoded trees are output-first. A zero-sample output may retain
+        # singleton setpoints; they cannot contribute an acquired cache slot.
+        # Keep empty slices below so their dtypes still take part in promotion.
+        if sizes[0] == 0 and all(size in (0, 1) for size in sizes):
+            empty_records.add(index)
+        elif len(set(sizes)) > 1:
             raise ValueError("Setpoint and measurement shapes do not match.")
     flattened = {}
     for name, column in data.items():
         check_cancelled()
-        if column.dtype.kind != "O":
+        if column.dtype.kind != "O" and not empty_records:
             flattened[name] = column.reshape(-1)
             continue
         parts = []
-        for record in column:
+        for index, record in enumerate(column):
             check_cancelled()
-            parts.append(np.asarray(record).ravel())
+            samples = np.asarray(record).ravel()
+            parts.append(samples[:0] if index in empty_records else samples)
         flattened[name] = concatenate_record_samples(parts)
     check_cancelled()
     return flattened

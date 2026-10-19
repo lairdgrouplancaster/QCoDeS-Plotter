@@ -91,9 +91,19 @@ def render_array_preview(observation, dependencies, dependent, width, height, ch
         if any(row[index] is None for index in indexes):
             continue
         columns = [_decode(row[index]) for index in indexes]
-        size = max(column.size for column in columns)
-        if any(column.size != (size if isinstance(row[source], bytes) else 1)
-               for source, column in zip(indexes, columns, strict=True)):
+        # QCoDeS expands scalar storage and singleton arrays to the largest
+        # acquired array. Scalar storage does not make an empty array record
+        # into one sample. Index singleton cells below without allocating the
+        # repeated arrays; the sample budget applies to their expanded extent.
+        array_sizes = [column.size for source, column in zip(indexes, columns, strict=True)
+                       if isinstance(row[source], bytes)]
+        # The selected output is first in QCoDeS' tree. A scalar output is
+        # initially expanded to the first array dependency. An empty output
+        # contributes no samples even when its setpoints are singleton arrays.
+        first_size = (columns[-1].size if isinstance(row[indexes[-1]], bytes)
+                      else array_sizes[0] if array_sizes else 1)
+        size = 0 if first_size == 0 else max(array_sizes, default=1)
+        if any(column.size not in (1, size) for column in columns):
             raise _UnsupportedNumericData("Array measurement and setpoint sizes differ.")
         expanded_count += size
         if expanded_count > MAX_SAMPLES:

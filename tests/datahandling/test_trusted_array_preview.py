@@ -130,7 +130,7 @@ def test_array_setpoint_length_mismatch_is_not_broadcast():
     observation = replace(
         observation,
         parameters=tuple(replace(param, paramtype="array") for param in observation.parameters),
-        sample_rows=((1, _blob([1.]), _blob([2., 3.])),),
+        sample_rows=((1, _blob([1., 2., 3.]), _blob([2., 3.])),),
     )
     payload = render_trusted_derived_payload(observation, TrustedWorkKind.THUMBNAIL)
     assert payload["status"] == "unsupported"

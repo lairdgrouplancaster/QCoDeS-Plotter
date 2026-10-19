@@ -126,11 +126,15 @@ def _csv_scalar_samples(values):
     return np.asarray(samples, dtype=object)
 
 
-def _csv_scalar_columns(param_data):
+def _csv_scalar_columns(param_data, output_param=None):
     """Align samples within each QCoDeS record before joining records."""
     arrays = {name: np.asarray(values) for name, values in param_data.items()}
     if not arrays:
         return {}
+    # QCoDeS trees are output-first; export callers also supply the selected
+    # output explicitly so column presentation order cannot define acquisition.
+    if output_param is None:
+        output_param = next(iter(arrays))
     # Regular, already aligned columns need no record-by-record expansion.
     if (
             len({values.shape for values in arrays.values()}) == 1
@@ -144,7 +148,8 @@ def _csv_scalar_columns(param_data):
             name: _csv_scalar_samples(values)
             for name, values in zip(arrays, record, strict=True)
         }
-        sample_count = max(values.size for values in samples.values())
+        sample_count = (max(values.size for values in samples.values())
+                        if samples[output_param].size else 0)
         for name, values in samples.items():
             if values.size == sample_count:
                 chunks[name].append(values)
@@ -2488,7 +2493,7 @@ class PlotActionsMixin:
         for param in params:
             param_data = parameter_data_for_export(dataset, param.name)
             columns = {}
-            for name, values in _csv_scalar_columns(param_data).items():
+            for name, values in _csv_scalar_columns(param_data, param.name).items():
                 column_name = f"{param.name}.{name}" if prefix_columns else name
                 # Object samples may need both uint64 and negative int64, or
                 # exact integers alongside floats. Disable pandas' inference.
