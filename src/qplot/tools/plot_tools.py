@@ -542,10 +542,28 @@ def pass_filter(
         exact_data = data.astype(object)
         # Decimal comparisons with NaN raise InvalidOperation. Missing cells
         # are never clipped, including holes in an integer heatmap.
-        valid = ~numeric_isnan(exact_data)
+        with np.errstate(over="ignore"):
+            valid = ~numeric_isnan(exact_data)
         clipped = np.zeros(data.shape, dtype=bool)
-        clipped[valid] = (exact_data[valid] > exact_limit if which == "low"
-                          else exact_data[valid] < exact_limit)
+        extended_objects = False
+        try:
+            clipped[valid] = (exact_data[valid] > exact_limit if which == "low"
+                              else exact_data[valid] < exact_limit)
+        except TypeError:
+            # Mixed QCoDeS array records can retain longdouble object cells.
+            # NumPy cannot compare these with Decimal; compare their exact
+            # binary ratios while retaining the source cells for a no-op.
+            for index, value in enumerate(exact_data.flat):
+                if index % 1024 == 0:
+                    _check_cancelled(cancelled_callback)
+                if isinstance(value, np.floating):
+                    extended_objects = True
+                    value = sample_fraction(value) if np.isfinite(value) else float(value)
+                if valid.flat[index]:
+                    clipped.flat[index] = (value > exact_limit if which == "low"
+                                           else value < exact_limit)
+            if not extended_objects:
+                raise
         if not np.any(clipped):
             new_data = data.copy()
         elif (data.dtype.kind in "iu" and exact_limit.is_finite()
@@ -562,6 +580,28 @@ def pass_filter(
             # the original-data CSV exporter.
             new_data = exact_data
             new_data[clipped] = exact_limit
+            # Retained longdouble and clipped Decimal cells must also support
+            # downstream ordering (rendering/statistics). Convert only this
+            # mixed processed result, retaining every original binary digit.
+            if extended_objects:
+                from decimal import localcontext
+
+                for index, value in enumerate(new_data.flat):
+                    if index % 1024 == 0:
+                        _check_cancelled(cancelled_callback)
+                    if not isinstance(value, np.floating):
+                        continue
+                    if not np.isfinite(value) or value == 0:
+                        new_data.flat[index] = Decimal(str(value))
+                        continue
+                    numerator, denominator = value.as_integer_ratio()
+                    decimal_numerator = Decimal(numerator)
+                    with localcontext() as context:
+                        # The denominator is 2**k. Multiplying its numerator
+                        # by 5**k needs fewer than k additional decimal digits.
+                        context.prec = (len(decimal_numerator.as_tuple().digits)
+                                        + denominator.bit_length())
+                        new_data.flat[index] = decimal_numerator / Decimal(denominator)
     else:
         new_data = np.clip(data, *limit_arr)
     _check_cancelled(cancelled_callback)
