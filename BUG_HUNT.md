@@ -14,6 +14,9 @@
   lookup only covers PR events, so push checks were verified using the public
   commit check-runs API, including returned count and each `head_sha`.
 - Dedicated branch: `codex/qplot-bug-hunt-2026-10-19`. No merge or release.
+- Initial reviewed batch pushed at `25a46cc51c36f6bf579546b446b96d25aa6441b4`;
+  [draft PR #90](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/90)
+  opened for cross-platform CI. Campaign remains active.
 - Local Python: project `.venv-mac`, CPython 3.12.2, QCoDeS 0.61.0,
   APSW 3.53.4.0. Installed native package was stale (1.0.0; source pins 1.0.1);
   rebuilt/installed current native source before runtime validation.
@@ -148,21 +151,85 @@
 
 ### Fresh independent review rounds
 
-- **Round 1 underway** with three new subchats using fresh contexts: safety and
+- **Round 1 found three new actionable issues** with three new subchats using fresh contexts: safety and
   native/live interactions; measurement and numeric/export correctness;
   UI/lifecycle/settings/entry-point interactions. Coordinator covers remaining
-  packaging/scripts/performance/integration. All five initial fixes are stable
-  and independently approved. No complete clean round counted until all four
-  coverage reports finish.
+  packaging/scripts/performance/integration. C19-006/007/008 below mean this
+  round cannot count as clean. All eight fixes are independently approved.
+- Round 1 measurement covered 488 focused tests and 1,152 independent oracle
+  cases: exact derivative stencils, mixed-bin means, explicit DFTs, and real
+  QCoDeS ragged/repeated/missing/mixed-dtype grids. Safety added 15 direct-reader
+  and 5 broker cycles exercising commit visibility, cancellation/deadlines,
+  reuse and writer checkpoints, plus 262 related tests. No further findings.
+- **Round 2 underway** with three new contexts covering safety/native/auxiliary,
+  measurement, and UI/lifecycle/interactions; coordinator covers remaining
+  entrypoints, settings, generation, scripts, performance and packaging.
+- Coordinator built both application/native sdists and wheels from clean
+  `25a46cc`. Inventory/metadata/twine checks pass: application sdist 378 files
+  including all 214 test modules, wheel 124 runtime files; native sdist 11 files,
+  wheel 2 runtime files. All nonbinary runtime bytes match that exact commit.
+  Native universal2 binary contains ARM64/x86_64 slices. Artifacts:
+  `/private/tmp/qplot-bh20261019-dist`. Later repairs require application rebuild.
+
+#### C19-006 — Promoted heatmap cuts attach to another window
+
+- Real QCoDeS/Qt reproduction: open B separately, drop B into A, remove A's
+  primary to promote B, then open a horizontal cut in promoted B. Its marker
+  appears in the original B window; promoted B has none. Both A host kinds fail.
+- Sweeper creation chose the first matching dataset/parameter window instead
+  of the emitting window. Fix forwards the emitting heatmap explicitly; direct
+  callers retain the existing lookup behavior.
+- Four real QCoDeS/Qt regressions failed before repair and now pass: horizontal
+  and vertical cuts from promoted line/heatmap hosts, marker/slider ownership,
+  bidirectional updates and closing isolation. File:
+  `tests/test_campaign_ui_cut_ownership.py`.
+- Author validation: 195 tests plus 2 subtests; broader 116 tests. Independent
+  measurement reviewer approved with 36 tests. Actual qPlot startup passed.
+
+#### C19-007 — Logging can append through a detached database handle
+
+- Fresh safety review found that logging validates its pathname but writes
+  through a retained stream. Rename an empty log file, create a current QCoDeS
+  database at that renamed inode, then emit: the missing log pathname passes
+  validation while the retained descriptor targets the database.
+- Actual disposable QCoDeS database hash, size and mtime changed before repair.
+  The handler now checks pathname/descriptor identity and retires invalid
+  streams by closing the raw file first, preventing pending buffered output
+  from flushing into a repurposed database during emit/flush/rollover/close.
+- `tests/test_campaign_diagnostics.py`: 12 regressions, including missing and
+  replaced log paths, rotation and buffered writes. Windows skips only open
+  file rename cases which its filesystem disallows; same-path cases still run.
+- Independent measurement reviewer approved; 36 tests and 3 subtests passed.
+  Integrated diagnostics/cuts checks: 23 passed, 3 subtests; startup passed.
+  Only disposable synthetic databases were used in these reproductions.
+
+#### C19-008 — Plot CSV narrows extended-precision array samples
+
+- Actual QCoDeS array read/worker/plot/export on Intel reproduced three distinct
+  `longdouble` readings at `1 + [0,1,2]*eps` exported as three `1.0` values.
+  ARM macOS cannot expose this loss because its longdouble equals binary64.
+  Used Rosetta with the project universal Python and isolated temporary Intel
+  dependencies; project environment was not replaced.
+- Fix formats longdouble samples directly with NumPy's unique scientific
+  formatter. Ordinary float16/32/64 retain the binary64 round-trip behavior;
+  integers and publication safety are unchanged.
+- `tests/test_campaign_measurement_longdouble_csv.py`: all 5 tests pass under
+  Intel, including actual QCoDeS source invariance; ARM runs 4 with 1 expected
+  platform skip. Independent reviewer approved after 1,016 extended-value
+  round-trips plus ordinary floats and actual CSV on both axes, including
+  values outside binary64, subnormals, signed zero, infinities and NaN.
+- Reviewer corrected the additional test oracle: ordinary floats round-trip
+  through binary64; parsing their shortest decimals directly into longdouble
+  is a different representation and was not the promised contract.
 
 ### Continuation checkpoint
 
-Initial and second coverage batches complete. C19-001 through C19-005 are fixed
-and independently approved. Complete the full suite and fresh round 1, address
-any new actionable finding, then repeat fresh/rotated complete reviews until
-two consecutive rounds are clean. Finish startup and clean package builds,
-commit/push the dedicated branch, open a draft PR and verify exact-head CI.
-No fresh complete clean round yet. No merge/release.
+Initial coverage and round 1 complete. C19-001 through C19-008 are fixed and
+independently approved. Round 2 is underway. Repeat fresh/rotated reviews until
+two consecutive complete rounds are clean. The running full suite covers the
+initial five-fix source. Final exact-source validation/startup/application
+rebuild and exact-head CI remain required. No fresh complete clean round yet.
+Draft PR #90 only; no merge/release.
 
 ## Previous campaign archive
 
