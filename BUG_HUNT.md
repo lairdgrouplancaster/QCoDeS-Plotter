@@ -412,11 +412,65 @@
   `/private/tmp/qplot-bh20261019-final-full.log`. Source must stay unchanged for
   this run to count as final validation. Native source remains unchanged.
 
-### Continuation checkpoint
+#### C19-019 — Clipping mixed extended-float records fails
 
-Initial coverage and rounds 1/2/3 complete. All 17 confirmed findings are fixed
-and independently approved; C19-014 was withdrawn. First fifteen fixes are
-pushed at `009a241`; profiling fixes are ready for the next commit. Repeat
+- Fresh round 4 actual QCoDeS 0.61/Qt reproduction on Intel: one signal record
+  contains `longdouble([1,2])`, another `int64([3,4])`. Limit Maximum = 2.5
+  should give `[1,2,2.5,2.5]`; the operation instead fails comparing
+  `numpy.longdouble` with `Decimal`. Limit Minimum fails analogously. Both
+  regression cases fail before repair; protected source remains unchanged.
+- Narrow `pass_filter` repair compares extended object samples by exact ratios
+  and, only when clipping actually changes data, normalizes retained extended
+  samples to exact Decimal values so downstream rendering/CSV can order them.
+  Original source cells and no-op results stay untouched. Cancellation is
+  polled through the fallback loops; ordinary vectorized paths are retained.
+- Author final Intel regression: 15 passed; ARM related batch: 59 passed,
+  2 extended-only skips; related Intel batch: 44 passed. Actual qPlot startup
+  passed. Independent safety reviewer verified 4,508 exact Fraction comparisons
+  across extreme exponents, subnormals, thresholds and nonfinite values;
+  60 ordinary-dtype cases unchanged, two 2-million-sample cancellation probes
+  returned in 8 and 14 ms. Final independent Intel UI/render/CSV and related
+  regression batch: 51 passed. Reviewer approved; round 4 is not clean.
+- Artifacts at `b8fb173` passed inventory, exact committed runtime-byte checks
+  (124 application runtime files), and twine. Application sdist contains 389
+  files including all 225 test modules. Compiler-free wheel acceptance passed:
+  installed runtime matches wheels, actual startup/live reader work, no compiler
+  builds attempted. Full suite is still running; after C19-019 these count as
+  transitional validation.
+
+#### C19-020 — Promoting a source resumes a paused plot
+
+- Fresh real-QCoDeS UI reproduction: set Refresh interval to 0, then remove
+  the primary dataset through Appearance. The promoted plot resumes at the
+  configured 1-second default. Promotion passes the explicit zero correctly;
+  `plotWidget.initRefresh` accepts only positive values and replaces zero.
+- Single-condition repair in `_plotWin.py` preserves zero alongside positive
+  intervals; prior absent/negative/NaN fallback remains unchanged. New 10-case
+  `test_campaign_ui_paused_promotion.py` covers every host/promoted kind, real
+  live timers, manual refresh and resume/re-pause. Six pause cases failed before
+  repair, positive controls already passed. Author related suite: 35 passed.
+- Independent safety subchat approved after 19 promotion/refresh tests. Actual
+  qPlot startup and Ruff pass. Committed as `ab5c599`.
+
+#### Round 4 completion and round 5 review
+
+- Round 4 found C19-019/020 and is not clean. Fresh safety review itself found
+  no further issue: 291 tests passed, one Windows-only skip; six reader cycles,
+  30 mutation refusals, three 240,001-sample array records, four mid-capture
+  cancellations/close operations. Protected hashes/identity/mtime unchanged,
+  13 writer TRUNCATE checkpoints succeeded, all helpers/threads/endpoints reaped.
+- Measurement review passed 144 real QCoDeS grid routes on 36 new random
+  fixtures against independent grouped-Fraction oracles, plus 140 focused
+  existing tests. UI review added 28 transform/ownership/lifecycle probes.
+- Fresh round 5 UI, measurement and safety subchats review the repaired source.
+  Clean-round count remains zero. Integrated Ruff/configured mypy pass.
+
+### Latest continuation checkpoint
+
+Initial coverage and rounds 1/2/3 complete. First 17 confirmed findings are fixed
+and independently approved, pushed at `b8fb173`; C19-014 was withdrawn.
+Round 4 found C19-019 and C19-020; both repaired and independently approved.
+All 19 confirmed repairs are complete. Round 5 underway. Repeat
 fresh/rotated reviews until two consecutive complete rounds are clean.
 Transitional full suite: 5,073 passed, 44 skipped. Final candidate suite is
 running; integrated startup/static checks pass. Final application rebuild and
