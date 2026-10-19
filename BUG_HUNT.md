@@ -739,8 +739,29 @@
   new test setup before application invocation. Windows manual-refresh test
   captures missing `_heatmap_geometry` callbacks on an incomplete `_LayerHost`
   test fixture. One Intel shutdown assertion overshot its 0.2 s allowance by
-  0.029 s. Three subchats are investigating these separately; no broad skip,
-  deadline relaxation or application change is accepted without evidence.
+  0.029 s. All three causes are now corrected in tests and independently
+  reviewed, with no application change or relaxed application deadline.
+- QCoDeS capability setup: generator guards remain tested on both versions by
+  setting the intended configuration dictionary directly. Only real storage
+  fixtures skip when package defaults prove the backend absent. Author and
+  independent UI reviewer each passed all 14 checks on 0.61, and 11 with three
+  feature-unavailable skips on isolated 0.58. Main venv remains on 0.61.
+- Windows callback contamination: a real paint reproduced the incomplete unit
+  host's missing geometry protocol before repair. The fixture now implements
+  its honest absent primary geometry, registers owned secondary layers and
+  disconnects/destroys/drains them before another test. Strict exception capture
+  remains. Author combined batch 58 passed; independent ordered layer/manual-
+  refresh batch 44 passed, including a new actual-paint/cleanup regression.
+- Shutdown timing oracle: first successful native group/Job termination is now
+  timestamped in the launcher; parent pipe draining/reaping/scheduling is not
+  mistaken for kill time. The original -0.04/+0.20 s deadline bound remains,
+  and GUI/launcher disappearance is checked. Real delayed-parent control showed
+  kill at deadline+0.00085 s while the old assertion observed +0.421 s and
+  failed. Author and independent reviewer each passed five Intel process cases.
+  Independent deliberately late kill at +0.257 s still fails the same bound.
+- Rebuilt application wheel at `179c99b` matches all 124 committed runtime
+  files. Compiler-free wheel installation, GUI startup and trusted live reader
+  pass: `/private/tmp/qplot-bh20261019-179c99b-wheel-install.log`.
 
 ### Latest repair checkpoint
 
@@ -748,8 +769,9 @@ Initial coverage and rounds 1/2/3 complete. First 17 confirmed findings are fixe
 and independently approved, pushed at `b8fb173`; C19-014 was withdrawn.
 Round 4 found C19-019 and C19-020; both repaired and independently approved.
 All 25 confirmed repairs are complete and independently approved, including
-round 9 C19-026. Finish the CI follow-up investigations, then begin fresh round
-10. Round 8 was clean but round 9 was not; clean-round streak is zero.
+round 9 C19-026. All three test-only CI follow-ups are independently approved.
+Begin fresh rounds 10 and 11; run the final full suite after two complete clean
+rounds to avoid another superseded run. Clean-round streak is zero.
 Complete transitional suites: 5,073 passed/44 skipped, then 5,178 passed/52
 skipped. Integrated startup/static checks, final application rebuild and wheel/
 editable compiler-free acceptance pass. Final full suite and exact-head CI remain
