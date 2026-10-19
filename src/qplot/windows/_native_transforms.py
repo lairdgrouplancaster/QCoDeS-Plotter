@@ -347,7 +347,9 @@ class NativePlotDataItem(pg.PlotDataItem):
 
     def _precision_checked_samples(self, x, y):
         self._qplot_precision_error = None
-        if x.dtype.kind not in "iuO" and y.dtype.kind not in "iuO":
+        if all(values.dtype.kind not in "iuO"
+               and not (values.dtype.kind == "f" and values.dtype.itemsize > 8)
+               for values in (x, y)):
             return x, y
         # Only paired finite samples can be drawn. Derivatives and phase maps
         # can leave an exact coordinate opposite a missing slope; its rounded

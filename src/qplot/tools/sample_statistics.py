@@ -56,12 +56,19 @@ def finite_mean(values, *, check_cancelled=lambda: None):
                 check_cancelled()
             yield value
 
-    if values.dtype.kind in "iuO":
+    # Extended floats also lose recorded residuals when math.fsum converts
+    # each input to a Python float before summing. Reuse exact binary totals.
+    if values.dtype.kind in "iuO" or (values.dtype.kind == "f" and values.dtype.itemsize > 8):
         exact = _binary_total(values, check_cancelled)
         if exact is not None:
             total, denominator = exact
             check_cancelled()
-            return float(Fraction(total, denominator * values.size))
+            try:
+                return float(Fraction(total, denominator * values.size))
+            except OverflowError:
+                # A finite extended mean may exceed the display float range.
+                # Retain the ordinary float path's signed infinity result.
+                return math.inf if total > 0 else -math.inf
         return float(sum((sample_fraction(v) for v in samples()), Fraction()) / values.size)
     try:
         return math.fsum(samples()) / values.size
@@ -73,7 +80,9 @@ def finite_mean(values, *, check_cancelled=lambda: None):
 def finite_standard_deviation(values):
     """Population deviation with subtraction before conversion and scaling."""
     values = np.asarray(values).ravel()
-    if values.dtype.kind in "iuO":
+    # Subtract extended floating anchors before narrowing to display precision,
+    # just as for nearby integer/object samples above float64's precision.
+    if values.dtype.kind in "iuO" or (values.dtype.kind == "f" and values.dtype.itemsize > 8):
         anchor = sample_fraction(values[0])
         try:
             if values.dtype.kind in "iu":
