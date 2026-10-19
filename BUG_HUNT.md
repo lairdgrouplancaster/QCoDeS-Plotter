@@ -1,6 +1,6 @@
 # qPlot bug-hunt campaign
 
-## Campaign starting 2026-10-19 — final round and validation
+## Campaign starting 2026-10-19 — completed after round 13 at user's request
 
 ### Verified baseline
 
@@ -1152,25 +1152,50 @@
 - Project editable metadata refreshed to 1.6.2. Ruff, configured mypy (88
   files), dependency consistency and whitespace checks pass. Actual project
   startup passes with a visible 1.6.2 window, running Qt event loop and exit
-  zero. Final whole-suite/artifact checks are next; draft PR #90 will record
-  exact results. Both author and independent release reviewer are finished.
+  zero. Both author and independent release reviewer are finished.
 
-### Latest repair checkpoint
+#### Final validation
 
-Initial coverage and rounds 1/2/3 complete. First 17 confirmed findings are fixed
-and independently approved, pushed at `b8fb173`; C19-014 was withdrawn.
-Round 4 found C19-019 and C19-020; both repaired and independently approved.
-All 30 confirmed application repairs are complete and independently approved,
-including round 13 C19-031. All four test-only CI follow-ups are independently
-approved. Complete final validation, commits/push and the 1.6.2 draft PR update. At the
-user's explicit credit-limit instruction, round 13 is final; do not start another
-round or pursue the superseded two-clean-round criterion. Clean streak is zero.
-Complete transitional suites: 5,073 passed/44 skipped, then 5,178 passed/52
-skipped. Integrated startup/static checks, final application rebuild and wheel/
-editable compiler-free acceptance pass for earlier candidates. Rebuild artifacts
-and repeat install acceptance for the final decoder source. Final full suite
-and exact-head CI remain pending; no further review rounds are requested.
-Draft PR #90 only; no merge/release.
+- Final application/test revision: `3b909f4b9a4868fab712fe89e0a21ac52bcaa1c8`.
+  Complete local suite: **5,485 passed, 101 skipped**, 56 warnings, 915.18 s.
+  Command uses project venv, fixed Matplotlib cache, offscreen Qt and
+  `-m pytest --no-cov -n 2 --dist=loadfile --no-loadscope-reorder`.
+  Log: `/private/tmp/qplot-bh20261019-3b909f4-full.log`. Hosted CI retains
+  coverage and platform-specific checks. The final log-only commit does not
+  alter this tested application, test, packaging or release source.
+- Ruff, configured mypy (88 files), `pip check` and whitespace checks pass.
+  Actual project module startup confirms visible version 1.6.2, running Qt
+  event loop and exit zero. Receipt:
+  `/private/tmp/qplot-162-final-startup-wgxf_70d/startup.json`.
+- Rebuilt 1.6.2 application wheel/sdist pass inventory and exact committed-byte
+  comparisons: 130 wheel files/124 runtime files, 402 sdist files including all
+  238 source test modules. Verified unchanged native 1.0.1 artifacts contain
+  seven wheel files/two runtime files and 11 sdist files; no native source
+  change required another rebuild. All four artifacts pass twine checks.
+  Manifest: `/private/tmp/qplot-bh20261019-3b909f4-artifact-manifest.json`.
+- Fresh compiler-free wheel and editable installations both pass: installed
+  bytes/native identity, GUI startup, trusted live reader, console commands,
+  and editable edits without reinstalling. No compiler builds attempted.
+  Logs: `/private/tmp/qplot-bh20261019-3b909f4-wheel-install.log` and
+  `/private/tmp/qplot-bh20261019-3b909f4-editable-install.log`.
+- Candidate hosted CI observation: 31 successful checks, 11 running and four
+  queued, no failures; all returned checks verified against exact `3b909f4`.
+  Final branch-head CI remains pending after the log update. Passing local
+  checks are not represented as completed hosted platform acceptance.
+
+### Final checkpoint and remaining release gates
+
+All **30 confirmed application fixes** and four test-only CI follow-ups are
+committed and independently approved; C19-014 was withdrawn. Investigation ends
+after round 13 at the user's explicit credit-limit instruction. The original
+two-clean-round condition was superseded and was not achieved (streak zero).
+Final local whole-suite, static, startup, artifact and installation validation
+pass. Application 1.6.2 bugfix release is prepared on
+`codex/qplot-bug-hunt-2026-10-19` in [draft PR #90](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/90).
+No uncommitted repair or further investigation round remains. Hosted CI and
+maintainer review are the remaining merge/release gates; no merge, tag or
+publication was performed. Resume only if requested or to address a concrete
+subsequent CI/review failure.
 
 ## Previous campaign archive
 
