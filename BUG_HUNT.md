@@ -593,13 +593,58 @@
 - UI review additionally covered promotion/drop callbacks, cut mapping, source
   ownership, CSV collection, preferences/settings, shutdown and CLI routing.
 
+#### C19-025 — Differentiation rejects valid mixed Boolean array records
+
+- Current QCoDeS 0.61 `DataSet.add_results` accepts Boolean NPY array records
+  (the higher-level DataSaver rejects them). Real shaped and unshaped runs
+  containing Boolean, integer and floating records display `[0,1,2,3,4,5]`.
+  Applying Operations dy/dx raises an isfinite TypeError wrapped in
+  OperationExecutionError instead of returning six ones. Both actual Qt
+  reproductions fail before repair; source hashes/mtimes and shutdown hold.
+- The exact mixed numeric predicates explicitly exclude Boolean object cells;
+  their fallback sends object arrays to NumPy isfinite. Measurement subchat
+  owns `plot_tools.py` and `test_campaign_boolean_derivative.py` for the narrow
+  repair. Final repair accepts Boolean cells in the exact mixed-numeric path;
+  pure dtype handling and original measurements remain unchanged.
+- All 36 new cases pass, including six failed-before real-UI cases, CSV output,
+  restore, both heatmap axes, exact integer/extended coordinates, missing values,
+  nonnumeric rejection and cancellation. Author ARM related batch: 277 passed;
+  Intel: 153 passed. One implementation-coupled cancellation observer expected
+  the old exact type tuple; updated its tuple only, all three controls pass.
+- Independent boundary reviewer approved all three files. Final Intel rerun:
+  39 passed. Independent ARM and Intel Fraction/Lagrange oracles each passed
+  1,452 checks. Four 200k/2M-sample cancellation probes completed within 23 ms,
+  inputs unchanged. Ruff, configured mypy (88 files), whitespace and actual
+  project-venv qPlot startup (visible window/event loop/exit 0) pass.
+- Round 7 is not clean. Coordinator integration has passed 390 rejected atomic
+  settings transactions, six corrupt-settings recoveries, and an independent
+  analytic comparison of all 250,000 spatial cells from 2,000,000 source rows
+  (maximum absolute error 2.27e-13). Aggregation 2.439 s, preview 1.670 s;
+  original database hash/mtime unchanged. Package/entry/profiling: 88 passed.
+
+#### Round 7 completion
+
+- C19-025 is the sole confirmed finding; all 24 findings are now fixed and
+  independently approved. Clean-round count remains zero.
+- Fresh boundary review: 292 focused tests passed. Three URI-special-path
+  sources exercised first-WAL appearance, 12 acquisition rounds, 72 mutation
+  refusals, 12 each of deadlines, interrupts, result limits and snapshots,
+  six helper and six broker shutdowns with 42 selected-run subscribers.
+  All 30 protected-file checks held, 15 writer checkpoints succeeded, forbidden
+  native audit counters remained zero, and handles/threads/endpoints were reaped.
+- Fresh UI review: 14 actual-QCoDeS/Qt compositions and 182 focused checks passed,
+  with 33 expected platform skips. Covered both plot hosts, settings, swaps,
+  transforms, SVG/PDF/clipboard, promotion, retained cuts, editor closure,
+  close/reopen, cancelled reload/retry and paused acquisition. Source protection
+  held. Four sandbox-blocked IPC checks passed on unprivileged external rerun.
+
 ### Latest repair checkpoint
 
 Initial coverage and rounds 1/2/3 complete. First 17 confirmed findings are fixed
 and independently approved, pushed at `b8fb173`; C19-014 was withdrawn.
 Round 4 found C19-019 and C19-020; both repaired and independently approved.
-All 23 confirmed repairs are complete and independently approved, including
-round 6 C19-024. Start fresh round 7 on the repaired source, then repeat
+All 24 confirmed repairs are complete and independently approved, including
+round 7 C19-025. Start fresh round 8 on the repaired source, then repeat
 fresh/rotated reviews until two consecutive complete rounds are clean.
 Complete transitional suites: 5,073 passed/44 skipped, then 5,178 passed/52
 skipped. Integrated startup/static checks pass. Final full suite/application rebuild and

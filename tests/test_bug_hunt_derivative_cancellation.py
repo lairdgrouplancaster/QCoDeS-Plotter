@@ -18,7 +18,7 @@ def test_object_derivative_type_scan_checks_cancellation(monkeypatch, numeric):
         values[0] = Decimal("0.25")
     original = values.copy()
     consumed = 0
-    observed_types = ((int, float, Decimal, plot_tools.Fraction, np.integer, np.floating)
+    observed_types = ((int, float, Decimal, plot_tools.Fraction, np.integer, np.floating, np.bool_)
                       if numeric else (int, np.integer))
 
     def instance(value, types):

@@ -89,9 +89,11 @@ def _integer_samples(values, cancelled_callback=None):
 
 
 def _numeric_object_samples(values, cancelled_callback=None):
+    # Mixed QCoDeS array records can retain Boolean cells alongside integers
+    # and floats. Their numeric values are 0/1; keep the exact mixed path so
+    # other samples and coordinates are not rounded before subtraction.
     return values.dtype.kind == "O" and all(
-        isinstance(value, (int, float, Decimal, Fraction, np.integer, np.floating))
-        and not isinstance(value, (bool, np.bool_))
+        isinstance(value, (int, float, Decimal, Fraction, np.integer, np.floating, np.bool_))
         for value in _checked_samples(values, cancelled_callback)
     )
 
