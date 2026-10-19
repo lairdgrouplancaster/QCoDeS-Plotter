@@ -39,7 +39,7 @@
   interactions. Require concrete reproductions and meaningful regression tests.
 - Finish with integrated checks/startup and fresh rotated independent review
   rounds until **two consecutive complete rounds find no actionable bugs**.
-- Current clean-round count: **0** (round 9 found C19-026 after clean round 8).
+- Current clean-round count: **0** (round 10 found C19-027/028).
   Historical results below are not counted.
 
 ### Findings and validation
@@ -763,15 +763,97 @@
   files. Compiler-free wheel installation, GUI startup and trusted live reader
   pass: `/private/tmp/qplot-bh20261019-179c99b-wheel-install.log`.
 
+#### Candidate artifacts and fresh round 10
+
+- Pushed all three independently approved CI test repairs at `a7036eb` and
+  updated draft PR #90. Exact-revision CI run 39312252542 is in progress;
+  no completed passing result is claimed yet.
+- Current application sdist contains 397 files and all 233 test modules;
+  all 394 tracked archive files match committed bytes. The wheel has 130
+  files and all 124 runtime files match both current Git source and the
+  compiler-free accepted `179c99b` wheel. Both native artifacts remain the
+  previously rebuilt, validated 1.0.1 artifacts. All four pass twine.
+- Receipts: `/private/tmp/qplot-bh20261019-a7036eb-artifact-manifest.json`
+  and `/private/tmp/qplot-bh20261019-a7036eb-sdist-source-proof.json`.
+- Compiler-free editable acceptance passed, including actual GUI startup,
+  native identity, live reader and edit-without-reinstall checks. No compiler
+  builds attempted: `/private/tmp/qplot-bh20261019-a7036eb-editable-install.log`.
+- Fresh safety review is complete and clean: 65 focused checks, four actual
+  runs across two URI-special sources, ten acquisition/metadata/SAVEPOINT and
+  WAL-truncation cycles, 80 mutation refusals, ten each deadlines/cancellations/
+  result limits, 20 private snapshots, six helpers and six brokers with 72
+  selected-run requests, 24 protected-file comparisons and 14 native audits.
+  All helper/thread/endpoint resources reaped; forbidden counters zero.
+- Fresh UI review completed with 119 focused checks and six actual Qt/QCoDeS
+  compositions: all line/heatmap combinations, mutual overlays, retained-source
+  closure, paused acquisition, preferences, swaps/native operations, eight CSV
+  exports, clipboard, promotion, both cut orientations, cancelled reload and
+  close/reopen. Protected-file comparisons and full resource cleanup passed.
+- Fresh measurement probes on each of ARM and Intel: eight real runs, 208
+  cache/SQL grid routes, 496 raw samples, eight previews, 40 protected checks,
+  160 derivative oracles, 320 native-transform comparisons, 320 statistics
+  checks, 160 row means and 876 CSV cells. Author found C19-027; independent
+  repair review subsequently confirmed C19-028.
+- Coordinator revisited package inventories/provenance, entry points, release
+  verification boundaries and the repaired profiling scripts. No additional
+  actionable issue; no release or publication action performed.
+
+#### C19-027 — Inferred dependent channels fail to load
+
+- Four actual public QCoDeS DataSaver/Qt reproductions cover numeric/array
+  records and line/heatmap plots. Register `converted` with the same setpoints
+  as `signal` and `basis=('signal',)`. Opening the run automatically creates
+  both plots: signal is correct, converted stays blank and reports
+  `KeyError: 'converted'`. Raw export independently reads its exact values.
+- QCoDeS cache preparation deliberately creates top-level trees only; qPlot
+  offers every parameter with setpoints but indexes a missing inferred tree.
+  Source hashes/mtimes and normal cleanup hold in all four reproductions.
+- Measurement subchat owns the narrow viewer-cache repair and regression file;
+  a different safety subchat independently reviews concurrency, correctness
+  and database protection. No global QCoDeS changes or source writes required.
+- Eight regression GUI cases failed before repair, covering numeric/array,
+  line/heatmap and shaped/unshaped data with two inferred siblings. The repair
+  creates only a private empty tree snapshot; existing successful publication
+  commits it. Cancelled initial reads leave shared cache and statuses untouched.
+- Author validation: 64 focused tests passed, including all 18 new regressions;
+  isolated QCoDeS 0.58 also passes all 18. Actual project-venv startup passes
+  (visible window/event loop/exit 0). Ruff, configured mypy (88 files) and
+  whitespace checks pass.
+- Independent safety reviewer approved the final cache-only repair: 43 focused
+  checks passed. Ten real runs across snapshot/trusted routes passed 20 load
+  orders, 104 worker loads, 168 raw-SQL column comparisons, 640 concurrent
+  private initial snapshots, 20 cancelled reads without cache mutation, 20 stale
+  publication refusals and 20 protected-file checks. Baseline KeyError was
+  independently reproduced in every case. No new SQLite/filesystem operations.
+
+#### C19-028 — Missing basis array cells break inferred plots and raw export
+
+- Independent reviewer confirmed with public QCoDeS DataSaver and actual Qt:
+  array `signal` and `other` depend on `x`, while `converted` has the same
+  setpoints and `basis=('signal', 'other')`. QCoDeS stores two rows, each with
+  one basis channel NULL and converted values `[101,102]` present in both.
+- Raw export already fails before C19-027 with `AttributeError` on `None.size`
+  in QCoDeS array expansion. After the cache repair, plotting reaches and fails
+  at that same decoder step. Both basis plots themselves work. Expected raw
+  converted samples are exactly `[101,102,101,102]`, matching stored records.
+- Both baseline and repaired-cache GUI reproductions keep protected-file
+  hashes/mtimes unchanged and shut down cleanly. Reproduction:
+  `/private/tmp/qplot-c28-minimal.py`.
+- Measurement author owns the separate narrow `parameter_data.py` repair and
+  regression file; safety reviewer independently checks missing-cell meaning,
+  precision, row alignment, cancellation and database protection. Repair pending.
+- Round 10 is not clean; clean streak zero.
+
 ### Latest repair checkpoint
 
 Initial coverage and rounds 1/2/3 complete. First 17 confirmed findings are fixed
 and independently approved, pushed at `b8fb173`; C19-014 was withdrawn.
 Round 4 found C19-019 and C19-020; both repaired and independently approved.
-All 25 confirmed repairs are complete and independently approved, including
-round 9 C19-026. All three test-only CI follow-ups are independently approved.
-Begin fresh rounds 10 and 11; run the final full suite after two complete clean
-rounds to avoid another superseded run. Clean-round streak is zero.
+All first 26 confirmed repairs are complete and independently approved, including
+round 10 C19-027. All three test-only CI follow-ups are independently approved.
+Round 10 also confirmed C19-028; complete its repair and separate review, then begin
+fresh rounds until two complete rounds are clean. Run the final full suite
+after that point to avoid another superseded run. Clean-round streak is zero.
 Complete transitional suites: 5,073 passed/44 skipped, then 5,178 passed/52
 skipped. Integrated startup/static checks, final application rebuild and wheel/
 editable compiler-free acceptance pass. Final full suite and exact-head CI remain
