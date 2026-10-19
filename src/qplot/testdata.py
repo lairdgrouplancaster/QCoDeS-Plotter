@@ -1789,7 +1789,7 @@ def main(argv: Sequence[str] | None = None):
             args.database,
             overwrite=args.overwrite,
         )
-    except (OSError, SpecificationError) as error:
+    except (OSError, SpecificationError, UnicodeError, csv.Error) as error:
         parser.exit(2, f"qplot-generate-db: error: {error}\n")
 
     total_points = sum(specification.point_count for specification in specifications)
