@@ -20,6 +20,7 @@ from itertools import islice
 from typing import Any, Protocol, TypeAlias, cast
 
 from qplot.datahandling.file_identity import DatabaseInstance
+from qplot.datahandling.readonly import SEPARATE_RAW_DATA_STORAGE_MESSAGE
 from qplot.datahandling.readSQL import (
     materialize_run_basic_fields,
     materialize_run_observation,
@@ -28,6 +29,7 @@ from qplot.datahandling.source_activity import source_activity_timestamp
 from qplot.datahandling.trusted_live import (
     TRUSTED_LIVE_MAX_SCALAR_BYTES,
     SqliteBindings,
+    TrustedLiveQueryError,
     TrustedQuery,
     TrustedQueryResult,
 )
@@ -1898,6 +1900,13 @@ class TrustedMetadataQueryAdapter:
         """
 
         metadata = dict(self._require_cached_run(run_id))
+        if "raw_data_db_path" in self._ensure_current_schema():
+            storage = self._executor.query(
+                "SELECT raw_data_db_path IS NOT NULL FROM runs WHERE run_id=? LIMIT 1",
+                (run_id,),
+            ).rows
+            if storage and storage[0][0]:
+                raise TrustedLiveQueryError(SEPARATE_RAW_DATA_STORAGE_MESSAGE)
         if any(name not in metadata for name in _DEFERRED_BASIC_RUN_COLUMNS):
             selected = tuple(
                 name

@@ -16,6 +16,7 @@ from qcodes.dataset.descriptions.versioning.converters import new_to_old
 from qcodes.dataset.descriptions.versioning.serialization import from_json_to_current
 from qcodes.dataset.sqlite.connection import AtomicConnection
 
+from .readonly import SEPARATE_RAW_DATA_STORAGE_MESSAGE
 from .trusted_live import TrustedLiveQueryError, TrustedQuery
 
 PAGE_ROWS = 8192
@@ -88,6 +89,14 @@ class TrustedPlotDataset:
 
 
 def plot_dataset(executor, service, guid):
+    columns = executor.query("SELECT * FROM runs WHERE 0").columns
+    if "raw_data_db_path" in columns:
+        storage = executor.query(
+            "SELECT raw_data_db_path IS NOT NULL FROM runs WHERE guid=? LIMIT 1",
+            (guid,),
+        ).rows
+        if storage and storage[0][0]:
+            raise TrustedLiveQueryError(SEPARATE_RAW_DATA_STORAGE_MESSAGE)
     rows = executor.query(
         "SELECT r.run_id, r.guid, r.result_table_name, r.run_description, "
         "r.is_completed, r.name, e.name, e.sample_name "

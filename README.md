@@ -39,6 +39,11 @@ selected run's plain detail view without copying the database. Main-database,
 WAL, and rollback-journal handles remain read-only; SQLite may update only the
 exact colocated `-shm` file as transient WAL coordination state.
 
+Measurement viewing supports QCoDeS's standard `sqlite_main_db` storage backend.
+Runs using the optional `sqlite_per_dataset_db` backend can appear in the run
+list, but their measurement actions are refused before opening the separate
+raw-data files. Safe multi-file live viewing is not yet implemented.
+
 Normal `qplot`, `python -m qplot`, and `qplot.run()` launches put the complete
 qPlot process tree behind a shutdown boundary before Qt or reader helpers can
 start. The command-line process is the launcher. A public `qplot.run()` call
