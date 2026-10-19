@@ -57,9 +57,14 @@ def _trusted_plot_action(method):
     @wraps(method)
     def invoke(self, *args, **kwargs):
         arguments = call_signature.bind(self, *args, **kwargs).arguments
+        target_window = arguments.get("target_win")
+        # A deferred drop remains owned by the window that received it.
+        if getattr(target_window, "_closed", False):
+            return False
         target = arguments.get("source_identity", arguments.get("guid"))
         if self._defer_trusted_plot_action(
             target, lambda: invoke(self, *args, **kwargs),
+            target_window=target_window,
         ):
             return
         return method(self, *args, **kwargs)
@@ -167,7 +172,7 @@ class PlotActionsMixin:
 
     _selected_dataset_key: DatasetKey | None
 
-    def _defer_trusted_plot_action(self, target, resume):
+    def _defer_trusted_plot_action(self, target, resume, *, target_window=None):
         if getattr(self, "_database_access_mode", None) != TRUSTED_LIVE_MODE:
             return False
         # Qt's str signal converts the run table's None argument to "".
@@ -219,6 +224,7 @@ class PlotActionsMixin:
 
         def poll():
             stale = (getattr(self, "_shutdown_started", False)
+                     or getattr(target_window, "_closed", False)
                      or service is not getattr(self, "_trusted_read_service", None)
                      or (selection is not None and selection != (
                          getattr(self, "selected_run_id", None),
