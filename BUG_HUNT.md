@@ -545,13 +545,61 @@
 - Fresh round 6 will review the frozen repaired source. Clean-round count is
   still zero; two consecutive complete clean rounds remain necessary.
 
+#### C19-024 — Manual refresh leaves paused secondary sources stale
+
+- Real QCoDeS acquisition/UI reproduction with main/host/hidden-source refresh
+  intervals zero: initial primary `[1,2]`, secondary `[11,12]`; writer appends
+  `[3,4]` and `[13,14]`. Clicking host Refresh updates primary to four samples
+  but secondary remains at two; heatmap equivalent also fails. The source
+  worker does not run. Protected file checks hold between intentional writes.
+- Toolbar and R action call primary-only `refreshWindow(force=True)`;
+  secondary synchronizers copy existing source data and retain zero intervals.
+  UI subchat owns a narrow explicit manual dispatcher in `_plot_refresh.py`
+  and `_plotWin.py`, leaving automatic and operation refresh semantics intact.
+  Direct source workers are deduplicated and pause settings preserved. Source
+  overlays are not traversed recursively; mutually overlaid windows cannot cycle.
+- All 21 new regressions pass, covering line/heatmap combinations, hidden/visible
+  sources, button/R action, repeated acquisition, shared sources/cuts, cycles,
+  pending refresh coalescing, immediate closure and operation-Apply scope.
+  Author related checks: 79 passed. Independent safety reviewer approved the
+  final source with all 21 cases plus five ownership/pause/replacement checks.
+  Protected-file assertions, Ruff/configured mypy and actual qPlot startup pass.
+- Round 6 is not clean. Its candidate full
+  suite was gracefully interrupted once this new required repair was confirmed;
+  1,806 passed and 33 skipped in 205.93 s before interruption, no failures.
+  Final full-suite validation is deferred until the repaired source stabilizes.
+- Artifacts at `ae32de4` pass inventory, metadata/twine and exact committed
+  runtime-byte checks: 124 application runtime files, 394 sdist files including
+  all 230 test modules. Native source/binary remains unchanged.
+
+#### Round 6 completion
+
+- C19-024 is the sole actionable finding; all 23 confirmed findings are now
+  repaired and independently approved. Clean-round count remains zero.
+- Safety/native/package/process review: 68 focused tests passed. Four fresh
+  sources with different page sizes and URI-special paths passed 44 protected
+  file checks, 24 acquisition/schema changes, 12 each of private snapshots,
+  deadlines, cancellations and result-limit failures, and four helper lifecycles.
+  Both native slices, pinned versions and SQLite linkage boundary remain valid.
+- Measurement/generation/package review: 178 focused tests passed. ARM and Intel
+  each passed 132 fresh real-QCoDeS grid/cache/SQL comparisons and 400 exact
+  Fraction derivative oracles. Intel passed 240 exact statistics comparisons;
+  worst standard-deviation relative error 2.20e-16. Integer mean plus standard
+  deviation for 300,000 samples took 0.138 s.
+- Eight actual Qt composed workflows passed on each architecture: clipping,
+  derivative, native mean/FFT, CSV, forced refresh and restored samples. Protected
+  source hashes, mtimes and sidecar states held. One-ULP floating bin differences
+  and probe-created overwrite dialogs were investigated and rejected as bugs.
+- UI review additionally covered promotion/drop callbacks, cut mapping, source
+  ownership, CSV collection, preferences/settings, shutdown and CLI routing.
+
 ### Latest repair checkpoint
 
 Initial coverage and rounds 1/2/3 complete. First 17 confirmed findings are fixed
 and independently approved, pushed at `b8fb173`; C19-014 was withdrawn.
 Round 4 found C19-019 and C19-020; both repaired and independently approved.
-All 22 confirmed repairs are complete and independently approved. Round 5 is
-complete; round 6 starts on the frozen source. Repeat
+All 23 confirmed repairs are complete and independently approved, including
+round 6 C19-024. Start fresh round 7 on the repaired source, then repeat
 fresh/rotated reviews until two consecutive complete rounds are clean.
 Complete transitional suites: 5,073 passed/44 skipped, then 5,178 passed/52
 skipped. Integrated startup/static checks pass. Final full suite/application rebuild and
