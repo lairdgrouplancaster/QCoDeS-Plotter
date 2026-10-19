@@ -1,6 +1,6 @@
 # qPlot bug-hunt campaign
 
-## Campaign starting 2026-10-19 — active
+## Campaign starting 2026-10-19 — final round and validation
 
 ### Verified baseline
 
@@ -37,10 +37,12 @@
   edits this log or commits. All substantive fixes get a different subchat review.
 - Expand to all application areas, native packaging, performance and subsystem
   interactions. Require concrete reproductions and meaningful regression tests.
-- Finish with integrated checks/startup and fresh rotated independent review
-  rounds until **two consecutive complete rounds find no actionable bugs**.
-- Current clean-round count: **0** (round 12 found C19-030).
-  Historical results below are not counted.
+- Original stopping condition was two consecutive complete clean rounds.
+  **User superseded this during round 13 because credits were running low:
+  round 13 is final; finish its repairs, commit and update the draft PR for the
+  next bugfix release.** No further investigation rounds are authorized/needed.
+- Clean-round count: **0** (round 13 found C19-031). Two clean rounds were not
+  achieved; historical results below are not counted.
 
 ### Findings and validation
 
@@ -1077,24 +1079,97 @@
   routes, two empty raw/shaped routes, and actual incremental read-one/write-one
   corruption followed by four coordinates against three measurements. Earlier
   Intel numeric/preview batch: 192 passed, one deselected; final Intel follow-up
-  after empty alignment is pending and not claimed as final validation.
+  after empty alignment passes 16 selected cases (97 outside that scope).
+- Measurement remit completed with no further finding. Fresh independent
+  numerical oracles pass 720 comparisons on each ARM/Intel architecture:
+  Fraction derivatives/secants, native/statistical/axis means, bounded fill
+  and independently interpolated DFTs. Unsupported oversized operation paths
+  were verified to refuse before the hypothesized narrowing, so no speculative
+  repair was made. All sources/services/processes cleaned up.
 - Round 12 is not clean; repair and independent review are complete. Begin
   two new complete fresh rounds; current clean-round streak remains zero.
+
+#### Round 13 — final review at user's request
+
+- All 29 application repairs are committed and pushed at `769e9b1`; fresh
+  safety, measurement and UI subchats have begun review with separate contexts.
+  Coordinator covers remaining entry points, settings, scripts and packaging.
+  Count remains zero until a complete round has no actionable findings.
+- Fresh coordinator entry-point composition passes two real public `qplot.run()`
+  launches from one embedding caller: each GUI becomes visible, runs its event
+  loop and returns zero; caller PID/process group and continuation are preserved.
+  Separate explicit `return_objects=True` launch returns owned Qt objects after
+  quiescent shutdown; caller deletes both safely and continues. Private settings
+  and logs only. Receipts: `/private/tmp/qplot-r13-entrypoints-v_8myciy/api.json`
+  and `/private/tmp/qplot-r13-caller-owned-h413gqm4/receipt.json`.
+- Coordinator actual 100,000-row/three-column decoder check preserves all
+  300,000 values and protected files. Decoding took 0.211–0.219 s without the
+  budget projection and 0.455–0.473 s with it, retaining 2.4 MB of array data.
+  Receipt: `/private/tmp/qplot-r13-decoder-e43l86tz/receipt.json`.
+- Safety remit clean: 84 focused tests pass; fresh public-QCoDeS compositions
+  verify 36 physical read-only handles, nine native audits, 45 mutation refusals,
+  21 writer checkpoints, 180 exact prefix rows, repeatable concurrent reads,
+  source replacement rejection, snapshots, deadlines/cancellation and cache/
+  auxiliary boundaries. Forty-two protected-file comparisons pass; all owned
+  helpers, threads, writers and temporary resources cleaned up.
+- UI remit clean: 191 focused tests and ten fresh real-Qt compositions pass,
+  covering overlay/promotion/cut ownership, operations/export, database switches,
+  paused retained-source refresh, numeric run entry, details, live Auto-plot,
+  completion and reopen. No callbacks/errors or source mutation; all resources
+  reaped. No further broad review after the user's credit-limit instruction.
+
+#### C19-031 — Empty unshaped acquisitions corrupt incremental alignment
+
+- Actual public-DataSaver/Qt reproduction fails in two cases: opening an
+  unshaped empty line reports a setpoint/measurement mismatch; opening an empty
+  heatmap then appending a singleton output reports incompatible broadcast
+  shapes and remains blank. Scalar inputs to array-typed coordinates retain
+  one coordinate despite zero acquired measurements, before unshaped cache
+  merging. Protected source files remain unchanged.
+- Repair is eight added lines in `LoadFromDB.py`: before cache merge, validate
+  and flatten newly decoded zero-output trees so singleton setpoints contribute
+  zero acquired samples. Read status still advances by SQL rows; empty dtype
+  contributions remain intact. No worker, transaction, native or source-I/O
+  changes. Nine meaningful regressions cover initial/middle empties, subsequent
+  singleton/larger appends, planned/unplanned line/heatmap, exact uint64,
+  cancellation/retry and stale publication. Two fail against original source.
+- Author's nine new cases and all 68 C19-030 cases pass. Different safety
+  subchat independently approved with 13 focused passing checks. Separate UI
+  subchat passes two actual-WAL flows through Plot, refresh, exact plotted CSV,
+  close/reopen, preserving `[4,6,7]` and matching coordinates. Protected source
+  and all resource-cleanup checks pass. No further investigation remains.
+
+#### Release preparation — 1.6.2
+
+- User initially requested the next minor release, then explicitly corrected
+  this to the next bugfix release (1.6.2). Application
+  version, changelog, README and distribution instructions now prepare 1.6.2;
+  separate UI subchat independently approved these four release files.
+- Native source and dependency remain 1.0.1. Public PyPI metadata verifies all
+  four native platform wheels exist and are not yanked; 1.6.2 uses the
+  application-only release workflow after review/merge and explicit tagging.
+  No merge, tag, publishing or release creation was performed.
+- Project editable metadata refreshed to 1.6.2. Ruff, configured mypy (88
+  files), dependency consistency and whitespace checks pass. Actual project
+  startup passes with a visible 1.6.2 window, running Qt event loop and exit
+  zero. Final whole-suite/artifact checks are next; draft PR #90 will record
+  exact results. Both author and independent release reviewer are finished.
 
 ### Latest repair checkpoint
 
 Initial coverage and rounds 1/2/3 complete. First 17 confirmed findings are fixed
 and independently approved, pushed at `b8fb173`; C19-014 was withdrawn.
 Round 4 found C19-019 and C19-020; both repaired and independently approved.
-All 29 confirmed application repairs are complete and independently approved,
-including round 12 C19-030. All four test-only CI follow-ups are independently
-approved. Begin fresh rounds 13 and 14 and continue until two complete rounds are
-clean. Run the final full suite after that point. Clean-round streak is zero.
+All 30 confirmed application repairs are complete and independently approved,
+including round 13 C19-031. All four test-only CI follow-ups are independently
+approved. Complete final validation, commits/push and the 1.6.2 draft PR update. At the
+user's explicit credit-limit instruction, round 13 is final; do not start another
+round or pursue the superseded two-clean-round criterion. Clean streak is zero.
 Complete transitional suites: 5,073 passed/44 skipped, then 5,178 passed/52
 skipped. Integrated startup/static checks, final application rebuild and wheel/
 editable compiler-free acceptance pass for earlier candidates. Rebuild artifacts
 and repeat install acceptance for the final decoder source. Final full suite
-and exact-head CI remain required. Two new complete clean rounds are necessary.
+and exact-head CI remain pending; no further review rounds are requested.
 Draft PR #90 only; no merge/release.
 
 ## Previous campaign archive

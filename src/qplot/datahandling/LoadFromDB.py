@@ -68,6 +68,14 @@ def append_shaped_parameter_data_to_existing_arrays(
 
     new_data_1_tree = new_data.get(meas_parameter, {})
 
+    if new_data_1_tree and not new_data_1_tree[meas_parameter].size:
+        # QCoDeS skips an empty column independently when merging unshaped
+        # caches. Empty array outputs can retain singleton setpoints, which
+        # would then be appended without their measurement and misalign the
+        # next refresh. Validate those records and retain zero samples in
+        # every field; the separate read status still counts acquired rows.
+        new_data_1_tree = flatten_record_columns(new_data_1_tree, check_cancelled)
+
     shapes = rundescriber.shapes
     if shapes is not None:
         shape = shapes.get(meas_parameter, None)

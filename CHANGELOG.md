@@ -2,6 +2,38 @@
 
 All notable user-facing changes are recorded here.
 
+## 1.6.2 — Unreleased
+
+This bugfix release improves measurement correctness, live viewing and plot
+lifecycle reliability. The native dependency remains `qplotter-native==1.0.1`.
+
+### Fixed
+
+- Load inferred QCoDeS parameters and missing ancillary array cells, preserving
+  recorded samples across previews, plotting, incremental refresh and raw CSV.
+- Handle singleton and empty array acquisitions consistently, including planned
+  scan shapes, and check expanded memory requirements before allocating them.
+- Preserve extended floating-point and integer precision in derivatives, FFTs,
+  clipping, centering, statistics, heatmaps, previews and CSV exports.
+- Preserve axis meaning and source ownership during mixed-plot promotion,
+  cut refresh and drag-and-drop; refresh retained sources while paused and
+  cancel pending work when its target window closes.
+- Honor accepted reader cancellation and delayed helper cancellation without
+  publishing stale results or unnecessarily retiring healthy readers.
+- Protect measurement files from diagnostic-log reuse and synthetic generation
+  side effects; report malformed generator inputs and profiling failures cleanly.
+
+### Compatibility and validation
+
+- Standard QCoDeS main-database storage remains supported. Runs using the
+  optional separate-per-dataset storage backend are refused before opening
+  their measurement files, since safe multi-file live viewing is not implemented.
+- Main databases, WAL files and rollback journals remain physically read-only.
+  Only the pinned native reader may modify the exact colocated SHM file.
+- Add regression coverage and independently reviewed fixes documented in
+  `BUG_HUNT.md`. No legacy settings migrations are introduced. This draft does
+  not publish a release.
+
 ## 1.6.1
 
 This patch release improves live acquisition viewing and release validation.
