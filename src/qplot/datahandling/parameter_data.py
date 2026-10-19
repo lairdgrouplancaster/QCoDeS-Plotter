@@ -6,6 +6,7 @@ broadcast nested dimensions and cannot represent all valid QCoDeS records.
 """
 
 from collections.abc import Callable
+from math import prod
 
 import numpy as np
 from qcodes.dataset.data_set import DataSet
@@ -76,10 +77,124 @@ def _record_column(values, dtype, check_cancelled, *, preserve_integers=True):
     return column
 
 
+def _expand_record(record, specs, check_cancelled):
+    """Expand acquired fields before restoring absent ancillary cells."""
+    if all(value is not None for value in record):
+        expanded = [record]
+        _expand_data_to_arrays(expanded, specs)
+        return expanded[0]
+
+    # Inferred values can be stored with several basis parameters in separate
+    # rows. Their other basis cells are SQL NULL, which QCoDeS' expansion does
+    # not accept. Keep those fields out of expansion; retain every present
+    # value and let QCoDeS apply its ordinary scalar/array rules unchanged.
+    present = [(value, spec) for value, spec in zip(record, specs, strict=True)
+               if value is not None]
+    expanded = [tuple(value for value, _spec in present)]
+    _expand_data_to_arrays(expanded, tuple(spec for _value, spec in present))
+    # The selected output is always first and non-NULL. Its expanded shape
+    # includes the zero-sample case, so absent cells cannot create samples.
+    shape = np.shape(expanded[0][0])
+    values = iter(expanded[0])
+    restored = []
+    for value, spec in zip(record, specs, strict=True):
+        check_cancelled()
+        if value is not None:
+            restored.append(next(values))
+        else:
+            missing = (None if spec.type == "text" else
+                       complex(np.nan, np.nan) if spec.type == "complex" else np.nan)
+            # Retain only a scalar until the final column is assembled. This
+            # avoids allocating a second full buffer for every absent field.
+            restored.append(np.broadcast_to(np.asarray(missing), shape))
+    return tuple(restored)
+
+
+def _column_layout(parts, check_cancelled):
+    """Project scalar storage without materializing record-shaped columns."""
+    count, text_bytes = 0, 0
+    dtypes = set()
+    for index, part in enumerate(parts):
+        if index % 1024 == 0:
+            check_cancelled()
+        array = np.asarray(part)
+        # Empty acquired records still participate in the decoder's dtype
+        # promotion, even though they add no samples.
+        dtypes.add(array.dtype)
+        if not array.size:
+            continue
+        count += array.size
+        if array.dtype.kind in "US":
+            text_bytes = max(text_bytes, array.dtype.itemsize)
+        elif array.dtype.kind == "O":
+            for cell_index, value in enumerate(array.flat):
+                if cell_index % 1024 == 0:
+                    check_cancelled()
+                if isinstance(value, (str, bytes)):
+                    text_bytes = max(text_bytes, 4 * len(value))
+    return count, dtypes, text_bytes
+
+
+def _cached_column_parts(column):
+    if column.dtype.kind == "O" and column.ndim == 1:
+        # Ragged records retain whole arrays in object cells. Dense object
+        # scalar cells must retain their object allocation cost instead.
+        for value in column:
+            yield value if isinstance(value, np.ndarray) else np.asarray(value, dtype=object)
+    else:
+        yield column
+
+
+def _check_materialization_budget(
+    records, specs, rundescriber, output_param, existing_data, written_count,
+    max_decode_bytes, check_cancelled,
+):
+    """Bound the expanded tree and its eventual incremental cache allocation."""
+    if max_decode_bytes is None:
+        return
+    existing_data = {} if existing_data is None else existing_data
+    shape = (rundescriber.shapes or {}).get(output_param)
+    planned_count = prod(shape) if shape is not None else 0
+    projected_bytes = 0
+    for index, spec in enumerate(specs):
+        check_cancelled()
+        count, dtypes, text_bytes = _column_layout(
+            (record[index] for record in records), check_cancelled,
+        )
+        if spec.type == "numeric":
+            # The decoder always converts SQL numeric columns to float64.
+            dtypes, text_bytes = {np.dtype(np.float64)}, 0
+        previous = existing_data.get(spec.name)
+        prior_count = 0
+        if previous is not None and previous.size:
+            prior_count, prior_dtypes, prior_text = _column_layout(
+                _cached_column_parts(previous), check_cancelled,
+            )
+            dtypes.update(prior_dtypes)
+            text_bytes = max(text_bytes, prior_text)
+        dtype = integer_preserving_dtype(dtypes)
+        # Object cells retain Python numbers/strings as well as array slots.
+        # Dense numeric columns use their actual itemsize, including extended
+        # floats. Missing fields participate in the same promotion as data.
+        item_bytes = max(128, text_bytes + 128) if dtype.kind == "O" else dtype.itemsize
+        if shape is not None:
+            count = max(planned_count, (written_count or 0) + count)
+        else:
+            count += prior_count
+        projected_bytes += count * item_bytes
+        if projected_bytes > max_decode_bytes:
+            raise ValueError(
+                "Expanded parameter data exceeds the plot decoding budget. "
+                "No measurement fields have been omitted."
+            )
+    check_cancelled()
+
+
 def get_parameter_data_for_one_paramtree(
     conn, table_name, rundescriber, output_param, start=None, end=None,
     *, check_cancelled: Callable[[], None] = _check_noop,
     preserve_integers=True,
+    max_decode_bytes=None, existing_data=None, written_count=None,
 ):
     """Decode one tree on an existing read-only connection.
 
@@ -99,10 +214,12 @@ def get_parameter_data_for_one_paramtree(
     # Expand within each acquisition record, never across record boundaries.
     for index, record in enumerate(records):
         check_cancelled()
-        expanded = [record]
-        _expand_data_to_arrays(expanded, specs)
-        records[index] = expanded[0]
+        records[index] = _expand_record(record, specs, check_cancelled)
 
+    _check_materialization_budget(
+        records, specs, rundescriber, output_param, existing_data, written_count,
+        max_decode_bytes, check_cancelled,
+    )
     data = {}
     for index, spec in enumerate(specs):
         check_cancelled()

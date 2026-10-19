@@ -826,7 +826,7 @@
   publication refusals and 20 protected-file checks. Baseline KeyError was
   independently reproduced in every case. No new SQLite/filesystem operations.
 
-#### C19-028 — Missing basis array cells break inferred plots and raw export
+#### C19-028 — Missing basis cells break inferred array plots and raw export
 
 - Independent reviewer confirmed with public QCoDeS DataSaver and actual Qt:
   array `signal` and `other` depend on `x`, while `converted` has the same
@@ -841,7 +841,43 @@
   `/private/tmp/qplot-c28-minimal.py`.
 - Measurement author owns the separate narrow `parameter_data.py` repair and
   regression file; safety reviewer independently checks missing-cell meaning,
-  precision, row alignment, cancellation and database protection. Repair pending.
+  precision, row alignment, cancellation and database protection.
+- Fourteen GUI/mixed-storage cases failed before repair. Present fields retain
+  QCoDeS expansion semantics; absent ancillary fields return in original order
+  and output shape, including empty acquisitions. Missing text remains None
+  (blank CSV), numeric/array cells remain NaN and complex cells retain complex
+  missingness. Scalar broadcast views avoid allocating transient full arrays.
+- Functional validation: 138 ARM checks, all 33 new cases on Intel and all 33
+  on isolated QCoDeS 0.58 pass. Actual project-venv startup, Ruff/scoped mypy and
+  whitespace pass. Independent ARM/Intel oracles each passed four actual runs,
+  848 exact stored-SQL value comparisons, 20 cancellations and eight protected
+  file checks. Source values, row duplication and NULL-output exclusion hold.
+- Before approval, independent review confirmed expanded-cache amplification:
+  16 actual array bases x 8,192 samples produce a 3,188,736-byte prefix estimate
+  but 18,874,368 retained bytes. A safely reduced 8,388,608-byte worker limit
+  still accepts that cache; measured peak is 22,173,716 bytes. Reproduction:
+  `/private/tmp/qplot-c28-budget.py`. No giant allocation attempted.
+- Author additionally owns `LoadFromDB.py` and `tools/worker.py` to propagate
+  the existing decoding budget and reject projected expanded storage before
+  column allocation, including incremental and planned extents. Measurements
+  are not trimmed. Final guard accounts for numeric float64, extended types,
+  object/text storage, empty acquired dtype promotion, existing cache extent
+  and planned padding, with cancellable projection before column construction.
+- Independent reviewer approved the final application source and all 39 new
+  regressions. Final trusted probe refuses at 8 MiB before column allocation
+  with unchanged cache/status, and succeeds at 24 MiB with the exact 18 MiB
+  cache. Incremental, planned/overflow, object-text, empty-dtype, cancellation
+  and retry controls pass. Final ARM/Intel SQL oracles remain exact; all
+  owned helpers and processes reaped.
+- Author focused validation: 171 passed (170 plus one final durable cached-
+  text/cancellation case). Root Ruff, configured mypy (88 files) and whitespace
+  checks pass. Full-decoder median timings for three scalar columns:
+  100k rows 0.2085 s without guard / 0.2900 s with it; 200k 0.4356 / 0.6331 s.
+  Array decoding is unchanged within timing noise (0.0147 / 0.0134 s).
+- Final isolated QCoDeS 0.58 run passes all 39 cases. Actual project-venv
+  module startup has visible window, active event loop and normal exit 0:
+  `/private/tmp/qplot-c28-final-startup-DIHLfb/startup.json`. No owned processes
+  remain, and source protection/cleanup assertions pass.
 - Round 10 is not clean; clean streak zero.
 
 #### Additional CI fixture follow-up
@@ -864,21 +900,27 @@
   process cases pass on Intel. Independent safety reviewer approved and passed
   five selected real-process cases, including both delayed-parent controls
   and the unterminated-child-output regression. All resources reaped.
+- Windows 3.14 full partition independently hit the same partial-line defect
+  after 2,599 passing tests and 119 skips; no distinct cause. Reviewed fixture
+  repair committed at `4fea3dd` and pushed with C19-027 for renewed draft CI.
+  Final source CI remains required after C19-028; old passing jobs are not
+  claimed as final validation.
 
 ### Latest repair checkpoint
 
 Initial coverage and rounds 1/2/3 complete. First 17 confirmed findings are fixed
 and independently approved, pushed at `b8fb173`; C19-014 was withdrawn.
 Round 4 found C19-019 and C19-020; both repaired and independently approved.
-All first 26 confirmed repairs are complete and independently approved, including
-round 10 C19-027. All three test-only CI follow-ups are independently approved.
-Round 10 also confirmed C19-028; complete its repair and separate review, then begin
-fresh rounds until two complete rounds are clean. Run the final full suite
-after that point to avoid another superseded run. Clean-round streak is zero.
+All 27 confirmed application repairs are complete and independently approved,
+including round 10 C19-027/028. All four test-only CI follow-ups are independently
+approved. Begin fresh rounds 11 and 12; continue until two complete rounds are
+clean. Run the final full suite after that point to avoid another superseded
+run. Clean-round streak is zero.
 Complete transitional suites: 5,073 passed/44 skipped, then 5,178 passed/52
 skipped. Integrated startup/static checks, final application rebuild and wheel/
-editable compiler-free acceptance pass. Final full suite and exact-head CI remain
-required after the preview repair. Two new complete clean rounds are necessary.
+editable compiler-free acceptance pass for earlier candidates. Rebuild artifacts
+and repeat install acceptance for the final decoder source. Final full suite
+and exact-head CI remain required. Two new complete clean rounds are necessary.
 Draft PR #90 only; no merge/release.
 
 ## Previous campaign archive

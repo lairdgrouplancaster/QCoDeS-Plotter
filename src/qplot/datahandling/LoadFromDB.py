@@ -191,6 +191,7 @@ def load_param_data_from_db(
     end: int | None = None,
     *,
     check_cancelled=_check_noop,
+    max_decode_bytes=None,
 ):
     # Data fetch
     updated_read_status: dict[str, int] = dict(read_status)
@@ -205,6 +206,9 @@ def load_param_data_from_db(
         start=start,
         end=end,
         check_cancelled=check_cancelled,
+        max_decode_bytes=max_decode_bytes,
+        existing_data=existing_data.get(meas_parameter, {}),
+        written_count=write_status.get(meas_parameter),
     )
     new_data_dict[meas_parameter] = new_data
     updated_read_status[meas_parameter] = start + n_rows_read - 1

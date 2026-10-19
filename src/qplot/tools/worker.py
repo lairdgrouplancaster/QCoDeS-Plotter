@@ -588,6 +588,7 @@ class loader(QtCore.QRunnable):
                             read_status,
                             existing_data,
                             check_cancelled=self._check_cancelled,
+                            max_decode_bytes=MAX_TRUSTED_FULL_PLOT_DECODE_BYTES,
                         )
                     finally:
                         self._close_sql_connection(conn)
