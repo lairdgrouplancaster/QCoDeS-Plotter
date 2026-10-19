@@ -658,7 +658,11 @@ def differentiate(
     if integer_coordinates:
         spacing = _integer_differences(coordinates, cancelled_callback=cancelled_callback)
     else:
-        coordinates = coordinates.astype(float)
+        # Widen narrow floats without rounding extended recorded coordinates
+        # before subtraction. Their spacing sets the derivative's physical scale.
+        dtype = (np.result_type(coordinates.dtype, np.float64)
+                 if coordinates.dtype.kind == "f" else np.float64)
+        coordinates = coordinates.astype(dtype)
         with np.errstate(over="ignore", invalid="ignore"):
             spacing = np.diff(coordinates)
     if not np.all(numeric_isfinite(coordinates)):
