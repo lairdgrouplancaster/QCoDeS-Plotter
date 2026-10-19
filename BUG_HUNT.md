@@ -161,9 +161,19 @@
   QCoDeS ragged/repeated/missing/mixed-dtype grids. Safety added 15 direct-reader
   and 5 broker cycles exercising commit visibility, cancellation/deadlines,
   reuse and writer checkpoints, plus 262 related tests. No further findings.
-- **Round 2 underway** with three new contexts covering safety/native/auxiliary,
+- **Round 2 found actionable issues** with three new contexts covering safety/native/auxiliary,
   measurement, and UI/lifecycle/interactions; coordinator covers remaining
   entrypoints, settings, generation, scripts, performance and packaging.
+- Second reviewed batch pushed at `5fcbd9a`; actual qPlot startup again passed
+  (visible window, running event loop, exit 0). CSV integration: 88 passed,
+  1 platform skip. Configured mypy checks 88 files successfully; Ruff passes.
+- Coordinator round 2 settings/generation/package/CLI validation: 291 passed,
+  2 Windows-only skips, 25 subtests. Reviewed CLI argument flow, settings
+  recovery/atomic saving, generation publication and compiler-free/install
+  validation scripts. No new coordinator-area bug found in this round.
+- The locally rebuilt universal2 native wheel also passed 85 tests under Intel
+  emulation, with 1 Windows-only skip. Verified the imported native binary came
+  from that extracted artifact, not an index wheel. No native source change.
 - Coordinator built both application/native sdists and wheels from clean
   `25a46cc`. Inventory/metadata/twine checks pass: application sdist 378 files
   including all 214 test modules, wheel 124 runtime files; native sdist 11 files,
@@ -222,10 +232,88 @@
   through binary64; parsing their shortest decimals directly into longdouble
   is a different representation and was not the promised contract.
 
+#### C19-009 — Cut overlay stays blank after returning to a compatible axis
+
+- Real QCoDeS heatmap, open horizontal cut, add through the host trace combo,
+  switch cut to vertical and back. Cut window contains valid samples, but the
+  retained overlay remains empty until another slider movement or refresh.
+- Cut publication emits fresh samples and then invalidates compatibility,
+  clearing the samples just published. Minimal repair reverses those signals.
+- Dedicated real-control regression: `tests/test_campaign_ui_cut_axis_refresh.py`.
+  Author's related suite: 214 passed, 39 subtests. Measurement reviewer approved
+  C19-009/012 after 29 cut/cursor/promotion tests. Actual qPlot startup passed.
+
+#### C19-010 — Extended array precision lost in drawing and statistics
+
+- Actual Intel QCoDeS/Qt reproduction: `[1,1+eps80,1+2*eps80]` has three
+  recorded values but renders a flat QPainterPath without the existing precision
+  warning, and reports standard deviation zero. Subtract Mean restores visible
+  differences, making the established warning/recovery workflow applicable.
+- Independently reachable statistics case remains distinguishable in the plot:
+  `[1+0.4*eps64,1+0.6*eps64]` reports deviation five times the exact Fraction
+  oracle because each sample is rounded before centering.
+- Repair extends existing precision guards and exact statistics paths to
+  extended floating dtypes. Intel real-QCoDeS/Qt regressions: 11 passed; ARM
+  broader measurement/cache/geometry/operations batch: 192 passed.
+- UI reviewer independently approved after 200 exact-reference cases covering
+  Fraction means, Decimal population deviations and display distinctions.
+  Review caught an introduced overflow for means beyond binary64: fixed to
+  preserve the previous signed-infinity result, with actual FFT control and
+  callback-exception regression. Sources and raw CSV remain intact.
+- Values wholly outside binary64 display range remain unplottable with Stats
+  unavailable. Representable extended variations now get the existing
+  subtraction/recovery warning instead of a silently flattened plot.
+
+#### C19-011 — QCoDeS split-storage loading bypasses the read boundary
+
+- Real public QCoDeS 0.61 `sqlite_per_dataset_db` measurement with 10 points:
+  writer child exits leaving committed raw-data WAL. qPlot's read-only ID loader
+  delegates DataSet construction to QCoDeS, which opens the recorded separate
+  raw database with O_RDWR. Reading/closing/GC changes that database's hash and
+  deletes its WAL and SHM. Reproduction uses disposable synthetic files only.
+- The ordinary main-database connection remains protected, but the new QCoDeS
+  backend opens another connection internally before qPlot regains control.
+  Merely passing QCoDeS `read_only=True` would still bypass qPlot's pinned VFS.
+- Safety repair: explicitly reject this unsupported multi-file backend
+  before construction/plot loading, with a useful diagnostic. Full safe
+  multi-file live viewing is a separate feature; standard main-DB runs remain
+  supported. README documents this limitation.
+- Three actual mixed-database regressions pass: ID/GUID refusal before raw
+  connection creation; unchanged main/raw bytes, mtimes and sidecar existence
+  through GC; trusted metadata/list accessible; expensive/derived/plot actions
+  rejected; ordinary run counts and plot capture still work on the same broker.
+- UI subchat independently approved the final guards and all construction
+  routes. Author validation: 186 related loader/plot/query cases, 133 other
+  safety cases, fresh WAL/cancellation probes and actual qPlot startup pass.
+
+#### C19-012 — Promoted cut mapping assigns signal values to a coordinate
+
+- Actual QCoDeS heatmap/cut/full-source workflow: promote another primary, then
+  switch the retained cut to its other axis. Instead of becoming incompatible,
+  the cut overlay maps measured values onto X and sweep coordinates onto Y.
+- Cut `axis_options['y']` identifies its fixed setpoint, while plotted Y is the
+  measured signal. Promotion's axis mapping incorrectly treats them as equal.
+- Repair uses actual cut plot axis identities. Dedicated tests cover promoted
+  and unpromoted cases, surviving line/heatmap hosts, axis return, sliders,
+  refresh and style/sample invariance: 6 passed; broader mixed/drop/overlay
+  batch 101 passed. Measurement reviewer independently approved with C19-009.
+
+#### C19-013 — Unshaped extended-float heatmap aggregation crashes
+
+- Fresh real QCoDeS array-grid probes on Intel reproduce a pandas
+  `TypeError: No matching signature found` in `data2matrix`'s grouped mean /
+  pivot path for unshaped longdouble heatmaps. Forced SQL heatmap route works.
+- Measurement author owns the narrow aggregation repair and real-data
+  regressions; a different, fresh UI subchat will independently review it.
+- Fresh round 3 safety/UI reviews have started. Its measurement review and
+  complete-round result must use the completed C19-013 repair.
+
 ### Continuation checkpoint
 
-Initial coverage and round 1 complete. C19-001 through C19-008 are fixed and
-independently approved. Round 2 is underway. Repeat fresh/rotated reviews until
+Initial coverage and round 1 complete. C19-001 through C19-012 are fixed and
+independently approved; first eight are pushed. Round 2 additionally found
+C19-013; finish its repair, tests and independent review. Round 3 has begun.
+Repeat fresh/rotated reviews until
 two consecutive complete rounds are clean. The running full suite covers the
 initial five-fix source. Final exact-source validation/startup/application
 rebuild and exact-head CI remain required. No fresh complete clean round yet.
