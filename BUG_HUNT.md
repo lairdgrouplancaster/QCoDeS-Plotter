@@ -1,6 +1,172 @@
 # qPlot bug-hunt campaign
 
-## Final campaign result
+## Campaign starting 2026-10-19 — active
+
+### Verified baseline
+
+- Intended revision: `d766a0f45edf266215e8366b8ff8d5ccf65b9a0e`, current
+  `main` / `origin/main` after successful `git fetch origin`; clean working tree.
+- Verified **49/49 check runs completed successfully for that exact SHA**,
+  including Required checks, all platform/Python jobs, native builds,
+  compiler-free installations, static analysis, coverage and CodeQL.
+  [Baseline CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/38631829472).
+  There are no additional legacy commit statuses. The GitHub app's workflow
+  lookup only covers PR events, so push checks were verified using the public
+  commit check-runs API, including returned count and each `head_sha`.
+- Dedicated branch: `codex/qplot-bug-hunt-2026-10-19`. No merge or release.
+- Local Python: project `.venv-mac`, CPython 3.12.2, QCoDeS 0.61.0,
+  APSW 3.53.4.0. Installed native package was stale (1.0.0; source pins 1.0.1);
+  rebuilt/installed current native source before runtime validation.
+- Follow `Agents.md` and user-supplied AGENTS.md; preserve all database access
+  restrictions, support current QCoDeS, and add no legacy settings migrations.
+
+### Coverage, ownership and execution plan
+
+| Owner | Initial owned source | Investigation |
+| --- | --- | --- |
+| Safety subchat | `src/qplot/datahandling/`, `native/src/` | Physical read-only handles, SHM exception, snapshots, live services, cancellation |
+| Measurement subchat | `src/qplot/tools/` | Extraction/transform correctness, numerics, measurement preservation |
+| UI subchat | `src/qplot/windows/` | Windows, workflows, lifecycle, refresh, export, shutdown |
+| Coordinator | Remaining source, scripts, packaging, this log | Configuration, entry points, diagnostics, generation, build/install, integration |
+
+- Shared checkout uses disjoint file ownership. Request ownership before editing
+  another area; tests get distinct campaign-specific filenames. Only coordinator
+  edits this log or commits. All substantive fixes get a different subchat review.
+- Expand to all application areas, native packaging, performance and subsystem
+  interactions. Require concrete reproductions and meaningful regression tests.
+- Finish with integrated checks/startup and fresh rotated independent review
+  rounds until **two consecutive complete rounds find no actionable bugs**.
+- Current clean-round count: **0**. Historical results below are not counted.
+
+### Findings and validation
+
+- Rebuilt and installed current native 1.0.1 from source (universal2 cp311-abi3).
+  Refreshed stale application editable metadata to 1.6.1. No native source edit.
+- Initial coordinator settings/diagnostics/auxiliary safety/generation/version
+  checks: **200 passed, 28 subtests passed**. Ruff and mypy (88 files) pass.
+- Actual `.venv-mac/bin/python -m qplot` with the existing packaging startup
+  observer: window visible, Qt event loop running, normal exit **0**. Temporary
+  settings/logs only. Sandbox blocked local IPC; approved unprivileged run
+  outside the sandbox passed. This is an environment constraint, not a bug.
+- Initial safety checks: **149 passed, 1 Windows-only skip** for trusted reader,
+  read scopes and snapshots; **131 passed** for broker/supervisor/partial frames
+  and concurrent WAL writes. No protected-file mutation found.
+- Initial package tests: **132 passed, 5 skipped**, one stale-metadata pin
+  mismatch. Editable reinstall alone did not repair pytest's precedence for an
+  old ignored `src/qplotter.egg-info` (1.6.0b3/native pin 1.0.0). Removed only
+  that generated metadata directory as permitted by CONTRIBUTING; all **7 pin
+  and package-split tests passed** afterward. This was local environment residue.
+- Existing 2,000,000-row synthetic heatmap benchmark passed: 500 x 500 grid,
+  all finite, aggregation 2.394 s and preview 1.522 s. Temporary synthetic
+  database only; timings are local observations, not portable requirements.
+- Launcher/Windows containment suite outside IPC sandbox: **121 passed**.
+- Initial UI batch: **335 passed, 3 skipped**; four sandbox IPC failures match
+  the coordinator's successful external launcher validation. Real nested-dialog
+  Close All/cancel probes passed (four cases); rejected hypotheses left no edits.
+- Measurement second pass covers dimensional/dependency inference, current
+  QCoDeS cache/ragged append and dtype behavior, trusted numeric/array capture,
+  previews, metadata and bounded summaries. Additional 600 deterministic
+  irregular derivative cases agree with independent Fraction stencils within
+  1e-12. No new bug there; intentional finite-observation filtering retained.
+- Obsolete integration batch 1 was gracefully interrupted after **226 passed**
+  because C19-004/005 landed after its start. A coverage-instrumented restart
+  was also stopped to avoid repeating expensive per-row instrumentation.
+  The complete local suite now runs with `--no-cov` in
+  `/private/tmp/qplot-bh20261019-full.log`; PR CI retains required coverage.
+
+#### C19-001 — Generator CLI leaks CSV decoding/parser exceptions
+
+- Real malformed UTF input and a CSV field beyond the parser limit escape from
+  `main()` as `UnicodeDecodeError` / `_csv.Error` instead of its normal diagnostic
+  and exit code 2. Both regression cases failed before the repair.
+- Fix: catch these input-error families in the existing CLI error handler.
+  GUI already handles validation failures. No generation/output mutation occurs.
+- Tests: `tests/test_campaign_generator_input.py`; malformed files stay intact,
+  output/temp files are absent, stderr is diagnostic and exit code is 2.
+- Safety subchat independently approved scope, error handling and protection.
+  Generator and regression suite: **90 passed**.
+
+#### C19-002 — Differentiation rejects finite overflowing coordinate gaps
+
+- Measurement subchat reproduced `x=[-1e308,1e308], y=x` failing with
+  "axis coordinates must be finite" instead of derivative 1. Three-point
+  irregular case also fails. The inputs are finite; adjacent subtraction is not.
+- Fix validates original coordinates and computes overflowing-gap quotients
+  from exact differences. Existing native-transform behavior needs no change.
+- Real-QCoDeS tests cover lines/both heatmap axes, order reversal, tiny finite
+  slopes, mixed/integer signals, missing values, invalid axes and cancellation,
+  with source hash/mtime invariance. Focused suites: **113 passed**.
+- Safety subchat independently approved; **79 related tests passed**.
+
+#### C19-003 — Accepted cancellation during cleanup still publishes results
+
+- A real native-backed reader is paused after result-limit restoration. A
+  separate thread receives `interrupt()==True`, but the query returned normally.
+  The regression failed before repair (`TrustedLiveCancelledError` not raised).
+- `_finish_operation` now honors the latched cancellation reason before result
+  publication. Regression checks rejection, subsequent reader reuse, no stale
+  interruption, and unchanged source bytes/mtime.
+- Test: `tests/test_campaign_safety_cancellation.py`. Independent UI subchat
+  approved: mutex retirement makes the latched reason stable and generation
+  local; no added native I/O or transaction lifetime. Regression passed.
+
+#### C19-004 — Source promotion changes operations' scientific meaning
+
+- Real-QCoDeS reproduction: add another line, apply Limit Maximum=1 in that
+  source, swap host axes, then remove the primary dataset. Displayed overlay
+  `(x=[0,1,1], y=[0,1,2])` becomes `(x=[0,1,2], y=[0,1,1])` after promotion;
+  clipping was reapplied to the coordinate. Both line/heatmap hosts reproduce.
+- Repair maps axis-specific heatmap operations when transposing. A transposed
+  processed line cannot be represented by existing Y-only operation controls;
+  preflight refuses that removal with guidance to swap axes back, preserving
+  the current plot/data. Unprocessed transposed lines remain promotable.
+- Tests: `tests/test_campaign_ui_promotion.py`; **16 passed**, covering both
+  host kinds, refusal atomicity/swap-back recovery, unprocessed promotion,
+  physical derivative labels, ordered mean/clip pipeline, repeated refresh and
+  exported CSV samples. Broader mixed/drop checks: **87 passed, 2 expected skips**.
+- Measurement subchat independently approved and reran final **16 cases**
+  after **62** earlier promotion/mixed checks. UI runtime startup/clean Qt
+  shutdown also passed. No unrelated operation-model redesign.
+
+#### C19-005 — A genuine delayed cancellation retires a healthy helper
+
+- Real supervisor public API reproduction: `cancel(first)==True`; first and
+  second reads finish before the child control thread receives that cancel.
+  The genuine delayed frame then causes the third read to fail with
+  `TrustedLiveProtocolError`. Only child scheduling is delayed; no forged frame.
+- Minimal fix uses completed and cancelled generation high watermarks to
+  accept delayed cancellations for this helper's completed jobs. Contiguous
+  command generations prove membership; initialize cancellation lower bound
+  from the first generation. Memory stays bounded; duplicates, older-incarnation
+  and future frames remain errors. Supervisor's lock and synchronous bounded
+  sends guarantee increasing cancel-frame order; send failures retire helper.
+- Safety regression file covers generations 1/17 plus prior-incarnation and
+  future-frame rejection. The two positive cases failed before repair;
+  all five campaign safety cases pass. Supervisor/protocol: **77 passed**.
+- Measurement subchat independently approved with **7 passing** new/existing
+  cancellation cases outside the IPC sandbox. No native source change.
+
+### Fresh independent review rounds
+
+- **Round 1 underway** with three new subchats using fresh contexts: safety and
+  native/live interactions; measurement and numeric/export correctness;
+  UI/lifecycle/settings/entry-point interactions. Coordinator covers remaining
+  packaging/scripts/performance/integration. All five initial fixes are stable
+  and independently approved. No complete clean round counted until all four
+  coverage reports finish.
+
+### Continuation checkpoint
+
+Initial and second coverage batches complete. C19-001 through C19-005 are fixed
+and independently approved. Complete the full suite and fresh round 1, address
+any new actionable finding, then repeat fresh/rotated complete reviews until
+two consecutive rounds are clean. Finish startup and clean package builds,
+commit/push the dedicated branch, open a draft PR and verify exact-head CI.
+No fresh complete clean round yet. No merge/release.
+
+## Previous campaign archive
+
+### Final campaign result
 
 - **27 confirmed findings repaired and independently reviewed**: BH-001–026
   and BH-028. BH-027 was withdrawn after a mocked reproduction was disproved;
