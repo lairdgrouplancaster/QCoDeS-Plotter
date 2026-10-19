@@ -910,7 +910,7 @@ class plotWidget(
         self.plot_status = PlotStatusWidget(self.toolbarRef)
         self.plotStatusAction = self.toolbarRef.addWidget(self.plot_status)
         
-        if refrate is not None and refrate > 0:
+        if refrate is not None and refrate >= 0:
             set_refresh_interval(self.spinBox, refrate)
         else:
             set_refresh_interval(
