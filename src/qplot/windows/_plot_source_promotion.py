@@ -43,14 +43,36 @@ def _remaining_datasets(owner, selected):
     return datasets
 
 
-def _copy_operations(source, target):
+def source_promotion_operation_error(source, axis_order):
+    """A line's Y-only operations cannot be preserved on its displayed X axis."""
+    if source.operation_kind != "plot1d" or axis_order != ("y", "x"):
+        return None
+    operations = source.oper_widget.list_order
+    if any(not operations.item(index).isHidden() for index in range(operations.count())):
+        return (
+            "Swap this plot's X/Y axes before removing its primary dataset; "
+            "the remaining transposed trace has data operations that must keep "
+            "their original axis."
+        )
+    return None
+
+
+def _copy_operations(source, target, *, transpose=False):
+    transposed_names = {
+        "Subtract Row Mean": "Subtract Column Mean",
+        "Subtract Column Mean": "Subtract Row Mean",
+        "dz/dx": "dz/dy",
+        "dz/dy": "dz/dx",
+        "Fill Below": "Fill Right",
+        "Fill Right": "Fill Below",
+    } if transpose else {}
     options = {target.list_options.item(index).operation_row.label: target.list_options.item(index)
                for index in range(target.list_options.count())}
     for index in range(source.list_order.count()):
         row = source.list_order.item(index)
         if row.isHidden():
             continue
-        option = options[row.label]
+        option = options[transposed_names.get(row.label, row.label)]
         option.input.setChecked(True)
         old_input, new_input = row.input, option.operation_row.input
         if isinstance(old_input, qtw.QLineEdit):
@@ -107,6 +129,9 @@ def promote_plot_source(main: Any, owner: Any, selected: list[tuple[str, Any]]) 
     if primary is None:
         raise ValueError("Keep a full line or heatmap dataset in this plot; cuts cannot be its primary source.")
     source = primary.source
+    operation_error = source_promotion_operation_error(source, primary.plan.axis_order)
+    if operation_error:
+        raise ValueError(operation_error)
     dialog = owner.__dict__.get("_plot_appearance_dialog")
     show_dialog = dialog is not None and dialog.isVisible()
     dialog_geometry = dialog.saveGeometry() if show_dialog else None
@@ -118,7 +143,10 @@ def promote_plot_source(main: Any, owner: Any, selected: list[tuple[str, Any]]) 
                      refrate=refresh_interval_value(owner.spinBox), show=True)
         replacement = next(win for win in main.windows if win not in previous_windows)
         _copy_window_layout(owner, replacement)
-        _copy_operations(source.oper_widget, replacement.oper_widget)
+        _copy_operations(
+            source.oper_widget, replacement.oper_widget,
+            transpose=primary.plan.axis_order == ("y", "x"),
+        )
         order = primary.plan.axis_order
         for dimension, source_axis in zip(("x", "y"), order, strict=True):
             combo = replacement.axis_dropdown[dimension]

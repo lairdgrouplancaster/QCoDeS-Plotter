@@ -10,6 +10,7 @@ from ._plot2d_colorbar import Plot2DColorbarMixin
 from ._plot2d_layers import Plot2DLayerMixin
 from ._plot_data_viewbox import PlotDataViewBox, coordinate_viewbox
 from ._plot_drop_axes import plot_axis_entries
+from ._plot_source_promotion import source_promotion_operation_error
 
 if TYPE_CHECKING:
     from ._plot_axis_scaling import PlotAxisScalingMixin
@@ -126,13 +127,13 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
             for kind, key in selected
         )
         if primary_selected:
-            for kind, key in self._plot_item_order:
+            for kind, key in reversed(self._plot_item_order):
                 if (kind, key) in selected:
                     continue
                 item = self.lines[key] if kind == "trace" else self.heatmaps[key]
                 source = item.from_win
                 if source.operation_kind in {"plot1d", "plot2d"}:
-                    return None
+                    return source_promotion_operation_error(source, item.source_axis_order())
             return "Keep a full line or heatmap dataset in this plot; cuts cannot be its primary source."
         return None
 
