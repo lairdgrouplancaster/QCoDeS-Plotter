@@ -61,7 +61,7 @@ def _run(script, database, *arguments):
     before = _state(database)
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / script), str(database), *map(str, arguments)],
-        cwd=ROOT, env=dict(os.environ, QT_QPA_PLATFORM="offscreen"),
+        cwd=ROOT, env=dict(os.environ, QT_QPA_PLATFORM="offscreen", PYTHONFAULTHANDLER="1"),
         capture_output=True, text=True, timeout=45,
     )
     assert _state(database) == before
@@ -86,6 +86,52 @@ def test_actual_plot_benchmark_failure_shuts_down_without_crashing(measured_data
     assert result.returncode == 1, result.stdout + result.stderr
     assert "QThread: Destroyed" not in result.stderr
     assert "Fatal Python error" not in result.stderr
+
+
+@pytest.mark.parametrize("run_id", [1, 2, 999])
+def test_plot_benchmark_retires_owned_qt_objects_before_return(measured_database, tmp_path, run_id):
+    """Held Python wrappers must not leave native Qt cleanup to interpreter exit."""
+    probe = tmp_path / "observe_cleanup.py"
+    state_path = tmp_path / "cleanup.json"
+    probe.write_text("""
+import json
+import runpy
+from pathlib import Path
+from PyQt6 import QtWidgets, sip
+from qplot.windows.main import MainWindow
+from qplot.windows._plotWin import plotWidget
+
+owned = []
+applications = []
+for kind in (MainWindow, plotWidget):
+    original = kind.__init__
+    def observed_init(self, *args, original=original, **kwargs):
+        original(self, *args, **kwargs)
+        owned.append(self)
+        applications.append(QtWidgets.QApplication.instance())
+    kind.__init__ = observed_init
+
+try:
+    runpy.run_path(SCRIPT, run_name="__main__")
+finally:
+    Path(STATE).write_text(json.dumps({
+        "owned_types": [type(item).__name__ for item in owned],
+        "objects_deleted": [sip.isdeleted(item) for item in owned],
+        "applications_deleted": [sip.isdeleted(item) for item in applications],
+        "application_absent": QtWidgets.QApplication.instance() is None,
+    }))
+""".replace("SCRIPT", repr(str(ROOT / "scripts/benchmark_plot_launch.py")))
+        .replace("STATE", repr(str(state_path))))
+    result = _run(probe, measured_database, run_id, "--repeats", 2)
+    assert result.returncode == (1 if run_id == 999 else 0), result.stdout + result.stderr
+    cleanup = json.loads(state_path.read_text())
+    assert cleanup["owned_types"].count("MainWindow") == 1
+    assert cleanup["owned_types"].count("plot1d" if run_id == 1 else "plot2d") == (
+        0 if run_id == 999 else 2
+    )
+    assert all(cleanup["objects_deleted"]), cleanup
+    assert all(cleanup["applications_deleted"]), cleanup
+    assert cleanup["application_absent"], cleanup
 
 
 @pytest.mark.parametrize("run_id,columns,expected", [

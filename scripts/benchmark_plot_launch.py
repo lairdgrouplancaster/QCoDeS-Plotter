@@ -27,7 +27,7 @@ def main():
     parser.add_argument("--preceding-stage", choices=("any", "aggregate", "large-summary"), default="any")
     args = parser.parse_args()
 
-    from PyQt6 import QtCore, QtWidgets
+    from PyQt6 import QtCore, QtWidgets, sip
 
     from qplot.configuration.config import config
     from qplot.datahandling import readonly, trusted_heatmap, trusted_plot
@@ -231,6 +231,11 @@ def main():
             window.deleteLater()
             app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
             app.processEvents()
+            # Closed plots remain top-level widgets, with Python references
+            # held by the paint observer and iteration locals. Destroy their
+            # Qt owner while those wrappers and the interpreter are alive,
+            # as the production entry point does after bounded shutdown.
+            sip.delete(app)
     after = source_state()
     print(json.dumps({"database_bytes": args.database.stat().st_size,
                       "database_open_ms": open_ms, "run_id": args.run_id,
