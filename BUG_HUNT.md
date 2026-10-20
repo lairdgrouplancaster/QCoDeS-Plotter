@@ -1,6 +1,6 @@
 # qPlot bug-hunt campaign
 
-## Campaign starting 2026-10-19 — resumed 2026-10-20 for up to five more rounds
+## Campaign starting 2026-10-19 — investigation complete after round 17
 
 ### Verified baseline
 
@@ -43,6 +43,9 @@
   The next release remains the bugfix **1.6.2**; no merge, tag or release.
 - Clean-round count at resumption: **0** (round 13 found C19-031).
   Historical results below are not counted toward the new reviews.
+- Current result: **two consecutive complete clean rounds, 16 and 17**.
+  Four additional rounds (14–17) were used; round 18 is unnecessary.
+  Final local integration validation passes; draft PR #90 prepares bugfix 1.6.2.
 
 ### Resumption baseline — 2026-10-20
 
@@ -1353,6 +1356,141 @@ subsequent CI/review failure.
   exact extended precision and equal/ragged mixtures with uint64 above 2**63.
   Tests verify exact parsed values, source dtype/bytes and protected files.
   Probe: `/private/tmp/test_qplot_c034_independent.py`.
+- Author's final related export/complex-refusal batch: **116 passed, one
+  expected extended-only skip** on ARM. Actual project module startup after
+  integration confirms visible 1.6.2 window, real event loop and exit zero:
+  `/private/tmp/qplot-r15-final-startup-8tfchaj_/startup.json`.
+  Repair committed as `14b73632f1dffb69c8659f9cad7b8e5bd101ffe2` and pushed.
+
+#### Round 16 — complete and clean (streak 1)
+
+- Fresh independent safety/measurement/UI subchats review `14b7363` without
+  sharing the previous reviewers' investigation context; all changes require
+  concrete evidence and a different reviewer.
+- Coordinator public-entry-point composition passes two actual launches against
+  a new Unicode/special-character database path: explicit Path argument and
+  command-line parsing with Qt options. Both display the five exact sweep
+  coordinates, preserve the host process/group, finish normal shutdown and
+  leave protected database inode/hash/size/mtime unchanged.
+  Receipt: `/private/tmp/qplot-r16-entrypoints-cxyqwhjj/receipt.json`.
+- UI review is clean: **36 checks passed**, including two fresh actual Qt
+  compositions with two hosts sharing a processed source, source close during
+  refresh, editor/export disposal, reopen, old overlay/CSV preservation, cuts,
+  consumer remove/re-add, promotion and paused refresh. Protected artifacts and
+  complete QObject/worker/service cleanup pass; no source edits.
+  Probe: `/private/tmp/test_qplot_round16_ui.py`.
+- Safety review is clean: **10 focused tests passed** plus three concurrent
+  WAL/array-prefix compositions (shared cancellation with append/foreground
+  metadata, sole cancellation/retry, close during private BLOB staging). Nine
+  protected-file comparisons and seven writer checkpoints pass; four new
+  descriptors are physically read-only, four mutation refusals/audits pass,
+  and every owned helper/service/thread/endpoint/spool is released.
+  Receipt: `/private/tmp/qplot-round16-safety-receipt.json`.
+- Measurement review is clean on ARM and Intel: six fresh actual QCoDeS runs
+  per architecture cover incremental empty/ragged/partial/overrun acquisitions,
+  mixed integer/float/complex/Boolean records, caches, previews and exports.
+  Per architecture: 72 incremental-column comparisons, 18 grids, six previews,
+  36 Fraction-oracle operation cells and 234 CSV cells pass. Targeted tests:
+  **52 passed, nine expected skips** on ARM; **30 passed** on Intel. Protected
+  files unchanged; all temporary sources/connections cleaned.
+  Receipt: `/private/tmp/qplot-r16-measurement-receipt.json`.
+- Rebuilt `14b7363` application artifacts match exact committed bytes and pass
+  inventories/twine: 130 wheel files/124 runtime files, 404 sdist files/all
+  240 test modules. Native artifacts remain unchanged and verified. Full local
+  suite is running; fresh compiler-free wheel and editable installations both
+  pass for this candidate, including actual GUI/native-reader startup.
+  Manifest: `/private/tmp/qplot-bh20261019-14b7363-artifact-manifest.json`.
+- All four coverage areas found no new actionable bug. This is the first
+  complete clean round of the resumed campaign; one more clean round is needed.
+
+#### Round 17 — complete and clean (streak 2; investigation finished)
+
+- Fresh independent reviewers cover safety, measurement and UI/lifecycle;
+  coordinator completes package, startup, static and integration validation.
+  All four areas are clean; the stopping condition is met without round 18.
+- Coordinator's fresh ordinary-workflow performance composition passes six
+  real paints across GUID/Run/double-click launches: 65,537 line samples and a
+  257×65 heatmap, each repeated twice. First displays take 1.2–2.9 s locally,
+  subsequent displays 0.46–0.84 s while integration tests are also running;
+  these are observations, not portable performance promises. Two bounded-read
+  configurations each repeat twice across the 65,536-row boundary with equal
+  checksums, and every source fingerprint remains unchanged. All processes exit
+  normally with no Qt teardown crash.
+  Receipt: `/private/tmp/qplot-r17-performance-gtmjsf2o/receipt.json`.
+- Safety review is clean: **10 focused tests passed**, plus real WAL metadata
+  and snapshot updates at constant row count, cache eviction/restart and
+  invalidated pending publication during database selection. Four revisions,
+  eight long snapshot values, three foreign-handle refusals, four mutation
+  refusals, four writer checkpoints and 13 protected-file comparisons pass.
+  Both native audits show zero forbidden operations and no remaining proof
+  handles. All owned connections/thread/disposable files are cleaned up.
+  Receipt: `/private/tmp/qplot-round17-safety-receipt.json`.
+- Measurement review is clean on ARM and Intel. Per architecture: four real
+  QCoDeS runs, 32 full/cache/SQL/restored grids, 1,440 ordered-operation cells,
+  4,320 CSV cells, 120 geometry checks, 192 exact statistics checks and four
+  previews pass. Covers duplicate/descending/irregular/nonfinite coordinates,
+  large integers, float16, transposition and Fill/Mean/Derivative order.
+  **26 focused derivative/statistics/FFT-cursor tests passed**. Protected files
+  unchanged and all owned databases/connections cleaned up.
+  Receipt: `/private/tmp/qplot-r17-measurement-receipt.json`.
+- UI review is clean: **two fresh actual Qt compositions passed** for line and
+  heatmap hosts, real WAL growth, orthogonal cuts, coalesced refresh, exact
+  overlay values, axis swaps/marker movement, clipping, real CSV chooser
+  cancel/save and Close All No/Yes during pending reads/cut-axis work. All
+  source checks pass and every owned QObject/reader/worker/service is released.
+  Early automated-dialog responder stalls were temporary probe issues,
+  corrected without application changes; stopped probes/helpers were reaped.
+  Probe: `/private/tmp/test_qplot_round17_ui.py`.
+
+### Resumed campaign final validation — completed 2026-10-21
+
+- Final application/test revision is
+  `14b73632f1dffb69c8659f9cad7b8e5bd101ffe2`. Rounds 16 and 17 made no source
+  edits. Full local suite: **5,509 passed, 110 skipped**, 61 warnings in
+  **925.04 s**. Project venv, fixed Matplotlib cache, offscreen Qt and
+  `-m pytest --no-cov -n 2 --dist=loadfile --no-loadscope-reorder`.
+  Log: `/private/tmp/qplot-bh20261020-14b7363-full.log`. The final log-only commit
+  changes none of this tested runtime/test source.
+- Ruff, configured mypy (88 files), dependency consistency and whitespace
+  checks pass. Actual project startup displays 1.6.2, runs Qt's event loop and
+  exits zero. Receipt: `/private/tmp/qplot-r15-final-startup-8tfchaj_/startup.json`.
+- Application/native inventories, exact committed-byte comparisons and four
+  twine checks pass. Final application artifacts contain 130 wheel files/124
+  runtime files and 404 sdist files/all 240 source test modules. Unchanged
+  native 1.0.1 artifacts remain verified; no native source edit requires another
+  rebuild. Manifest: `/private/tmp/qplot-bh20261019-14b7363-artifact-manifest.json`.
+- Fresh compiler-free wheel and editable installations both pass actual GUI
+  startup, trusted live reading, installed-byte identity and editable updates.
+  No compiler builds attempted. Logs:
+  `/private/tmp/qplot-bh20261020-14b7363-wheel-install.log` and
+  `/private/tmp/qplot-bh20261020-14b7363-editable-install.log`.
+- All **33 confirmed application/diagnostic fixes** are committed and have a
+  different subchat's independent approval (C19-014 remains withdrawn).
+  Five test-only CI follow-ups include the resumed WAL fixture correction.
+- Final hosted candidate observation: **30 successful checks, 10 running,
+  six queued**, no failures; all 46 returned checks match the exact `14b7363`
+  SHA and API total. This is pending CI, not completed platform acceptance.
+  Evidence: `/private/tmp/qplot-bh20261020-14b7363-checks.json`.
+
+### Final checkpoint and next tasks
+
+Four further rounds (14–17) are complete. Rounds 16 and 17 are independently
+clean, satisfying the stopping condition within the user's five-round limit.
+The resumed work adds C19-032/033/034 and the live-WAL CI fixture correction;
+all substantive repairs have regressions and separate approval. No uncommitted
+application repair or additional investigation remains. All agent-owned
+processes, workers, connections and disposable probe resources were closed;
+evidence receipts remain under `/private/tmp`.
+
+Prepared bugfix release: **qplotter 1.6.2**, retaining **qplotter-native 1.0.1**.
+Branch: `codex/qplot-bug-hunt-2026-10-19`;
+[draft PR #90](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/90).
+The database-access invariant is preserved and no settings migrations were
+added. Remaining tasks are hosted CI completion and maintainer review/release
+gates. The final documentation push may queue new checks; do not infer their
+completion from local tests or the earlier candidate status. No merge, tag or
+release was performed. Resume investigation only if requested or for concrete
+subsequent CI/review failures.
 
 ## Previous campaign archive
 
