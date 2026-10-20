@@ -862,7 +862,7 @@ class PlotExportMixin(_PlotExportBase):
                     csv_writer.writerow((
                         float(x_centre),
                         float(y_centre),
-                        data_grid[y_index, x_index],
+                        _csv_numeric_text(data_grid[y_index, x_index]),
                     ))
                     rows_written += 1
 

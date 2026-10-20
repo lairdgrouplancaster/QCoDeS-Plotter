@@ -1292,6 +1292,68 @@ subsequent CI/review failure.
   Committed as `bf1c61a`. Hosted macOS acceptance still needs fresh CI evidence;
   this repair is not represented as a proven explanation of the earlier SIGBUS.
 
+#### Round 15 — complete; one confirmed CSV precision repair
+
+- Fresh safety, measurement and UI subchats review the integrated `add63bb`
+  revision. No native source changes; the pinned native reader remains 1.0.1.
+- Coordinator rebuilt application wheel/sdist and verified every tracked
+  archive/runtime byte against `add63bb5df777ecf2a88490070bf025e4ca47aa3`.
+  Inventories: 130 wheel files/124 runtime files; 403 sdist files including all
+  239 test modules. Unchanged native wheel/sdist inventories and all four twine
+  checks pass. Fresh compiler-free wheel and editable installations both pass
+  GUI startup, trusted reading, installed-byte checks and editable behavior.
+  Manifest: `/private/tmp/qplot-bh20261019-add63bb-artifact-manifest.json`.
+  Logs: `/private/tmp/qplot-bh20261020-add63bb-{wheel,editable}-install.log`.
+- Ruff, configured mypy (88 files), dependency consistency and whitespace pass.
+  Integration suite at `add63bb` was gracefully stopped after **1,551 passed**
+  when C19-034 was confirmed; it is partial, superseded validation, not a final
+  full-suite result. Log: `/private/tmp/qplot-bh20261020-add63bb-full.log`.
+- Four fresh UI compositions pass: pending and successful database switching
+  while mixed plots retain sources, preferences, export/appearance disposal,
+  Auto-plot disable/re-enable during selection/refresh, paused manual refresh
+  and closed-run replay suppression. Protected database checks and complete
+  QObject/worker/service cleanup pass. No additional UI finding.
+  Probe: `/private/tmp/test_qplot_round15_ui.py`.
+- Safety review is clean: **45 focused tests passed** plus 288 subscriber
+  requests, six acquisition cycles, six each deadline/cancellation/result-limit
+  refusals, 30 mutation refusals, seven private snapshots and 15 writer
+  checkpoints. First WAL arrival works through persistent readers and broker;
+  stale instances refuse and replacement reopening succeeds. All 21 protected
+  file comparisons and native audits pass; all owned resources are reaped.
+  A 2,400-node snapshot traverses 19 bounded pages without loss or duplication;
+  343 full-value handles retain exact contents and refuse foreign-source reuse.
+  Receipts: `/private/tmp/qplot-round15-safety-receipt.json` and
+  `/private/tmp/qplot-round15-boundary-receipt.json`.
+- Fresh measurement oracle covers six public-QCoDeS runs with planned/unplanned
+  and empty/ragged/descending/duplicate data: 18 raw-column comparisons,
+  18 grids through cache/SQL/swapped axes, six preview images and 72 composed
+  Fill/Clip/Mean/Derivative cells agree with independent Fraction expectations.
+  Protected sources remain unchanged and all temporary resources are closed.
+- Measurement subchat confirmed and repaired C19-034 below; round 15 is not
+  clean. Consecutive clean-round count remains **zero**.
+
+#### C19-034 — Narrow floating CSV exports change recorded numeric values
+
+- Actual heatmap Export Plot and raw Run CSV actions serialize float16/float32
+  values using their short dtype-specific text, but CSV carries no dtype.
+  Stored `float16(0.1)` is `0.0999755859375`, exported as `0.1`; the smallest
+  float32 subnormal changes from `1.401298464324817e-45` to `1e-45` (about 29%).
+  Six actual-dialog/raw-path regressions fail before repair.
+- Heatmap CSV now uses the existing precise numeric formatter already used by
+  lines. Raw CSV widens only temporary float16/32 pandas Series to float64,
+  exactly preserving their values. Recorded/cache dtype and contents remain
+  unchanged; integer/object/extended-float export behavior is retained.
+- Twelve new cases pass on ARM and Intel, covering planned/unplanned scans,
+  CSV/TSV, both real export actions, adjacent values, tiny/subnormal values,
+  signed zero and float64/longdouble controls. Ruff, configured mypy (88 files)
+  and whitespace checks pass.
+- UI subchat independently approved: **24 passed, one expected skip** on ARM
+  and **eight independent cases passed** on Intel. Random bit-pattern probes
+  include 257 samples per float dtype, NaN/Inf/signed zero/maxima/subnormals,
+  exact extended precision and equal/ragged mixtures with uint64 above 2**63.
+  Tests verify exact parsed values, source dtype/bytes and protected files.
+  Probe: `/private/tmp/test_qplot_c034_independent.py`.
+
 ## Previous campaign archive
 
 ### Final campaign result

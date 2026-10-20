@@ -2503,6 +2503,10 @@ class PlotActionsMixin:
                     # integers retain exact values instead of becoming floats.
                     prefix = "U" if values.dtype.kind == "u" else ""
                     dtype = f"{prefix}Int{values.dtype.itemsize * 8}"
+                elif values.dtype.kind == "f" and values.dtype.itemsize < 8:
+                    # Untyped CSV is normally read as binary64. Widen exactly
+                    # before pandas formats narrow floats to their short text.
+                    dtype = "float64"
                 columns[column_name] = pd.Series(values, dtype=dtype)
             frames.append(pd.DataFrame(columns))
 
