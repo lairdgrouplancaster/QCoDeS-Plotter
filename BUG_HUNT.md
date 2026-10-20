@@ -1,6 +1,6 @@
 # qPlot bug-hunt campaign
 
-## Campaign starting 2026-10-19 — completed after round 13 at user's request
+## Campaign starting 2026-10-19 — resumed 2026-10-20 for up to five more rounds
 
 ### Verified baseline
 
@@ -37,12 +37,29 @@
   edits this log or commits. All substantive fixes get a different subchat review.
 - Expand to all application areas, native packaging, performance and subsystem
   interactions. Require concrete reproductions and meaningful regression tests.
-- Original stopping condition was two consecutive complete clean rounds.
-  **User superseded this during round 13 because credits were running low:
-  round 13 is final; finish its repairs, commit and update the draft PR for the
-  next bugfix release.** No further investigation rounds are authorized/needed.
-- Clean-round count: **0** (round 13 found C19-031). Two clean rounds were not
-  achieved; historical results below are not counted.
+- Round 13 ended at the user's request. On 2026-10-20 the user authorized
+  **up to five further rounds (14–18)**, followed by an update to draft PR #90.
+  Stop sooner if two consecutive complete fresh rounds find no actionable bugs.
+  The next release remains the bugfix **1.6.2**; no merge, tag or release.
+- Clean-round count at resumption: **0** (round 13 found C19-031).
+  Historical results below are not counted toward the new reviews.
+
+### Resumption baseline — 2026-10-20
+
+- Clean local and fetched remote bug-hunt branch both point to
+  `e5fc7ebe088a3e566de53c0f7002ffa9ec2e13c5`.
+- Verified all **47 check runs** against that exact SHA and the API total:
+  **43 successful, three test jobs failed, Required checks failed**.
+  The previous local validation passed; the resumed CI baseline is not green.
+  [Resumption CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39323753600).
+  Evidence: `/private/tmp/qplot-bh20261020-baseline-checks.json`.
+- macOS Python 3.11/3.14 and Linux installed-sdist failures involve live
+  inferred-parameter refreshes encountering a rollback journal/service closure.
+  macOS 3.14 also reports a line-plot benchmark failure. Round 14 starts by
+  identifying their causes, alongside fresh measurement and application review.
+- Three independent subchats cover safety/live reading, measurement correctness,
+  and UI/lifecycle. Coordinator covers packaging, settings, diagnostics,
+  performance and integration; file ownership is assigned before repairs.
 
 ### Findings and validation
 
@@ -1183,7 +1200,7 @@
   Final branch-head CI remains pending after the log update. Passing local
   checks are not represented as completed hosted platform acceptance.
 
-### Final checkpoint and remaining release gates
+### Round-13 checkpoint (superseded by the authorized resumption above)
 
 All **30 confirmed application fixes** and four test-only CI follow-ups are
 committed and independently approved; C19-014 was withdrawn. Investigation ends
@@ -1196,6 +1213,84 @@ No uncommitted repair or further investigation round remains. Hosted CI and
 maintainer review are the remaining merge/release gates; no merge, tag or
 publication was performed. Resume only if requested or to address a concrete
 subsequent CI/review failure.
+
+### Further rounds authorized 2026-10-20
+
+#### Round 14 — complete; two confirmed repairs and one CI fixture correction
+
+- Fresh coordinator review covers configuration/console settings, synthetic
+  generation, cancellation/publication, metadata, package boundaries and
+  auxiliary-file protection. **74 focused tests passed**.
+- Independent probe exercises every scalar settings category through the
+  console command: **122 successful persistence round-trips, 144 invalid
+  updates rejected atomically**. Eight actual QCoDeS synthetic runs cover
+  line/heatmap, reversed sweeps, subnormal and overflowing finite spans.
+  Five cancellation points leave the existing selected output byte-identical
+  with unchanged inode/size/mtime and no generator temporary artifacts.
+  Receipt: `/private/tmp/qplot-r14-coordinator-1dxi0a28/receipt.json`.
+- Safety subchat identified and repaired a CI fixture error: the inferred live-refresh test
+  writes in DELETE mode while asynchronous reader jobs are active. A held-writer
+  reproduction confirms the intentional `journal/journal_appeared` refusal;
+  WAL allows the same bounded reads and exposes the subsequent commit without
+  qPlot modifying protected files. Live cases now use WAL and obtain ordered
+  plot metadata through the already accepted broker; static DELETE coverage is
+  retained. Measurement subchat independently approved; **18 tests passed**.
+  Committed as `564be1b`.
+- Fresh safety composition passes four held/uncommitted append cycles, four
+  deadlines and four cancellations (40–51 ms), eight complete writer RESTART
+  checkpoints, 20 mutation refusals and 17 protected-file comparisons. Native
+  audits show no forbidden operations; all readers/writers were closed/reaped.
+  Receipt: `/private/tmp/qplot-round14-safety-compose.json`.
+- Measurement subchat confirmed and repaired C19-032 below. Round 14 is not
+  clean; the consecutive clean-round count remains **zero**.
+- Four fresh UI compositions pass: shared-dataset overlays, closing one host,
+  retained-source promotion while paused, manual refresh, CSV export, heatmap
+  cuts and complete cleanup. Probe: `/private/tmp/test_qplot_round14_composition.py`.
+  Actual project module startup passes with visible window, running event loop
+  and exit zero. No protected database changes.
+
+#### C19-032 — Mixed extended-float records silently lose finite heatmap samples
+
+- Actual current-QCoDeS mixed longdouble/integer array records turn a finite
+  `1e310` heatmap row into NaNs on extended-range platforms. Pure-longdouble
+  controls retain it, and subtracting its row mean yields representable exact
+  residuals. Two real worker regressions failed before the repair.
+- `numeric_isfinite` previously narrowed object cells to float64. Keep its
+  vectorized fast path, but recheck original cells whose converted values are
+  infinite; exact conversion overflow also uses original scalar identities.
+  No recorded data or database access changes. Unsupported nonnumeric/complex
+  objects remain refused, and the bounded float64-mean route still rejects
+  unrepresentable results rather than inventing samples.
+- **18 new Intel tests pass**, including planned/unplanned scans, positive and
+  negative extended values, real GUI row-mean recovery, scalar/empty shapes,
+  exact-number classes and invalid values. Related validation: **69 passed,
+  33 expected skips** on ARM; **151 passed** on Intel. Ruff and configured mypy
+  (88 files) pass.
+- Safety subchat independently approved, ran all 18 Intel regressions and an
+  88-case classification oracle on each architecture. Review caught an initial
+  slow NaN retry loop; final missing-data masks remain vectorized (250,000 NaNs:
+  2.45 ms versus 2.42 ms before on ARM; 4.48 versus 4.42 ms on Intel). Ordinary
+  250,000-cell mixed masks remain about 3 ms. These are local observations.
+- Evidence: `/private/tmp/qplot-r14-finiteness-before.log`,
+  `/private/tmp/qplot-r14-finiteness-fixed.log`,
+  `tests/test_campaign_mixed_extended_finiteness.py`.
+
+#### C19-033 — Plot benchmark retains native Qt objects through interpreter teardown
+
+- macOS 3.14 CI reported SIGBUS after successful benchmark JSON output. Sixteen
+  local repetitions do not reproduce that signal; its cause remains unproven.
+  A separate deterministic observation shows completed plots and QApplication
+  are still alive when `main()` returns, after MainWindow itself was deleted.
+- Repair explicitly destroys the script-owned QApplication after the existing
+  bounded shutdown proves background work quiescent and deletes MainWindow,
+  matching production entry-point lifetime ordering. This retires closed plots
+  while their Python wrappers and interpreter remain alive.
+- Three real subprocess regressions retain actual Qt wrappers and fail before
+  repair for line, heatmap and invalid-run paths. All **nine profiling tests
+  pass** afterward; protected hashes/size/mtime are unchanged.
+- Safety subchat independently approved and ran six focused lifecycle cases.
+  Committed as `bf1c61a`. Hosted macOS acceptance still needs fresh CI evidence;
+  this repair is not represented as a proven explanation of the earlier SIGBUS.
 
 ## Previous campaign archive
 

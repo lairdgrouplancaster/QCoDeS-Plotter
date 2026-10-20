@@ -6,6 +6,8 @@ broadcast nested dimensions and cannot represent all valid QCoDeS records.
 """
 
 from collections.abc import Callable
+from decimal import Decimal
+from fractions import Fraction
 from math import prod
 
 import numpy as np
@@ -43,7 +45,33 @@ def concatenate_record_samples(parts):
 def numeric_isfinite(values):
     """Inspect numeric object cells without changing the stored sample array."""
     values = np.asarray(values)
-    return np.isfinite(values.astype(float) if values.dtype.kind == "O" else values)
+    if values.dtype.kind != "O":
+        return np.isfinite(values)
+    try:
+        with np.errstate(over="ignore"):
+            converted = values.astype(float)
+        finite = np.asarray(np.isfinite(converted))
+        retry = np.isinf(converted)
+    except OverflowError:
+        # Exact integer/Fraction cells can overflow the conversion itself.
+        finite = np.zeros(values.shape, dtype=bool)
+        retry = np.ones(values.shape, dtype=bool)
+    # Mixed QCoDeS records retain extended floats in object cells. Overflow
+    # during the fast binary64 check must not turn finite acquired samples
+    # into missing heatmap cells or prevent a representable centered result.
+    # NaNs (including absent None cells) need no retry; large missing regions
+    # in partial scans must retain their vectorized classification.
+    for index in np.flatnonzero(retry):
+        value = values.flat[index]
+        if isinstance(value, (int, np.integer, Fraction)):
+            finite.flat[index] = True
+        elif isinstance(value, Decimal):
+            finite.flat[index] = value.is_finite()
+        elif isinstance(value, np.floating):
+            finite.flat[index] = np.isfinite(value)
+        else:
+            finite.flat[index] = value is not None and np.isfinite(float(value))
+    return finite
 
 
 def numeric_isnan(values):
