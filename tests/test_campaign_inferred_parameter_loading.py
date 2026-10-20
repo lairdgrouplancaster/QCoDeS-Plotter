@@ -39,9 +39,9 @@ no_callback_errors = _no_callback_errors
 
 
 @contextmanager
-def _measurement(tmp_path, *, arrays, heatmap, shaped):
+def _measurement(tmp_path, *, arrays, heatmap, shaped, journal_mode="DELETE"):
     path = tmp_path / "inferred.db"
-    initialise_or_create_database_at(str(path), journal_mode="DELETE")
+    initialise_or_create_database_at(str(path), journal_mode=journal_mode)
     experiment = load_or_create_experiment("Inferred measurements", "regression")
     measurement = Measurement(exp=experiment)
     paramtype = "array" if arrays else "numeric"
@@ -106,12 +106,11 @@ def _window(tmp_path, monkeypatch, path, guid, *, order=None):
         if order is None:
             window.openPlot(guid=guid)
         else:
-            dataset = load_by_id_read_only(1, str(path))
-            try:
-                parameters = {param.name: param for param in dataset.get_parameters()}
-                window.openPlot(guid=guid, params=[parameters[name] for name in order])
-            finally:
-                dataset.conn.close()
+            request = window._trusted_read_service.submit_plot_dataset(guid)
+            wait_for(lambda: request.done)
+            dataset = request.wait(0)
+            parameters = {param.name: param for param in dataset.get_parameters()}
+            window.openPlot(guid=guid, params=[parameters[name] for name in order])
         wait_for(lambda: len(window.windows) == 3)
         wait_for(lambda: all(not plot.worker.running for plot in window.windows))
         for plot in window.windows:
@@ -177,7 +176,10 @@ def test_inferred_measurements_plot_export_and_process(
 def test_inferred_live_refreshes_keep_sibling_cursors_independent(
     tmp_path, monkeypatch, no_callback_errors, arrays, heatmap, shaped,
 ):
-    with _measurement(tmp_path, arrays=arrays, heatmap=heatmap, shaped=shaped) as (
+    # Background detail reads can overlap the next append. Trusted live viewing
+    # supports concurrent WAL writers; rollback sources must remain sidecar-free.
+    with _measurement(tmp_path, arrays=arrays, heatmap=heatmap, shaped=shaped,
+                      journal_mode="WAL") as (
         path, saver, append,
     ):
         append(0, 2)
