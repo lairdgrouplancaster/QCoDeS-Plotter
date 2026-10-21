@@ -36,6 +36,7 @@ def main():
         _BrokerQueryExecutor,
     )
     from qplot.windows._plot_feedback import PlotWindowFeedbackMixin
+    from qplot.windows._plotWin import plotWidget
     from qplot.windows.main import MainWindow
 
     def source_state():
@@ -143,7 +144,7 @@ def main():
         config.default_file = str(Path(directory) / config.config_file_name)
         window = MainWindow()
         window.show_error = lambda *items: errors.append(items)
-        observer = PaintTimes()
+        observer = PaintTimes(window)
         try:
             window.startupDatabaseTimer.stop()
             window.config.config["user_preference"]["confirm_close"] = False
@@ -228,13 +229,16 @@ def main():
             wait_for(lambda: window._shutdown_ready, timeout=20, check_errors=False)
             if window._shutdown_background_work_active():
                 raise RuntimeError("Plot benchmark background work did not stop")
+            # Closed plots are still top-level widgets held by iteration
+            # locals and the paint records. Retire their native ownership
+            # before QApplication's unordered sweep of Python Qt wrappers.
+            # Leave child menus and embedded widgets to their Qt owners.
+            for widget in app.topLevelWidgets():
+                if isinstance(widget, plotWidget) and not sip.isdeleted(widget):
+                    sip.delete(widget)
             window.deleteLater()
             app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
             app.processEvents()
-            # Closed plots remain top-level widgets, with Python references
-            # held by the paint observer and iteration locals. Destroy their
-            # Qt owner while those wrappers and the interpreter are alive,
-            # as the production entry point does after bounded shutdown.
             sip.delete(app)
     after = source_state()
     print(json.dumps({"database_bytes": args.database.stat().st_size,

@@ -69,6 +69,12 @@ after two complete consecutive clean rounds. Earlier clean rounds do not count.
   monitoring the pending checks. Last completely green earlier baseline was
   `64aff93` (47/47). [Current CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39562904041).
   Evidence: `/private/tmp/qplot-r22-baseline-checks.json`.
+- Completion checked during final integration: **45/47 successful**. macOS
+  Python 3.14 full shard 1/2 failed, making Required checks fail too. All returned
+  check SHAs/counts match `f7c02fe`; this baseline is not green. The benchmark
+  subprocess reports SIGBUS during explicit QApplication destruction. See the
+  final CI follow-up below; evidence
+  `/private/tmp/qplot-r22-baseline-checks-latest.json`.
 - Current application source is unchanged from tested `3cb0e01`: 5,528 passed,
   110 skipped, plus final assertion checks; startup, static analysis, native
   artifact checks and compiler-free installations pass. Native remains 1.0.1.
@@ -1988,8 +1994,130 @@ of a concrete later CI/review failure. No merge, tag or release was performed.
   and exit normally. Receipt:
   `/private/tmp/qplot-r22-log-startup-o12qdggw/receipt.json`.
 
-Next: finish complete integration and fresh rounds 24–25 on the reviewed repairs.
-Stop after two complete new clean rounds or the four-round cap. Keep bugfix 1.6.2.
+#### Round 24 — complete and clean (streak 1)
+
+- Three fresh subchats independently reviewed the frozen, approved repairs at
+  `5c9d7e6`. No new actionable finding or source edit.
+- Safety: two actual current-QCoDeS reader helpers on one live WAL database
+  pass **43,176 exact values**, eight rollback-visibility checks, four accepted
+  cancellations (0.57–1.01 ms), and four deadlines that correctly retire/reap
+  the affected helper (112–186 ms total). Independent browser helper remains
+  usable; refresh/capture takes 50–102 ms. Thirteen writer TRUNCATE checkpoints,
+  39 protected-file/activity comparisons and 24 physically read-only descriptor
+  observations pass. Native proofs, prefixes, helpers, threads and endpoints
+  retire. Focused suite: **19 passed**. Receipt:
+  `/private/tmp/qplot-round24-safety-receipt.json`.
+- Measurement: descending snake/nonuniform grids with duplicate uint64 exact
+  means and shaped float32 records match independent rational/Lagrange oracles:
+  **120 derivatives, 80 centered values, 108 cut coordinates/values, 24 statistics
+  samples, 100 raw values, 120 restored cells and 240 CSV/TSV cells**. Four axis
+  swaps, four refreshes and four protected-file comparisons pass. Six plot
+  QObjects and all reader/writer resources retire, with zero Qt callback errors.
+  Intentional precision refusal and captured Stats-copy behavior were verified,
+  not patched. Focused suite: **25 passed**. Receipt:
+  `/private/tmp/qplot-round24-measurement-receipt.json`.
+- UI: fresh three-layer nonuniform heatmaps pass **165 grid values, 32 cut
+  values, 15 CSV cells, 24 manual color-level bindings**, four colormap changes,
+  eight source refreshes and six protected-file comparisons. Includes all four
+  axis pairs, reorder/opacity/visibility, manual-to-union-auto color ranges,
+  browser close and retained-source removal with Appearance/Color dialogs open.
+  Eight owned QObjects and all services retire; zero callback errors. Focused
+  suite: **22 passed**. Receipt: `/private/tmp/qplot-round24-ui-receipt.json`.
+- Coordinator: a fresh generator CLI to actual Qt plot-launch composition uses
+  Unicode paths, descending 120,001-sample lines and a 151×401 heatmap. GUID,
+  double-click and Run actions each paint two launches with one worker thread;
+  protected file identity/timestamps/hashes remain unchanged. Cold display
+  takes 3.82–5.30 s and repeated display 1.04–1.33 s; these are local observations,
+  not portable performance limits. All windows/background work retire. Receipt:
+  `/private/tmp/qplot-round24-generator-launch-receipt.json`.
+- Exact `5c9d7e6` application artifacts pass all committed-byte comparisons and
+  inventories: 130 wheel files/124 runtime files, 409 sdist files including all
+  245 test modules and conftest. All four twine checks pass. Native 1.0.1 source
+  is unchanged, so its already rebuilt and verified artifacts are reused.
+  Fresh compiler-free wheel and editable installations pass GUI/native reads,
+  dependency/installed-byte consistency and live editable updates without
+  reinstalling. Manifest:
+  `/private/tmp/qplot-bh20261019-5c9d7e6-artifact-manifest.json`.
+
+#### Round 25 — complete and clean (streak 2; investigation finished)
+
+- Three new subchats independently reviewed final application `5c9d7e6`.
+  No new actionable finding or source edit. Rounds **24 and 25** satisfy the
+  two-consecutive-clean-round condition and the requested four-round cap.
+- Safety: fresh live WAL reading across settings/export/diagnostic collisions
+  passes **8,088 exact values**, 81 protected-destination refusals, nine protected
+  log-rotation cases, three safe settings/export recoveries and three rejected
+  late-alias publications. Includes direct paths, hardlinks and symlinks, 57
+  protected-file/activity comparisons, four writer checkpoints and four physically
+  read-only descriptors. Same helper works through all acquisition stages;
+  native handles, stages, prefixes, threads and endpoints retire. Native/SHM
+  guards and package pins reviewed. Focused suite: **11 passed**. Receipt:
+  `/private/tmp/qplot-round25-safety-receipt.json`.
+- Measurement: actual three-output live QCoDeS acquisition with unequal array
+  chunks and append, merged averages, eleven native-control states per stage,
+  removal and restoration agrees with independent Fraction/trigonometric DFT
+  oracles: **1,408 displayed values, 240 averages, 288 raw/restored values and
+  192 CSV cells**. Three protected-file comparisons and all Qt/helper/writer
+  cleanup pass. Complex rejection/raw export/recovery and averaging follow-up:
+  **14 passed**. Receipt: `/private/tmp/qplot-round25-measurement-receipt.json`.
+- UI: current-running Auto-plot activation, append/completion, new-run plotting
+  during selection changes, closed-plot deduplication, sorted/multiple/typed-ID
+  selections and browser close/reopen with retained plots pass **150 exact
+  values, 24 selection checks, three typed IDs, six refreshes, four no-replay
+  checks and seven protected-file comparisons**. Four plot QObjects and both
+  services retire. Focused suite: **98 passed, three subtests passed**. Receipt:
+  `/private/tmp/qplot-round25-ui-receipt.json`.
+- Coordinator: six actual module startups/restarts recover invalid JSON,
+  boolean-as-number and nonfinite current settings. Existing backup names point
+  by hardlink/symlink to a disposable real QCoDeS database; recovery selects the
+  next absent backup, preserves original bytes and all database identity/hash/
+  timestamps, saves valid current settings and restarts without new backups.
+  All windows/event loops/normal exits pass. Receipt:
+  `/private/tmp/qplot-round25-settings-startup-receipt.json`.
+
+Next: finish the already-running full suite, record exact baseline/final CI
+observations, commit the final checkpoint and update draft PR #90. Investigation
+is complete; retain bugfix 1.6.2/native 1.0.1 without merging or releasing.
+
+#### Final CI follow-up — benchmark destruction on macOS Python 3.14
+
+- The last pending starting-revision job completed with **one failed, 2,757
+  passed, 61 skipped, 26 subtests passed**. The actual line-benchmark subprocess
+  exits with SIGBUS at `sip.delete(app)`; its native stack includes
+  `cleanup_qobject`, `sip_api_visit_wrappers` and `release_QApplication`.
+  [Failed job](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39562904041/job/119099264551).
+- This is a concrete validation follow-up to C19-033, not another investigation
+  round. Earlier retained-object cleanup was independently verified but never
+  claimed to prove the earlier platform SIGBUS resolved. UI subchat owns the
+  benchmark and its regression module; measurement subchat independently
+  reviews. Avoid claiming a crash fix without evidence of its mechanism.
+  Exact stack: `/private/tmp/qplot-f7c02fe-macos314-benchmark-traceback.log`.
+- Three stronger subprocess cases demonstrate live plot owners at entry to
+  QApplication destruction in the original benchmark (line, heatmap and
+  post-display paint failure). An initial generic top-level-widget cleanup
+  candidate was rejected because it can destroy Qt menus/frames out of order;
+  independent review reproduced that candidate's SIGSEGV. The candidate was
+  never committed. The revision restricts cleanup to qPlot plot owners after
+  bounded shutdown and parents the paint observer to MainWindow.
+- The first complete integration run finished **5,540 passed, 110 skipped and
+  four failed**, all four in benchmark subprocess tests that encountered the
+  rejected transient cleanup candidate. Stack traces point to that candidate's
+  widget deletion; no application-runtime test failed. Log:
+  `/private/tmp/qplot-r23-c039-full.log` (966.78 s). A final frozen-source run
+  will replace this transitional result after independent review.
+- Final owner-specific patch is independently approved. All **10 profiling
+  tests pass** for both author and reviewer. Two additional real-QCoDeS
+  subprocesses inject second-render failure for line/heatmap plots: the baseline
+  retains both plot owners at QApplication destruction; the fix retires them
+  and MainWindow first, preserves the original RuntimeError, leaves no active
+  background work or Qt callbacks, and completes QApplication destruction.
+  Both source comparisons pass. Receipt:
+  `/private/tmp/qplot-c033-independent-final-receipt.json`.
+- Approval establishes the cleanup-order improvement, **not a proven resolution
+  of the hosted Python 3.14 SIGBUS**. That platform remains a required fresh-CI
+  acceptance gate. No production application or native source changed in this
+  follow-up. Full frozen-source integration is running at
+  `/private/tmp/qplot-r25-final-full.log`; Ruff and mypy (88 files) pass.
 
 ## Previous campaign archive
 

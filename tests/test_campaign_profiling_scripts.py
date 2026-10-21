@@ -88,9 +88,11 @@ def test_actual_plot_benchmark_failure_shuts_down_without_crashing(measured_data
     assert "Fatal Python error" not in result.stderr
 
 
-@pytest.mark.parametrize("run_id", [1, 2, 999])
-def test_plot_benchmark_retires_owned_qt_objects_before_return(measured_database, tmp_path, run_id):
-    """Held Python wrappers must not leave native Qt cleanup to interpreter exit."""
+@pytest.mark.parametrize("run_id,fail_paint", [(1, False), (2, False), (999, False), (1, True)])
+def test_plot_benchmark_retires_owned_qt_objects_before_return(
+    measured_database, tmp_path, run_id, fail_paint,
+):
+    """Destroy held plot owners before QApplication's unordered wrapper sweep."""
     probe = tmp_path / "observe_cleanup.py"
     state_path = tmp_path / "cleanup.json"
     probe.write_text("""
@@ -103,6 +105,7 @@ from qplot.windows._plotWin import plotWidget
 
 owned = []
 applications = []
+before_application_delete = []
 for kind in (MainWindow, plotWidget):
     original = kind.__init__
     def observed_init(self, *args, original=original, **kwargs):
@@ -110,6 +113,21 @@ for kind in (MainWindow, plotWidget):
         owned.append(self)
         applications.append(QtWidgets.QApplication.instance())
     kind.__init__ = observed_init
+
+original_delete = sip.delete
+def observed_delete(item):
+    if isinstance(item, QtWidgets.QApplication):
+        before_application_delete.append({
+            "objects_deleted": [sip.isdeleted(owner) for owner in owned],
+            "plot_windows": sum(isinstance(widget, plotWidget) for widget in item.topLevelWidgets()),
+        })
+    original_delete(item)
+sip.delete = observed_delete
+
+if FAIL_PAINT:
+    def failed_grab(self, *args, **kwargs):
+        raise RuntimeError("Deliberate plot paint failure")
+    plotWidget.grab = failed_grab
 
 try:
     runpy.run_path(SCRIPT, run_name="__main__")
@@ -119,19 +137,27 @@ finally:
         "objects_deleted": [sip.isdeleted(item) for item in owned],
         "applications_deleted": [sip.isdeleted(item) for item in applications],
         "application_absent": QtWidgets.QApplication.instance() is None,
+        "before_application_delete": before_application_delete,
     }))
 """.replace("SCRIPT", repr(str(ROOT / "scripts/benchmark_plot_launch.py")))
-        .replace("STATE", repr(str(state_path))))
+        .replace("STATE", repr(str(state_path)))
+        .replace("FAIL_PAINT", repr(fail_paint)))
     result = _run(probe, measured_database, run_id, "--repeats", 2)
-    assert result.returncode == (1 if run_id == 999 else 0), result.stdout + result.stderr
+    assert result.returncode == (1 if run_id == 999 or fail_paint else 0), result.stdout + result.stderr
+    if fail_paint:
+        assert "Deliberate plot paint failure" in result.stderr
     cleanup = json.loads(state_path.read_text())
     assert cleanup["owned_types"].count("MainWindow") == 1
     assert cleanup["owned_types"].count("plot1d" if run_id == 1 else "plot2d") == (
-        0 if run_id == 999 else 2
+        0 if run_id == 999 else 1 if fail_paint else 2
     )
     assert all(cleanup["objects_deleted"]), cleanup
     assert all(cleanup["applications_deleted"]), cleanup
     assert cleanup["application_absent"], cleanup
+    assert len(cleanup["before_application_delete"]) == 1, cleanup
+    before_delete = cleanup["before_application_delete"][0]
+    assert all(before_delete["objects_deleted"]), cleanup
+    assert before_delete["plot_windows"] == 0, cleanup
 
 
 @pytest.mark.parametrize("run_id,columns,expected", [
