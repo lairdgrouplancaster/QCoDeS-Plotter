@@ -1,16 +1,18 @@
 # qPlot bug-hunt campaign
 
-## Campaign starting 2026-10-19 — resumed 2026-10-21 for up to four more rounds
+## Campaign starting 2026-10-19 — four-round extension completed 2026-10-21
 
-Previous result: **rounds 18–21 complete; rounds 20 and 21 independently clean**.
-This extension fixes C19-035 (live schema refresh) and C19-036 (narrow-float
-clipping), bringing the campaign to **35 confirmed application/diagnostic
-repairs**, all independently approved. Final local suite: **5,528 passed,
-110 skipped**. Bugfix target remains **1.6.2**; draft PR #90, no merge/release.
+**Rounds 22–25 are complete.** This extension repairs C19-037 (cyclic diagnostic
+paths), C19-038 (clipped trace axis reassignment) and C19-039 (recovered metadata
+warnings), bringing the campaign to **38 confirmed application/diagnostic
+repairs**, all independently reviewed. Rounds 24 and 25 found no new actionable
+bugs on application revision `5c9d7e6`; no round 26 was started.
 
-Resumed again on 2026-10-21 for **up to four new rounds, 22–25**, followed by
-another draft PR update. New clean-round count starts at zero; stop sooner
-after two complete consecutive clean rounds. Earlier clean rounds do not count.
+A late hosted-CI failure prompted a separately reviewed C19-033 benchmark
+cleanup-order follow-up. Final frozen-source suite at `fce02c3`: **5,545 passed,
+110 skipped**. Hosted macOS Python 3.14 SIGBUS acceptance remains pending fresh
+CI; local cleanup validation does not prove that platform failure resolved.
+Bugfix target remains **1.6.2**, native **1.0.1**; draft PR #90, no merge/release.
 
 ### Verified baseline
 
@@ -63,7 +65,7 @@ after two complete consecutive clean rounds. Earlier clean rounds do not count.
 
 - Clean local branch and fetched upstream both match
   `f7c02fe543326bf8ff814d3388e4f88917fc6341`.
-- Exact-SHA CI remains **pending: 17 successful, 17 running, 12 queued**,
+- At resumption, exact-SHA CI was **pending: 17 successful, 17 running, 12 queued**,
   no failures. All 46 returned checks match that SHA and the API total. This
   is not a green hosted baseline; continue independent investigation while
   monitoring the pending checks. Last completely green earlier baseline was
@@ -2118,6 +2120,47 @@ is complete; retain bugfix 1.6.2/native 1.0.1 without merging or releasing.
   acceptance gate. No production application or native source changed in this
   follow-up. Full frozen-source integration is running at
   `/private/tmp/qplot-r25-final-full.log`; Ruff and mypy (88 files) pass.
+
+### Final validation — rounds 22–25, completed 2026-10-21
+
+- Final application/test/script source: `fce02c3`. Full frozen-source suite:
+  **5,545 passed, 110 skipped, 61 warnings in 875.25 s**. All benchmark tests
+  now pass in the complete run; this supersedes the transient-candidate result.
+  Command: project-venv `-m pytest --no-cov -n 2 --dist=loadfile
+  --no-loadscope-reorder` with offscreen Qt and the required fixed Matplotlib
+  cache. Log: `/private/tmp/qplot-r25-final-full.log`.
+- Ruff, configured mypy (**88 files**), dependency consistency and whitespace
+  checks pass. Final actual module startup passes ordinary/self-loop/two-link
+  log destinations with visible windows, running event loops, preserved links
+  and normal exits. Receipt:
+  `/private/tmp/qplot-r22-log-startup-avui1bsn/receipt.json`.
+- Final runtime bytes under `src/`, native source and dependency declarations
+  are unchanged from the exact `5c9d7e6` artifacts that passed compiler-free
+  wheel/editable installation, GUI/native-reader and editable-update checks.
+  The benchmark follow-up changes only the development script and its tests.
+  Final documentation archives are rebuilt against the final checkpoint SHA
+  before pushing, with exact tracked-byte/inventory and all four twine checks.
+- All substantive fixes have independent approval. Three fresh subchats per
+  investigation round covered safety, measurement and UI; coordinator covered
+  entry points, settings, diagnostics, generation, performance and packaging.
+  Database-access restrictions, current QCoDeS support and settings policy
+  remain unchanged. No native rebuild was needed after the initially verified
+  native 1.0.1 rebuild because no native source changed.
+
+### Final checkpoint and continuation — four-round cap reached
+
+Investigation, repair, independent review and local validation are complete.
+Commits `472698f`, `5c9d7e6` and `fce02c3` contain this extension's repairs and
+evidence; the final documentation commit records this checkpoint. Keep draft
+PR #90 targeting bugfix 1.6.2. No merge, tag or release has been performed.
+
+The starting revision `f7c02fe` finished **45/47 green**, with the macOS 3.14
+benchmark failure and consequent Required-check failure recorded above. The
+final push queues new exact-head CI; do not infer success from local tests or
+another SHA. Remaining work is hosted CI completion (especially macOS 3.14
+benchmark destruction), maintainer review and the normal release gates. Any
+concrete CI failure needs diagnosis and validation before acceptance. Do not
+start another broad investigation round without a new user request.
 
 ## Previous campaign archive
 
