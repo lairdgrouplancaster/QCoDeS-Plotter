@@ -257,6 +257,7 @@ class RunList(qtw.QTreeWidget):
     plot = QtCore.pyqtSignal([str])
     previewPlotRequested = QtCore.pyqtSignal(str, str)
     previewExportRequested = QtCore.pyqtSignal(str, str)
+    previewStatsRequested = QtCore.pyqtSignal(str, str)
     _shortcut_keys = "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
     def __init__(
@@ -741,6 +742,7 @@ class RunList(qtw.QTreeWidget):
         cell.update_placeholder_metadata(item.run_metadata)
         cell.plotRequested.connect(self._preview_plot_requested)
         cell.exportRequested.connect(self._preview_export_requested)
+        cell.statsRequested.connect(self._preview_stats_requested)
         accessible_text = self._measurement_accessible_text(
             item.run_metadata,
             measurement_count,
@@ -831,6 +833,10 @@ class RunList(qtw.QTreeWidget):
         if item is not None:
             self.setCurrentItem(item)
         self.previewExportRequested.emit(guid, parameter)
+
+    @QtCore.pyqtSlot(str, str)
+    def _preview_stats_requested(self, guid, parameter):
+        self.previewStatsRequested.emit(guid, parameter)
 
     def _item_for_guid(self, guid):
         return self._items_by_guid.get(guid)
