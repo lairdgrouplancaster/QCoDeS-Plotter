@@ -26,9 +26,9 @@ def cfg(tmp_path, monkeypatch):
     return config()
 
 
-def test_default_grid_preserves_window_size(cfg):
-    assert plot_tile_grid(cfg) == (2, 2)
-    assert plot_tile_size(cfg, QtCore.QRect(0, 0, 2000, 1000)) == (940, 470)
+def test_default_grid_sizes_windows_for_three_columns(cfg):
+    assert plot_tile_grid(cfg) == (2, 3)
+    assert plot_tile_size(cfg, QtCore.QRect(0, 0, 2000, 1000)) == (626, 470)
 
 
 @pytest.mark.parametrize("rows, columns, size, positions", [
@@ -48,6 +48,7 @@ def test_grid_sizes_and_places_windows_in_order(cfg, rows, columns, size, positi
 
 
 def test_changed_grid_restarts_placement(cfg):
+    cfg.update(PLOT_TILE_COLUMNS_KEY, 2)
     owner = SimpleNamespace(config=cfg, screenrect=QtCore.QRect(-2000, 50, 2000, 1000))
     window = Mock()
     place_plot_window(owner, window)
@@ -63,7 +64,7 @@ def test_preferences_persist_and_restore_grid(cfg, monkeypatch):
     dialog = PreferencesDialog(cfg)
     try:
         assert dialog.plotTileRowsSpin.value() == 2
-        assert dialog.plotTileColumnsSpin.value() == 2
+        assert dialog.plotTileColumnsSpin.value() == 3
         dialog.plotTileRowsSpin.setValue(1)
         dialog.plotTileColumnsSpin.setValue(3)
         assert dialog.apply_preferences()
@@ -75,7 +76,7 @@ def test_preferences_persist_and_restore_grid(cfg, monkeypatch):
         assert dialog.restore_defaults()
         assert plot_tile_grid(config()) == (1, 3)
         assert dialog.apply_preferences()
-        assert plot_tile_grid(config()) == (2, 2)
+        assert plot_tile_grid(config()) == (2, 3)
     finally:
         dialog.close()
 
@@ -85,4 +86,4 @@ def test_preferences_persist_and_restore_grid(cfg, monkeypatch):
 def test_grid_rejects_invalid_values(cfg, key, value):
     with pytest.raises(ValidationError):
         cfg.update(key, value)
-    assert plot_tile_grid(config()) == (2, 2)
+    assert plot_tile_grid(config()) == (2, 3)
