@@ -1,18 +1,25 @@
 # qPlot bug-hunt campaign
 
-## Campaign starting 2026-10-19 — four-round extension completed 2026-10-21
+## Campaign starting 2026-10-19 — round 26 completed 2026-10-21
 
-**Rounds 22–25 are complete.** This extension repairs C19-037 (cyclic diagnostic
-paths), C19-038 (clipped trace axis reassignment) and C19-039 (recovered metadata
-warnings), bringing the campaign to **38 confirmed application/diagnostic
-repairs**, all independently reviewed. Rounds 24 and 25 found no new actionable
-bugs on application revision `5c9d7e6`; no round 26 was started.
+**The one additional authorized round, 26, is complete.** Three fresh subchats
+and coordinator integration found **no new application bug**. A Windows CI
+test-helper defect was reproduced, repaired and independently approved: inspect
+SHM type/identity without opening SQLite's locked shared-memory file. Main,
+WAL and rollback-journal checks remain strict. The campaign still has **38
+confirmed application/diagnostic repairs**, plus **six test-only CI corrections**.
+Do not start round 27 without a new user request.
 
-A late hosted-CI failure prompted a separately reviewed C19-033 benchmark
-cleanup-order follow-up. Final frozen-source suite at `fce02c3`: **5,545 passed,
-110 skipped**. Hosted macOS Python 3.14 SIGBUS acceptance remains pending fresh
-CI; local cleanup validation does not prove that platform failure resolved.
-Bugfix target remains **1.6.2**, native **1.0.1**; draft PR #90, no merge/release.
+Rounds 22–25 repaired C19-037 (cyclic diagnostic paths), C19-038 (clipped trace
+axis reassignment) and C19-039 (recovered metadata warnings). Rounds 24, 25 and
+26 found no further application bugs on application revision `5c9d7e6`.
+The last full frozen-source suite at `fce02c3` passed **5,545 tests, 110 skipped**;
+round 26's changed helper and all its consumers passed **116 tests, 2 skipped**.
+Both hosted macOS Python 3.14 shards passed at `9745b4d`, including the earlier
+benchmark failure. That revision finished **45/47 green** because of the Windows
+helper failure and consequent Required-check failure; final-head Windows CI
+remains an acceptance gate. Bugfix target remains **1.6.2**, native **1.0.1**;
+draft PR #90, no merge, tag or release.
 
 ### Verified baseline
 
@@ -2161,6 +2168,119 @@ another SHA. Remaining work is hosted CI completion (especially macOS 3.14
 benchmark destruction), maintainer review and the normal release gates. Any
 concrete CI failure needs diagnosis and validation before acceptance. Do not
 start another broad investigation round without a new user request.
+
+### Additional round 26 — complete, 2026-10-21
+
+- Clean local branch, fetched branch and remote tracking ref all match
+  `9745b4dc7cb1f6874c99c01e43ebc28fcbf3bd6f`.
+- Verified all **47 exact-SHA check runs** and their total: **45 successful**,
+  Windows Python 3.14 full shard 2/2 failed, and Required checks consequently
+  failed. Both macOS Python 3.14 shards now pass, including the previously
+  failing benchmark validation. This starting baseline is not fully green.
+  Evidence: `/private/tmp/qplot-r26-baseline-checks.json`.
+  [Baseline CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39570306021).
+- The failing test helper reads/hash-checks the live `-shm` file even though its
+  invariance assertion ignores SHM contents. Windows rejects that read while
+  SQLite holds byte-range locks. A writer append has already changed the WAL,
+  so the interrupted baseline assignment then reports an unrelated stale-WAL
+  comparison during cleanup. This is a test-helper failure; no application
+  write is established by the traceback.
+  Exact traceback: `/private/tmp/qplot-r26-windows-ci-failure.log`.
+- Three fresh subchats cover safety/live/native behavior, measurement and UI.
+  Safety owns the shared test observation helper and dedicated regressions;
+  measurement independently reviews that correction. Coordinator owns the log,
+  packaging, entry-point integration and publishing. No production source
+  changed in this round.
+
+#### Confirmed test-only CI correction — locked SHM observation
+
+- Reproduction: the real Windows Python 3.14 failure in
+  `test_manual_refresh_updates_paused_sources[button-visible-heatmap_source-heatmap_host]`
+  shows `PermissionError` opening SHM after a fixture writer append. A local
+  denial-injection regression reproduces the interrupted baseline assignment.
+  The pre-fix regression run had **3 failed, 8 passed**, also exposing missing
+  checks for deletion or replacement of an existing SHM.
+- Repair in `tests/windows/test_heatmap_layer_integration.py`: retain the exact
+  main/WAL/journal size, timestamp and SHA-256 observations; use `lstat` only
+  for SHM. Require regular type and preserved device/inode when it already
+  existed. Creation and in-place SQLite changes remain allowed. Unexpected
+  metadata/read errors still propagate. No application database code changed.
+- Eleven regressions in `tests/test_campaign_wal_artifact_observation.py` cover
+  locked SHM, post-writer baselines, protected content/read failures, permitted
+  SHM creation/growth and forbidden SHM removal/replacement/symlinks. They use
+  disposable byte fixtures, never a user's measurement database.
+- Author validation including every shared-helper consumer: **116 passed,
+  2 expected skips**. Evidence:
+  `/private/tmp/qplot-round26-artifacts-before.log` and
+  `/private/tmp/qplot-round26-artifacts-after.log`.
+- Independent measurement subchat **approved** the frozen patch and reran its
+  regressions. Additional probes verified exact protected reads without opening
+  SHM, propagation of SHM metadata errors, protected-file disappearance,
+  nonregular SHM rejection and allowed in-place metadata normalization.
+  Receipt: `/private/tmp/qplot-round26-artifacts-independent-receipt.json`.
+  This is the sixth test-only CI correction, not another application finding.
+
+#### Fresh application coverage and validation
+
+- **Safety/live/native:** empty current-QCoDeS database to three runs with
+  Unicode parameter names, six int64 array appends above `2**62`, expanding
+  schema/metadata and retained prefixes across **11 writer TRUNCATE resets**.
+  Verified **5,112,042 exact array values**, 20 watermark/page checks, 18
+  metadata/snapshot checks, 33 protected-file/activity comparisons, eight
+  physically read-only main/WAL descriptors and seven refused mutating queries.
+  Refresh/capture stayed within **0.143–0.303 s**. Additional native SHM/reset,
+  cancellation and busy checks: **9 passed**. Receipt:
+  `/private/tmp/qplot-round26-safety-receipt.json`.
+- **Measurement:** real sparse/ragged integer and narrow-float acquisitions
+  through ordered Fill Below/Right, clipping, centering, cuts, raw/processed
+  CSV/TSV, reset and refresh. Independent fill/Fraction oracles verified 60
+  recorded cells, 60 filled cells, 60 centered cells, 72 cut values, 360 export
+  cells, 39 raw values and 120 restored cells; six protected-file comparisons
+  passed. Focused tests: **31 passed**. Receipt:
+  `/private/tmp/qplot-round26-measurement-receipt.json`.
+- **UI/lifecycle:** two actual QCoDeS WAL databases with overlapping run IDs,
+  lazy snapshot pages/full-value dialogs, run-selection changes, refresh during
+  paging, close/reopen and stale queued requests. Verified 20 pages containing
+  1,555 exact ordered unique entries, 25,392 copied snapshot characters and
+  4,341 metadata characters, eight selections, two stale-request rejections and
+  14 protected-file comparisons; no Qt callback errors. Fresh composition:
+  **1 passed**; focused suite: **47 passed, 6 subtests passed**. Receipt:
+  `/private/tmp/qplot-round26-ui-receipt.json`.
+- **Coordinator startup/integration:** actual `python -m qplot -style Fusion`
+  and public `qplot.run(database_path=...)` against a private live current-QCoDeS
+  WAL writer and a Unicode path with spaces. Verified five then ten exact rows,
+  QApplication identity, visible window/event loop, trusted reader, clipboard
+  database path, explicit API path precedence over inherited command-line
+  arguments, lazy PyQt import and return to the API caller. Both exit normally;
+  protected main/WAL/journal identity, size, timestamps and hashes are unchanged;
+  helpers retire and both writer checkpoints succeed. Receipt:
+  `/private/tmp/qplot-round26-entrypoints-receipt.json`.
+- All private writers, plot/dialog objects, reader helpers, worker threads,
+  endpoints, retained captures and fixture directories were retired. Ruff,
+  configured mypy (**88 files**) and whitespace checks pass. Python commands use
+  the project venv, fixed Matplotlib cache and offscreen Qt where appropriate.
+- Application/native source and dependencies remain unchanged from the verified
+  `5c9d7e6` artifacts and compiler-free installations. No native rebuild is
+  needed for this test-only change. The full **5,545 passed / 110 skipped** run
+  at `fce02c3` remains the last full-suite result; the relevant changed tests and
+  consumers above were rerun, rather than claiming a new full-suite result.
+- Publication validation rebuilds the application archives from the clean final
+  commit, compares tracked bytes and inventories, and checks all four
+  application/native artifacts with Twine. Evidence is recorded in
+  `/private/tmp/qplot-r26-final-build.log` and
+  `/private/tmp/qplot-bh20261019-<final-short-sha>-artifact-manifest.json`.
+
+#### Round-26 checkpoint and continuation
+
+This request is complete: **zero new application bugs, one confirmed CI
+test-helper correction**. The correction is independently approved and all
+relevant local checks pass. Commit these three changed files, push the dedicated
+branch and update draft PR #90; preserve bugfix target 1.6.2/native 1.0.1.
+The final push requests new exact-head CI, especially Windows Python 3.14
+manual-refresh validation. Do not equate local simulation with that platform's
+acceptance. Remaining gates are final-head hosted CI, maintainer review and
+normal release checks. No merge, tag, release or round 27 is authorized by this
+one-round request.
 
 ## Previous campaign archive
 
