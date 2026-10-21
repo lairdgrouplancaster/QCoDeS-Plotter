@@ -25,6 +25,7 @@ lifecycle reliability. The native dependency remains `qplotter-native==1.0.1`.
   acquired runs expose their current columns without missing data or query errors.
 - Protect measurement files from diagnostic-log reuse and synthetic generation
   side effects; report malformed generator inputs and profiling failures cleanly.
+- Allow qPlot to start when the diagnostic log path contains a symlink loop.
 
 ### Compatibility and validation
 

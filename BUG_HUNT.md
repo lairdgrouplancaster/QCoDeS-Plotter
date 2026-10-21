@@ -2,11 +2,15 @@
 
 ## Campaign starting 2026-10-19 — resumed 2026-10-21 for up to four more rounds
 
-Latest result: **rounds 18–21 complete; rounds 20 and 21 independently clean**.
+Previous result: **rounds 18–21 complete; rounds 20 and 21 independently clean**.
 This extension fixes C19-035 (live schema refresh) and C19-036 (narrow-float
 clipping), bringing the campaign to **35 confirmed application/diagnostic
 repairs**, all independently approved. Final local suite: **5,528 passed,
 110 skipped**. Bugfix target remains **1.6.2**; draft PR #90, no merge/release.
+
+Resumed again on 2026-10-21 for **up to four new rounds, 22–25**, followed by
+another draft PR update. New clean-round count starts at zero; stop sooner
+after two complete consecutive clean rounds. Earlier clean rounds do not count.
 
 ### Verified baseline
 
@@ -22,7 +26,7 @@ repairs**, all independently approved. Final local suite: **5,528 passed,
 - Dedicated branch: `codex/qplot-bug-hunt-2026-10-19`. No merge or release.
 - Initial reviewed batch pushed at `25a46cc51c36f6bf579546b446b96d25aa6441b4`;
   [draft PR #90](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/90)
-  opened for cross-platform CI. Investigation is now complete through round 21.
+  opened for cross-platform CI. Investigation resumes with round 22.
 - Local Python: project `.venv-mac`, CPython 3.12.2, QCoDeS 0.61.0,
   APSW 3.53.4.0. Installed native package was stale (1.0.0; source pins 1.0.1);
   rebuilt/installed current native source before runtime validation.
@@ -55,7 +59,25 @@ repairs**, all independently approved. Final local suite: **5,528 passed,
   sooner if two consecutive complete new rounds are clean. Bugfix target
   remains 1.6.2; no merge, tag or release.
 
-### Resumption baseline — 2026-10-21
+### Resumption baseline — rounds 22–25, 2026-10-21
+
+- Clean local branch and fetched upstream both match
+  `f7c02fe543326bf8ff814d3388e4f88917fc6341`.
+- Exact-SHA CI remains **pending: 17 successful, 17 running, 12 queued**,
+  no failures. All 46 returned checks match that SHA and the API total. This
+  is not a green hosted baseline; continue independent investigation while
+  monitoring the pending checks. Last completely green earlier baseline was
+  `64aff93` (47/47). [Current CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39562904041).
+  Evidence: `/private/tmp/qplot-r22-baseline-checks.json`.
+- Current application source is unchanged from tested `3cb0e01`: 5,528 passed,
+  110 skipped, plus final assertion checks; startup, static analysis, native
+  artifact checks and compiler-free installations pass. Native remains 1.0.1.
+- Three fresh subchats cover safety/live reading, measurement and UI/lifecycle;
+  coordinator owns remaining areas, packaging, performance and integration.
+  All investigators begin read-only and request exact file ownership before
+  repairs. Substantive fixes require another subchat's independent review.
+
+### Previous resumption baseline — rounds 18–21, 2026-10-21
 
 - Clean local and fetched remote bug-hunt branch both point to
   `64aff93ded7ad2187a36e3ac097910623cf25abc`.
@@ -1783,7 +1805,7 @@ and independently approved. No more investigation rounds are needed or planned.
   [Candidate CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39561239943).
   The starting revision `64aff93` was independently verified **47/47 green**.
 
-### Final checkpoint and continuation
+### Previous extension checkpoint — rounds 18–21
 
 The four-round request is complete. Rounds 20/21 satisfy the two-consecutive-
 clean-round condition. All subchats have finished; owned processes, readers,
@@ -1798,6 +1820,77 @@ draft PR update publish this checkpoint. That push may queue fresh CI; do not
 infer completion from the earlier candidate or local results. Subsequent work
 is hosted CI completion and maintainer review/release gates, or investigation
 of a concrete later CI/review failure. No merge, tag or release was performed.
+
+### Additional review rounds — rounds 22–25
+
+#### Round 22 — C19-037 repaired and independently approved
+
+- Three fresh subchats investigated safety/live scheduling, sparse measurement
+  operations and actual Qt export/source workflows. Coordinator reviewed
+  diagnostics, startup, metadata/repair helpers and packaging integration.
+  Current clean-round count is zero because C19-037 was confirmed.
+- Safety: fresh current-QCoDeS composition passes **1,048,624 exact array
+  values**, three subscriber cancellations, queued expiry and two priority
+  preemptions. Five writer checkpoints succeed, including between capture
+  transactions; nine protected-file/acquisition-timestamp comparisons and four
+  physically read-only main/WAL descriptors pass. Retained captures exclude
+  later appends; replacement work survives cancellation of previous subscribers.
+  Helper/thread/endpoint/spool cleanup passes. Focused broker follow-up:
+  **12 passed**. Receipt: `/private/tmp/qplot-round22-safety-receipt.json`.
+- Measurement: four planned/unplanned uint64/float32 sparse-map compositions
+  pass 20 actual-control fill/clip/mean refreshes: **1,008 exact cells, 504
+  Fraction-oracle centered cells, 1,512 processed CSV/TSV values, 252 exact raw
+  CSV values, 252 restored cells, 504 worker comparisons and 12 protected-file
+  comparisons**. Opposite fill order, edge gaps, snake acquisition and fractional
+  clipping preserve data. Bounded display `float(Fraction mean)` rounding and
+  refusal of operations during forced detail reload match explicit existing
+  contracts; these hypotheses were rejected. Focused suite: **31 passed**.
+  Receipt: `/private/tmp/qplot-round22-measurement-receipt.json`.
+- UI: one actual-Qt composition passes **30 plotted values, 60 CSV/TSV cells,
+  eight file dialogs, two overwrite confirmations and four protected-file
+  comparisons**. Covers same-name databases/overlapping IDs, retained sources,
+  overlays, browser close, window restoration, format switching, Cancel/No/Yes,
+  PNG/SVG clipboard and literal source annotations. Owned QObjects, both reader
+  services and fixtures retire. Receipt:
+  `/private/tmp/qplot-round22-ui-receipt.json`.
+
+**C19-037 — cyclic diagnostic log paths crash startup on Python 3.11/3.12.**
+
+- Reproduction: actual project `-m qplot` with an isolated ordinary log exits
+  zero and displays a window; a self-loop or two-link log cycle exits **1 before
+  any window appears**. `Path.resolve()` raises `RuntimeError` on supported
+  Python 3.11/3.12, but duplicate-handler detection catches only `OSError`, so
+  the failure escapes before nonfatal log setup. Resolving an existing handler's
+  newly cyclic filename also blocks a healthy replacement destination.
+  Evidence: `/private/tmp/qplot-r22-log-startup-before.log` and
+  `/private/tmp/qplot-r22-log-startup-js5mw9d5/receipt.json`.
+- Fix: catch `RuntimeError` alongside `OSError` at both diagnostic path
+  resolution sites. Actual opening remains governed by the unchanged auxiliary
+  safety guard; unreadable/nonregular paths still fail closed. No SQLite,
+  native, settings-schema or database-access change.
+- Four meaningful regressions cover self/pair/parent cycles and recovery from
+  an old cyclic handler; all **four fail before** the repair. Focused logging/
+  auxiliary protection validation: **45 passed, three subtests passed**.
+  Logs: `/private/tmp/qplot-c037-before.log`, `/private/tmp/qplot-c037-after.log`.
+  Actual ordinary/self-loop/two-link startups all show the window/event loop
+  and exit zero afterward, preserving the symlinks. Receipt:
+  `/private/tmp/qplot-r22-log-startup-y5xpopzn/receipt.json`.
+- Different safety subchat independently approves: four regressions, two actual
+  module startups (including a cyclic parent directory), and two retained-handler
+  recovery compositions pass. A detached log inode repurposed as an explicitly
+  disposable QCoDeS database remains byte/identity/timestamp identical despite
+  buffered diagnostics and a later cycle/protected alias; unsafe streams are
+  discarded and safe logging recovers. All resources cleaned. Receipt:
+  `/private/tmp/qplot-c037-independent-review-receipt.json`.
+- Ruff, configured mypy (88 files) and whitespace checks pass. Complete local
+  integration is running on the frozen repair/tests:
+  `/private/tmp/qplot-r22-c037-full.log`. No further production edit is pending.
+  Baseline CI remains pending at its later exact-SHA observation: **27 successful,
+  11 running, eight queued**, no failures; evidence
+  `/private/tmp/qplot-r22-baseline-checks-latest.json`.
+
+Next: rounds 23 onward (at most 25), full integration and final draft PR update.
+Stop sooner after two complete new clean rounds. Keep bugfix 1.6.2.
 
 ## Previous campaign archive
 

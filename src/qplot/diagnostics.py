@@ -232,7 +232,9 @@ def log_bounded_shutdown(message, diagnostics, logger_name=None):
 def _has_handler_for(logger, target):
     try:
         target = target.resolve()
-    except OSError:
+    except (OSError, RuntimeError):
+        # Python 3.11/3.12 report symlink loops as RuntimeError. Let the
+        # guarded file open refuse the path without making logging fatal.
         target = target.absolute()
 
     for handler in logger.handlers:
@@ -243,7 +245,7 @@ def _has_handler_for(logger, target):
         try:
             if Path(handler.baseFilename).resolve() == target:
                 return True
-        except OSError:
+        except (OSError, RuntimeError):
             continue
     return False
 
