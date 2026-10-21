@@ -39,6 +39,7 @@ class FakeConfig:
             "user_preference.plot_tile_columns": 2,
             MOUSE_MODE_KEY: "pan",
             COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
+            "user_preference.csv_filename_format": "current",
             "file.default_load_path": "",
             "user_preference.default_refresh_rate": 1.0,
             CONFIRM_CLOSE_ALL_KEY: True,
@@ -334,6 +335,8 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
 
         try:
             dialog.themeCombo.setCurrentIndex(dialog.themeCombo.findData("dark"))
+            dialog.csvFilenameFormatCombo.setCurrentIndex(1)
+            self.assertIn("GUID", dialog.csvFilenameFormatCombo.toolTip())
             dialog.colorbarWidthSpin.setValue(21)
             dialog.axisTickWidthSpin.setValue(2.5)
             dialog.axisMajorTickCountSpin.setValue(5)
@@ -359,6 +362,7 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
 
             reloaded = config()
             self.assertEqual(reloaded.get("user_preference.theme"), "dark")
+            self.assertEqual(reloaded.get("user_preference.csv_filename_format"), "qcodes")
             self.assertEqual(reloaded.get(COLORBAR_WIDTH_KEY), 21)
             self.assertEqual(reloaded.get(AXIS_TICK_WIDTH_KEY), 2.5)
             self.assertEqual(reloaded.get(AXIS_MAJOR_TICK_COUNT_KEY), 5)

@@ -24,6 +24,8 @@ except ImportError:  # pragma: no cover - fail-closed compatibility path
 
 from qplot.diagnostics import log_exception
 
+from ._csv_filenames import csv_filename
+
 from ._export_paths import (
     ExportDestinationTransaction,
     UnsafeExportDestinationError,
@@ -695,6 +697,14 @@ class PlotExportMixin(_PlotExportBase):
         suffixes, default_suffix, name_filter, description = specification
         suggested_path = path.splitext(self._default_plot_pdf_filename())[0]
         suggested_path = f"{suggested_path}{default_suffix}"
+        if type(exporter) is CSVExporter:
+            dataset = getattr(self, "ds", None)
+            filename = csv_filename(
+                getattr(self, "config", None), path.basename(suggested_path),
+                guid=getattr(dataset, "guid", None),
+                captured_run_id=getattr(dataset, "captured_run_id", None),
+            )
+            suggested_path = path.join(path.dirname(suggested_path), filename)
         try:
             destination = choose_export_path_with_suffixes(
                 self,

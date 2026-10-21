@@ -28,6 +28,8 @@ from qplot.datahandling.trusted_live_service import (
 )
 from qplot.diagnostics import log_exception
 
+from ._csv_filenames import csv_filename
+
 from ._dataset_handle import (
     DatasetHandle,
     DatasetKey,
@@ -2575,6 +2577,11 @@ class PlotActionsMixin:
         database_folder = os.path.dirname(self.fileTextbox.text())
         measurement = "all" if len(params) != 1 else params[0].name
         filename = self._safe_filename(f"run_{dataset.run_id}_{measurement}.csv")
+        filename = csv_filename(
+            getattr(self, "config", None), filename,
+            guid=getattr(dataset, "guid", None),
+            captured_run_id=getattr(dataset, "captured_run_id", None),
+        )
         return os.path.join(database_folder or os.getcwd(), filename)
 
 
@@ -2598,6 +2605,11 @@ class PlotActionsMixin:
         filename = self._safe_filename(
             f"run_{run_identifier}_{measurement}.csv"
         )
+        metadata = PlotActionsMixin._run_metadata_for_guid(self, dataset_key.guid)
+        filename = csv_filename(
+            getattr(self, "config", None), filename,
+            guid=dataset_key.guid, captured_run_id=metadata.get("captured_run_id"),
+        )
         database_folder = os.path.dirname(dataset_key.database_path)
         return os.path.join(database_folder or os.getcwd(), filename)
 
@@ -2618,6 +2630,11 @@ class PlotActionsMixin:
         run_identifier = dataset_key.guid if run_id is None else run_id
         filename = self._safe_filename(
             f"run_{run_identifier}_{parameter_name}.csv",
+        )
+        metadata = PlotActionsMixin._run_metadata_for_guid(self, dataset_key.guid)
+        filename = csv_filename(
+            getattr(self, "config", None), filename,
+            guid=dataset_key.guid, captured_run_id=metadata.get("captured_run_id"),
         )
         database_folder = os.path.dirname(dataset_key.database_path)
         return os.path.join(database_folder or os.getcwd(), filename)
