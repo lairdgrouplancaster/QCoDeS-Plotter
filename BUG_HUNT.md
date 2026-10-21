@@ -1585,8 +1585,78 @@ subsequent CI/review failures.
   integration is running against the final repair and all three new tests:
   `/private/tmp/qplot-bh20261021-c035-full.log`. No legacy settings migrations.
 
-Next: complete integration, then rounds 19 onward (at most 21), stopping after
-two complete new clean rounds. Keep the branch/draft PR at bugfix 1.6.2.
+#### Round 19 — C19-036 repaired and independently approved
+
+- Three fresh independent subchats examine the repaired application. Safety
+  and UI find no additional actionable issue. Measurement confirms C19-036
+  below, so the new clean-round streak remains zero.
+- Safety: seven actual QCoDeS schema additions; 15 rejected, expired or
+  cancelled reads followed by recovery on the same reader; oversized metadata
+  presentation; 2/3/4-point captures and completed-cache reuse. **15 protected
+  file comparisons**, four writer checkpoints, zero forbidden native operations
+  or proof leaks, and full helper/thread/endpoint/spool cleanup pass. Focused
+  follow-up: **10 passed**. Receipt:
+  `/private/tmp/qplot-round19-safety-receipt.json`.
+- UI: one fresh actual-Qt composition passes with **three background runs,
+  five flushed blocks and 11 protected-file comparisons** on one persistent
+  helper. New metadata before/after points, exact line/map values, selection
+  and tab changes, Auto-plot disable/re-enable, completion status, closed-plot
+  replay suppression and normal close during refresh all pass. Helper resources
+  retire and plot QObjects are deleted. Receipt:
+  `/private/tmp/qplot-round19-ui-receipt.json`.
+- Coordinator: committed C19-035 revision `f89bbd211763f2bbce30758ec2810fa1e16ab70a`
+  is pushed. Application/native artifact inventories, exact committed-byte
+  comparisons and four twine checks pass: application wheel 130 files/124
+  runtime files; sdist 405 files including all **241 source test modules**.
+  Unchanged native 1.0.1 artifacts remain verified. Manifest:
+  `/private/tmp/qplot-bh20261019-f89bbd2-artifact-manifest.json`.
+- Fresh compiler-free wheel and editable installations pass dependency checks,
+  actual GUI startup/live reading, installed-byte identity and editable update
+  without reinstalling. No compiler builds occur. Logs:
+  `/private/tmp/qplot-bh20261021-f89bbd2-wheel-install.log` and
+  `/private/tmp/qplot-bh20261021-f89bbd2-editable-install.log`.
+- Superseded C19-035 full run was gracefully interrupted after **2,618 passed,
+  34 skipped**, no failures (399.27 s), when C19-036 was confirmed. This is
+  partial validation, not final acceptance. The next full run will cover both
+  repairs together; log `/private/tmp/qplot-bh20261021-c035-full.log`.
+
+**C19-036 — finite clipping bounds underflow or overflow narrow floating arrays.**
+
+- Reproduction through actual registered controls and real current-QCoDeS
+  arrays: float16 `[1, 2, 3]` with Limit Minimum `70000` becomes all infinity,
+  leaving no line or CSV samples. Limit Maximum `1e-8` instead becomes all zero.
+  Float32 limits `1e40` and `1e-46` show the same overflow/underflow. NumPy casts
+  scalar clipping bounds back to the narrow input dtype. Original measurement
+  values are unchanged, but processed/exported results are wrong.
+  Evidence: `/private/tmp/qplot-r19-clipping-probe.log`.
+- Author owns only `plot_tools.py` and the new narrow-float clipping regression
+  file. A different subchat reviews the proposed narrow-float promotion before
+  clipping, including unchanged integer/object/extended-precision paths.
+- Fix: widen only dense floating arrays narrower than binary64 before `np.clip`.
+  All original float16/float32 samples are exactly representable after widening,
+  and the existing finite scalar bound is retained. Four production lines;
+  integer/object and float64/longdouble processing stays unchanged.
+- All **16 new regressions fail before** the fix: actual line/heatmap controls,
+  processed and raw CSV, clipping followed by derivatives, signed bounds and
+  special values. Author validation: **71 passed, two ARM-only extended-float
+  skips**; final no-op/signed-zero assertions: **four passed**. Originals and raw
+  exports remain unchanged. Logs: `/private/tmp/qplot-r19-clipping-before.log`
+  and `/private/tmp/qplot-r19-clipping-after.log`.
+- Different safety subchat independently approves: **73 passed/two skipped on
+  ARM; 13 passed on Intel**. Independent scalar oracles compare **1,253,376
+  values per architecture**, including every float16 bit pattern, seeded
+  float32 values, signed bounds and foreign-endian arrays. Actual controls,
+  export/restore and existing integer/object/true extended-float regressions
+  pass; no repository edits by reviewer. Receipt:
+  `/private/tmp/qplot-c036-independent-review-receipt.json`.
+- Coordinator post-fix startup passes all three ordinary/protected-alias cases,
+  with visible 1.6.2 window, active event loop and exit zero. Receipt:
+  `/private/tmp/qplot-r18-auxiliary-i_4lkww0/receipt.json`. Ruff, configured mypy
+  (88 files) and whitespace checks pass. Full integration restarted against
+  both application fixes: `/private/tmp/qplot-bh20261021-c036-full.log`.
+
+Next: finish integration and rounds 20–21. Stop after two
+complete new clean rounds or the user's four-round cap. Keep bugfix 1.6.2.
 
 ## Previous campaign archive
 

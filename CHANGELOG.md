@@ -15,6 +15,7 @@ lifecycle reliability. The native dependency remains `qplotter-native==1.0.1`.
   scan shapes, and check expanded memory requirements before allocating them.
 - Preserve extended floating-point and integer precision in derivatives, FFTs,
   clipping, centering, statistics, heatmaps, previews and CSV exports.
+  Honor finite clipping bounds on float16/float32 measurement arrays.
 - Preserve axis meaning and source ownership during mixed-plot promotion,
   cut refresh and drag-and-drop; refresh retained sources while paused and
   cancel pending work when its target window closes.

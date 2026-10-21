@@ -605,6 +605,10 @@ def pass_filter(
                                         + denominator.bit_length())
                         new_data.flat[index] = decimal_numerator / Decimal(denominator)
     else:
+        # NumPy otherwise narrows the bound to float16/float32, which can turn
+        # finite clipping limits into infinity or zero before the operation.
+        if data.dtype.kind == "f" and data.dtype.itemsize < 8:
+            data = data.astype(np.float64)
         new_data = np.clip(data, *limit_arr)
     _check_cancelled(cancelled_callback)
     
