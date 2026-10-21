@@ -307,6 +307,7 @@
                 "confirm_incompatible_axes",
                 "mouse_mode",
                 "copy_plot_image_resolution",
+                "csv_filename_format",
                 "auto_plot",
                 "default_refresh_rate"
             ],
