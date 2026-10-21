@@ -2,6 +2,12 @@
 
 ## Campaign starting 2026-10-19 — resumed 2026-10-21 for up to four more rounds
 
+Latest result: **rounds 18–21 complete; rounds 20 and 21 independently clean**.
+This extension fixes C19-035 (live schema refresh) and C19-036 (narrow-float
+clipping), bringing the campaign to **35 confirmed application/diagnostic
+repairs**, all independently approved. Final local suite: **5,528 passed,
+110 skipped**. Bugfix target remains **1.6.2**; draft PR #90, no merge/release.
+
 ### Verified baseline
 
 - Intended revision: `d766a0f45edf266215e8366b8ff8d5ccf65b9a0e`, current
@@ -16,7 +22,7 @@
 - Dedicated branch: `codex/qplot-bug-hunt-2026-10-19`. No merge or release.
 - Initial reviewed batch pushed at `25a46cc51c36f6bf579546b446b96d25aa6441b4`;
   [draft PR #90](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/90)
-  opened for cross-platform CI. Campaign remains active.
+  opened for cross-platform CI. Investigation is now complete through round 21.
 - Local Python: project `.venv-mac`, CPython 3.12.2, QCoDeS 0.61.0,
   APSW 3.53.4.0. Installed native package was stale (1.0.0; source pins 1.0.1);
   rebuilt/installed current native source before runtime validation.
@@ -1655,8 +1661,143 @@ subsequent CI/review failures.
   (88 files) and whitespace checks pass. Full integration restarted against
   both application fixes: `/private/tmp/qplot-bh20261021-c036-full.log`.
 
-Next: finish integration and rounds 20–21. Stop after two
-complete new clean rounds or the user's four-round cap. Keep bugfix 1.6.2.
+#### Round 20 — complete and clean (streak 1)
+
+- Safety: fresh actual-QCoDeS capture/snapshot/close/reopen composition passes
+  **6,400,048 exact array values, 524 lazy snapshot pages, 15 protected-file
+  comparisons, eight physically read-only main/WAL descriptors and five writer
+  checkpoints**. Close during active BLOB capture returns in 0.029 ms and
+  cleanup completes in 89 ms; no partial publication. Retained data remains
+  usable, reopened sessions reject stale ownership, completed cache reuse and
+  new-session capture are exact. All helper/thread/endpoint groups and private
+  spools retire. No actionable finding or source edit.
+  Receipt: `/private/tmp/qplot-round20-safety-receipt.json`.
+- Measurement: four planned/unplanned float32 and mixed signed/unsigned integer
+  variants pass **40 worker loads, 32 cache prefixes, 784 raw-cell checks,
+  192 grid cells, 96 Fraction-oracle centered cells, eight exact reduced means,
+  576 CSV/TSV cells, 16 previews and 16 protected-file comparisons**. Covers
+  empty/singleton/ragged records, missing basis fields, unequal inferred outputs,
+  independent load order and bounded-to-full retry. All sources remain intact;
+  helpers/readers and fixtures are cleaned. No actionable finding.
+  Receipt: `/private/tmp/qplot-r20-measurement-receipt.json`.
+- UI: one fresh actual-Qt composition passes **89 exact plotted values and
+  28 CSV cells**, including shared processed sources across two hosts, retained
+  refresh, line-to-map promotion, independent Clear/reapply, two differentiated
+  cuts/axis changes, export and queued shutdown. Three protected-file snapshots
+  are unchanged; six plot QObjects and all helper/thread/endpoint resources
+  retire. No source edit or actionable finding. Receipt:
+  `/private/tmp/qplot-round20-ui-receipt.json`.
+- Coordinator performance: a real 65,537-point QCoDeS WAL database passes
+  **360 four-query batches/1,440 statements**, exact result comparisons, six
+  protected-file comparisons and safe native audits/handle cleanup. Median
+  batch times are 1.19/1.26 ms with the schema preflight versus 1.14 ms in a
+  static-source reference probe omitting only that preflight. These are local
+  observations under concurrent tests, not portable timing requirements.
+  Initial probe-only multiprocessing-guard and WAL-fixture assumptions were
+  corrected; no application issue. Receipt:
+  `/private/tmp/qplot-round20-read-performance-receipt.json`.
+- Both repairs are committed and pushed at
+  `3cb0e010879036a7c1be0ad71bd90e2861622bfa`. Rebuilt application artifacts and
+  unchanged native 1.0.1 artifacts pass exact committed-byte/inventory checks
+  and four twine checks. The source archive contains all **242 test modules**.
+  Fresh wheel and editable compiler-free installations again pass real GUI
+  startup/live reading, byte identity, dependency consistency and editable
+  updates. Logs: `/private/tmp/qplot-bh20261021-3cb0e01-build.log`,
+  `/private/tmp/qplot-bh20261021-3cb0e01-wheel-install.log` and
+  `/private/tmp/qplot-bh20261021-3cb0e01-editable-install.log`.
+
+#### Round 21 — complete and clean (streak 2; investigation finished)
+
+- Safety: fresh real-QCoDeS journal/SHM refusal-and-recovery composition passes
+  **39 protected-file comparisons, seven expected refusals and three healthy
+  native reads after refusal**. Missing/empty regular SHM recovers safely;
+  symlink/hardlink/directory SHM layouts remain unchanged on refusal. A real
+  appearing rollback journal retires the old service; explicit reopening keeps
+  retained captures valid and reads resumed acquisition/completion exactly.
+  All six services, proofs, helper/thread/endpoint groups, captures and writer
+  retire. The initial execution approval concern was resolved by explicitly
+  assigning/asserting the disposable fixture path before opening QCoDeS; no
+  user database was accessed and nothing remains blocked. No source edit or
+  actionable finding. Receipt: `/private/tmp/qplot-round21-safety-receipt.json`.
+- Measurement: four actual-QCoDeS planned/unplanned and ascending/descending
+  cases pass **1,280 heatmap cells against rational derivative oracles, 108
+  axis-coordinate checks, 216 cut samples, 3,600 plot CSV values, 240 raw CSV
+  values, four previews and four protected-file comparisons**. Covers nonuniform
+  axes, swapped assignments, ordered derivatives and slider/marker ownership.
+  Probe-only preview-order/unique-output-path assumptions were corrected; final
+  execution and cleanup pass. No source edit or actionable finding. Receipt:
+  `/private/tmp/qplot-round21-measurement-receipt.json`.
+
+- UI: fresh actual-Qt composition passes **67 exact values and three protected
+  file comparisons**. Real incompatible-axis Cancel/OK and Preferences
+  Apply/Cancel/OK change concurrency/heatmap budgets during queued refresh;
+  full-to-one-bin-to-full values stay exact. Closing open editors and pending
+  refresh deletes nine owned QObjects and retires all helper/thread/endpoint
+  resources. No source edits or actionable issue. Receipt:
+  `/private/tmp/qplot-round21-ui-receipt.json`.
+- Coordinator: **11 actual installed CLI invocations** pass with Unicode/
+  whitespace/hash-containing paths. Current settings update/find/reset work;
+  invalid numeric input leaves settings unchanged. Synthetic generation creates
+  two complete runs with 7/21 points; ordinary read leaves main/WAL/journal
+  unchanged. Existing-output refusal, explicit selected-output replacement and
+  refusal with an existing WAL sentinel preserve every unselected file and
+  settings. All disposable fixtures cleaned. Receipt:
+  `/private/tmp/qplot-round21-cli-receipt.json`.
+
+All four authorized rounds (18–21) are complete. Rounds 20 and 21 are two
+consecutive complete clean rounds. C19-035 and C19-036 are repaired, committed
+and independently approved. No more investigation rounds are needed or planned.
+
+### Final validation — 2026-10-21, four-round extension
+
+- Final application/test revision:
+  `3cb0e010879036a7c1be0ad71bd90e2861622bfa`. No application or test edits in
+  rounds 20/21. Complete local suite: **5,528 passed, 110 skipped, 61 warnings
+  in 926.84 s**, exit zero. Project venv, fixed Matplotlib cache, offscreen Qt:
+  `-m pytest --no-cov -n 2 --dist=loadfile --no-loadscope-reorder`.
+  Log: `/private/tmp/qplot-bh20261021-c036-full.log`. Four extra test-only
+  no-op/signed-zero assertions added after this run's collection also pass in
+  the author's focused rerun. All final application code is covered by the
+  complete run; the final documentation commit changes no tested source.
+- Final Ruff, configured mypy (88 files), dependency consistency and whitespace
+  checks pass. Actual project startup after both fixes passes three settings/
+  protected-alias variants: visible version 1.6.2 window, Qt event loop and exit
+  zero. Startup receipts and logs retained; owned disposable measurement files
+  and aliases subsequently removed.
+- Exact committed application/native artifact checks and four twine checks
+  pass; the sdist includes all **242 test modules**. Fresh compiler-free wheel
+  and editable installations pass actual GUI/native-reader startup, installed
+  byte identity, dependencies and editable changes without reinstalling.
+  Manifest: `/private/tmp/qplot-bh20261019-3cb0e01-artifact-manifest.json`.
+  Native source/pin remains 1.0.1, already rebuilt and verified; no new native
+  modification requires another rebuild.
+- Current campaign totals: **35 confirmed application/diagnostic fixes** and
+  five test-only CI corrections. C19-014 remains withdrawn. Every substantive
+  repair has concrete evidence, meaningful regressions and another subchat's
+  independent approval. Database invariants remain intact; no legacy settings
+  migrations were added.
+- Hosted CI observation for exact `3cb0e01`: **28 successful, ten running,
+  eight queued**, no failures; all 46 returned check runs match the SHA and API
+  count. This remains pending platform acceptance. Evidence:
+  `/private/tmp/qplot-bh20261021-3cb0e01-checks.json`.
+  [Candidate CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39561239943).
+  The starting revision `64aff93` was independently verified **47/47 green**.
+
+### Final checkpoint and continuation
+
+The four-round request is complete. Rounds 20/21 satisfy the two-consecutive-
+clean-round condition. All subchats have finished; owned processes, readers,
+Qt objects, helper endpoints and disposable fixtures are retired. Reproduction
+scripts, receipts and validation logs remain under `/private/tmp`.
+
+Branch: `codex/qplot-bug-hunt-2026-10-19`;
+[draft PR #90](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/90).
+Prepared release: **qplotter 1.6.2**, retaining **qplotter-native 1.0.1**.
+The final documentation commit records local acceptance; the branch push and
+draft PR update publish this checkpoint. That push may queue fresh CI; do not
+infer completion from the earlier candidate or local results. Subsequent work
+is hosted CI completion and maintainer review/release gates, or investigation
+of a concrete later CI/review failure. No merge, tag or release was performed.
 
 ## Previous campaign archive
 
