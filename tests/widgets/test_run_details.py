@@ -2791,7 +2791,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(requested, ["signal", "signal"])
         self.assertTrue(image.property(PREVIEW_SELECTED_PROPERTY))
 
-    def test_preview_keyboard_menu_keys_open_plot_and_export_actions(self):
+    def test_preview_keyboard_menu_keys_open_plot_export_and_stats_actions(self):
         original_exec_descriptor = qtw.QMenu.__dict__["exec"]
         captured_action_texts = []
         preview = PreviewTab(preview_size=100)
@@ -2838,8 +2838,8 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             captured_action_texts,
             [
-                ["Plot", "Export CSV..."],
-                ["Plot", "Export CSV..."],
+                ["Plot", "Export CSV...", "Generate stats..."],
+                ["Plot", "Export CSV...", "Generate stats..."],
             ],
         )
 
