@@ -1,25 +1,28 @@
 # qPlot bug-hunt campaign
 
-## Campaign starting 2026-10-19 — round 26 completed 2026-10-21
+## Campaign starting 2026-10-19 — round 27 completed 2026-10-21
 
-**The one additional authorized round, 26, is complete.** Three fresh subchats
-and coordinator integration found **no new application bug**. A Windows CI
-test-helper defect was reproduced, repaired and independently approved: inspect
-SHM type/identity without opening SQLite's locked shared-memory file. Main,
-WAL and rollback-journal checks remain strict. The campaign still has **38
-confirmed application/diagnostic repairs**, plus **six test-only CI corrections**.
-Do not start round 27 without a new user request.
+**The one additional authorized round, 27, is complete: no new actionable bugs.**
+Three fresh subchats and coordinator integration exercised live cancellation and
+reader recovery, transform/export recovery, mixed-plot ownership, generation,
+settings and startup. Only this campaign record changed. The campaign remains
+at **38 confirmed application/diagnostic repairs**, plus **six test-only CI
+corrections**. Do not start round 28 without a new user request.
 
-Rounds 22–25 repaired C19-037 (cyclic diagnostic paths), C19-038 (clipped trace
-axis reassignment) and C19-039 (recovered metadata warnings). Rounds 24, 25 and
-26 found no further application bugs on application revision `5c9d7e6`.
+Starting local, fetched and remote-tracking revision was
+`4ab5862beb3db93bac06688e5bcb5815aff6a510`. Its exact-SHA CI initially had
+25 successful, 12 running and 9 queued checks; a later observation had
+**31 successful, 10 running and 5 queued**, with no reported failures.
+All 46 returned checks matched the SHA and API total. Hosted acceptance,
+including round 26's Windows SHM-observation correction, remains pending.
+
 The last full frozen-source suite at `fce02c3` passed **5,545 tests, 110 skipped**;
 round 26's changed helper and all its consumers passed **116 tests, 2 skipped**.
-Both hosted macOS Python 3.14 shards passed at `9745b4d`, including the earlier
-benchmark failure. That revision finished **45/47 green** because of the Windows
-helper failure and consequent Required-check failure; final-head Windows CI
-remains an acceptance gate. Bugfix target remains **1.6.2**, native **1.0.1**;
-draft PR #90, no merge, tag or release.
+Round 27 focused suites passed **8 safety, 23 measurement, 58 UI and 58
+coordinator tests**, plus fresh end-to-end compositions and actual qPlot
+startups. Application/native source remains unchanged from `5c9d7e6`; test and
+script source remains unchanged from `4ab5862`. Bugfix target remains **1.6.2**,
+native **1.0.1**; draft PR #90, no merge, tag or release.
 
 ### Verified baseline
 
@@ -2281,6 +2284,104 @@ manual-refresh validation. Do not equate local simulation with that platform's
 acceptance. Remaining gates are final-head hosted CI, maintainer review and
 normal release checks. No merge, tag, release or round 27 is authorized by this
 one-round request.
+
+### Additional round 27 — complete, 2026-10-21
+
+- Clean starting local, fetched and remote-tracking revision:
+  `4ab5862beb3db93bac06688e5bcb5815aff6a510`. Exact-SHA checks initially:
+  **25 successful, 12 running, 9 queued**, no failures. All 46 check SHAs and
+  the API total matched. A later observation found **31 successful, 10 running,
+  5 queued**, still no failures. This is not a fully green baseline. Evidence:
+  `/private/tmp/qplot-r27-baseline-checks.json` and
+  `/private/tmp/qplot-r27-baseline-checks-latest.json`.
+  [Starting CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39603700089).
+- Three fresh subchats cover safety/live/native, measurement and UI/lifecycle;
+  coordinator covers generation, settings, entry points, packaging, integration
+  and this record. Read-only investigation first, with exact file ownership and
+  independent review required before any substantive repair. Exactly one new
+  round is authorized; do not start round 28.
+- **Safety/live/native — clean:** fresh current-QCoDeS incomplete acquisition
+  through coalesced capture cancellation, concurrent appends, partial-spool
+  cleanup, idle-helper termination/restart, stale cancellation fencing, metadata
+  and snapshot paging, completed-cache reuse and retained captures after close.
+  Verified **240,320 exact values**, 14 source-page reads, two coalesced pairs,
+  three cancelled subscribers, five metadata checks, four snapshot pages,
+  **21 protected-file comparisons, six writer TRUNCATE checkpoints and eight
+  physically read-only main/WAL descriptors** across two helper incarnations.
+  Cancel returned in 0.004–0.019 ms; cancelled spool retired in 1.37 ms. Focused
+  checks: **8 passed, 72 deselected**. All helpers, threads, endpoints, private
+  prefixes and fixture writers retired. Receipt:
+  `/private/tmp/qplot-round27-safety-receipt.json`.
+- **Measurement — clean:** two live current-QCoDeS WAL runs acquire valid then
+  reversing/repeated coordinates with derivative/FFT controls active. Verified
+  atomic rejection, axis-swap recovery, independent Lagrange-gradient and
+  interpolated trigonometric DFT oracles, raw/processed exports and reset:
+  **58 stored values, 28 DFT coordinates/magnitudes, eight gradients, 16 retained
+  values across four rejected refreshes, 26 raw CSV values, 52 plot CSV/TSV
+  values and 65 restored values**. Four axis swaps, ten protected-file
+  identity/hash/mtime/ctime comparisons and two writer checkpoints passed.
+  Both documented active-WAL raw-export refusals preserve existing destinations;
+  export succeeds after the disposable writer explicitly checkpoints. qPlot
+  never checkpoints the source. Focused checks: **23 passed, 46 deselected**.
+  Four plot QObjects, both windows/readers/writers and private fixtures retired;
+  no uncaught callbacks. Receipt:
+  `/private/tmp/qplot-round27-measurement-receipt.json`.
+- **UI/lifecycle — clean:** reciprocal line/heatmap hosts on one live QCoDeS
+  WAL acquisition, append, captured statistics/CSV/SVG/image dialogs, Window
+  menu restoration, cross-dimension primary-source promotion, normal database
+  switching with retained readers, closing the opposite host, further live
+  append/refresh and the public Close Database action. Fresh composition:
+  **1 passed**; focused refresh/promotion/window/dialog/export checks:
+  **58 passed, 175 deselected**. Verified **144 plotted values, 40 CSV values**, four each
+  statistics/SVG/image copies (640 × 480 pixels), four Window actions, four
+  manual refreshes and seven protected-file identity/hash/timestamp comparisons.
+  Three plot and five tracked dialog QObjects plus both services retired;
+  no Qt callback errors. Receipt:
+  `/private/tmp/qplot-round27-ui-receipt.json`.
+- **Coordinator generation/settings/startup — clean:** nine actual console
+  operations plus two actual module startups compose private settings commands,
+  invalid-value rejection, current-QCoDeS synthetic generation, refusal to
+  overwrite without consent and explicit replacement. The selected filename
+  contains Unicode, spaces and `#`; the exact selected output is published and
+  the historically truncated alias remains absent. Independently checked 38
+  setpoint values for reversed line/heatmap sweeps, five protected-file states,
+  fresh generation token/GUID/inode after replacement, persisted themes/recent
+  path and visible event-loop startup with **5+12 then 9 exact result rows**.
+  Both helpers and all reader/process/fixture resources retired; no temporary
+  generation artifacts remained. Receipt:
+  `/private/tmp/qplot-round27-generation-startup-receipt.json`.
+- Coordinator focused generator backend/input/safety, diagnostics and package
+  boundary checks: **58 passed**. Ruff and configured mypy (**88 files**) pass.
+  No production, native, dependency or test source has changed in this round.
+- **Rejected hypothesis:** a retained-plot Refresh after calling low-level
+  `close_database()` directly raised a fallback refusal/KeyError. The probe
+  bypassed normal lifecycle ordering: File → Close Database calls
+  `close_current_database()`, closes plots first and aborts if closure is
+  cancelled. Quit and Reset Settings also close plots before source teardown.
+  Safety independently confirmed this contract. Normal database switching
+  retains plot-owned brokers. No speculative patch or regression was added for
+  the unsupported low-level sequence; UI validation uses the actual supported
+  switching workflow instead.
+
+#### Round-27 validation and checkpoint
+
+All four investigation streams are complete and clean. No new regression test
+or production repair is justified. Database-access restrictions, current QCoDeS
+support and settings policy remain unchanged. Relevant focused suites, fresh
+compositions and actual qPlot startup pass; Ruff, configured mypy and whitespace
+checks pass. The last full-suite result remains **5,545 passed / 110 skipped**
+at `fce02c3`; all tests changed afterward were validated in round 26. No source
+change here requires another full run, native rebuild or compiler-free install.
+
+The publication checkpoint rebuilds application archives from the clean final
+documentation commit and verifies exact tracked bytes, inventories and all four
+application/native Twine checks. Evidence:
+`/private/tmp/qplot-r27-final-build.log` and
+`/private/tmp/qplot-bh20261019-<final-short-sha>-artifact-manifest.json`.
+Push the record on the existing dedicated branch and update draft PR #90 with
+the completed round and honest CI status. Hosted CI completion, maintainer
+review and normal bugfix-release gates remain; no merge, tag, release or round
+28 has been performed or authorized by this one-round request.
 
 ## Previous campaign archive
 
