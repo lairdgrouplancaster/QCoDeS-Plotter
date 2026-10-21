@@ -19,6 +19,8 @@ lifecycle reliability. The native dependency remains `qplotter-native==1.0.1`.
 - Preserve axis meaning and source ownership during mixed-plot promotion,
   cut refresh and drag-and-drop; refresh retained sources while paused and
   cancel pending work when its target window closes.
+- Avoid Qt callback errors when reassigning axes on a clipped trace, and clear
+  obsolete omission warnings when live metadata becomes available again.
 - Honor accepted reader cancellation and delayed helper cancellation without
   publishing stale results or unnecessarily retiring healthy readers.
 - Refresh live-reader schema descriptions when QCoDeS adds metadata, so newly

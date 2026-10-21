@@ -1883,14 +1883,113 @@ of a concrete later CI/review failure. No merge, tag or release was performed.
   discarded and safe logging recovers. All resources cleaned. Receipt:
   `/private/tmp/qplot-c037-independent-review-receipt.json`.
 - Ruff, configured mypy (88 files) and whitespace checks pass. Complete local
-  integration is running on the frozen repair/tests:
-  `/private/tmp/qplot-r22-c037-full.log`. No further production edit is pending.
-  Baseline CI remains pending at its later exact-SHA observation: **27 successful,
-  11 running, eight queued**, no failures; evidence
+  integration was superseded by round 23's two new fixes (partial result below):
+  `/private/tmp/qplot-r22-c037-full.log`.
+  Baseline CI remains pending at its later exact-SHA observation: **40 successful,
+  six running**, no failures; evidence
   `/private/tmp/qplot-r22-baseline-checks-latest.json`.
 
-Next: rounds 23 onward (at most 25), full integration and final draft PR update.
-Stop sooner after two complete new clean rounds. Keep bugfix 1.6.2.
+#### Round 23 — C19-038/039 repaired and independently approved
+
+- Three new subchats cover live metadata/result limits, independent measurement
+  caches and line controls. Measurement is clean; safety/UI each found a
+  reproducible issue. New clean-round streak remains zero.
+- Measurement: one live WAL run, two shared-cache output plots and four
+  alternating acquisition stages cover empty records, multidimensional/ragged
+  changes, big-endian float32/float64/float16 and signed/unsigned arrays. Actual
+  derivative/mean/FFT controls match independent Fraction/interpolation oracles:
+  **84 original coordinates/values, 34 slopes, 42 centered values, 108 FFT
+  coordinates/magnitudes and 84 CSV cells**. Five protected-file comparisons,
+  restoration and full Qt/helper/writer cleanup pass. Focused follow-up:
+  **24 passed**. Receipt: `/private/tmp/qplot-round23-measurement-receipt.json`.
+- Coordinator: exact committed C19-037 artifacts (`472698f`) pass inventories,
+  byte comparisons and four twine checks; source archive contains all **243 test
+  modules**. Fresh compiler-free wheel/editable installations pass actual GUI,
+  native reading, dependency/byte consistency and editable updates without
+  reinstalling. Native source remains unchanged. Manifest:
+  `/private/tmp/qplot-bh20261019-472698f-artifact-manifest.json`; logs
+  `/private/tmp/qplot-r23-472698f-wheel-install.log` and
+  `/private/tmp/qplot-r23-472698f-editable-install.log`.
+- Fresh actual-module startup/Help composition passes ordinary, unavailable and
+  stalled optional Git metadata. All show 1.6.2 and open/close nine total About/
+  Quick Start/Shortcuts dialogs; diagnostic-path clipboard and ownership cleanup
+  pass. Stalled Git reads respect their five-second per-lookup budget; startup
+  plus About finishes in 12.95 s and leaves no child processes. Missing Git
+  finishes in 3.01 s; ordinary in 2.47 s. No actionable finding. Receipt:
+  `/private/tmp/qplot-round23-metadata-startup-receipt.json`.
+- Superseded C19-037 full suite was gracefully interrupted after **2,605 passed,
+  34 skipped**, no failures (368.97 s), after the two new fixes were confirmed.
+  This is partial validation, not final acceptance. Log:
+  `/private/tmp/qplot-r22-c037-full.log`. Final integration will cover all repairs.
+
+**C19-038 — clipped trace axis reassignment raises uncaught Qt callback errors.**
+
+- Actual line workflow: enable Clip to View, then reassign axes through Trace
+  Appearance. Temporary detachment makes PyQtGraph report a GraphicsLayoutWidget
+  instead of a ViewBox. Native clip-to-view mapping calls its nonexistent
+  `autoRangeEnabled()`, causing 12 uncaught callback AttributeErrors across the
+  composition. This is a callback failure, not a demonstrated process crash;
+  qPlot's exception logger keeps the reproduction running.
+  Evidence: `/private/tmp/qplot-round23-ui-r3.log`.
+- Author owns `_native_transforms.py` and a dedicated reparenting regression
+  file. Four real-QCoDeS regressions fail before the narrow view-range guard
+  and pass afterward; detach defers rendering and reattach rebuilds display.
+  Fresh workflow after the fix passes 12 snap samples, 44 selected values,
+  1,170 unchanged raw values, eight invalid-limit recoveries, nine refreshes
+  and five protected-file comparisons, with all owned resources retired.
+  Receipt: `/private/tmp/qplot-round23-ui-receipt.json`.
+- All **109 focused author tests pass**. Different measurement subchat
+  independently approves: four regressions and an additional real-QCoDeS
+  phase/mean/automatic-downsampling composition pass, including eight axis
+  moves, four refreshes, 224 restored coordinates/values and zero Qt callback
+  errors. Restoring only the original callback makes that independent
+  composition fail with the same AttributeError. Protected files and cleanup
+  pass. Evidence: `/private/tmp/qplot-c038-after.log` and
+  `/private/tmp/qplot-c038-independent-receipt.json`.
+
+**C19-039 — recovered live metadata retains false omission/truncation warnings.**
+
+- Current-QCoDeS metadata is initially too large for bounded presentation, then
+  replaced with small valid values. The same helper recovers all six values and
+  a valid snapshot but retains historical unavailable-field names; Raw remains
+  `truncated` and incorrectly says complete source data was omitted. The adapter
+  only unions old omission flags. Evidence:
+  `/private/tmp/qplot-round23-safety-receipt.json` and its probe/log.
+- Author owns `trusted_live_queries.py` and a dedicated metadata-recovery
+  regression file. Clearing must be tied to newly observed fields and retain
+  omissions for fields still unavailable or not re-read. Measurement subchat
+  independently reviews both C19-038 and C19-039; coordinator owns integration.
+- Independent review caught an initial repair losing a newer omission during
+  nested cheap refresh between selected-detail column groups. The revised
+  patch follows the existing newest-cache merge authority and reconciles only
+  observations still used. Eight regressions cover real live recovery plus
+  newer omission/recovery at both column-group and layout yield boundaries.
+  No new cache, SQL budget or native access policy is introduced.
+- Author validation: **83 passed**. Fresh composition passes **327,710 exact
+  array values**, 12 protected-file comparisons, four writer checkpoints and
+  four physically read-only descriptors; scalar-limit refusal is recoverable
+  with the same helper, and all spools/threads/endpoints retire. Recovered Raw
+  is available with no omission flags; malformed snapshots retain their real
+  warning until corrected. Before/final receipts:
+  `/private/tmp/qplot-round23-safety-before-receipt.json` and
+  `/private/tmp/qplot-round23-safety-receipt.json`.
+- Different measurement subchat independently approves after **13 checks**:
+  eight regressions, the initially failing inter-group case, a new real-QCoDeS
+  composition and three unchanged payload/layout-budget controls. Includes
+  oversized-to-empty metadata, oversized-to-malformed-to-valid snapshots,
+  partial recovery, 12 protected-file comparisons, four writer checkpoints,
+  same-helper reuse and full cleanup. Evidence:
+  `/private/tmp/qplot-c039-independent-receipt.json`.
+- Final full integration started on the frozen C19-038/039 source/tests:
+  `/private/tmp/qplot-r23-c039-full.log`. Ruff, configured mypy (88 source files)
+  and dependency consistency pass. Native source remains unchanged.
+- Integrated actual `-m qplot` startup checks pass ordinary/self-loop/two-link
+  log destinations: all show a visible window and event loop, preserve links
+  and exit normally. Receipt:
+  `/private/tmp/qplot-r22-log-startup-o12qdggw/receipt.json`.
+
+Next: finish complete integration and fresh rounds 24–25 on the reviewed repairs.
+Stop after two complete new clean rounds or the four-round cap. Keep bugfix 1.6.2.
 
 ## Previous campaign archive
 

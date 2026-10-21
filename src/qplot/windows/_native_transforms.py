@@ -376,6 +376,13 @@ class NativePlotDataItem(pg.PlotDataItem):
                         and np.all(np.isfinite(pixels[spans > 0] / spans[spans > 0])))
 
     def viewRangeChanged(self, vb=None, ranges=None, changed=None):
+        if not isinstance(self.getViewBox(), pg.ViewBox):
+            # Axis reassignment briefly leaves the trace in the scene alone.
+            # GraphicsItem then reports the GraphicsView, which lacks native
+            # clipping's axis API. Reattachment rebuilds the display normally.
+            self._datasetDisplay = None
+            self._watch_display_range(None)
+            return
         super().viewRangeChanged(vb, ranges, changed)
         self.sigDisplayChanged.emit(self)
 
