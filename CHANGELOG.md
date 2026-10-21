@@ -20,6 +20,8 @@ lifecycle reliability. The native dependency remains `qplotter-native==1.0.1`.
   cancel pending work when its target window closes.
 - Honor accepted reader cancellation and delayed helper cancellation without
   publishing stale results or unnecessarily retiring healthy readers.
+- Refresh live-reader schema descriptions when QCoDeS adds metadata, so newly
+  acquired runs expose their current columns without missing data or query errors.
 - Protect measurement files from diagnostic-log reuse and synthetic generation
   side effects; report malformed generator inputs and profiling failures cleanly.
 

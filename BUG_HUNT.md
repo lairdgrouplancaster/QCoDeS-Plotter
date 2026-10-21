@@ -1,6 +1,6 @@
 # qPlot bug-hunt campaign
 
-## Campaign starting 2026-10-19 — investigation complete after round 17
+## Campaign starting 2026-10-19 — resumed 2026-10-21 for up to four more rounds
 
 ### Verified baseline
 
@@ -43,9 +43,25 @@
   The next release remains the bugfix **1.6.2**; no merge, tag or release.
 - Clean-round count at resumption: **0** (round 13 found C19-031).
   Historical results below are not counted toward the new reviews.
-- Current result: **two consecutive complete clean rounds, 16 and 17**.
-  Four additional rounds (14–17) were used; round 18 is unnecessary.
-  Final local integration validation passes; draft PR #90 prepares bugfix 1.6.2.
+- Previous extension finished with **two complete clean rounds, 16 and 17**.
+  On 2026-10-21 the user authorized **up to four more rounds (18–21)** and a
+  draft PR update afterward. Begin a fresh clean-round count at zero; stop
+  sooner if two consecutive complete new rounds are clean. Bugfix target
+  remains 1.6.2; no merge, tag or release.
+
+### Resumption baseline — 2026-10-21
+
+- Clean local and fetched remote bug-hunt branch both point to
+  `64aff93ded7ad2187a36e3ac097910623cf25abc`.
+- Verified **47/47 check runs completed successfully for that exact SHA**,
+  checking every returned `head_sha` and the API total. This includes the
+  previously failing platform jobs and Required checks.
+  [Verified CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39512764225).
+  Evidence: `/private/tmp/qplot-bh20261021-baseline-checks.json`.
+- Final prior local validation: 5,509 passed/110 skipped, startup/static checks,
+  exact-commit artifact checks and compiler-free wheel/editable installations.
+  Three fresh subchats again own safety, measurement and UI investigation;
+  coordinator covers remaining areas, packaging, performance and integration.
 
 ### Resumption baseline — 2026-10-20
 
@@ -1472,7 +1488,7 @@ subsequent CI/review failure.
   SHA and API total. This is pending CI, not completed platform acceptance.
   Evidence: `/private/tmp/qplot-bh20261020-14b7363-checks.json`.
 
-### Final checkpoint and next tasks
+### Previous extension checkpoint — superseded by the 2026-10-21 resumption
 
 Four further rounds (14–17) are complete. Rounds 16 and 17 are independently
 clean, satisfying the stopping condition within the user's five-round limit.
@@ -1491,6 +1507,86 @@ gates. The final documentation push may queue new checks; do not infer their
 completion from local tests or the earlier candidate status. No merge, tag or
 release was performed. Resume investigation only if requested or for concrete
 subsequent CI/review failures.
+
+### Additional review rounds — resumed 2026-10-21
+
+#### Round 18 — C19-035 repaired and independently approved
+
+- Three fresh subchats cover safety/live acquisition, measurement correctness
+  and actual Qt workflows. Coordinator covers settings/diagnostics, entry points,
+  packaging and integration. Baseline is the exact green `64aff93` revision
+  recorded above; new clean-round streak remains zero.
+- Measurement: **12 fresh real-QCoDeS compositions pass on each of ARM and
+  Intel**. Per architecture: 80 worker loads, 60 raw-column comparisons, 1,040
+  independent direct-DFT cells, 738 exact secants, 32 grids/288 exact bin means,
+  2,880 CSV cells, eight previews and 56 protected-file comparisons. Includes
+  incremental multidimensional arrays, Fortran/strided/big-endian storage,
+  waveform controls and viewport reduction. No actionable finding.
+  Receipt: `/private/tmp/qplot-r18-measurement-receipt.json`.
+- UI: **26 checks pass**, including two fresh actual-Qt compositions with
+  overlapping run IDs across databases, typed/table launch, rapid selection,
+  preferences Apply/Cancel/Restore, retained-source operation refresh, SVG/PDF
+  export and normal shutdown. Owned windows/workers close and protected files
+  remain unchanged. Receipt: `/private/tmp/qplot-round18-ui-receipt.json`.
+- Coordinator: **three actual module startups pass** with ordinary settings,
+  hardlinked config/log paths and symlinked config/log paths pointing at a real
+  disposable QCoDeS database. All show version 1.6.2, enter Qt's event loop,
+  report settings recovery where appropriate and exit zero. Protected file
+  contents and identities remain unchanged; no unsafe recovery backup appears.
+  Receipt: `/private/tmp/qplot-r18-auxiliary-elyxfpn6/receipt.json`.
+  Configuration, diagnostics and packaging checks: **50 passed, two
+  Windows-only skips**, log `/private/tmp/qplot-r18-coordinator-tests.log`.
+- Safety found C19-035: a persistent reader can validate stale columns after
+  QCoDeS adds metadata. The same first-query failure is independently reproduced
+  directly against SQLite and through an actual QCoDeS acquisition. Author owns
+  only `trusted_live.py` and the dedicated regression file; another subchat
+  reviews the repair. Full integration and new clean rounds follow the fix.
+
+**C19-035 — refresh the persistent reader's schema before describing results.**
+
+- Reproduction: open a live broker against an empty current-QCoDeS database,
+  create a background-acquired run and call `dataset.add_metadata`. Refresh
+  sees a changed `data_version`, but the selected run omits the newly created
+  metadata column. Direct native reads isolate two forms: the first zero-row
+  `SELECT * FROM runs WHERE 0` returns stale column names after the schema
+  change; the first nonempty `SELECT * FROM runs` raises a metadata mismatch.
+  All **three new regressions fail before the repair**.
+- Cause: `BEGIN` is deferred and APSW `query_info` prepares without stepping.
+  SQLite refreshes its cached schema on execution, after qPlot has already
+  validated columns and calculated their result limits. Empty results then
+  retain the stale validated description; nonempty results fail the consistency
+  guard. The broker can retain those stale column names for later metadata reads.
+- Fix: step a fixed `SELECT 1 FROM main.sqlite_schema LIMIT 1` immediately
+  inside the existing transaction before describing user queries. This pins
+  the snapshot and refreshes the schema without materializing schema contents.
+  Existing native protections, authorizer, length/work/deadline controls,
+  cancellation and rollback cover the read. No native source changes or
+  database writes; the application change is nine lines including explanation.
+- Author validation: **95 passed, one Windows-only skip** across native reader,
+  result limits, cancellation, the three regressions and fresh compositions.
+  Three background QCoDeS runs/six acquired blocks pass 18 protected-file
+  comparisons, ten writer checkpoints, four physically read-only main/WAL
+  descriptor checks, four mutation refusals and native audit/resource cleanup.
+  Three real rollback-lock contention cycles pass shared cancellation, queued
+  expiry, backpressure and recovery on the same helper.
+  Final broker/service follow-up: **61 passed**. Owned test databases, helpers,
+  workers, connections and endpoints are cleaned up.
+  Receipt: `/private/tmp/qplot-round18-safety-receipt.json`.
+- Separate UI subchat independently approves: **eight checks pass**, including
+  actual schema commits during query validation (stable current snapshot/new
+  schema on next transaction), cancellation/deadline immediately after the
+  schema step, rollback/length restoration/reuse and exact result-budget checks.
+  Source invariance, writer checkpoints and zero forbidden native operations
+  pass. Receipt: `/private/tmp/qplot-round18-schema-review-receipt.json`.
+- Coordinator post-fix actual startup: all three ordinary/hardlink/symlink
+  scenarios pass again; receipt
+  `/private/tmp/qplot-r18-auxiliary-z8i6mlvd/receipt.json`. Ruff, configured mypy
+  (88 files), dependency consistency and whitespace checks pass. Full local
+  integration is running against the final repair and all three new tests:
+  `/private/tmp/qplot-bh20261021-c035-full.log`. No legacy settings migrations.
+
+Next: complete integration, then rounds 19 onward (at most 21), stopping after
+two complete new clean rounds. Keep the branch/draft PR at bugfix 1.6.2.
 
 ## Previous campaign archive
 

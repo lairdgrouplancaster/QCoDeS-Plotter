@@ -2424,6 +2424,15 @@ class TrustedLiveReader:
                 # If BEGIN itself completed but explicit cursor cleanup failed,
                 # this still forces rollback on the exceptional path.
                 transaction_started = connection.in_transaction
+            # BEGIN is deferred, and query_info prepares without stepping.
+            # SQLite may therefore still describe the previous schema after a
+            # QCoDeS writer adds metadata columns.  Step one fixed, scalar-only
+            # read to refresh that schema and pin this transaction's snapshot
+            # before validating result columns and their materialisation limits.
+            # The existing handlers, deadline, length cap and rollback cover it.
+            self._execute_transaction_control(
+                "SELECT 1 FROM main.sqlite_schema LIMIT 1"
+            )
             materialised: list[TrustedQueryResult] = []
             for query in specifications:
                 self._raise_if_operation_aborted(control)
