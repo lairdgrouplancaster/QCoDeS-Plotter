@@ -29,7 +29,6 @@ from qplot.datahandling.trusted_live_service import (
 from qplot.diagnostics import log_exception
 
 from ._csv_filenames import csv_filename
-
 from ._dataset_handle import (
     DatasetHandle,
     DatasetKey,

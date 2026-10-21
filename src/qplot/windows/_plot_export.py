@@ -25,7 +25,6 @@ except ImportError:  # pragma: no cover - fail-closed compatibility path
 from qplot.diagnostics import log_exception
 
 from ._csv_filenames import csv_filename
-
 from ._export_paths import (
     ExportDestinationTransaction,
     UnsafeExportDestinationError,

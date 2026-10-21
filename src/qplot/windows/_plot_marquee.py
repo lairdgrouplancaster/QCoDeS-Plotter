@@ -344,8 +344,9 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
     def _new_marquee_stats_dialog(self, stats_text: str) -> qtw.QDialog:
         return new_statistics_dialog(self, stats_text, "Marquee stats")
 
-    def _new_marquee_stats_table(self, stats_text: str) -> CopyableTableWidget:
-        rows = self._marquee_stats_table_rows(stats_text)
+    @staticmethod
+    def _new_marquee_stats_table(stats_text: str) -> CopyableTableWidget:
+        rows = PlotMarqueeMixin._marquee_stats_table_rows(stats_text)
         stats_table = CopyableTableWidget()
         stats_table.setObjectName("detailsTable")
         stats_table.setColumnCount(2)
@@ -386,7 +387,8 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
 
         return stats_table
 
-    def _marquee_stats_table_rows(self, stats_text: str) -> list[tuple[str, str]]:
+    @staticmethod
+    def _marquee_stats_table_rows(stats_text: str) -> list[tuple[str, str]]:
         rows: list[tuple[str, str]] = []
         for line in stats_text.splitlines():
             line = line.strip()
@@ -640,17 +642,12 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             }
 
 
-class _StatisticsContent:
-    _new_marquee_stats_table = PlotMarqueeMixin._new_marquee_stats_table
-    _marquee_stats_table_rows = PlotMarqueeMixin._marquee_stats_table_rows
-
-
 def new_statistics_dialog(parent, stats_text, title):
     dialog = qtw.QDialog(parent)
     dialog.setWindowTitle(title)
 
     layout = qtw.QVBoxLayout(dialog)
-    stats_table = _StatisticsContent()._new_marquee_stats_table(stats_text)
+    stats_table = PlotMarqueeMixin._new_marquee_stats_table(stats_text)
     layout.addWidget(stats_table)
 
     buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)

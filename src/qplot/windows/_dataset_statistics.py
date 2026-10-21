@@ -4,6 +4,7 @@ import numpy as np
 
 from qplot.datahandling.parameter_data import numeric_isfinite
 from qplot.tools.sample_statistics import finite_mean, finite_standard_deviation
+
 from ._plotWin import plotWidget
 
 
@@ -19,7 +20,7 @@ def dataset_statistics_text(columns, parameter_name):
     # Match the default plot axes: the inner (second) setpoint is X,
     # and the outer (first) setpoint is Y.
     range_names = axes[::-1] if len(axes) == 2 else (axes + [parameter_name])[:2]
-    for axis, name in zip(("X", "Y"), range_names):
+    for axis, name in zip(("X", "Y"), range_names, strict=False):
         samples = np.asarray(columns[name])
         samples = samples[numeric_isfinite(samples)]
         if samples.size:

@@ -11,9 +11,9 @@ from PyQt6 import (
 
 from qplot.configuration.fonts import FONT_SIZE_KEY
 
-from ._csv_filenames import CSV_FILENAME_FORMAT_KEY, CSV_FILENAME_FORMAT_OPTIONS
 from ._commands import create_action
 from ._config_persistence import persist_config_values
+from ._csv_filenames import CSV_FILENAME_FORMAT_KEY, CSV_FILENAME_FORMAT_OPTIONS
 from ._plot_annotation import SHOW_SOURCE_ANNOTATION_KEY
 from ._plot_tiling import PLOT_TILE_COLUMNS_KEY, PLOT_TILE_ROWS_KEY
 from ._window_controls import (

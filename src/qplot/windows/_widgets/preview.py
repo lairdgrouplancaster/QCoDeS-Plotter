@@ -1397,8 +1397,9 @@ class PreviewImageLabel(qtw.QLabel):
         export_action.triggered.connect(lambda: self.exportRequested.emit(self.parameter))
         menu.addAction(export_action)
 
-        stats_action = menu.addAction("Generate &stats...")
+        stats_action = QtGui.QAction("Generate &stats...", menu)
         stats_action.triggered.connect(lambda: self.statsRequested.emit(self.parameter))
+        menu.addAction(stats_action)
 
         menu.exec(global_position)
 

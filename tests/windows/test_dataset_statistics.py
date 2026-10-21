@@ -1,5 +1,6 @@
 import numpy as np
-from PyQt6 import QtCore, QtWidgets as qtw
+from PyQt6 import QtCore
+from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._dataset_statistics import dataset_statistics_text
 from qplot.windows._plot_marquee import new_statistics_dialog
@@ -58,6 +59,7 @@ def test_thumbnail_action_and_shared_dialog(monkeypatch):
 
 def test_stats_action_releases_reader_before_showing_dialog(monkeypatch):
     from types import SimpleNamespace
+
     from qplot.windows import _plot_actions, _plot_marquee
 
     events = []
