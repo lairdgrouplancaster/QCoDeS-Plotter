@@ -336,7 +336,7 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
         try:
             dialog.themeCombo.setCurrentIndex(dialog.themeCombo.findData("dark"))
             dialog.csvFilenameFormatCombo.setCurrentIndex(1)
-            self.assertIn("GUID", dialog.csvFilenameFormatCombo.toolTip())
+            self.assertEqual("Suggested filename when exporting to CSV.", dialog.csvFilenameFormatCombo.toolTip())
             dialog.colorbarWidthSpin.setValue(21)
             dialog.axisTickWidthSpin.setValue(2.5)
             dialog.axisMajorTickCountSpin.setValue(5)

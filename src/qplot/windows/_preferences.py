@@ -309,10 +309,7 @@ class PreferencesDialog(qtw.QDialog):
         for label, value in CSV_FILENAME_FORMAT_OPTIONS:
             self.csvFilenameFormatCombo.addItem(label, value)
         self.csvFilenameFormatCombo.setToolTip(
-            "Suggested CSV filenames: Current uses run_<run_id>_<measurement>.csv "
-            "(all for multiple measurements). QCoDeS uses "
-            "qcodes_<captured_run_id>_<GUID>.csv, matching dataset.export defaults. "
-            "You can edit the filename when saving."
+            "Suggested filename when exporting to CSV."
         )
         self._add_row(form, "CSV &filename format:", self.csvFilenameFormatCombo)
 

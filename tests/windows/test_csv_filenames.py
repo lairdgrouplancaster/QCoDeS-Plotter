@@ -27,7 +27,7 @@ def test_csv_suggestions_use_captured_id_for_qcodes(style, tmp_path):
     dataset = SimpleNamespace(run_id=7, captured_run_id=42, guid=guid)
     key = DatasetKey(str(tmp_path / "data.db"), guid)
     params = [SimpleNamespace(name="signal")]
-    expected = f"qcodes_42_{guid}.csv" if style == "qcodes" else "run_7_signal.csv"
+    expected = f"42_{guid}.csv" if style == "qcodes" else "run_7_signal.csv"
     suggestions = [
         PlotActionsMixin._default_export_filename(host, dataset, params),
         PlotActionsMixin._default_run_csv_export_filename(host, key, ["signal"]),

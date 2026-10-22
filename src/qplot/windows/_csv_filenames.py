@@ -2,18 +2,18 @@
 
 CSV_FILENAME_FORMAT_KEY = "user_preference.csv_filename_format"
 CSV_FILENAME_FORMAT_OPTIONS = (
-    ("Current format", "current"),
-    ("QCoDeS format (includes GUID)", "qcodes"),
+    ("run_<run_id>_<measurement>.csv", "current"),
+    ("<captured_run_id>_<GUID>.csv", "qcodes"),
 )
 
 
 def csv_filename(config, current_filename, *, guid, captured_run_id):
-    """Use QCoDeS' default export naming when captured metadata is available."""
+    """Use captured run ID and GUID naming when metadata is available."""
     try:
         use_qcodes = config.get(CSV_FILENAME_FORMAT_KEY) == "qcodes"
     except (AttributeError, KeyError):
         use_qcodes = False
     if use_qcodes and guid and captured_run_id is not None:
-        filename = f"qcodes_{captured_run_id}_{guid}.csv"
+        filename = f"{captured_run_id}_{guid}.csv"
         return "".join(c if c.isalnum() or c in "._-" else "_" for c in filename)
     return current_filename
