@@ -65,6 +65,13 @@ database and each run, including elapsed times and whether generation completed,
 was cancelled, or failed. These appear alongside QCoDeS's existing
 `Starting experimental run with id:` messages.
 
+Generation requires QCoDeS's `dataset.raw_data_backend` to be `sqlite_main_db`,
+`dataset.export_automatic` to be false, and
+`subscription.default_subscribers` to be empty. Other settings are rejected
+before creating files because they can write outside the selected output.
+qPlot leaves these global settings unchanged and uses an empty private station
+so synthetic measurements do not read parameters from an acquisition station.
+
 Every nonblank CSV row creates one run, named `run_1`, `run_2`, and so on. A 1D
 row sweeps `V_SD`; a 2D row sweeps both `V_SD` and `V_G`. Each measured signal
 is the sum of two sinusoids with independently randomised amplitudes,

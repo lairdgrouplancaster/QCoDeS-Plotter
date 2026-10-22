@@ -29,15 +29,15 @@ virtual environment with:
 python -m pip install --only-binary=:all: qplotter
 ```
 
-The current development target is the stable application release `1.6.1`,
+The current development target is the stable application release `1.6.2`,
 with exact native dependency `1.0.1`. Existing candidate tags do not establish
 that publication succeeded. Preparing a PR does not publish either package.
 
-The prepared stable application release is `1.6.1`, with exact native
+The prepared stable application release is `1.6.2`, with exact native
 dependency `1.0.1`. Once published, install that release explicitly:
 
 ```console
-python -m pip install --only-binary=:all: qplotter==1.6.1
+python -m pip install --only-binary=:all: qplotter==1.6.2
 ```
 
 The earlier `native-and-app/v1.6.0b2` candidate did not pass its complete hosted
@@ -59,7 +59,7 @@ wheel paths from this revision's validated artifacts together. For example,
 on Windows x64 (replace the application version when appropriate):
 
 ```console
-python -m pip install --only-binary=:all: dist/qplotter_native-1.0.1-cp311-abi3-win_amd64.whl dist/qplotter-1.6.1-py3-none-any.whl
+python -m pip install --only-binary=:all: dist/qplotter_native-1.0.1-cp311-abi3-win_amd64.whl dist/qplotter-1.6.2-py3-none-any.whl
 ```
 
 Use your platform's native filename on macOS/Linux. Never mix artifacts from
@@ -91,7 +91,7 @@ application names before installing the replacement:
 
 ```console
 python -m pip uninstall -y qplot qcodes-plotter qcodes-plotter-native qplotter qplotter-native
-python -m pip install --only-binary=:all: qplotter==1.6.1
+python -m pip install --only-binary=:all: qplotter==1.6.2
 python -m pip check
 python -c "from importlib.metadata import packages_distributions; p = packages_distributions(); assert set(p['qplot']) == {'qplotter'}; assert set(p['qplot_native']) == {'qplotter-native'}"
 ```
@@ -399,8 +399,8 @@ application version from `pyproject.toml`:
 
 | Tag | Native handling | PyPI uploads |
 | --- | --- | --- |
-| `native-and-app/v1.6.1` | Build/validate native `1.0.1` at this revision, if unpublished | Native wheels first, then application wheel/sdist |
-| `v1.6.1` | Fetch/validate the application's exact published native pin | Application wheel/sdist only |
+| `native-and-app/v1.6.2` | Build/validate native `1.0.1` at this revision, if unpublished | Native wheels first, then application wheel/sdist |
+| `v1.6.2` | Fetch/validate the application's exact published native pin | Application wheel/sdist only |
 
 The workflow calls the entire CI workflow at the tagged revision. Failure of
 any build, static check, source-distribution suite, database-protection suite,
@@ -432,7 +432,7 @@ After application publication and byte verification, `public-installations`
 runs on all four platforms and every advertised CPython version (3.11–3.14).
 Each entry creates two fresh environments outside the original checkout.
 The ordinary path runs `python -m pip install --only-binary=:all:
-qplotter==1.6.1` against the public PyPI index with all runtime dependencies.
+qplotter==1.6.2` against the public PyPI index with all runtime dependencies.
 The editable path fetches the exact tested commit into a fresh checkout and
 installs `.[dev]` with `qplotter-native==1.0.1` resolved from public PyPI.
 Neither path installs a local release wheel; the validated artifacts are only
@@ -491,13 +491,14 @@ and [pending-publisher instructions](https://docs.pypi.org/trusted-publishers/cr
    release version before tagging; never move a published tag. If migrating
    from token publishing, revoke/remove the old upload tokens/secrets.
 
-### Paired release commands
+### Application 1.6.2 release commands
 
-Version 1.6.1 includes native-reader changes, so release native 1.0.1 with
-the paired tag below. Keep the already published native 1.0.0 unchanged.
+Version 1.6.2 contains Python-only changes and retains the published native
+1.0.1 dependency. Use the application-only tag below; published native files
+remain unchanged.
 
 Complete the account setup and merge the reviewed packaging/release changes
-to `main`. With application `1.6.1` and native `1.0.1`, use the configured
+to `main`. With application `1.6.2` and native `1.0.1`, use the configured
 Git remote/credentials:
 
 ```console
@@ -505,22 +506,22 @@ git fetch origin
 git switch main
 git pull --ff-only origin main
 python scripts/validate_distribution.py --check-clean
-git tag -a native-and-app/v1.6.1 -m "qPlot 1.6.1 with native reader 1.0.1"
-git push origin refs/tags/native-and-app/v1.6.1
+git tag -a v1.6.2 -m "qPlot 1.6.2"
+git push origin refs/tags/v1.6.2
 ```
 
 Use the activated project venv for Python; on macOS set
 `MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache` for Python commands that may
 import Matplotlib. The tag push is the publication trigger. Review its hosted
-CI results, then approve the `pypi-native` environment. Confirm native
-verification succeeds before approving `pypi-application`. The final PyPI
+CI results and confirm verification of the published native dependency
+succeeds before approving `pypi-application`. No native publication is needed. The final PyPI
 verification and all `public-installations` jobs must succeed before announcing the release. No GitHub Release
 object is needed to trigger publication; use the connected GitHub app for any
 subsequent release/PR operations if supported, never `gh`.
 
 ### Later Python-only releases
 
-Update the application version (for example to `1.6.0b4`) and changelog, keep
+Update the application version (for example to `1.6.3`) and changelog, keep
 the exact native/APSW pins when still compatible, and merge the changes. Do
 not change native sources/ABI under an existing native version. Then:
 
@@ -529,8 +530,8 @@ git fetch origin
 git switch main
 git pull --ff-only origin main
 python scripts/validate_distribution.py --check-clean
-git tag -a v1.6.0b4 -m "qPlot 1.6.0b4"
-git push origin refs/tags/v1.6.0b4
+git tag -a v1.6.3 -m "qPlot 1.6.3"
+git push origin refs/tags/v1.6.3
 ```
 
 The native release must already contain all four non-yanked compatible wheels.

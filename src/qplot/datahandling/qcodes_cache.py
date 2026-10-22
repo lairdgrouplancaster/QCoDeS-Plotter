@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from threading import Lock, RLock
 from typing import Any
 
+import numpy as np
+
 _CACHE_LOCK_CREATION = Lock()
 
 
@@ -150,7 +152,21 @@ def snapshot_cache_parameter_state(cache, parameter_name):
     """Take a consistent shallow snapshot for one parameter-tree read."""
 
     with cache_lock(cache):
-        parameter_data = dict(cache_parameter_data(cache, parameter_name))
+        if parameter_name in cache_data(cache) or cache_is_live(cache):
+            parameter_data = dict(cache_parameter_data(cache, parameter_name))
+        else:
+            # QCoDeS prepares only top-level cache trees. Recorded inferred
+            # parameters can still have their own setpoints and be plotted.
+            # Prepare their requested tree using the same ordering as the
+            # decoder, privately until a successful read is published. A
+            # cancelled or failed first read must not change shared state.
+            interdeps = cache_rundescriber(cache).interdeps
+            parameter = interdeps._id_to_paramspec[parameter_name]
+            output, dependencies, inferences = interdeps.all_parameters_in_tree_by_group(parameter)
+            parameter_data = {
+                item.name: np.array([])
+                for item in (output, *dependencies, *inferences)
+            }
         return (
             dict(cache_write_status(cache)),
             dict(cache_read_status(cache)),

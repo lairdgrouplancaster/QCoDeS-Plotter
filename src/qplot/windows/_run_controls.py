@@ -186,6 +186,7 @@ class RunControlsMixin:
         self.RunList.plot.connect(self.openPlot)
         self.RunList.previewPlotRequested.connect(self.open_run_preview_plot)
         self.RunList.previewExportRequested.connect(self.export_run_preview_csv)
+        self.RunList.previewStatsRequested.connect(self.show_run_preview_stats)
         self.RunList.verticalScrollBar().valueChanged.connect(
             lambda _: self._run_table_view_changed()
             )
@@ -193,6 +194,7 @@ class RunControlsMixin:
         self.infoBox = moreInfo(preview_size=self.preview_size)
         self.infoBox.preview.plotRequested.connect(self.open_preview_plot)
         self.infoBox.preview.exportRequested.connect(self.export_preview_csv)
+        self.infoBox.preview.statsRequested.connect(self.show_preview_stats)
         self.infoBox.preview.previewsReady.connect(self.RunList.set_run_previews)
         self.infoBox.preview.previewGenerationChanged.connect(
             self.RunList.set_run_preview_generating

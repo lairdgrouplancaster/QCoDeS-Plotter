@@ -588,6 +588,7 @@ class loader(QtCore.QRunnable):
                             read_status,
                             existing_data,
                             check_cancelled=self._check_cancelled,
+                            max_decode_bytes=MAX_TRUSTED_FULL_PLOT_DECODE_BYTES,
                         )
                     finally:
                         self._close_sql_connection(conn)
@@ -1243,7 +1244,20 @@ class loader(QtCore.QRunnable):
                                 )
                     sizes = [value.size if isinstance(value, _HeatmapArrayReader) else 1
                              for value in values]
-                    size = sizes[2]
+                    # QCoDeS also expands a singleton dependent array (or
+                    # numeric scalar) when its setpoints supply more samples.
+                    # Scalar storage must not turn all-empty array records
+                    # into measurements. Keep singleton payloads unexpanded
+                    # until the existing bounded chunk broadcast below.
+                    array_sizes = {name: value.size for name, value in zip(names, values, strict=True)
+                                   if isinstance(value, _HeatmapArrayReader)}
+                    # Scalar outputs expand to the first array in QCoDeS'
+                    # output-first tree, independently of displayed axis order.
+                    # Empty output records stay empty with singleton setpoints.
+                    first_size = next((array_sizes[name] for name in
+                                       (self.param.name, *self.param.depends_on_)
+                                       if name in array_sizes), 1)
+                    size = 0 if first_size == 0 else max(array_sizes.values(), default=1)
                     if any(value_size not in (1, size) for value_size in sizes):
                         raise ValueError("Heatmap setpoint and measurement shapes do not match.")
                     yield values, size

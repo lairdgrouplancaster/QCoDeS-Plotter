@@ -20,6 +20,7 @@ from itertools import islice
 from typing import Any, Protocol, TypeAlias, cast
 
 from qplot.datahandling.file_identity import DatabaseInstance
+from qplot.datahandling.readonly import SEPARATE_RAW_DATA_STORAGE_MESSAGE
 from qplot.datahandling.readSQL import (
     materialize_run_basic_fields,
     materialize_run_observation,
@@ -28,6 +29,7 @@ from qplot.datahandling.source_activity import source_activity_timestamp
 from qplot.datahandling.trusted_live import (
     TRUSTED_LIVE_MAX_SCALAR_BYTES,
     SqliteBindings,
+    TrustedLiveQueryError,
     TrustedQuery,
     TrustedQueryResult,
 )
@@ -1826,13 +1828,18 @@ class TrustedMetadataQueryAdapter:
         self,
         run_id: int,
         *field_groups: tuple[str, ...],
+        observed_fields: tuple[str, ...] = (),
     ) -> tuple[str, ...]:
-        """Merge unavailable names without ever growing retained adapter state."""
+        """Replace observed omissions, retaining bounded names not fetched again."""
 
+        observed = frozenset(observed_fields)
         merged = tuple(
             dict.fromkeys(
                 (
-                    *self._unavailable_run_fields.get(run_id, ()),
+                    *(
+                        name for name in self._unavailable_run_fields.get(run_id, ())
+                        if name not in observed
+                    ),
                     *(name for group in field_groups for name in group),
                 )
             )
@@ -1878,6 +1885,7 @@ class TrustedMetadataQueryAdapter:
         unavailable_fields = self._cache_unavailable_fields(
             run_id,
             loaded.unavailable_fields,
+            observed_fields=tuple(loaded.fields),
         )
         return _bounded_run_record(
             run_id,
@@ -1898,6 +1906,13 @@ class TrustedMetadataQueryAdapter:
         """
 
         metadata = dict(self._require_cached_run(run_id))
+        if "raw_data_db_path" in self._ensure_current_schema():
+            storage = self._executor.query(
+                "SELECT raw_data_db_path IS NOT NULL FROM runs WHERE run_id=? LIMIT 1",
+                (run_id,),
+            ).rows
+            if storage and storage[0][0]:
+                raise TrustedLiveQueryError(SEPARATE_RAW_DATA_STORAGE_MESSAGE)
         if any(name not in metadata for name in _DEFERRED_BASIC_RUN_COLUMNS):
             selected = tuple(
                 name
@@ -1919,6 +1934,7 @@ class TrustedMetadataQueryAdapter:
             self._cache_unavailable_fields(
                 run_id,
                 loaded.unavailable_fields,
+                observed_fields=tuple(loaded.fields),
             )
         table_name = self._result_table_name(run_id, metadata)
         result_columns = self._ensure_result_columns(table_name)
@@ -2695,6 +2711,26 @@ class TrustedMetadataQueryAdapter:
         cached = self._require_cached_run(run_id)
         run_columns = self._ensure_current_schema()
         loaded = self._single_run_columns(run_id, run_columns)
+        if loaded is None:
+            raise TrustedMetadataQueryError(
+                f"Run {run_id} disappeared during selected-detail loading."
+            )
+        # Grouped column reads can themselves yield to a newer cheap refresh.
+        # Reconcile only observations still used by the newest-cache merge,
+        # then let later layout-boundary refreshes retain their omission state.
+        latest_after_columns = self._require_cached_run(run_id)
+        cache_unchanged = latest_after_columns == cached
+        observed_fields = tuple(
+            name for name, value in loaded.fields.items()
+            if cache_unchanged
+            or name not in latest_after_columns
+            or latest_after_columns[name] == value
+        )
+        self._cache_unavailable_fields(
+            run_id,
+            tuple(name for name in loaded.unavailable_fields if name in observed_fields),
+            observed_fields=observed_fields,
+        )
         layout_watermark_result = self._executor.query(
             'SELECT COALESCE(MAX("layout_id"), 0) FROM "layouts" WHERE "run_id" = ?',
             (run_id,),
@@ -2703,10 +2739,6 @@ class TrustedMetadataQueryAdapter:
             layout_watermark_result,
             "selected-run layout watermark",
         )
-        if loaded is None:
-            raise TrustedMetadataQueryError(
-                f"Run {run_id} disappeared during selected-detail loading."
-            )
         layout_result, layout_unavailable = self._selected_layout_pages(
             run_id,
             layout_watermark,
@@ -2775,7 +2807,6 @@ class TrustedMetadataQueryAdapter:
         )
         public_unavailable_fields = self._cache_unavailable_fields(
             run_id,
-            loaded.unavailable_fields,
             layout_unavailable,
             presentation_unavailable,
         )

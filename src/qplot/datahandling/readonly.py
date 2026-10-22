@@ -99,6 +99,11 @@ SQLITE_READ_ONLY_CACHE_KIB = 16 * 1024
 SNAPSHOT_COPY_CHUNK_BYTES = 1024 * 1024
 QCODE_SQLITE_BUSY_QUANTUM_SECONDS = 0.05
 QCODE_SQLITE_OPEN_TIMEOUT_SECONDS = 5.0
+SEPARATE_RAW_DATA_STORAGE_MESSAGE = (
+    "This QCoDeS run stores its measurements in a separate raw-data SQLite "
+    "database (sqlite_per_dataset_db). qPlot cannot safely read this storage "
+    "backend yet; its measurement files have not been opened."
+)
 WAL_SNAPSHOT_ATTEMPTS = 5
 _ROLLBACK_JOURNAL_MAGIC = b"\xd9\xd5\x05\xf9 \xa1c\xd7"
 _ROLLBACK_JOURNAL_PREFIX_BYTES = 4096
@@ -953,6 +958,26 @@ def qcodes_read_only_connection(
         )
 
 
+def _require_main_database_results(connection, key, value):
+    """Reject external result files before QCoDeS can open their connections.
+
+    Current QCoDeS constructs its separate-file results backend while loading
+    a DataSet, independently of the supplied private metadata connection.
+    Even its read-only mode would bypass qPlot's source-file boundary.
+    """
+    columns = connection.execute("PRAGMA table_info(runs)").fetchall()
+    if not any(column[1] == "raw_data_db_path" for column in columns):
+        return
+    if key not in {"guid", "run_id"}:
+        raise ValueError("Invalid QCoDeS run lookup key.")
+    row = connection.execute(
+        f"SELECT raw_data_db_path IS NOT NULL FROM runs WHERE {key}=? LIMIT 1",
+        (value,),
+    ).fetchone()
+    if row is not None and row[0]:
+        raise ReadOnlyDatabaseAccessError(SEPARATE_RAW_DATA_STORAGE_MESSAGE)
+
+
 def load_by_guid_read_only(
         guid,
         database_path=None,
@@ -973,6 +998,7 @@ def load_by_guid_read_only(
     connection_transferred = False
     try:
         _raise_if_read_interrupted(cancelled_callback, deadline)
+        _require_main_database_results(conn, "guid", guid)
         result = load_by_guid(guid, conn=conn)
         _raise_if_read_interrupted(cancelled_callback, deadline)
         connection_transferred = result_owns_supplied_connection(result)
@@ -1005,6 +1031,7 @@ def load_by_id_read_only(
     connection_transferred = False
     try:
         _raise_if_read_interrupted(cancelled_callback, deadline)
+        _require_main_database_results(conn, "run_id", run_id)
         result = load_by_id(run_id, conn=conn)
         _raise_if_read_interrupted(cancelled_callback, deadline)
         connection_transferred = result_owns_supplied_connection(result)

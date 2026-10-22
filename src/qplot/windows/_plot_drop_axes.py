@@ -211,10 +211,20 @@ class DroppedAxisMapping:
         self.target = target
         self.source = source
         self.target_names = tuple(target.axis_options[axis] for axis in ("x", "y"))
-        self.source_names = tuple(source.axis_options[axis] for axis in order)
+        options = self._source_axis_options()
+        self.source_names = tuple(options[axis] for axis in order)
+
+    def _source_axis_options(self) -> dict[str, str]:
+        options = dict(self.source.axis_options)
+        if getattr(self.source, "operation_kind", None) == "sweeper":
+            # A cut selects its fixed coordinate in axis_options['y'], but
+            # its plotted Y samples remain the measured signal. A cut-axis
+            # change must never transpose that signal into the old coordinate.
+            options["y"] = self.source.param.name
+        return options
 
     def axis_order(self) -> tuple[str, str] | None:
-        options = self.source.axis_options
+        options = self._source_axis_options()
         names = self.source_names
         target_names = tuple(self.target.axis_options[axis] for axis in ("x", "y"))
         if target_names == self.target_names[::-1]:

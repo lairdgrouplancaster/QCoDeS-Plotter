@@ -379,8 +379,10 @@ class sweeper(plotWidget):
             self.formatNum(self.fixed_indep_data[self.fixed_index])
             )
         self._set_param_axis_labels()
-        self.update_sweep()
+        # Consumers clear obsolete samples when compatibility changes, before
+        # update_sweep publishes the newly committed cut through trace_updated.
         self.merge_compatibility_changed.emit()
+        self.update_sweep()
 
 
     def _commit_empty_cut(self, transaction: _AxisChangeTransaction) -> None:

@@ -26,14 +26,15 @@ def heatmap_display_range_is_finite(geometry, pixel_size=(1., 1.)):
 
 
 def float_display_loses_distinctions(values):
-    """Check exact integer/object values before a renderer converts to float.
+    """Check recorded values before a renderer converts to float64.
 
     Ordinary float64 and narrower samples are already representable. Only
     potentially inexact inputs need sorting; adjacent distinct exact values
     must remain distinct after conversion, including fractional object cells.
     """
     values = np.asarray(values)
-    if values.dtype.kind not in "iuO" or values.size < 2:
+    extended_float = values.dtype.kind == "f" and values.dtype.itemsize > 8
+    if (values.dtype.kind not in "iuO" and not extended_float) or values.size < 2:
         return False
     if values.dtype.kind in "iu" and (
         values.dtype.itemsize < 8

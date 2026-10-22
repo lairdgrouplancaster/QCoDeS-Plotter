@@ -804,6 +804,21 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertNotIn("preview_size", backup["GUI"])
         self.assertEqual(backup["user_preference"]["theme"], "dark")
 
+    def test_config_without_csv_filename_format_is_backed_up_and_reset(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        stored_config["user_preference"]["theme"] = "dark"
+        del stored_config["user_preference"]["csv_filename_format"]
+        with open(config.default_file, "w") as fp:
+            json.dump(stored_config, fp)
+
+        reloaded = config()
+
+        self.assertEqual(reloaded.get("user_preference.csv_filename_format"), "current")
+        self.assertEqual(reloaded.get("user_preference.theme"), "light")
+        with open(reloaded.invalid_config_backup_file) as fp:
+            self.assertEqual(json.load(fp), stored_config)
+
     def test_config_with_removed_setting_is_backed_up_and_reset(self):
         cfg = config()
         stored_config = deepcopy(cfg.config)

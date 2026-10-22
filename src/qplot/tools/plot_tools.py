@@ -89,9 +89,11 @@ def _integer_samples(values, cancelled_callback=None):
 
 
 def _numeric_object_samples(values, cancelled_callback=None):
+    # Mixed QCoDeS array records can retain Boolean cells alongside integers
+    # and floats. Their numeric values are 0/1; keep the exact mixed path so
+    # other samples and coordinates are not rounded before subtraction.
     return values.dtype.kind == "O" and all(
-        isinstance(value, (int, float, Decimal, Fraction, np.integer, np.floating))
-        and not isinstance(value, (bool, np.bool_))
+        isinstance(value, (int, float, Decimal, Fraction, np.integer, np.floating, np.bool_))
         for value in _checked_samples(values, cancelled_callback)
     )
 
@@ -116,7 +118,7 @@ def _gradient_with_integer_samples(
         # Mixed QCoDeS integer/float records use object cells. Their finite
         # floating differences can overflow too; divide the exact recorded
         # difference before rounding, including the first-order edge slopes.
-        repair = ((~np.isfinite(differences) | mixed_objects)
+        repair = ((~np.isfinite(differences) | ~np.isfinite(spacing) | mixed_objects)
                   & numeric_isfinite(samples[..., 1:])
                   & numeric_isfinite(samples[..., :-1]))
         for index, position in enumerate(zip(*np.nonzero(repair), strict=True)):
@@ -138,6 +140,21 @@ def _gradient_with_integer_samples(
             slopes[repair] = (
                 samples[..., 1:][repair] / 2. - samples[..., :-1][repair] / 2.
             ) / (distances[repair] / 2.)
+
+        # The coordinates themselves can be finite while their separation
+        # exceeds float64. Divide the original exact differences; scaling
+        # an already-overflowed spacing would turn valid slopes into zero.
+        repair = (~np.isfinite(spacing) & np.isfinite(samples[..., 1:])
+                  & np.isfinite(samples[..., :-1]))
+        for index, position in enumerate(zip(*np.nonzero(repair), strict=True)):
+            if index % 1024 == 0:
+                _check_cancelled(cancelled_callback)
+            left = position[-1]
+            row = position[:-1]
+            distance = _sample_fraction(coordinates[left + 1]) - _sample_fraction(coordinates[left])
+            difference = (_sample_fraction(samples[row][left + 1])
+                          - _sample_fraction(samples[row][left]))
+            slopes[position] = _fraction_as_float(difference / distance)
 
     if np.all(spacing == spacing[0]):
         dx = spacing[0]
@@ -190,9 +207,9 @@ def _gradient_with_integer_samples(
         # coefficients, and subtraction still precedes weighting so stored
         # offsets cannot erase representable differences.
         scale = np.maximum(np.abs(dx1), np.abs(dx2))
-        before, after = dx1 / scale, dx2 / scale
-        total = before + after
         with np.errstate(over="ignore", invalid="ignore"):
+            before, after = dx1 / scale, dx2 / scale
+            total = before + after
             left_term = (after / total) * slopes[..., :-1]
             right_term = (before / total) * slopes[..., 1:]
             central = left_term + right_term
@@ -261,6 +278,29 @@ def _sample_fraction(value):
     return sample_fraction(value)
 
 
+def _fraction_as_extended_float(value, dtype):
+    """Round an exact residual to a binary dtype, including halfway ties."""
+    numerator, denominator = abs(value.numerator), value.denominator
+    if not numerator:
+        return dtype.type(0)
+    exponent = numerator.bit_length() - denominator.bit_length()
+    below_power = (numerator < denominator << exponent if exponent >= 0
+                   else numerator << -exponent < denominator)
+    exponent -= int(below_power)
+    info = np.finfo(dtype)
+    # Subnormal values all share the smallest exponent's mantissa unit.
+    unit = max(exponent - info.nmant, info.minexp - info.nmant)
+    if unit < 0:
+        numerator <<= -unit
+    else:
+        denominator <<= unit
+    significand, remainder = divmod(numerator, denominator)
+    if 2 * remainder > denominator or (2 * remainder == denominator and significand % 2):
+        significand += 1
+    rounded = np.ldexp(dtype.type(significand), unit)
+    return -rounded if value < 0 else rounded
+
+
 def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callback=None):
     """Remove a float mean without rounding a large offset into the result.
 
@@ -271,6 +311,7 @@ def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callba
     """
     values = np.asarray(values)
     dtype = np.result_type(values.dtype, np.float64)
+    extended_float = dtype.kind == "f" and dtype.itemsize > 8
     samples = np.moveaxis(values.astype(dtype, copy=False), axis, -1)
     if samples.shape[-1] == 0:
         return values.astype(dtype, copy=True)
@@ -284,7 +325,7 @@ def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callba
         finite = np.isfinite(chunk)
         indices = np.argmax(finite, axis=1)
         anchors = chunk[np.arange(len(chunk)), indices, None]
-        with np.errstate(over="ignore", invalid="ignore"):
+        with np.errstate(over="ignore", invalid="ignore", under="ignore"):
             shifted = chunk - anchors
             offset_mean = mean_func(shifted, axis=1, keepdims=True)
             result = shifted - offset_mean
@@ -320,13 +361,15 @@ def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callba
                     for index, value in enumerate(values):
                         if index % 1024 == 0:
                             _check_cancelled(cancelled_callback)
-                        yield float(value)
+                        yield value
 
                 nonzero = np.abs(original[original != 0])
                 # With more than a mantissa's range between samples, rounding
                 # the mean itself can change the small residual by one ULP.
                 # Subtract exact means in just these sensitive rows.
-                exact_required = (subnormal[row_index]
+                # math.fsum narrows each extended sample before summation,
+                # erasing recorded residuals between opposite-sign readings.
+                exact_required = (extended_float or subnormal[row_index]
                                   or np.max(nonzero) / (2. ** 53) > np.min(nonzero))
                 if not exact_required:
                     try:
@@ -342,12 +385,17 @@ def _center_float_samples(values, axis=-1, *, ignore_nan=False, cancelled_callba
                         exact_values.append(exact_value)
                         total += exact_value
                     exact_mean = total / len(original)
-                    residuals = np.empty(len(original))
+                    residuals = np.empty(len(original), dtype=dtype)
                     for index, value in enumerate(exact_values):
                         if index % 1024 == 0:
                             _check_cancelled(cancelled_callback)
                         difference = value - exact_mean
-                        residuals[index] = _fraction_as_float(difference)
+                        if extended_float:
+                            # Convert only the final residual, retaining the
+                            # source dtype's exponent range and precision.
+                            residuals[index] = _fraction_as_extended_float(difference, dtype)
+                        else:
+                            residuals[index] = _fraction_as_float(difference)
                     result[row_index, finite[row_index]] = residuals
                 else:
                     result[row_index] = chunk[row_index] - mean
@@ -496,10 +544,28 @@ def pass_filter(
         exact_data = data.astype(object)
         # Decimal comparisons with NaN raise InvalidOperation. Missing cells
         # are never clipped, including holes in an integer heatmap.
-        valid = ~numeric_isnan(exact_data)
+        with np.errstate(over="ignore"):
+            valid = ~numeric_isnan(exact_data)
         clipped = np.zeros(data.shape, dtype=bool)
-        clipped[valid] = (exact_data[valid] > exact_limit if which == "low"
-                          else exact_data[valid] < exact_limit)
+        extended_objects = False
+        try:
+            clipped[valid] = (exact_data[valid] > exact_limit if which == "low"
+                              else exact_data[valid] < exact_limit)
+        except TypeError:
+            # Mixed QCoDeS array records can retain longdouble object cells.
+            # NumPy cannot compare these with Decimal; compare their exact
+            # binary ratios while retaining the source cells for a no-op.
+            for index, value in enumerate(exact_data.flat):
+                if index % 1024 == 0:
+                    _check_cancelled(cancelled_callback)
+                if isinstance(value, np.floating):
+                    extended_objects = True
+                    value = sample_fraction(value) if np.isfinite(value) else float(value)
+                if valid.flat[index]:
+                    clipped.flat[index] = (value > exact_limit if which == "low"
+                                           else value < exact_limit)
+            if not extended_objects:
+                raise
         if not np.any(clipped):
             new_data = data.copy()
         elif (data.dtype.kind in "iu" and exact_limit.is_finite()
@@ -516,7 +582,33 @@ def pass_filter(
             # the original-data CSV exporter.
             new_data = exact_data
             new_data[clipped] = exact_limit
+            # Retained longdouble and clipped Decimal cells must also support
+            # downstream ordering (rendering/statistics). Convert only this
+            # mixed processed result, retaining every original binary digit.
+            if extended_objects:
+                from decimal import localcontext
+
+                for index, value in enumerate(new_data.flat):
+                    if index % 1024 == 0:
+                        _check_cancelled(cancelled_callback)
+                    if not isinstance(value, np.floating):
+                        continue
+                    if not np.isfinite(value) or value == 0:
+                        new_data.flat[index] = Decimal(str(value))
+                        continue
+                    numerator, denominator = value.as_integer_ratio()
+                    decimal_numerator = Decimal(numerator)
+                    with localcontext() as context:
+                        # The denominator is 2**k. Multiplying its numerator
+                        # by 5**k needs fewer than k additional decimal digits.
+                        context.prec = (len(decimal_numerator.as_tuple().digits)
+                                        + denominator.bit_length())
+                        new_data.flat[index] = decimal_numerator / Decimal(denominator)
     else:
+        # NumPy otherwise narrows the bound to float16/float32, which can turn
+        # finite clipping limits into infinity or zero before the operation.
+        if data.dtype.kind == "f" and data.dtype.itemsize < 8:
+            data = data.astype(np.float64)
         new_data = np.clip(data, *limit_arr)
     _check_cancelled(cancelled_callback)
     
@@ -572,10 +664,14 @@ def differentiate(
     if integer_coordinates:
         spacing = _integer_differences(coordinates, cancelled_callback=cancelled_callback)
     else:
-        coordinates = coordinates.astype(float)
-        spacing = np.diff(coordinates)
-    if ((not integer_coordinates and not np.all(np.isfinite(coordinates)))
-            or not np.all(np.isfinite(spacing))):
+        # Widen narrow floats without rounding extended recorded coordinates
+        # before subtraction. Their spacing sets the derivative's physical scale.
+        dtype = (np.result_type(coordinates.dtype, np.float64)
+                 if coordinates.dtype.kind == "f" else np.float64)
+        coordinates = coordinates.astype(dtype)
+        with np.errstate(over="ignore", invalid="ignore"):
+            spacing = np.diff(coordinates)
+    if not np.all(numeric_isfinite(coordinates)):
         raise ValueError("Differentiation axis coordinates must be finite.")
     if np.any(spacing == 0):
         raise ValueError("Differentiation axis coordinates must not repeat.")

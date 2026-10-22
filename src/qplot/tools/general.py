@@ -37,10 +37,12 @@ def data2matrix(indep1 : ArrayLike,
 
     """
     values = np.asarray(depvar)
-    if values.dtype.kind in "iuO":
+    extended_float = values.dtype.kind == "f" and values.dtype.itemsize > 8
+    if values.dtype.kind in "iuO" or extended_float:
         # A floating pivot mean rounds even a cell containing a single large
         # integer. Retain those cells, including holes; repeated coordinates
         # still mean-average their acquired samples, using exact arithmetic.
+        # Pandas' grouped mean cannot handle extended floating dtypes either.
         rows, row_indices = np.unique(indep1, return_inverse=True)
         columns, column_indices = np.unique(indep2, return_inverse=True)
         grid = np.full((len(rows), len(columns)), np.nan, dtype=object)
@@ -52,28 +54,33 @@ def data2matrix(indep1 : ArrayLike,
                 check_cancelled()
             if isinstance(value, np.generic):
                 value = value.item()
-            if not np.isfinite(float(value)):
+            if not (np.isfinite(value) if isinstance(value, np.floating)
+                    else np.isfinite(float(value))):
                 continue
             cells.setdefault((row, column), []).append(value)
         for index, (position, samples) in enumerate(cells.items()):
             if index % 1024 == 0:
                 check_cancelled()
-            if len(samples) == 1:
+            if len(samples) == 1 and not isinstance(samples[0], np.floating):
                 grid[position] = samples[0]
             else:
                 total = Fraction()
+                extended_samples = False
                 for sample_index, value in enumerate(samples):
                     if sample_index % 1024 == 0:
                         check_cancelled()
                     total += sample_fraction(value)
+                    extended_samples |= isinstance(value, np.floating)
                 mean = total / len(samples)
-                if mean.denominator == 1:
+                if mean.denominator == 1 and not extended_samples:
                     grid[position] = int(mean)
                 else:
                     # Decimal keeps the offset and fractional detail while
                     # remaining a numeric CSV cell (Fraction writes "a/b").
+                    # Extended singleton cells use Decimal too: NumPy's
+                    # longdouble scalar cannot compare with Decimal means.
                     with localcontext() as context:
-                        context.prec = max(34, len(str(abs(mean.numerator))) + 17)
+                        context.prec = max(34, Decimal(abs(mean.numerator)).adjusted() + 18)
                         grid[position] = Decimal(mean.numerator) / Decimal(mean.denominator)
         check_cancelled()
         return pd.DataFrame(grid, index=rows, columns=columns)

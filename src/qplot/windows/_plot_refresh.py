@@ -535,6 +535,26 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
 
     @QtCore.pyqtSlot()
+    def refresh_plot_data(self) -> None:
+        """Manually reload each source whose data is shown in this plot."""
+        if not self._can_process_refresh():
+            return
+        sources = [self]
+        seen = {id(self)}
+        for registry_name in ("lines", "heatmaps"):
+            for item in self.__dict__.get(registry_name, {}).values():
+                source = getattr(item, "from_win", None)
+                if source is not None and id(source) not in seen:
+                    sources.append(source)
+                    seen.add(id(source))
+        # A source contributes only its own primary data to an overlay.
+        # Refreshing its overlays recursively would do unrelated work and
+        # could cycle when two visible plots contain each other's traces.
+        for source in sources:
+            source.refreshWindow(force=True)
+
+
+    @QtCore.pyqtSlot()
     def refreshWindow(self, force: bool = False) -> None:
         """
         Event handler for monitor timeout and other refresh sources.

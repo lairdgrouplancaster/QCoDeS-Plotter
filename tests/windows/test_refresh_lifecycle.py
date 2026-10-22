@@ -35,6 +35,7 @@ class _Config:
             "GUI.preview_size": 200,
             "user_preference.mouse_mode": "pan",
             "user_preference.copy_plot_image_resolution": "screen",
+            "user_preference.csv_filename_format": "current",
             "file.default_load_path": "",
             "user_preference.confirm_close_all": True,
             "user_preference.confirm_close": True,

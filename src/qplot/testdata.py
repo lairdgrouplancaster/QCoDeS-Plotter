@@ -21,10 +21,12 @@ from pathlib import Path
 from time import perf_counter
 
 import numpy as np
+import qcodes
 from qcodes.dataset import Measurement, new_experiment
 from qcodes.dataset.sqlite.connection import AtomicConnection
 from qcodes.dataset.sqlite.database import connect
 from qcodes.parameters import ManualParameter
+from qcodes.station import Station
 
 from qplot._auxiliary_paths import ensure_safe_auxiliary_path
 from qplot.datahandling.file_identity import (
@@ -1055,7 +1057,12 @@ def _write_run(
         label=specification.measured_label,
         unit=specification.measured_unit,
     )
-    measurement = Measurement(exp=experiment, name=f"run_{run_number}")
+    # An omitted station makes QCoDeS snapshot Station.default and read any
+    # invalid instrument/parameter caches. Synthetic runs must not invoke an
+    # acquisition station's callbacks or replace that process-wide default.
+    measurement = Measurement(
+        exp=experiment, name=f"run_{run_number}", station=Station(default=False),
+    )
     measurement.register_parameter(v_sd)
 
     v_sd_values = _finite_sweep(
@@ -1540,6 +1547,34 @@ def _publish_database(
         publication_callback()
 
 
+def _require_self_contained_generation():
+    """Reject inherited acquisition defaults that create unselected outputs.
+
+    QCoDeS chooses these settings globally inside Measurement/DataSaver and
+    does not expose per-run overrides. Do not alter a caller's configuration
+    while another acquisition may be using it.
+    """
+    backend = qcodes.config.dataset.get("raw_data_backend", "sqlite_main_db")
+    if backend != "sqlite_main_db":
+        raise SpecificationError(
+            "Test-database generation requires QCoDeS dataset.raw_data_backend "
+            "to be 'sqlite_main_db'; the configured backend would write "
+            "measurement files outside the selected output. No files were created."
+        )
+    if qcodes.config.dataset.export_automatic:
+        raise SpecificationError(
+            "Test-database generation requires QCoDeS dataset.export_automatic "
+            "to be false so automatic exports cannot overwrite unselected files. "
+            "No files were created."
+        )
+    if qcodes.config.subscription.default_subscribers:
+        raise SpecificationError(
+            "Test-database generation requires QCoDeS "
+            "subscription.default_subscribers to be empty so acquisition "
+            "callbacks cannot create unselected outputs. No files were created."
+        )
+
+
 def generate_database(
         specifications,
         database_path,
@@ -1552,6 +1587,7 @@ def generate_database(
     specifications = list(specifications)
     if not specifications:
         raise SpecificationError("At least one run specification is required")
+    _require_self_contained_generation()
 
     database_path = Path(database_path)
     if database_path.suffix.lower() != ".db":
@@ -1789,7 +1825,7 @@ def main(argv: Sequence[str] | None = None):
             args.database,
             overwrite=args.overwrite,
         )
-    except (OSError, SpecificationError) as error:
+    except (OSError, SpecificationError, UnicodeError, csv.Error) as error:
         parser.exit(2, f"qplot-generate-db: error: {error}\n")
 
     total_points = sum(specification.point_count for specification in specifications)

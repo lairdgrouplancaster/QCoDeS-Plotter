@@ -76,9 +76,14 @@ def test_annotation_in_real_plot_and_svg(real_plot):
         else:
             assert plot.plot.layout.itemAt(0, 1) is None
         root = ET.fromstring(plot._plot_svg_bytes())
-        # Bold and normal text are separate SVG elements with formatting whitespace.
-        exported_text = " ".join("".join(root.itertext()).split())
-        assert (expected in exported_text) is visible
+        # Qt splits wrapped words across text elements and may express spaces
+        # through positions. Check painted characters without XML indentation;
+        # the exact plain text and annotation geometry are checked above.
+        exported_text = "".join(
+            "".join(node.itertext())
+            for node in root.iter("{http://www.w3.org/2000/svg}text")
+        )
+        assert ("".join(expected.split()) in "".join(exported_text.split())) is visible
         assert not plot._plot_image_at_size(QtCore.QSize(640, 480)).isNull()
     assert plot_top[False] < plot_top[True]
     dialog.close()

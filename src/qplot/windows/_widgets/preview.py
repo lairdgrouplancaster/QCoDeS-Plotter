@@ -116,6 +116,7 @@ class PreviewTab(qtw.QWidget):
     """
     plotRequested = QtCore.pyqtSignal(str)
     exportRequested = QtCore.pyqtSignal(str)
+    statsRequested = QtCore.pyqtSignal(str)
     previewsReady = QtCore.pyqtSignal(str, object)
     previewGenerationChanged = QtCore.pyqtSignal(str, bool)
     databaseReplaced = QtCore.pyqtSignal(str)
@@ -1210,6 +1211,7 @@ class PreviewTab(qtw.QWidget):
             card = PreviewCard(preview, self.preview_size, self.current_guid, self)
             card.plotRequested.connect(self.plotRequested)
             card.exportRequested.connect(self.exportRequested)
+            card.statsRequested.connect(self.statsRequested)
             self.content_layout.addWidget(card)
         self.content_layout.addStretch()
 
@@ -1217,6 +1219,7 @@ class PreviewTab(qtw.QWidget):
 class PreviewCard(qtw.QWidget):
     plotRequested = QtCore.pyqtSignal(str)
     exportRequested = QtCore.pyqtSignal(str)
+    statsRequested = QtCore.pyqtSignal(str)
 
     def __init__(self, preview, preview_size, guid=None, *args):
         super().__init__(*args)
@@ -1247,6 +1250,7 @@ class PreviewCard(qtw.QWidget):
         image.set_preview_accessibility(preview["title"])
         image.plotRequested.connect(self.plotRequested)
         image.exportRequested.connect(self.exportRequested)
+        image.statsRequested.connect(self.statsRequested)
 
         layout = qtw.QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1257,6 +1261,7 @@ class PreviewCard(qtw.QWidget):
 class PreviewImageLabel(qtw.QLabel):
     plotRequested = QtCore.pyqtSignal(str)
     exportRequested = QtCore.pyqtSignal(str)
+    statsRequested = QtCore.pyqtSignal(str)
 
     def __init__(self, parameter, *args):
         super().__init__(*args)
@@ -1391,6 +1396,10 @@ class PreviewImageLabel(qtw.QLabel):
         export_action = QtGui.QAction("&Export CSV...", menu)
         export_action.triggered.connect(lambda: self.exportRequested.emit(self.parameter))
         menu.addAction(export_action)
+
+        stats_action = QtGui.QAction("Generate &stats...", menu)
+        stats_action.triggered.connect(lambda: self.statsRequested.emit(self.parameter))
+        menu.addAction(stats_action)
 
         menu.exec(global_position)
 

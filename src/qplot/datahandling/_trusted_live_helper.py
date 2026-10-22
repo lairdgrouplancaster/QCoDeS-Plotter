@@ -193,15 +193,19 @@ def _control_loop(control_receive: Connection, state: _ChildControlState) -> Non
                     _interrupt_active_locked(state)
                     continue
                 if (
-                    state.last_completed_generation == envelope.generation
+                    state.last_completed_generation is not None
+                    and envelope.generation <= state.last_completed_generation
                     and cancellation_is_new
                 ):
                     # The operation may finish after the parent decides to
                     # cancel but before this control thread receives that
                     # exact-generation frame.  It may even arrive after the
-                    # following operation starts because commands and control
-                    # use separate pipes.  Accept it once as a no-op; never
-                    # interrupt the newer generation.
+                    # following operations finish because commands and control
+                    # use separate pipes. Commands are contiguous, and the
+                    # cancellation high watermark starts at this incarnation's
+                    # first generation minus one. Thus this is a completed job
+                    # owned by this helper. Accept it once as a no-op; never
+                    # interrupt a newer generation.
                     state.last_cancelled_generation = envelope.generation
                     continue
                 if (
@@ -434,6 +438,7 @@ def trusted_live_helper_main(
         session,
         orphan_grace_ms / 1_000.0,
         first_generation,
+        last_cancelled_generation=first_generation - 1,
     )
     reader: TrustedLiveReader | None = None
     control_thread = threading.Thread(

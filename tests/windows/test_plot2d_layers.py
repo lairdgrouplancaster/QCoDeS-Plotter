@@ -1,9 +1,10 @@
+import sys
 from types import SimpleNamespace
 
 import numpy as np
 import pyqtgraph as pg
 import pytest
-from PyQt6 import QtCore
+from PyQt6 import QtCore, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._dataset_handle import DatasetKey, TraceKey
@@ -121,13 +122,25 @@ class _LayerHost(Plot2DLayerMixin, PlotAxisScalingMixin):
     def _view_range_changed_programmatically(self):
         pass
 
+    def _heatmap_geometry(self):
+        # This unit host owns renderers but never loads primary measurement
+        # geometry. Secondary layers still provide their real geometry.
+        return None
+
     def close(self):
-        for layer in list(getattr(self, "heatmaps", {}).values()):
+        heatmaps = getattr(self, "heatmaps", {})
+        for layer in list(heatmaps.values()):
             if isinstance(layer, HeatmapLayer):
                 layer.disconnect_source_updates()
                 layer.remove_renderers()
+        heatmaps.clear()
+        self.widget.close()
         self.spinBox.deleteLater()
         self.widget.deleteLater()
+        # deleteLater alone can leave a canvas and its queued view validation
+        # in the next test's event loop (and its exception recorder).
+        qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+        qtw.QApplication.processEvents()
 
 
 def _trace_key(tmp_path, guid, parameter):
@@ -169,7 +182,10 @@ def _new_layer(
         value_unit=source_value_unit,
         axis_units=source_axis_units,
     )
-    return host, source, HeatmapLayer(host, source)
+    host._init_heatmap_layers()
+    layer = HeatmapLayer(host, source)
+    host.heatmaps[layer.trace_key] = layer
+    return host, source, layer
 
 
 @pytest.mark.parametrize(
@@ -217,6 +233,35 @@ def test_uniform_layer_uses_image_renderer_and_preserves_grid(tmp_path):
     finally:
         host.close()
         source.spinBox.deleteLater()
+
+
+def test_layer_host_paints_and_releases_its_owned_layer(tmp_path, monkeypatch, qapplication):
+    """Unit hosts must finish their Qt callbacks before another test starts."""
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda *args: errors.append(args))
+    host, source, layer = _new_layer(tmp_path)
+    try:
+        host._init_heatmap_layers()
+        host._set_layer_axes(host, "Top", "Right")
+        # The application colorscale supplies levels before painting floats.
+        layer.image.setLevels((1.0, 4.0))
+        host.widget.show()
+        host.widget.resize(640, 480)
+        host.widget.viewport().repaint()
+        for _ in range(3):
+            qapplication.processEvents()
+        assert errors == []
+        assert layer.geometry is not None
+        assert source._merged_trace_users == 1
+    finally:
+        host.close()
+        source.spinBox.deleteLater()
+        qapplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+        qapplication.processEvents()
+    assert errors == []
+    assert source._merged_trace_users == 0
+    assert sip.isdeleted(host.widget)
+    assert sip.isdeleted(host.spinBox)
 
 
 def test_swapped_layer_transposes_grid_and_geometry(tmp_path):

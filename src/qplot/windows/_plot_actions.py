@@ -28,6 +28,7 @@ from qplot.datahandling.trusted_live_service import (
 )
 from qplot.diagnostics import log_exception
 
+from ._csv_filenames import csv_filename
 from ._dataset_handle import (
     DatasetHandle,
     DatasetKey,
@@ -57,9 +58,14 @@ def _trusted_plot_action(method):
     @wraps(method)
     def invoke(self, *args, **kwargs):
         arguments = call_signature.bind(self, *args, **kwargs).arguments
+        target_window = arguments.get("target_win")
+        # A deferred drop remains owned by the window that received it.
+        if getattr(target_window, "_closed", False):
+            return False
         target = arguments.get("source_identity", arguments.get("guid"))
         if self._defer_trusted_plot_action(
             target, lambda: invoke(self, *args, **kwargs),
+            target_window=target_window,
         ):
             return
         return method(self, *args, **kwargs)
@@ -121,11 +127,15 @@ def _csv_scalar_samples(values):
     return np.asarray(samples, dtype=object)
 
 
-def _csv_scalar_columns(param_data):
+def _csv_scalar_columns(param_data, output_param=None):
     """Align samples within each QCoDeS record before joining records."""
     arrays = {name: np.asarray(values) for name, values in param_data.items()}
     if not arrays:
         return {}
+    # QCoDeS trees are output-first; export callers also supply the selected
+    # output explicitly so column presentation order cannot define acquisition.
+    if output_param is None:
+        output_param = next(iter(arrays))
     # Regular, already aligned columns need no record-by-record expansion.
     if (
             len({values.shape for values in arrays.values()}) == 1
@@ -139,7 +149,8 @@ def _csv_scalar_columns(param_data):
             name: _csv_scalar_samples(values)
             for name, values in zip(arrays, record, strict=True)
         }
-        sample_count = max(values.size for values in samples.values())
+        sample_count = (max(values.size for values in samples.values())
+                        if samples[output_param].size else 0)
         for name, values in samples.items():
             if values.size == sample_count:
                 chunks[name].append(values)
@@ -167,7 +178,7 @@ class PlotActionsMixin:
 
     _selected_dataset_key: DatasetKey | None
 
-    def _defer_trusted_plot_action(self, target, resume):
+    def _defer_trusted_plot_action(self, target, resume, *, target_window=None):
         if getattr(self, "_database_access_mode", None) != TRUSTED_LIVE_MODE:
             return False
         # Qt's str signal converts the run table's None argument to "".
@@ -219,6 +230,7 @@ class PlotActionsMixin:
 
         def poll():
             stale = (getattr(self, "_shutdown_started", False)
+                     or getattr(target_window, "_closed", False)
                      or service is not getattr(self, "_trusted_read_service", None)
                      or (selection is not None and selection != (
                          getattr(self, "selected_run_id", None),
@@ -841,6 +853,7 @@ class PlotActionsMixin:
             *args,
             show=True,
             dataset_key: DatasetKey | None = None,
+            sweep_source=None,
             **kargs,
             ):
         """
@@ -959,7 +972,11 @@ class PlotActionsMixin:
 
         elif window_type == "plot2d":
             win.get_mergables.connect(lambda: self.get_1d_wins(win))
-            win.open_subplot.connect(self.openWin)
+            win.open_subplot.connect(
+                lambda widget, key, args, source=win: self.openWin(
+                    widget, key, args, sweep_source=source,
+                )
+            )
             win.close_sweeps_requested.connect(self.close_sweeps_from_plot)
             remove_dataset = getattr(win, "remove_dataset", None)
             if remove_dataset is not None:
@@ -967,7 +984,11 @@ class PlotActionsMixin:
 
         elif window_type == "sweeper":
             win.merge_compatibility_changed.connect(self.post_admin)
-            for item in self.windows:
+            # Source promotion can leave multiple heatmaps of one dataset.
+            # Bind a UI-created cut to its emitting window, not the first
+            # matching dataset. Direct openWin callers may omit that source.
+            sources = self.windows if sweep_source is None else (sweep_source,)
+            for item in sources:
                 if item.ds == win.ds and item.param == win.param and isinstance(item, plot2d):
                     win.sweep_moved.connect(item.update_sweep_line)
                     win.remove_sweep.connect(item.remove_sweep)
@@ -1158,6 +1179,60 @@ class PlotActionsMixin:
             parameter_names,
             run_id=run_id,
         )
+
+
+    @QtCore.pyqtSlot(str)
+    def show_preview_stats(self, parameter_name):
+        guid = getattr(self, "_selected_run_guid", None)
+        dataset = getattr(self, "ds", None)
+        if not guid and dataset is not None:
+            guid = dataset.guid
+        if guid:
+            key = getattr(self, "_selected_dataset_key", None)
+            self._show_preview_stats(
+                key or self._current_dataset_key(guid), parameter_name,
+            )
+
+    @QtCore.pyqtSlot(str, str)
+    def show_run_preview_stats(self, guid, parameter_name):
+        if guid:
+            self._show_preview_stats(self._current_dataset_key(guid), parameter_name)
+
+    def _show_preview_stats(self, dataset_key, parameter_name):
+        from ._dataset_statistics import dataset_statistics_text
+        from ._plot_marquee import new_statistics_dialog
+
+        if not PlotActionsMixin._generation_gate_allows_action(
+                self, operation="generating statistics"):
+            return
+        dataset = None
+        try:
+            dataset_key = self._bind_one_shot_dataset_key(dataset_key)
+            dataset = self._load_run_csv_dataset(dataset_key)
+            data = parameter_data_for_export(dataset, parameter_name)
+            columns = _csv_scalar_columns(data, parameter_name)
+            stats_text = dataset_statistics_text(columns, parameter_name)
+            self._require_run_csv_source_current(dataset_key)
+        except DatabaseInstanceChangedError as err:
+            self._handle_run_csv_source_replaced(dataset_key)
+            self.show_error("Statistics Failed", "Could not read the measurement.", str(err))
+            return
+        except Exception as err:
+            log_exception("Dataset statistics failed", err, __name__)
+            self.show_error("Statistics Failed", "Could not read the measurement.", str(err))
+            return
+        finally:
+            if dataset is not None:
+                close_dataset_connection(dataset)
+
+        if stats_text is None:
+            self.show_status("No finite data points in this measurement.", 5000)
+            return
+        dialog = new_statistics_dialog(self, stats_text, "Dataset stats")
+        dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
 
     @QtCore.pyqtSlot(str)
@@ -2473,7 +2548,7 @@ class PlotActionsMixin:
         for param in params:
             param_data = parameter_data_for_export(dataset, param.name)
             columns = {}
-            for name, values in _csv_scalar_columns(param_data).items():
+            for name, values in _csv_scalar_columns(param_data, param.name).items():
                 column_name = f"{param.name}.{name}" if prefix_columns else name
                 # Object samples may need both uint64 and negative int64, or
                 # exact integers alongside floats. Disable pandas' inference.
@@ -2483,6 +2558,10 @@ class PlotActionsMixin:
                     # integers retain exact values instead of becoming floats.
                     prefix = "U" if values.dtype.kind == "u" else ""
                     dtype = f"{prefix}Int{values.dtype.itemsize * 8}"
+                elif values.dtype.kind == "f" and values.dtype.itemsize < 8:
+                    # Untyped CSV is normally read as binary64. Widen exactly
+                    # before pandas formats narrow floats to their short text.
+                    dtype = "float64"
                 columns[column_name] = pd.Series(values, dtype=dtype)
             frames.append(pd.DataFrame(columns))
 
@@ -2497,6 +2576,11 @@ class PlotActionsMixin:
         database_folder = os.path.dirname(self.fileTextbox.text())
         measurement = "all" if len(params) != 1 else params[0].name
         filename = self._safe_filename(f"run_{dataset.run_id}_{measurement}.csv")
+        filename = csv_filename(
+            getattr(self, "config", None), filename,
+            guid=getattr(dataset, "guid", None),
+            captured_run_id=getattr(dataset, "captured_run_id", None),
+        )
         return os.path.join(database_folder or os.getcwd(), filename)
 
 
@@ -2520,6 +2604,11 @@ class PlotActionsMixin:
         filename = self._safe_filename(
             f"run_{run_identifier}_{measurement}.csv"
         )
+        metadata = PlotActionsMixin._run_metadata_for_guid(self, dataset_key.guid)
+        filename = csv_filename(
+            getattr(self, "config", None), filename,
+            guid=dataset_key.guid, captured_run_id=metadata.get("captured_run_id"),
+        )
         database_folder = os.path.dirname(dataset_key.database_path)
         return os.path.join(database_folder or os.getcwd(), filename)
 
@@ -2540,6 +2629,11 @@ class PlotActionsMixin:
         run_identifier = dataset_key.guid if run_id is None else run_id
         filename = self._safe_filename(
             f"run_{run_identifier}_{parameter_name}.csv",
+        )
+        metadata = PlotActionsMixin._run_metadata_for_guid(self, dataset_key.guid)
+        filename = csv_filename(
+            getattr(self, "config", None), filename,
+            guid=dataset_key.guid, captured_run_id=metadata.get("captured_run_id"),
         )
         database_folder = os.path.dirname(dataset_key.database_path)
         return os.path.join(database_folder or os.getcwd(), filename)

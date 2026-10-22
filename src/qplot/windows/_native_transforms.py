@@ -11,6 +11,7 @@ from pyqtgraph.graphicsItems.PlotDataItem import PlotDataset
 from qplot.datahandling.parameter_data import numeric_isfinite
 from qplot.tools.plot_tools import (
     _center_float_samples,
+    _fraction_as_extended_float,
     _fraction_as_float,
     _integer_differences,
     _integer_samples,
@@ -110,21 +111,45 @@ class _FFTCoordinatesError(ValueError):
 
 
 def _interpolate_fft_samples(targets, coordinates, samples):
-    """Repair only interpolation segments whose finite difference overflows."""
-    with np.errstate(over="ignore", invalid="ignore"):
-        result = np.interp(targets, coordinates, samples)
-        differences = np.diff(samples)
+    """Retain extended samples and repair overflowing interpolation segments."""
     segments = np.searchsorted(coordinates, targets, side="right") - 1
     segments = np.clip(segments, 0, len(coordinates) - 2)
+    extended = any(values.dtype.kind == "f" and values.dtype.itemsize > 8
+                   for values in (targets, coordinates, samples))
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        differences = np.diff(samples)
+        if extended:
+            # np.interp accepts only binary64 arrays. Retain extended recorded
+            # residuals through resampling, including cancellation in FFT DC.
+            dtype = np.result_type(targets, coordinates, samples, np.float64)
+            targets = targets.astype(dtype, copy=False)
+            coordinates = coordinates.astype(dtype, copy=False)
+            samples = samples.astype(dtype, copy=False)
+            differences = np.diff(samples)
+            left, right = coordinates[segments], coordinates[segments + 1]
+            before, after = samples[segments], samples[segments + 1]
+            weights = (targets - left) / (right - left)
+            result = before + differences[segments] * weights
+            # Match interpolation of missing/infinite samples and preserve
+            # exact endpoints, where zero times infinity must not erase data.
+            alternate = after - differences[segments] * (1 - weights)
+            result = np.where(np.isnan(result), alternate, result)
+            result = np.where(before == after, before, result)
+            result = np.where(targets == left, before, result)
+            result = np.where(targets == right, after, result)
+        else:
+            result = np.interp(targets, coordinates, samples)
     repair = (~np.isfinite(differences[segments])
               & np.isfinite(samples[segments]) & np.isfinite(samples[segments + 1]))
     for index in np.flatnonzero(repair):
         segment = segments[index]
-        left, right, target = map(Fraction, (
-            float(coordinates[segment]), float(coordinates[segment + 1]), float(targets[index]),
+        left, right, target = map(sample_fraction, (
+            coordinates[segment], coordinates[segment + 1], targets[index],
         ))
-        before, after = map(Fraction, (float(samples[segment]), float(samples[segment + 1])))
-        result[index] = float(before + (after - before) * (target - left) / (right - left))
+        before, after = map(sample_fraction, (samples[segment], samples[segment + 1]))
+        interpolated = before + (after - before) * (target - left) / (right - left)
+        result[index] = (_fraction_as_extended_float(interpolated, result.dtype)
+                         if extended else float(interpolated))
     return result
 
 
@@ -212,6 +237,15 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
                 dtype=np.float64, count=len(exact),
             )
             dx = np.diff(x)
+    elif x.dtype.kind == "f" and x.dtype.itemsize > 8:
+        # Uniform targets near a large recorded offset can round to an
+        # acquired coordinate before interpolation. Remove the offset while
+        # retaining the extended spacing and the original stored samples.
+        with np.errstate(over="ignore", invalid="ignore"):
+            rebased = x - x[0]
+        if (np.all(np.isfinite(rebased))
+                and rebased[-1] <= np.finfo(float).max):
+            x = rebased
     with np.errstate(over="ignore", invalid="ignore"):
         span = float(x[-1] - x[0])
     if not np.isfinite(span):
@@ -342,12 +376,21 @@ class NativePlotDataItem(pg.PlotDataItem):
                         and np.all(np.isfinite(pixels[spans > 0] / spans[spans > 0])))
 
     def viewRangeChanged(self, vb=None, ranges=None, changed=None):
+        if not isinstance(self.getViewBox(), pg.ViewBox):
+            # Axis reassignment briefly leaves the trace in the scene alone.
+            # GraphicsItem then reports the GraphicsView, which lacks native
+            # clipping's axis API. Reattachment rebuilds the display normally.
+            self._datasetDisplay = None
+            self._watch_display_range(None)
+            return
         super().viewRangeChanged(vb, ranges, changed)
         self.sigDisplayChanged.emit(self)
 
     def _precision_checked_samples(self, x, y):
         self._qplot_precision_error = None
-        if x.dtype.kind not in "iuO" and y.dtype.kind not in "iuO":
+        if all(values.dtype.kind not in "iuO"
+               and not (values.dtype.kind == "f" and values.dtype.itemsize > 8)
+               for values in (x, y)):
             return x, y
         # Only paired finite samples can be drawn. Derivatives and phase maps
         # can leave an exact coordinate opposite a missing slope; its rounded

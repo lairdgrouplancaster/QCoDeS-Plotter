@@ -27,7 +27,7 @@ def main():
     parser.add_argument("--preceding-stage", choices=("any", "aggregate", "large-summary"), default="any")
     args = parser.parse_args()
 
-    from PyQt6 import QtCore, QtWidgets
+    from PyQt6 import QtCore, QtWidgets, sip
 
     from qplot.configuration.config import config
     from qplot.datahandling import readonly, trusted_heatmap, trusted_plot
@@ -36,6 +36,7 @@ def main():
         _BrokerQueryExecutor,
     )
     from qplot.windows._plot_feedback import PlotWindowFeedbackMixin
+    from qplot.windows._plotWin import plotWidget
     from qplot.windows.main import MainWindow
 
     def source_state():
@@ -143,7 +144,7 @@ def main():
         config.default_file = str(Path(directory) / config.config_file_name)
         window = MainWindow()
         window.show_error = lambda *items: errors.append(items)
-        observer = PaintTimes()
+        observer = PaintTimes(window)
         try:
             window.startupDatabaseTimer.stop()
             window.config.config["user_preference"]["confirm_close"] = False
@@ -208,7 +209,9 @@ def main():
                     "iteration": iteration + 1,
                     "display_ms": (time.perf_counter() - started) * 1000,
                     "paint_ms": [(value - started) * 1000 for value in painted.values()],
-                    "grids": [list(plot.dataGrid.shape) for plot in plots],
+                    "grids": [list(plot.dataGrid.shape) for plot in plots if hasattr(plot, "dataGrid")],
+                    "line_samples": [int(plot.axis_data["y"].size) for plot in plots
+                                     if not hasattr(plot, "dataGrid")],
                     "capture": list(timings),
                     "broker_queries": [{"run_id": run, "phase": phase, **record}
                                        for (run, phase), record in list(phase_times.items())],
@@ -220,13 +223,23 @@ def main():
                 window.close_plot_windows(confirm=False, status=False)
                 wait_for(lambda: not window._plot_workers)
         finally:
-            window.close_plot_windows(confirm=False, status=False)
-            window._cancel_plot_work()
-            window.threadPool.waitForDone(10_000)
-            window.close_database(status=False)
-            window.hide()
-            wait_for(lambda: not window._retired_trusted_read_services,
-                     timeout=20, check_errors=False)
+            # Use the application's bounded shutdown for every worker pool,
+            # preview and broker, including a failed measurement iteration.
+            window.close()
+            wait_for(lambda: window._shutdown_ready, timeout=20, check_errors=False)
+            if window._shutdown_background_work_active():
+                raise RuntimeError("Plot benchmark background work did not stop")
+            # Closed plots are still top-level widgets held by iteration
+            # locals and the paint records. Retire their native ownership
+            # before QApplication's unordered sweep of Python Qt wrappers.
+            # Leave child menus and embedded widgets to their Qt owners.
+            for widget in app.topLevelWidgets():
+                if isinstance(widget, plotWidget) and not sip.isdeleted(widget):
+                    sip.delete(widget)
+            window.deleteLater()
+            app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+            app.processEvents()
+            sip.delete(app)
     after = source_state()
     print(json.dumps({"database_bytes": args.database.stat().st_size,
                       "database_open_ms": open_ms, "run_id": args.run_id,

@@ -68,6 +68,14 @@ def append_shaped_parameter_data_to_existing_arrays(
 
     new_data_1_tree = new_data.get(meas_parameter, {})
 
+    if new_data_1_tree and not new_data_1_tree[meas_parameter].size:
+        # QCoDeS skips an empty column independently when merging unshaped
+        # caches. Empty array outputs can retain singleton setpoints, which
+        # would then be appended without their measurement and misalign the
+        # next refresh. Validate those records and retain zero samples in
+        # every field; the separate read status still counts acquired rows.
+        new_data_1_tree = flatten_record_columns(new_data_1_tree, check_cancelled)
+
     shapes = rundescriber.shapes
     if shapes is not None:
         shape = shapes.get(meas_parameter, None)
@@ -82,7 +90,8 @@ def append_shaped_parameter_data_to_existing_arrays(
         # Object cells count records; shaped cache offsets count samples.
         # Flatten only the new records so QCoDeS' usual padding and offsets
         # still apply, including the same missing-value handling.
-        if any(values.dtype.kind == "O" for values in new_data_1_tree.values()):
+        if (any(values.dtype.kind == "O" for values in new_data_1_tree.values())
+                or len({values.shape for values in new_data_1_tree.values()}) > 1):
             new_data_1_tree = flatten_record_columns(new_data_1_tree, check_cancelled)
         private_data = {}
         for name, values in existing_data_1_tree.items():
@@ -191,6 +200,7 @@ def load_param_data_from_db(
     end: int | None = None,
     *,
     check_cancelled=_check_noop,
+    max_decode_bytes=None,
 ):
     # Data fetch
     updated_read_status: dict[str, int] = dict(read_status)
@@ -205,6 +215,9 @@ def load_param_data_from_db(
         start=start,
         end=end,
         check_cancelled=check_cancelled,
+        max_decode_bytes=max_decode_bytes,
+        existing_data=existing_data.get(meas_parameter, {}),
+        written_count=write_status.get(meas_parameter),
     )
     new_data_dict[meas_parameter] = new_data
     updated_read_status[meas_parameter] = start + n_rows_read - 1

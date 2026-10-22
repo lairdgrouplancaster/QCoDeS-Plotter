@@ -10,13 +10,14 @@ import tempfile
 import textwrap
 from pathlib import Path
 from threading import Event as ThreadEvent
-from time import monotonic
+from time import monotonic, sleep
 from types import SimpleNamespace
 
 import pytest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows import main as main_window
+from tests.test_shutdown_supervisor import _process_is_running
 
 
 def _offscreen_subprocess_environment() -> dict[str, str]:
@@ -224,21 +225,50 @@ _SUPERVISOR_DRIVER = textwrap.dedent(
     """
     import os
     import sys
+    import time
 
-    from qplot._shutdown_supervisor import _supervise_child
+    from qplot import _shutdown_supervisor as supervisor
+
+    if os.name == "nt":
+        from qplot._windows_shutdown_job import WindowsContainedProcess
+        termination_owner = WindowsContainedProcess
+        termination_method = "terminate_tree"
+    else:
+        termination_owner = supervisor._PosixProcessGroup
+        termination_method = "terminate"
+    original_terminate = getattr(termination_owner, termination_method)
+    termination_times = []
+
+    def observe_termination(self, *args, **kwargs):
+        started = time.monotonic()
+        result = original_terminate(self, *args, **kwargs)
+        completed = time.monotonic()
+        if not termination_times:
+            termination_times.append((started, completed))
+        return result
+
+    setattr(termination_owner, termination_method, observe_termination)
 
     child_argv = [sys.executable, "-c", sys.argv[1], *sys.argv[2:]]
-    raise SystemExit(
-        _supervise_child(
-            child_argv,
-            env=os.environ,
-            # This probe imports PyQt before it can authenticate.  Give cold
-            # CI imports their own bounded setup budget; the asserted
-            # shutdown deadline below is unchanged and starts only after
-            # SHUTDOWN_REQUEST_AT is published.
-            startup_timeout=30.0,
-        )
+    exit_code = supervisor._supervise_child(
+        child_argv,
+        env=os.environ,
+        # This probe imports PyQt before it can authenticate.  Give cold
+        # CI imports their own bounded setup budget; the asserted
+        # shutdown deadline below is unchanged and starts only after
+        # SHUTDOWN_REQUEST_AT is published.
+        startup_timeout=30.0,
     )
+    # Keep all output after actual termination and complete process-tree reap.
+    # Parent communicate()/scheduling latency is not the time of the kill.
+    if termination_times:
+        started, completed = termination_times[0]
+        # The terminated child may have left shared stdout mid-line.
+        print(
+            f"\\nTREE_TERMINATED started={started:.9f} completed={completed:.9f}",
+            flush=True,
+        )
+    raise SystemExit(exit_code)
     """
 )
 
@@ -636,6 +666,19 @@ def _shutdown_request_at(output: str) -> float:
     return float(match.group(1))
 
 
+def _assert_external_termination(completed, completed_at, launcher_pid, hard_deadline):
+    started = float(_probe_value(completed.stdout, "TREE_TERMINATED", "started"))
+    terminated_at = float(
+        _probe_value(completed.stdout, "TREE_TERMINATED", "completed")
+    )
+    assert hard_deadline - 0.04 <= started <= terminated_at <= hard_deadline + 0.20
+    assert terminated_at <= completed_at
+    gui_pid = int(re.search(r"(?m)^GUI_PID=(\d+)$", completed.stdout).group(1))
+    assert not _process_is_running(gui_pid)
+    assert not _process_is_running(launcher_pid)
+    return terminated_at
+
+
 def test_real_qthreadpool_stall_forces_os_process_exit_after_diagnostics(
     tmp_path: Path,
 ) -> None:
@@ -650,8 +693,6 @@ def test_real_qthreadpool_stall_forces_os_process_exit_after_diagnostics(
         output
     )
     assert launcher_pid > 0
-    shutdown_elapsed = completed_at - _shutdown_request_at(completed.stdout)
-    assert 0.25 <= shutdown_elapsed < 1.5
     shutdown_started_at = float(
         _probe_value(completed.stdout, "SHUTDOWN_ARMED", "started")
     )
@@ -665,7 +706,11 @@ def test_real_qthreadpool_stall_forces_os_process_exit_after_diagnostics(
     assert 0.97 <= hard_deadline - shutdown_started_at <= 1.03
     assert 0.22 <= hard_deadline - diagnostic_deadline <= 0.28
     assert failsafe_deadline == hard_deadline
-    assert hard_deadline - 0.04 <= completed_at <= hard_deadline + 0.20
+    terminated_at = _assert_external_termination(
+        completed, completed_at, launcher_pid, hard_deadline,
+    )
+    shutdown_elapsed = terminated_at - _shutdown_request_at(completed.stdout)
+    assert 0.25 <= shutdown_elapsed < 1.5
     assert "RUNNABLE_STARTED" in completed.stdout
     assert "GUI_PID=" in completed.stdout
     assert "EVENT_LOOP_RETURNED exit=0 deadline_exhausted=True" in completed.stdout
@@ -676,7 +721,7 @@ def test_real_qthreadpool_stall_forces_os_process_exit_after_diagnostics(
     event_loop_returned_at = float(
         _probe_value(completed.stdout, "EVENT_LOOP_RETURNED", "at")
     )
-    assert completed_at - event_loop_returned_at >= 0.04
+    assert terminated_at - event_loop_returned_at >= 0.04
     persisted = log_path.read_text(encoding="utf-8")
     assert "Bounded Application Shutdown" in persisted
     assert "pool threadPool: active_threads=1" in persisted
@@ -725,10 +770,20 @@ def test_real_qthreadpool_completion_disarms_after_graceful_destruction(
     assert "Bounded Application Shutdown" not in log_path.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("observation_delay", [0.0, 0.35])
 def test_blocked_diagnostic_io_cannot_delay_external_launcher_kill(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, observation_delay: float,
 ) -> None:
     log_path = tmp_path / "blocked-diagnostics.log"
+    if observation_delay:
+        original_communicate = subprocess.Popen.communicate
+
+        def delayed_observation(self, *args, **kwargs):
+            result = original_communicate(self, *args, **kwargs)
+            sleep(observation_delay)
+            return result
+
+        monkeypatch.setattr(subprocess.Popen, "communicate", delayed_observation)
 
     completed, completed_at, launcher_pid = _run_real_qthreadpool_shutdown_probe(
         "blocked-diagnostics", log_path
@@ -749,8 +804,46 @@ def test_blocked_diagnostic_io_cannot_delay_external_launcher_kill(
 
     assert 0.42 <= hard_deadline - shutdown_started_at <= 0.48
     assert failsafe_deadline == hard_deadline
-    assert hard_deadline - 0.04 <= completed_at <= hard_deadline + 0.20
+    terminated_at = _assert_external_termination(
+        completed, completed_at, launcher_pid, hard_deadline,
+    )
+    assert completed_at - terminated_at >= observation_delay
     assert "DIAGNOSTIC_IO_BLOCKED" in completed.stdout
+    assert "CHILD_EXITING_WITHOUT_LAUNCHER" not in completed.stdout
+
+
+def test_external_termination_record_follows_unterminated_child_stdout() -> None:
+    script = textwrap.dedent(
+        """
+        import os
+        import sys
+        import time
+
+        from qplot._shutdown_supervisor import ShutdownSupervisorClient
+
+        client = ShutdownSupervisorClient.from_environment().connect()
+        print(f"GUI_PID={os.getpid()}", flush=True)
+        hard_deadline = time.monotonic() + 0.45
+        assert client.arm(hard_deadline) is None
+        print(f"SHUTDOWN_ARMED hard={hard_deadline:.9f}", flush=True)
+        # The child cannot supply the newline after the launcher kills it.
+        sys.stdout.write("CHILD_PARTIAL_STDOUT")
+        sys.stdout.flush()
+        time.sleep(5.0)
+        print("CHILD_EXITING_WITHOUT_LAUNCHER", flush=True)
+        """
+    )
+    completed, completed_at, launcher_pid = _run_supervised_probe(script)
+
+    output = completed.stdout + completed.stderr
+    assert completed.returncode == main_window._APPLICATION_FORCED_SHUTDOWN_EXIT_CODE, (
+        output
+    )
+    hard_deadline = float(_probe_value(completed.stdout, "SHUTDOWN_ARMED", "hard"))
+    _assert_external_termination(
+        completed, completed_at, launcher_pid, hard_deadline,
+    )
+    assert "CHILD_PARTIAL_STDOUT\nTREE_TERMINATED " in completed.stdout
     assert "CHILD_EXITING_WITHOUT_LAUNCHER" not in completed.stdout
 
 

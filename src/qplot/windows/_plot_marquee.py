@@ -342,29 +342,11 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         return True
 
     def _new_marquee_stats_dialog(self, stats_text: str) -> qtw.QDialog:
-        dialog = qtw.QDialog(self)
-        dialog.setWindowTitle("Marquee stats")
+        return new_statistics_dialog(self, stats_text, "Marquee stats")
 
-        layout = qtw.QVBoxLayout(dialog)
-        stats_table = self._new_marquee_stats_table(stats_text)
-        layout.addWidget(stats_table)
-
-        buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
-        copy_button = buttons.addButton("Copy", qtw.QDialogButtonBox.ButtonRole.ActionRole)
-        if copy_button is None:
-            raise RuntimeError("Marquee stats copy button is not available.")
-
-        def copy_stats(_checked: bool = False) -> None:
-            self.copy_marquee_stats_to_clipboard(stats_text)
-
-        copy_button.clicked.connect(copy_stats)
-        buttons.rejected.connect(dialog.close)
-        layout.addWidget(buttons)
-
-        return dialog
-
-    def _new_marquee_stats_table(self, stats_text: str) -> CopyableTableWidget:
-        rows = self._marquee_stats_table_rows(stats_text)
+    @staticmethod
+    def _new_marquee_stats_table(stats_text: str) -> CopyableTableWidget:
+        rows = PlotMarqueeMixin._marquee_stats_table_rows(stats_text)
         stats_table = CopyableTableWidget()
         stats_table.setObjectName("detailsTable")
         stats_table.setColumnCount(2)
@@ -405,7 +387,8 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
 
         return stats_table
 
-    def _marquee_stats_table_rows(self, stats_text: str) -> list[tuple[str, str]]:
+    @staticmethod
+    def _marquee_stats_table_rows(stats_text: str) -> list[tuple[str, str]]:
         rows: list[tuple[str, str]] = []
         for line in stats_text.splitlines():
             line = line.strip()
@@ -657,3 +640,28 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             "sw": QtCore.QPointF(rect.left(), rect.top()),
             "w": QtCore.QPointF(rect.left(), centre_y),
             }
+
+
+def new_statistics_dialog(parent, stats_text, title):
+    dialog = qtw.QDialog(parent)
+    dialog.setWindowTitle(title)
+
+    layout = qtw.QVBoxLayout(dialog)
+    stats_table = PlotMarqueeMixin._new_marquee_stats_table(stats_text)
+    layout.addWidget(stats_table)
+
+    buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
+    copy_button = buttons.addButton("Copy", qtw.QDialogButtonBox.ButtonRole.ActionRole)
+    if copy_button is None:
+        raise RuntimeError("Marquee stats copy button is not available.")
+
+    def copy_stats(_checked: bool = False) -> None:
+        clipboard = qtw.QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(stats_text)
+
+    copy_button.clicked.connect(copy_stats)
+    buttons.rejected.connect(dialog.close)
+    layout.addWidget(buttons)
+
+    return dialog

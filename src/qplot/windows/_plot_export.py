@@ -24,6 +24,7 @@ except ImportError:  # pragma: no cover - fail-closed compatibility path
 
 from qplot.diagnostics import log_exception
 
+from ._csv_filenames import csv_filename
 from ._export_paths import (
     ExportDestinationTransaction,
     UnsafeExportDestinationError,
@@ -55,6 +56,15 @@ _UnsafePrintDestinationError = UnsafeExportDestinationError
 _PrintPdfDestination = ExportDestinationTransaction
 _SAFE_PYQTGRAPH_FILE_EXPORTERS = (ImageExporter, CSVExporter, SVGExporter)
 _SAFE_PYQTGRAPH_COPY_EXPORTERS = (ImageExporter, SVGExporter)
+
+
+def _csv_numeric_text(value: Any) -> str:
+    """Preserve extended array samples without narrowing them to binary64."""
+    if isinstance(value, np.longdouble):
+        return np.format_float_scientific(value, unique=True, trim="-")
+    if isinstance(value, (float, np.floating)):
+        return repr(float(value))
+    return str(value)
 
 
 def _csv_shared_coordinates_match(reference: Any, candidate: Any) -> bool:
@@ -686,6 +696,14 @@ class PlotExportMixin(_PlotExportBase):
         suffixes, default_suffix, name_filter, description = specification
         suggested_path = path.splitext(self._default_plot_pdf_filename())[0]
         suggested_path = f"{suggested_path}{default_suffix}"
+        if type(exporter) is CSVExporter:
+            dataset = getattr(self, "ds", None)
+            filename = csv_filename(
+                getattr(self, "config", None), path.basename(suggested_path),
+                guid=getattr(dataset, "guid", None),
+                captured_run_id=getattr(dataset, "captured_run_id", None),
+            )
+            suggested_path = path.join(path.dirname(suggested_path), filename)
         try:
             destination = choose_export_path_with_suffixes(
                 self,
@@ -755,11 +773,12 @@ class PlotExportMixin(_PlotExportBase):
         Reuse PyQtGraph's column/header collection, including error bars and
         original (unmapped, non-downsampled) datasets, but never its positional
         decimal-place formatter. Python's float representation round-trips
-        QCoDeS's binary64 numbers; integers are written without float coercion.
+        QCoDeS's binary64 numbers; extended array samples retain their precision
+        and integers are written without float coercion.
         Every attempt owns a fresh collector: copy only parameter settings,
         never the dialog exporter's counter, headers or accumulated data. This
         also isolates failures and leaves options intact for a retry or mode
-        switch. The earlier round-trip numeric serialization is unchanged.
+        switch.
         """
         if not isinstance(exporter.item, PlotItem):
             raise TypeError("Must have a PlotItem selected for CSV export.")
@@ -798,11 +817,7 @@ class PlotExportMixin(_PlotExportBase):
             )
             csv_writer.writerow(collector.header)
             for row in zip_longest(*columns, fillvalue=""):
-                csv_writer.writerow([
-                    repr(float(value)) if isinstance(value, (float, np.floating))
-                    else str(value)
-                    for value in row
-                ])
+                csv_writer.writerow([_csv_numeric_text(value) for value in row])
         return True
 
 
@@ -856,7 +871,7 @@ class PlotExportMixin(_PlotExportBase):
                     csv_writer.writerow((
                         float(x_centre),
                         float(y_centre),
-                        data_grid[y_index, x_index],
+                        _csv_numeric_text(data_grid[y_index, x_index]),
                     ))
                     rows_written += 1
 

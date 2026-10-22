@@ -2,6 +2,45 @@
 
 All notable user-facing changes are recorded here.
 
+## 1.6.2 — Unreleased
+
+This bugfix release improves measurement correctness, live viewing and plot
+lifecycle reliability. The native dependency remains `qplotter-native==1.0.1`.
+
+### Fixed
+
+- Load inferred QCoDeS parameters and missing ancillary array cells, preserving
+  recorded samples across previews, plotting, incremental refresh and raw CSV.
+- Handle singleton and empty array acquisitions consistently, including planned
+  scan shapes, and check expanded memory requirements before allocating them.
+- Preserve extended floating-point and integer precision in derivatives, FFTs,
+  clipping, centering, statistics, heatmaps, previews and CSV exports.
+  Honor finite clipping bounds on float16/float32 measurement arrays.
+- Preserve axis meaning and source ownership during mixed-plot promotion,
+  cut refresh and drag-and-drop; refresh retained sources while paused and
+  cancel pending work when its target window closes.
+- Avoid Qt callback errors when reassigning axes on a clipped trace, and clear
+  obsolete omission warnings when live metadata becomes available again.
+- Honor accepted reader cancellation and delayed helper cancellation without
+  publishing stale results or unnecessarily retiring healthy readers.
+- Refresh live-reader schema descriptions when QCoDeS adds metadata, so newly
+  acquired runs expose their current columns without missing data or query errors.
+- Protect measurement files from diagnostic-log reuse and synthetic generation
+  side effects; report malformed generator inputs and profiling failures cleanly.
+  Retire benchmark plot windows before Qt application teardown.
+- Allow qPlot to start when the diagnostic log path contains a symlink loop.
+
+### Compatibility and validation
+
+- Standard QCoDeS main-database storage remains supported. Runs using the
+  optional separate-per-dataset storage backend are refused before opening
+  their measurement files, since safe multi-file live viewing is not implemented.
+- Main databases, WAL files and rollback journals remain physically read-only.
+  Only the pinned native reader may modify the exact colocated SHM file.
+- Add regression coverage and independently reviewed fixes documented in
+  `BUG_HUNT.md`. No legacy settings migrations are introduced. This draft does
+  not publish a release.
+
 ## 1.6.1
 
 This patch release improves live acquisition viewing and release validation.

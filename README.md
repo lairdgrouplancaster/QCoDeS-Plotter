@@ -39,6 +39,11 @@ selected run's plain detail view without copying the database. Main-database,
 WAL, and rollback-journal handles remain read-only; SQLite may update only the
 exact colocated `-shm` file as transient WAL coordination state.
 
+Measurement viewing supports QCoDeS's standard `sqlite_main_db` storage backend.
+Runs using the optional `sqlite_per_dataset_db` backend can appear in the run
+list, but their measurement actions are refused before opening the separate
+raw-data files. Safe multi-file live viewing is not yet implemented.
+
 Normal `qplot`, `python -m qplot`, and `qplot.run()` launches put the complete
 qPlot process tree behind a shutdown boundary before Qt or reader helpers can
 start. The command-line process is the launcher. A public `qplot.run()` call
@@ -107,7 +112,7 @@ source builds, and release validation.
 ## Install
 
 Install qPlot inside a supported Python virtual environment. This checkout
-prepares the stable application release `1.6.1`, with native `1.0.1`.
+prepares the stable application release `1.6.2`, with native `1.0.1`.
 The installation examples below work after publication; until then, use
 validated local artifacts as described in [Distribution](docs/distribution.md).
 
@@ -138,9 +143,9 @@ For ordinary installation after a stable PyPI release is available:
 python -m pip install --only-binary=:all: qplotter
 ```
 
-To select version 1.6.1 explicitly after publication:
+To select version 1.6.2 explicitly after publication:
 ```console
-python -m pip install --only-binary=:all: qplotter==1.6.1
+python -m pip install --only-binary=:all: qplotter==1.6.2
 ```
 
 Both commands install the full runtime dependency set as wheels, with no C
@@ -162,7 +167,7 @@ installing the new packages:
 
 ```console
 python -m pip uninstall -y qplot qcodes-plotter qcodes-plotter-native qplotter qplotter-native
-python -m pip install --only-binary=:all: qplotter==1.6.1
+python -m pip install --only-binary=:all: qplotter==1.6.2
 python -m pip check
 ```
 

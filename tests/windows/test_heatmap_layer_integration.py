@@ -1,4 +1,5 @@
 import hashlib
+import stat
 import time
 from pathlib import Path
 
@@ -69,17 +70,23 @@ def _wait_for(predicate, timeout=12):
 
 def _database_artifact_state(database_path):
     state = {}
-    for suffix in ("", "-wal", "-shm", "-journal"):
+    for suffix in ("", "-wal", "-journal"):
         path = Path(f"{database_path}{suffix}")
         if not path.exists():
             state[suffix] = None
             continue
-        stat = path.stat()
+        metadata = path.stat()
         state[suffix] = (
-            stat.st_size,
-            stat.st_mtime_ns,
+            metadata.st_size,
+            metadata.st_mtime_ns,
             hashlib.sha256(path.read_bytes()).hexdigest(),
         )
+    # SQLite may hold Windows byte-range locks on this permitted mutable file.
+    # Its contents are not part of the invariant; observe type/identity only.
+    try:
+        state["-shm"] = Path(f"{database_path}-shm").lstat()
+    except FileNotFoundError:
+        state["-shm"] = None
     return state
 
 
@@ -90,10 +97,13 @@ def _assert_reader_artifact_invariant(database_path, original_artifacts):
 
     # The pinned trusted reader may use SQLite's exact colocated WAL shared-
     # memory file.  Its creation and contents are the sole viewing exception.
-    shm_path = Path(f"{database_path}-shm")
-    if current_artifacts["-shm"] is not None:
-        assert shm_path.is_file()
-        assert not shm_path.is_symlink()
+    shm = current_artifacts["-shm"]
+    if shm is not None:
+        assert stat.S_ISREG(shm.st_mode)
+    original_shm = original_artifacts["-shm"]
+    if original_shm is not None:
+        assert shm is not None
+        assert (shm.st_dev, shm.st_ino) == (original_shm.st_dev, original_shm.st_ino)
 
 
 def _build_two_heatmap_database(database_path):

@@ -32,6 +32,7 @@ MEASUREMENT_PREVIEW_GENERATING_BORDERS = (
 class RunPreviewCell(qtw.QWidget):
     plotRequested = QtCore.pyqtSignal(str, str)
     exportRequested = QtCore.pyqtSignal(str, str)
+    statsRequested = QtCore.pyqtSignal(str, str)
 
     def __init__(self, guid, count, parent=None, icon_size=MEASUREMENT_PREVIEW_SIZE):
         super().__init__(parent)
@@ -152,6 +153,7 @@ class RunPreviewCell(qtw.QWidget):
             )
         label.plotRequested.connect(self._emit_plot_requested)
         label.exportRequested.connect(self._emit_export_requested)
+        label.statsRequested.connect(self._emit_stats_requested)
         label.dragFinished.connect(self._apply_pending_display)
         self.content_layout.addWidget(label)
 
@@ -193,6 +195,7 @@ class RunPreviewCell(qtw.QWidget):
         label.dragFinished.connect(self._apply_pending_display)
         label.plotRequested.connect(self._emit_plot_requested)
         label.exportRequested.connect(self._emit_export_requested)
+        label.statsRequested.connect(self._emit_stats_requested)
         dimensions = self._placeholder_dimensions
         dimension = dimensions[index] if index < len(dimensions) else None
         label.setText(f"{dimension}D" if dimension else "")
@@ -248,6 +251,10 @@ class RunPreviewCell(qtw.QWidget):
 
     def _emit_plot_requested(self, parameter):
         self.plotRequested.emit(self.guid, parameter)
+
+
+    def _emit_stats_requested(self, parameter):
+        self.statsRequested.emit(self.guid, parameter)
 
 
     def _emit_export_requested(self, parameter):

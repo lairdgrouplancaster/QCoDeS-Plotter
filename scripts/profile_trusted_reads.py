@@ -6,6 +6,8 @@ import json
 import time
 from pathlib import Path
 
+from qcodes.dataset.descriptions.versioning.serialization import from_json_to_current
+
 from qplot.datahandling.trusted_live import TrustedLiveReader
 from qplot.datahandling.trusted_plot import identifier
 
@@ -38,12 +40,19 @@ def main():
     results = []
     reader_type = FullPathReader if args.full_path_checks else TrustedLiveReader
     with reader_type.open(args.database) as reader:
-        table, = reader.query("SELECT result_table_name FROM runs WHERE run_id=?",
-                              (args.run_id,)).rows[0]
+        table, description = reader.query(
+            "SELECT result_table_name, run_description FROM runs WHERE run_id=?",
+            (args.run_id,),
+        ).rows[0]
         table = identifier(table)
         columns = reader.query(f"SELECT * FROM {table} WHERE 0").columns
-        numeric = [identifier(name) for name in columns if name != "id"]
-        # Read all numeric fields, with only a small aggregate crossing the
+        types = {spec.name: spec.type for spec in from_json_to_current(description).interdeps.paramspecs}
+        numeric_parameters = [name for name in columns if types.get(name) == "numeric"]
+        if not numeric_parameters:
+            parser.error(f"Run {args.run_id} has no scalar numeric parameters to profile")
+        numeric = [identifier(name) for name in numeric_parameters]
+        # Array/complex/text values are outside this numeric profiler's scope.
+        # Read declared numeric fields, with only a small aggregate crossing the
         # helper boundary. Match the plot's finite primary-key intervals.
         expressions = ", ".join(f"MIN({name}), MAX({name})" for name in numeric)
         for repeat in range(args.repeats):
@@ -69,6 +78,7 @@ def main():
     if before != after:
         raise AssertionError("Protected source file sizes/timestamps changed")
     print(json.dumps({"run_id": args.run_id, "pages": args.pages, "results": results,
+                      "numeric_parameters": numeric_parameters,
                       "full_path_checks": args.full_path_checks,
                       "protected_file_stats_unchanged": True}, indent=2))
 

@@ -16,6 +16,7 @@ from qcodes.dataset.descriptions.versioning.converters import new_to_old
 from qcodes.dataset.descriptions.versioning.serialization import from_json_to_current
 from qcodes.dataset.sqlite.connection import AtomicConnection
 
+from .readonly import SEPARATE_RAW_DATA_STORAGE_MESSAGE
 from .trusted_live import TrustedLiveQueryError, TrustedQuery
 
 PAGE_ROWS = 8192
@@ -48,9 +49,10 @@ def _report_array_progress(executor, phase, row_id, watermark, copied_bytes, rec
 class TrustedPlotDataset:
     """Connection-free run description and viewer-owned QCoDeS cache."""
 
-    def __init__(self, service, row):
+    def __init__(self, service, row, *, captured_run_id=None):
         (self.run_id, self.guid, self.table_name, description,
          completed, self.name, self.exp_name, self.sample_name) = row
+        self.captured_run_id = captured_run_id
         self.service = service
         self.path_to_db = service.database_instance.logical_path
         self.description_json = description
@@ -88,15 +90,23 @@ class TrustedPlotDataset:
 
 
 def plot_dataset(executor, service, guid):
+    columns = executor.query("SELECT * FROM runs WHERE 0").columns
+    if "raw_data_db_path" in columns:
+        storage = executor.query(
+            "SELECT raw_data_db_path IS NOT NULL FROM runs WHERE guid=? LIMIT 1",
+            (guid,),
+        ).rows
+        if storage and storage[0][0]:
+            raise TrustedLiveQueryError(SEPARATE_RAW_DATA_STORAGE_MESSAGE)
     rows = executor.query(
         "SELECT r.run_id, r.guid, r.result_table_name, r.run_description, "
-        "r.is_completed, r.name, e.name, e.sample_name "
+        "r.is_completed, r.name, e.name, e.sample_name, r.captured_run_id "
         "FROM runs r JOIN experiments e ON r.exp_id=e.exp_id "
         "WHERE r.guid=? LIMIT 2", (guid,),
     ).rows
     if len(rows) != 1:
         raise TrustedLiveQueryError("The requested plot GUID does not identify one run.")
-    return TrustedPlotDataset(service, rows[0])
+    return TrustedPlotDataset(service, rows[0][:-1], captured_run_id=rows[0][-1])
 
 
 class PlotPrefix:

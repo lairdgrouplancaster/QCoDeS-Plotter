@@ -13,6 +13,7 @@ from qplot.configuration.fonts import FONT_SIZE_KEY
 
 from ._commands import create_action
 from ._config_persistence import persist_config_values
+from ._csv_filenames import CSV_FILENAME_FORMAT_KEY, CSV_FILENAME_FORMAT_OPTIONS
 from ._plot_annotation import SHOW_SOURCE_ANNOTATION_KEY
 from ._plot_tiling import PLOT_TILE_COLUMNS_KEY, PLOT_TILE_ROWS_KEY
 from ._window_controls import (
@@ -62,6 +63,7 @@ PREFERENCE_KEYS = (
     PLOT_TILE_COLUMNS_KEY,
     MOUSE_MODE_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
+    CSV_FILENAME_FORMAT_KEY,
     "file.default_load_path",
     "user_preference.default_refresh_rate",
     CONFIRM_CLOSE_ALL_KEY,
@@ -301,6 +303,19 @@ class PreferencesDialog(qtw.QDialog):
         form.setContentsMargins(8, 8, 8, 8)
         form.setSpacing(8)
 
+        self.csvFilenameFormatCombo = qtw.QComboBox(tab)
+        self.csvFilenameFormatCombo.setObjectName("csvFilenameFormatPreferenceCombo")
+        self.csvFilenameFormatCombo.setAccessibleName("CSV filename format")
+        for label, value in CSV_FILENAME_FORMAT_OPTIONS:
+            self.csvFilenameFormatCombo.addItem(label, value)
+        self.csvFilenameFormatCombo.setToolTip(
+            "Suggested CSV filenames: Current uses run_<run_id>_<measurement>.csv "
+            "(all for multiple measurements). QCoDeS uses "
+            "qcodes_<captured_run_id>_<GUID>.csv, matching dataset.export defaults. "
+            "You can edit the filename when saving."
+        )
+        self._add_row(form, "CSV &filename format:", self.csvFilenameFormatCombo)
+
         path_widget = qtw.QWidget(tab)
         path_layout = qtw.QHBoxLayout(path_widget)
         path_layout.setContentsMargins(0, 0, 0, 0)
@@ -501,6 +516,7 @@ class PreferencesDialog(qtw.QDialog):
             self.plotTileColumnsSpin,
             self.mouseModeCombo,
             self.copyPlotImageResolutionCombo,
+            self.csvFilenameFormatCombo,
             self.defaultLoadPathEdit,
             self.refreshRateSpin,
             self.confirmCloseAllCheck,
@@ -547,6 +563,9 @@ class PreferencesDialog(qtw.QDialog):
             self.copyPlotImageResolutionCombo.setCurrentIndex(
                 max(copy_resolution_index, 0)
                 )
+            self.csvFilenameFormatCombo.setCurrentIndex(max(
+                self.csvFilenameFormatCombo.findData(values[CSV_FILENAME_FORMAT_KEY]), 0
+            ))
             self.defaultLoadPathEdit.setText(str(values["file.default_load_path"]))
             self.refreshRateSpin.setValue(
                 float(values["user_preference.default_refresh_rate"])
@@ -606,6 +625,7 @@ class PreferencesDialog(qtw.QDialog):
             COPY_PLOT_IMAGE_RESOLUTION_KEY: (
                 self.copyPlotImageResolutionCombo.currentData()
                 ),
+            CSV_FILENAME_FORMAT_KEY: self.csvFilenameFormatCombo.currentData(),
             "file.default_load_path": self.defaultLoadPathEdit.text().strip(),
             "user_preference.default_refresh_rate": self.refreshRateSpin.value(),
             CONFIRM_CLOSE_ALL_KEY: self.confirmCloseAllCheck.isChecked(),
