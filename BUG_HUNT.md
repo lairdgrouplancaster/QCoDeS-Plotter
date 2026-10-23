@@ -31,7 +31,7 @@ review by a different subchat. Do not merge or release.
   pyqtgraph 0.14.0, APSW 3.53.4.0 and native 1.0.1. Use the fixed Matplotlib
   cache and offscreen Qt for automated startup checks.
 
-### Round 28 — in progress
+### Round 28 — complete: two confirmed bugs fixed
 
 Three fresh subchats investigate safety/live/native reading, measurement
 correctness and UI/lifecycle. The coordinator owns settings, entry points,
@@ -63,7 +63,30 @@ filename preference/export-path interactions, then other application seams.
   cleanup pass, with no callback errors. Receipt:
   `/private/tmp/qplot-r28-ui-independent-review-receipt.json`.
 
-#### Round-28 coverage completed so far
+#### C19-041 — Unsupported statistics values silently become real, infinite or zero
+
+- Reproduced through the actual thumbnail context-menu action: complex measured
+  values lose their imaginary parts; pure-imaginary measurements report four
+  zero summaries. On Intel, current-QCoDeS extended array values such as `1e400`
+  or `1e-400` produce infinity/NaN or zero despite finite nonzero recordings.
+  Distinct extended samples whose narrow values coincide can report zero spread.
+- Fix: validate actual measurements and declared setpoints before conversion,
+  explicitly refusing complex data, finite samples outside the display range,
+  nonfinite summaries and an unrepresentable nonzero spread. Keep original
+  arrays for exact centering; complex ancillary inference inputs remain valid.
+- Fifteen meaningful regressions fail before the repair on Intel. The related
+  author suite passes **46 tests / 7 expected platform skips on ARM**, **53 on
+  Intel**, including four positive precision/extreme-value controls. Logs:
+  `/private/tmp/qplot-r28-measurement-c041-after-{arm,intel}.log`.
+- Different safety subchat independently **approved** source and real menu
+  behavior: **7 ARM / 10 Intel compositions**, **28 passed / 7 expected skips
+  on ARM**, **35 passed on Intel**. Warning-free refusals, ragged and map axes,
+  complex ancillary bases, no-finite handling and valid recovery all pass.
+  **57 protected-file comparisons**, 17 retired snapshots and all helper/dialog
+  cleanup checks pass. Receipts:
+  `/private/tmp/qplot-r28-safety-numeric-review-{arm64,x86_64}-receipt.json`.
+
+#### Round-28 completed coverage
 
 - Safety lane found no additional bug: **40 focused tests passed**. Fresh live
   current-QCoDeS array composition verified **2,100,086 exact values**, 18
@@ -85,8 +108,23 @@ filename preference/export-path interactions, then other application seams.
   through the reused exporter; source artifacts are unchanged and owned UI and
   reader resources close. Receipt:
   `/private/tmp/qplot-r28-coordinator-receipt.json`.
-- A second normal-menu numeric-domain finding is being investigated/repaired
-  separately as C19-041. Round 28 is not clean; no clean-round credit yet.
+- Fresh measurement composition on each architecture covers eight real inferred
+  array runs and 24 incremental snapshots: repeated coordinates, ragged records,
+  planned-shape overruns, missing text bases, signed/unsigned/float16/extended and
+  nonfinite/extreme samples. Each passes **128 exact sample checks**, **92
+  independent Fraction/100-digit Decimal summary oracles**, 24 protected-file
+  comparisons and reader cleanup. Receipts:
+  `/private/tmp/qplot-r28-measurement-oracles-{arm64,x86_64}.json`.
+- Actual project-venv `python -m qplot` startup on the frozen repairs passes:
+  visible window, running Qt event loop, isolated settings/logs and clean exit 0.
+  Receipt: `/private/tmp/qplot-r28-ui-startup-receipt.json`.
+- Target is the next bugfix **1.6.3**, retaining native **1.0.1**. Native source
+  did not change and does not need rebuilding for these Python repairs.
+- Campaign total: **40 confirmed application/diagnostic repairs**, plus six
+  earlier test-only CI corrections. Round 28 is not clean; clean-round count
+  remains **0**. Next: fresh round 29, then further review until two consecutive
+  complete clean rounds or the authorized round-32 limit; finish full validation
+  and update the new draft PR without merging or releasing.
 
 ## Campaign starting 2026-10-19 — round 27 completed 2026-10-21
 
