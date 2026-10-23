@@ -1351,6 +1351,10 @@ class MainWindow(
                     self.show_status("Close all plot windows cancelled.", 3000)
                 return False
 
+        # Auto-plot and pending plot loads can publish while the modal
+        # confirmation runs its nested event loop. Close those windows too,
+        # before Close Database releases their dataset handles and readers.
+        plot_windows = self.windows.copy()
         if status:
             self.show_status("Closing plot windows...", 3000)
         for win in plot_windows:
