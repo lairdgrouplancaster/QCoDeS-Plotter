@@ -333,3 +333,63 @@ def test_supported_statistics_keep_original_precision_and_finite_extremes(
         assert f'Average: {expected_mean}\n' in text
         assert f'Standard deviation: {expected_deviation}\n' in text
         np.testing.assert_array_equal(recorded['signal'], samples)
+
+
+@pytest.mark.parametrize('storage', ['scalar', 'array', 'mixed-array'])
+@pytest.mark.parametrize('sign', [1, -1])
+def test_statistics_refuse_nonzero_mean_that_underflows_to_zero(
+    recorded_statistics_columns, storage, sign,
+):
+    from fractions import Fraction
+
+    smallest = np.nextafter(0., 1.)
+    samples = sign * np.array([2 * smallest, -smallest])
+    if storage == 'scalar':
+        records = list(zip(np.arange(samples.size, dtype=float), samples, strict=True))
+        types = {'x': 'numeric', 'signal': 'numeric'}
+    else:
+        records = [(np.arange(samples.size, dtype=float), samples)]
+        types = {'x': 'array', 'signal': 'array'}
+        if storage == 'mixed-array':
+            records.insert(0, (np.array([-1]), np.array([0], dtype=np.int64)))
+    with recorded_statistics_columns(records, types) as recorded:
+        exact_mean = sum(Fraction(value) for value in recorded['signal']) / len(recorded['signal'])
+        assert exact_mean != 0 and float(exact_mean) == 0
+        with pytest.raises(ValueError, match='display range'):
+            dataset_statistics_text(recorded, 'signal', setpoint_names=('x',))
+
+
+@pytest.mark.skipif(
+    np.finfo(np.longdouble).nmant <= np.finfo(float).nmant,
+    reason='This platform has no extended floating precision.',
+)
+def test_statistics_refuse_extended_cancellation_with_underflowed_mean(recorded_statistics_columns):
+    from fractions import Fraction
+
+    base = np.longdouble(np.finfo(float).tiny)
+    samples = np.array([np.nextafter(base, np.longdouble('inf')), -base])
+    exact = [Fraction(*value.as_integer_ratio()) for value in samples]
+    assert sum(exact) != 0 and float(sum(exact) / len(exact)) == 0
+    assert np.all(samples.astype(float) != 0)
+    with recorded_statistics_columns(
+        [(np.arange(samples.size, dtype=float), samples)], {'x': 'array', 'signal': 'array'},
+    ) as recorded:
+        with pytest.raises(ValueError, match='display range'):
+            dataset_statistics_text(recorded, 'signal', setpoint_names=('x',))
+
+
+@pytest.mark.parametrize('samples', [
+    np.array([0.]),
+    np.array([0], dtype=np.int64),
+    np.array([-np.nextafter(0., 1.), np.nextafter(0., 1.)]),
+    np.array([-2**62, 0, 2**62], dtype=np.int64),
+    np.array([np.finfo(float).max, np.finfo(float).max,
+              -np.finfo(float).max, -np.finfo(float).max]),
+])
+def test_statistics_keep_exactly_zero_means(recorded_statistics_columns, samples):
+    with recorded_statistics_columns(
+        [(np.arange(samples.size, dtype=float), samples)], {'x': 'array', 'signal': 'array'},
+    ) as recorded:
+        text = dataset_statistics_text(recorded, 'signal', setpoint_names=('x',))
+        assert 'Average: 0.000\n' in text
+        np.testing.assert_array_equal(recorded['signal'], samples)

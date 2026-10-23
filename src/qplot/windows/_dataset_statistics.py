@@ -3,7 +3,11 @@
 import numpy as np
 
 from qplot.datahandling.parameter_data import numeric_isfinite
-from qplot.tools.sample_statistics import finite_mean, finite_standard_deviation
+from qplot.tools.sample_statistics import (
+    finite_mean,
+    finite_standard_deviation,
+    finite_sum_is_zero,
+)
 
 from ._plotWin import plotWidget
 
@@ -43,6 +47,8 @@ def dataset_statistics_text(columns, parameter_name, *, setpoint_names):
     deviation = finite_standard_deviation(values)
     if not np.isfinite(average) or not np.isfinite(deviation) or (
         deviation == 0 and values.min() != values.max()
+    ) or (
+        average == 0 and not finite_sum_is_zero(values)
     ):
         raise ValueError(
             f"Statistics for {parameter_name!r} are outside the statistics display range."

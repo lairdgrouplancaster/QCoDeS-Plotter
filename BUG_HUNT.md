@@ -23,7 +23,8 @@ review by a different subchat. Do not merge or release.
   [release validation](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39774775931).
   Evidence: `/private/tmp/qplot-r28-main-baseline-all-checks.json`.
 - New dedicated branch: `codex/qplot-bug-hunt-2026-10-23`, based on that verified
-  main revision. Open a new draft PR for the extension; the merged PR is history.
+  main revision. [Draft PR #91](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/91)
+  was opened at `9f80242`; the merged PR is history.
 - Since round 27, main gained full-dataset statistics from thumbnail menus,
   persistent CSV filename preferences, revised default plot tiling and related
   validation. These changes are part of the baseline, not new campaign fixes.
@@ -125,6 +126,67 @@ filename preference/export-path interactions, then other application seams.
   remains **0**. Next: fresh round 29, then further review until two consecutive
   complete clean rounds or the authorized round-32 limit; finish full validation
   and update the new draft PR without merging or releasing.
+
+### Round 29 — in progress
+
+Three fresh subchats review native/snapshot failure recovery, measurement
+composition and live-cut/dialog lifecycle. The coordinator examines generator,
+settings, diagnostics, entry points and packaging. Exact edit ownership is
+assigned before changes; no overlapping author files.
+
+- **C19-042 confirmed:** current-QCoDeS scalar and array measurements containing
+  `[2 * smallest_subnormal, -smallest_subnormal]` show `Average: 0.000` even
+  though the exact Fraction mean is nonzero and the displayed spread is positive.
+  Nine real menu compositions reproduce both signs and mixed integer/float
+  records, with protected sources and cleanup. Fix: check exact cancellation
+  only when the computed mean is zero, reusing the existing exact accumulator
+  without changing `finite_mean` or rendering semantics. Author focused suites:
+  **67 passed / 8 expected skips on ARM**, **75 passed on Intel**. Evidence:
+  `/private/tmp/qplot-r29-measurement-underflow-receipt.json`.
+  Different safety subchat independently **approved**: **49 passed / 8 skips
+  on ARM**, **57 passed on Intel**, plus 21 distinct real menu acquisitions
+  involving large cancellation, mixed uint64/int64/float residuals, ragged exact
+  zeros and ordinary/large-offset controls. All 63 protected-file comparisons,
+  21 retired snapshots, exact-helper oracles and cancellation checks pass.
+  Million-record zero-mean menus take 0.550/0.235 s for float/int on ARM and
+  1.081/0.397 s on Intel. Receipts:
+  `/private/tmp/qplot-r29-safety-c042-review-{arm64,x86_64}-receipt.json`.
+- **C19-043 confirmed:** change a newly opened heatmap cut's enabled color
+  selector before its queued first data publication. The Qt callback calls
+  `update_sweep()` without `dataGrid`, raising an uncaught `AttributeError`.
+  The actual 3×4 current-QCoDeS heatmap reproduction preserves source files.
+  The UI owner is preparing a targeted color/lifecycle repair and regressions;
+  the measurement subchat will independently review. Evidence:
+  `/private/tmp/qplot-r29-ui-color-probe.log`.
+- Safety investigation is complete with no additional finding: **34 tests
+  passed**; 19 native refusals and 20 successful recoveries, cancellation and
+  deadline expiry, **1,620,126 exact values**, 36 protected-file comparisons,
+  five writer-owned checkpoints and eight physically read-only descriptors.
+  Private spool/copy ENOSPC, cancellation after connection open and deadline
+  after snapshot attachment all retire resources correctly; reopening recovers.
+  No prohibited VFS operations or proof leaks. Native runtime pins verify APSW
+  3.53.4.0, SQLite 3.53.4 and native 1.0.1. Receipt:
+  `/private/tmp/qplot-r29-safety-receipt.json`.
+- Coordinator focused generator/auxiliary/diagnostic/distribution suite:
+  **122 passed**. Fresh generator-to-reader-to-persistence composition passes:
+  literal `#`, `%`, `?`, spaces and Unicode filename, 78 exact setpoint checks,
+  four closed readers, nine protected-file comparisons, rejected unconfirmed
+  overwrite, cancellation during generation, safe settings/log refusal at the
+  measurement path, recovery of settings/log rotation and explicit selected
+  synthetic-output replacement. All fixtures retired. Receipt:
+  `/private/tmp/qplot-r29-coordinator-receipt.json`.
+- Whole-tree Ruff, mypy (**88 files**) and project-venv dependency check pass.
+  The project editable metadata now reports **1.6.3**. Initial draft-head CI at
+  exact `9f802428ee25103ec5182c68a34bc5cbe1c94c19`: 46 checks, 10 successful,
+  20 running, 16 queued, no failure; not yet a complete green result.
+- Two actual `python -m qplot` launches load the exact generated database with
+  literal filename punctuation/Unicode, once as a plain positional argument and
+  once following Qt style options and `--`. Both show the window, enter the Qt
+  event loop, load/select the run and exit 0 with isolated settings, unchanged
+  protected files and removed fixtures. Receipt:
+  `/private/tmp/qplot-r29-startup-path-receipt.json`.
+- Round 29 is not clean. Finish both repairs/reviews and remaining coverage,
+  then begin fresh round 30. Final full-suite/install/CI validation remains due.
 
 ## Campaign starting 2026-10-19 — round 27 completed 2026-10-21
 
