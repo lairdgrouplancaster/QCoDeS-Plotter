@@ -26,6 +26,10 @@ All notable user-facing changes are recorded here.
   measurements, keeping subsequent derivatives and CSV exports correct.
 - Close plots published by Auto-plot or pending loads while a close confirmation
   is open, before Close Database releases their readers and dataset handles.
+- Cancel plot requests already queued when Close All is accepted, including
+  Auto-plot requests, while preserving later explicit plots and new acquisitions.
+- Keep plot-launch profiling responsive when a small or cached preceding run
+  completes without capture steps; report unavailable requested stages promptly.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.

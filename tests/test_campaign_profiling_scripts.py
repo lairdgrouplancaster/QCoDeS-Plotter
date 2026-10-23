@@ -81,6 +81,41 @@ def test_actual_plot_benchmark_reports_lines_and_heatmaps(measured_database, run
         assert iteration["paint_ms"]
 
 
+@pytest.mark.parametrize("action", ["guid", "double-click", "run"])
+def test_plot_benchmark_repeated_preceding_run_accepts_cached_completion(
+    measured_database, action,
+):
+    result = _run(
+        "benchmark_plot_launch.py", measured_database, 1,
+        "--repeats", 2, "--preceding-run", 2, "--action", action,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(result.stdout)
+    assert report["protected_file_stats_unchanged"]
+    assert len(report["results"]) == 2
+    for iteration in report["results"]:
+        assert iteration["line_samples"] == [3]
+        assert iteration["paint_ms"]
+        assert any(capture["run_id"] == 2 for capture in iteration["capture"])
+    # The second completed-run capture legitimately reuses its immutable
+    # prefix without yielding a page; that must not strand the launch gate.
+    assert report["results"][1]["preceding_capture_steps"] == [0, 0]
+
+
+@pytest.mark.parametrize("stage", ["aggregate", "large-summary"])
+def test_plot_benchmark_explains_unreachable_preceding_stage(
+    measured_database, stage,
+):
+    result = _run(
+        "benchmark_plot_launch.py", measured_database, 1,
+        "--repeats", 1, "--preceding-run", 2, "--preceding-stage", stage,
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert f"Preceding run 2 completed without reaching the {stage} stage" in result.stderr
+    assert "QThread: Destroyed" not in result.stderr
+    assert "Fatal Python error" not in result.stderr
+
+
 def test_actual_plot_benchmark_failure_shuts_down_without_crashing(measured_database):
     result = _run("benchmark_plot_launch.py", measured_database, 999, "--repeats", 1)
     assert result.returncode == 1, result.stdout + result.stderr

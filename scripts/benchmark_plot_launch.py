@@ -185,11 +185,28 @@ def main():
                 if args.preceding_run is not None:
                     preceding_guid = window._run_metadata_for_id(args.preceding_run)["guid"]
                     launch(preceding_guid)
-                    wait_for(lambda: (args.preceding_run in large_summary_started
-                                      if args.preceding_stage == "large-summary" else
-                                      args.preceding_run in aggregate_started
-                                      if args.preceding_stage == "aggregate" else
-                                      capture_steps.get(args.preceding_run, 0) > 0))
+
+                    def preceding_ready():
+                        reached = (args.preceding_run in large_summary_started
+                                   if args.preceding_stage == "large-summary" else
+                                   args.preceding_run in aggregate_started
+                                   if args.preceding_stage == "aggregate" else
+                                   capture_steps.get(args.preceding_run, 0) > 0)
+                        if reached:
+                            return True
+                        if any(item["run_id"] == args.preceding_run for item in timings):
+                            # Completed prefixes can be reused without yielding
+                            # a capture step. A named phase may also be absent
+                            # for this run; never wait for it after completion.
+                            if args.preceding_stage != "any":
+                                raise RuntimeError(
+                                    f"Preceding run {args.preceding_run} completed without "
+                                    f"reaching the {args.preceding_stage} stage"
+                                )
+                            return True
+                        return False
+
+                    wait_for(preceding_ready)
                 preceding_steps_start = capture_steps.get(args.preceding_run, 0)
                 started = time.perf_counter()
                 launch(guid)
