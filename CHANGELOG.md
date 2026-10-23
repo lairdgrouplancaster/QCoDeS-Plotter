@@ -22,6 +22,10 @@ All notable user-facing changes are recorded here.
   changing, preserving merged traces and correct rollback after cancellation.
 - Explain when marquee-selection means or standard deviations are outside the
   display range, including in copied statistics, instead of reporting false zeros.
+- Preserve configured clipping-limit precision for extended floating-point
+  measurements, keeping subsequent derivatives and CSV exports correct.
+- Close plots published by Auto-plot or pending loads while a close confirmation
+  is open, before Close Database releases their readers and dataset handles.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.
