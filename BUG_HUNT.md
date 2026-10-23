@@ -26,7 +26,7 @@ current QCoDeS support; do not add legacy settings migrations.
   substantive fix. Use current-QCoDeS fixtures, concrete reproductions and
   meaningful regression tests; do not count unsupported or previously repaired
   behavior as a new finding.
-- **In progress.** Prior campaign total is 46 confirmed application/diagnostic
+- The starting campaign total was 46 confirmed application/diagnostic
   repairs plus six historical test-only CI corrections. Round 32 found two
   bugs, so the consecutive clean-round count starts at zero.
 
@@ -41,7 +41,7 @@ current QCoDeS support; do not add legacy settings migrations.
   the dialog, whereas these requests remain pending when accepted close returns.
   Evidence: `/private/tmp/qplot-r33-ui-pending-close-receipt.json` and
   `/private/tmp/qplot-r33-ui-auto-pending-close-receipt.json`. UI author owns
-  `main.py`, `_plot_actions.py`, `_auto_plot.py` and its new regression module;
+  `main.py`, `_plot_actions.py`, `_auto_plot.py` and its new regression module.
   The repair invalidates/cancels manual launches accepted before Close All and
   discards queued Auto Plot work while retaining completed-GUID history and
   future acquisition support. The same cancellation applies when no plot window
@@ -67,7 +67,7 @@ current QCoDeS support; do not add legacy settings migrations.
   A different measurement subchat independently confirmed the source cause.
   Evidence: `/private/tmp/qplot-r33-root-probe.log`. The coordinator owns
   the benchmark script and `tests/test_campaign_profiling_scripts.py`; the
-  measurement subchat will independently review the frozen repair. The original
+  measurement subchat independently reviewed the frozen repair. The original
   interrupted performance composition is not counted as a successful run.
   The repair accepts completed captures for the default `any` stage and raises
   an explicit diagnostic when a completed capture never entered a requested
@@ -124,11 +124,11 @@ current QCoDeS support; do not add legacy settings migrations.
   the campaign to **48 application/diagnostic repairs** plus six historical
   test-only CI corrections. The consecutive clean-round count remains zero.
   Do not begin round 34 without further authorization.
-- **Integration in progress:** both substantive fixes have independent approval;
-  the complete automated suite is running on frozen application code. An initial
+- **Local integration complete:** both substantive fixes have independent approval;
+  the complete automated suite passes on frozen application code. An initial
   sandboxed attempt was interrupted after local process-supervision IPC raised
   `PermissionError` before those tests could exercise their intended behavior
-  (540 passed, 70 permission-related failures, exit 2). The complete run restarted
+  (540 passed, 70 permission-related failures, exit 2). The complete run passed
   with approved local IPC/process permissions; the interrupted attempt is not
   counted as final validation. Its log is
   `/private/tmp/qplot-r33-full-sandbox-interrupted.log`. Actual project-venv
@@ -136,6 +136,58 @@ current QCoDeS support; do not add legacy settings migrations.
   loop, exit 0, isolated settings/logs and complete cleanup; its receipt binds
   all three changed application files:
   `/private/tmp/qplot-r33-ui-startup-receipt.json`.
+
+### Round-33 artifact and installation validation
+
+- Frozen reviewed source revision: `735d7a2263373884a8491eddee1869c2128f7272`.
+  Source/test hashes match both independent approvals; receipt:
+  `/private/tmp/qplot-r33-integration-source.json`.
+- Built the app wheel/sdist in a clean detached worktree, with exact clean,
+  unreleased PR #91 provenance. Every tracked archive member matches that
+  revision; the sdist includes all **254 test modules plus conftest**. All four
+  app/native artifacts pass Twine. Artifacts:
+  `/private/tmp/qplot-bh20261023-735d7a2-dist`; manifest:
+  `/private/tmp/qplot-bh20261023-735d7a2-artifact-manifest.json`.
+- Native sources remain identical to the verified baseline. The native wheel
+  and sdist retain their audited hashes; two missing old scratch-cache copies
+  were restored from the prior round's surviving artifacts only after exact
+  hash verification. No native source or dependency change was needed.
+- Fresh **ARM and Intel compiler-free wheel installations both pass**, including
+  exact installed-file checks, actual qPlot startup, current QCoDeS reading,
+  native protected-file/cleanup/checkpoint behavior and dependency checks.
+  Dependencies install entirely from wheels; no compiler build occurs. All
+  temporary environments, the Intel host-Git metadata helper and the detached
+  build worktree are removed. Receipts:
+  `/private/tmp/qplot-r33-wheel-install-arm64-receipt.json` and
+  `/private/tmp/qplot-r33-artifact-intel-acceptance-receipt.json`.
+- A separate Intel pytest attempt could not collect because the old shared
+  scratch runtime lacked Python package files and fell back to an ARM-only
+  dependency. It ran no tests and is not counted as a pass. The successful
+  fresh Intel wheel installation above does not use that scratch runtime;
+  earlier completed ARM/Intel measurement compositions retain their own
+  explicit architecture checks and receipts.
+
+### Round-33 final local validation and publication checkpoint
+
+- Complete suite: **5,663 passed, 128 skipped, 61 warnings**, all **5,791 items**
+  accounted for, exit 0 in **932.93 seconds**. Command:
+  `QT_QPA_PLATFORM=offscreen MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-mac/bin/python -m pytest --no-cov -n 2 --dist=loadfile --no-loadscope-reorder`.
+  Log: `/private/tmp/qplot-r33-full.log`. Skips cover platform-specific cases;
+  extended-precision public workflows were independently exercised on Intel.
+- Whole-tree Ruff, mypy (**88 source files**), dependency and whitespace checks
+  pass. All application/test/script/native trees match frozen reviewed revision
+  `735d7a2263373884a8491eddee1869c2128f7272`; the final record changes only
+  `BUG_HUNT.md`. Startup and fresh ARM/Intel wheel acceptance above use this
+  identical application source. No merge, tag or release is authorized.
+- Round 33 is complete with **two repairs**. The branch now contains **ten
+  confirmed fixes across rounds 28–33** for bugfix 1.6.3; native remains 1.0.1.
+  No additional investigation round is authorized.
+- Publication continuation: commit/push this validation record, verify all CI
+  checks for the resulting **exact final head**, and update draft PR #91. Record
+  the final hosted-CI observation in the linked PR, avoiding a further log-only
+  commit that would change the revision just validated. The complete API
+  receipt uses `/private/tmp/qplot-r33-ci-<shortsha>.json`. If interrupted, resume
+  only this integration checkpoint; do not start round 34 or merge/release.
 
 ## Resumed 2026-10-23 — up to five rounds, 28–32
 
