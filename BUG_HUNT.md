@@ -1,5 +1,93 @@
 # qPlot bug-hunt campaign
 
+## Resumed 2026-10-23 — up to five rounds, 28–32
+
+The user authorized up to five additional rounds with substantial effort.
+Start a fresh clean-round count at zero; stop after two complete fresh rounds
+find no new actionable bugs, or after round 32. Maintain the database-access
+invariant, current QCoDeS support and no legacy settings migrations. Every
+substantive fix requires concrete reproduction, regression tests and independent
+review by a different subchat. Do not merge or release.
+
+### Verified resumption baseline
+
+- Previous PR #90 was merged externally on 2026-10-22; its remote branch was
+  deleted. The former local head `d3af0b2` has **47/47 successful checks**.
+- Fetched current `origin/main` / tag `v1.6.2`:
+  `4a0baf68be2b005e25ba802d2fc166a4da38d418`. The checkout was clean.
+  Verified **111 exact-SHA checks across both API pages: 110 successful and
+  one skipped `publish-native` job**. Both `Required checks` and
+  `validate / Required checks` succeeded. All check IDs are unique, every
+  returned head SHA matches and the combined length matches the API total.
+  [Main CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39772723874),
+  [release validation](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39774775931).
+  Evidence: `/private/tmp/qplot-r28-main-baseline-all-checks.json`.
+- New dedicated branch: `codex/qplot-bug-hunt-2026-10-23`, based on that verified
+  main revision. Open a new draft PR for the extension; the merged PR is history.
+- Since round 27, main gained full-dataset statistics from thumbnail menus,
+  persistent CSV filename preferences, revised default plot tiling and related
+  validation. These changes are part of the baseline, not new campaign fixes.
+- Project venv: CPython 3.12.2, QCoDeS 0.61.0, NumPy 2.5.3, PyQt6 6.11.0,
+  pyqtgraph 0.14.0, APSW 3.53.4.0 and native 1.0.1. Use the fixed Matplotlib
+  cache and offscreen Qt for automated startup checks.
+
+### Round 28 — in progress
+
+Three fresh subchats investigate safety/live/native reading, measurement
+correctness and UI/lifecycle. The coordinator owns settings, entry points,
+generation, diagnostics, packaging, integration and this log. Investigation
+begins read-only; exact source/test ownership is assigned before any edit.
+Initial emphasis is new statistics acquisition/precision/lifecycle and CSV
+filename preference/export-path interactions, then other application seams.
+
+#### C19-040 — Inferred dataset statistics use basis columns as axes
+
+- Confirmed through real current-QCoDeS scalar and ragged-array recordings:
+  `converted(x)` also carries an inferred `basis` column. Statistics inferred
+  its axes from every non-output column, reporting X=basis and Y=x instead of
+  X=x and Y=converted. A text/complex basis made statistics fail. For a two-axis
+  measurement, adding a basis column reversed the displayed default axes.
+- Fix: take the ordered setpoint names from the requested parameter's actual
+  `depends_on_` metadata and pass them explicitly to the statistics summarizer.
+  Inference inputs remain available in recorded data but never define axes.
+- Twelve real QCoDeS regressions cover line/heatmap, scalar/ragged-array and
+  numeric/text/complex bases. All fail on the previous implementation and pass
+  after the repair. Author related suite: **91 passed**. Logs:
+  `/private/tmp/qplot-r28-measurement-before-final.log` and
+  `/private/tmp/qplot-r28-measurement-after.log`.
+- Independent UI reviewer **approved** the frozen repair: **16 tests passed**
+  plus a distinct two-output acquisition with opposite dependency ordering and
+  numeric, text and complex bases together. The original helper reverses both
+  outputs' X/Y ranges; corrected real row-menu dialogs match seven-line literal
+  oracles and retain copied text after Close Database. Protected files and
+  cleanup pass, with no callback errors. Receipt:
+  `/private/tmp/qplot-r28-ui-independent-review-receipt.json`.
+
+#### Round-28 coverage completed so far
+
+- Safety lane found no additional bug: **40 focused tests passed**. Fresh live
+  current-QCoDeS array composition verified **2,100,086 exact values**, 18
+  protected-file comparisons, five writer-owned checkpoints and eight physically
+  read-only main/WAL descriptors across two helpers. Coalesced cancellation,
+  active-WAL statistics refusal/checkpoint recovery and copied-run local versus
+  captured identifiers passed. All helpers, snapshots, prefixes and writers
+  retired. Receipt: `/private/tmp/qplot-r28-safety-receipt.json`.
+- UI lane found no additional bug: **126 focused tests and 17 subtests passed**.
+  Three real menu actions, eleven captured-dialog clipboard checks, switching,
+  Close Database and two nested-menu source transitions pass without callback
+  errors. Four dialogs and background resources retire; a million int64 samples
+  generate statistics in 0.265 s locally. Receipt:
+  `/private/tmp/qplot-r28-ui-receipt.json`.
+- Coordinator settings/preferences/package checks: **108 passed**. Fresh real
+  QCoDeS/Qt export composition: **1 passed**, six CSV/TSV exports preserving 60
+  exact values, three persisted filename-format changes, one rejected atomic
+  settings write and one cancelled export. Correct suggestions remain available
+  through the reused exporter; source artifacts are unchanged and owned UI and
+  reader resources close. Receipt:
+  `/private/tmp/qplot-r28-coordinator-receipt.json`.
+- A second normal-menu numeric-domain finding is being investigated/repaired
+  separately as C19-041. Round 28 is not clean; no clean-round credit yet.
+
 ## Campaign starting 2026-10-19 — round 27 completed 2026-10-21
 
 **The one additional authorized round, 27, is complete: no new actionable bugs.**

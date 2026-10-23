@@ -1211,7 +1211,10 @@ class PlotActionsMixin:
             dataset = self._load_run_csv_dataset(dataset_key)
             data = parameter_data_for_export(dataset, parameter_name)
             columns = _csv_scalar_columns(data, parameter_name)
-            stats_text = dataset_statistics_text(columns, parameter_name)
+            stats_text = dataset_statistics_text(
+                columns, parameter_name,
+                setpoint_names=dataset.paramspecs[parameter_name].depends_on_,
+            )
             self._require_run_csv_source_current(dataset_key)
         except DatabaseInstanceChangedError as err:
             self._handle_run_csv_source_replaced(dataset_key)

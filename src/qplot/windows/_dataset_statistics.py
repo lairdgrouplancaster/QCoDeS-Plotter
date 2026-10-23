@@ -8,14 +8,16 @@ from qplot.tools.sample_statistics import finite_mean, finite_standard_deviation
 from ._plotWin import plotWidget
 
 
-def dataset_statistics_text(columns, parameter_name):
+def dataset_statistics_text(columns, parameter_name, *, setpoint_names):
     values = np.asarray(columns[parameter_name])
     values = values[numeric_isfinite(values)]
     if not values.size:
         return None
     format_num = plotWidget.formatNum
     lines = [f"{values.size} points"]
-    axes = [name for name in columns if name != parameter_name]
+    # Inferred measurements also contain basis columns. Only declared
+    # dependencies define the plot axes; basis values need not be numeric.
+    axes = list(setpoint_names)
     # For a line, Y is the measured value; for a map, both are setpoints.
     # Match the default plot axes: the inner (second) setpoint is X,
     # and the outer (first) setpoint is Y.
