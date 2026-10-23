@@ -127,7 +127,7 @@ filename preference/export-path interactions, then other application seams.
   complete clean rounds or the authorized round-32 limit; finish full validation
   and update the new draft PR without merging or releasing.
 
-### Round 29 — in progress
+### Round 29 — complete: two confirmed bugs fixed
 
 Three fresh subchats review native/snapshot failure recovery, measurement
 composition and live-cut/dialog lifecycle. The coordinator examines generator,
@@ -155,9 +155,22 @@ assigned before changes; no overlapping author files.
   selector before its queued first data publication. The Qt callback calls
   `update_sweep()` without `dataGrid`, raising an uncaught `AttributeError`.
   The actual 3×4 current-QCoDeS heatmap reproduction preserves source files.
-  The UI owner is preparing a targeted color/lifecycle repair and regressions;
-  the measurement subchat will independently review. Evidence:
-  `/private/tmp/qplot-r29-ui-color-probe.log`.
+  Recoloring during a pending axis swap also moves/hides the old marker using
+  requested axes against committed samples. Fix: recolor the existing trace and
+  marker without rereading data; retain chosen color before first publication.
+  Notify sample consumers only when no axis transaction is pending.
+  Author related suite: **183 tests and 10 subtests passed**, including seven
+  new lifecycle regressions. Evidence: `/private/tmp/qplot-r29-ui-color-probe.log`.
+  Independent measurement review caught an initial repair gap: a merged overlay
+  cleared during pending recolor and stayed empty after cancellation. Two
+  strengthened real-overlay regressions fail before the notification guard and
+  pass afterward; final relevant subset **22 passed**. Different reviewer
+  approved the corrected source with two horizontal/vertical cuts, nine recolors,
+  17 marker checks, seven merged-consumer checks, 59 exact quadratic sample
+  checks and 18 protected-file comparisons. Both rollback and committed-axis
+  changes preserve the intended data/appearance policy. No callback errors and
+  complete cleanup. Receipt:
+  `/private/tmp/qplot-r29-measurement-c043-review-receipt.json`.
 - Safety investigation is complete with no additional finding: **34 tests
   passed**; 19 native refusals and 20 successful recoveries, cancellation and
   deadline expiry, **1,620,126 exact values**, 36 protected-file comparisons,
@@ -167,6 +180,20 @@ assigned before changes; no overlapping author files.
   No prohibited VFS operations or proof leaks. Native runtime pins verify APSW
   3.53.4.0, SQLite 3.53.4 and native 1.0.1. Receipt:
   `/private/tmp/qplot-r29-safety-receipt.json`.
+- Fresh numeric composition on **each** architecture covers eight actual
+  QCoDeS acquisitions and 64 workers, with 288 exact raw-sample checks, 288 CSV
+  round trips, 192 grid, 192 centering and 384 derivative oracles. All eight
+  protected-file comparisons and reader cleanup checks pass. Receipts:
+  `/private/tmp/qplot-r29-measurement-composition-{arm64,x86_64}-receipt.json`.
+- Final UI composition passes 87 exact plotted/exported values, 14 protected
+  comparisons, six color actions, three pending swaps, six live refreshes,
+  two CSV/TSV exports and six dialog-reuse cycles. Tiling wrap/reset, source
+  switching, rejected ranges/exports and public Close Database recover normally.
+  Nine owned QObjects, five dialogs and both services retire without callback
+  errors. Final corrected-source actual module startup also passes with private
+  settings, visible window/event loop and exit 0. Receipts:
+  `/private/tmp/qplot-r29-ui-receipt.json` and
+  `/private/tmp/qplot-r29-ui-startup-receipt.json`.
 - Coordinator focused generator/auxiliary/diagnostic/distribution suite:
   **122 passed**. Fresh generator-to-reader-to-persistence composition passes:
   literal `#`, `%`, `?`, spaces and Unicode filename, 78 exact setpoint checks,
@@ -185,8 +212,10 @@ assigned before changes; no overlapping author files.
   event loop, load/select the run and exit 0 with isolated settings, unchanged
   protected files and removed fixtures. Receipt:
   `/private/tmp/qplot-r29-startup-path-receipt.json`.
-- Round 29 is not clean. Finish both repairs/reviews and remaining coverage,
-  then begin fresh round 30. Final full-suite/install/CI validation remains due.
+- Round 29 is not clean; consecutive clean-round count remains **0**. Campaign
+  total is **42 confirmed application/diagnostic repairs**, plus six earlier
+  test-only CI corrections. Next: fresh round 30, then 31/32 as needed. Final
+  full-suite, exact-artifact/install and hosted CI validation remains due.
 
 ## Campaign starting 2026-10-19 — round 27 completed 2026-10-21
 

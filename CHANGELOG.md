@@ -12,6 +12,12 @@ All notable user-facing changes are recorded here.
 - Refuse full-dataset statistics for complex measurements or setpoints and for
   finite values or summaries outside the display range, instead of silently
   discarding imaginary components or displaying misleading infinities or zeros.
+- Distinguish an exactly cancelling mean from a nonzero mean that underflows to
+  zero, reporting unsupported statistics explicitly while retaining valid zero
+  means and recorded sample precision.
+- Keep heatmap-cut color changes safe before data arrives or after a failed or
+  empty load. During an axis change, recolor the existing cut and marker using
+  their committed axes until the new data is ready.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.
