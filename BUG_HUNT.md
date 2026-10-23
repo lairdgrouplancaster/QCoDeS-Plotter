@@ -443,6 +443,47 @@ Every repair had a different subchat's independent review before commit.
   exact-artifact/compiler-free installation/CI acceptance, record the results,
   commit/push and update draft PR #91 for bugfix **1.6.3**. No merge, tag or release.
 
+### Final integration validation — local acceptance complete
+
+- Frozen validation revision: **`f1f0efa990967411f8710ba17aa12e12d02267e6`**,
+  committed and pushed to draft PR #91. The code/tests are frozen; subsequent
+  validation-record edits affect only this campaign log.
+- Rebuilt app **1.6.3** wheel and sdist from that clean commit, with unreleased
+  PR #91 provenance. Verified every tracked member against Git: 133 wheel
+  members / 127 runtime files; 420 sdist members including all 253 test modules
+  and conftest. App/native Twine checks pass. Artifact manifest:
+  `/private/tmp/qplot-bh20261023-f1f0efa-artifact-manifest.json`.
+- All **four compiler-free installs pass**, using these exact final app/native
+  artifacts: ARM and Intel, wheel and editable. Each checks installed file
+  hashes, dependency consistency, entry points, actual qPlot startup and native
+  trusted-live behavior. Editable source edits take effect without reinstall;
+  native files remain unchanged. Intel interpreter architectures are verified.
+  All owned environments and temporary host-Git helpers are removed. Receipt:
+  `/private/tmp/qplot-r32-install-acceptance-receipt.json`; logs:
+  `/private/tmp/qplot-r32-{wheel,editable}-install-{arm64,x86_64}.log`.
+- Native source tree still matches the verified baseline exactly. The cached
+  native **1.0.1** universal wheel/sdist hashes match the audited sources; no
+  local native rebuild was necessary. Hosted CI additionally rebuilt all four
+  native platform wheels successfully for the frozen revision.
+- Complete final-source suite: **5,644 passed, 128 skipped, 61 warnings** in
+  **949.67 seconds**, exit **0**, accounting for all **5,772 collected items**.
+  Run with offscreen Qt, the fixed Matplotlib cache and project-venv
+  `python -m pytest --no-cov -n 2 --dist=loadfile --no-loadscope-reorder`.
+  Extended-precision cases skipped on ARM are covered by the Intel author and
+  independent-review runs above. Log: `/private/tmp/qplot-r32-final-full.log`.
+- Hosted CI for the frozen source has no reported failure at this checkpoint;
+  native/application builds and 30 checks have succeeded, with remaining matrix
+  jobs running or queued. The final documentation-only head must receive its own
+  required-check acceptance; do not infer a final green result from these partial
+  observations. Exact-SHA receipts are retained under
+  `/private/tmp/qplot-r32-ci-<shortsha>.json`, with the final observation recorded
+  in the [draft PR](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/91).
+- Investigation and local acceptance are complete at the authorized five-round
+  limit. Remaining integration task: push this validation record, verify hosted
+  CI for the exact final head, and update draft PR #91 with its result. This log
+  is the only file changed after frozen-source validation. No further round,
+  merge, tag or release is authorized here.
+
 ## Campaign starting 2026-10-19 — round 27 completed 2026-10-21
 
 **The one additional authorized round, 27, is complete: no new actionable bugs.**
