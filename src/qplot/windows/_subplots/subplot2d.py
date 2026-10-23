@@ -867,6 +867,19 @@ class sweeper(plotWidget):
         if sweep_id != self.sweep_id:
             return
 
+        if self.__dict__.get("_axis_change_transaction") is not None:
+            # The cut slider is disabled while its axes load, but the parent
+            # heatmap can still move the marker. Restore its committed position
+            # without publishing old samples against the requested selectors.
+            self.sweep_moved.emit(
+                self.sweep_id,
+                self.sweep_indep,
+                self.fixed_indep,
+                self.fixed_value,
+                self.line.opts["pen"],
+                )
+            return
+
         self.fixed_value = float(fixed_value)
         if not getattr(self, "fixed_indep_data", np.asarray([])).size:
             return

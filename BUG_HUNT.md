@@ -217,7 +217,7 @@ assigned before changes; no overlapping author files.
   test-only CI corrections. Next: fresh round 30, then 31/32 as needed. Final
   full-suite, exact-artifact/install and hosted CI validation remains due.
 
-### Round 30 — in progress
+### Round 30 — complete: two confirmed bugs fixed
 
 Three new subchats began from clean, committed `2602ea7`, pushed to draft PR #91.
 The coordinator owns packaging/native-install acceptance and profiling. The
@@ -227,9 +227,16 @@ clean-round count remains zero; remaining authorized rounds are 30–32.
   still-enabled source marker and cancel. The cut restores committed samples,
   but the marker remains on a different row and the merged overlay remains
   empty. Actual current-QCoDeS/Qt reproduction, protected files and cleanup
-  verified. UI owner is preparing a scoped pending-marker rejection/restoration
-  with regressions; measurement subchat will independently review. Evidence:
+  verified. Fix: restore the committed marker position/axes and avoid sample
+  publication while a cut-axis transaction is pending. Eight real regressions
+  fail before, covering horizontal/vertical cuts, commit/cancel and both outer
+  bounds. Author related suites: **221 passed and 10 subtests**. Different
+  measurement subchat independently **approved**: **16 focused tests passed**,
+  eight requests, 26 marker actions (edge, keyboard and group), cancellation,
+  supersession and injected failures; **846 exact samples**, 54 CSV values and
+  24 protected comparisons. All QObjects/readers/fixtures retire. Evidence:
   `/private/tmp/qplot-r30-ui-marker-receipt.json`.
+  Independent receipt: `/private/tmp/qplot-r30-c044-independent-receipt.json`.
 - **C19-045 confirmed:** select `[2*tiny, -tiny]` in a heatmap containing other
   normal-scale cells, where `tiny` is the smallest binary64 subnormal. The
   enabled marquee Stats dialog displays a zero mean despite a nonzero exact
@@ -242,13 +249,14 @@ clean-round count remains zero; remaining authorized rounds are 30–32.
   Author related suite: **94 passed / 8 expected ARM skips**. Reproduction:
   `/private/tmp/qplot-r30-marquee-probe.log`.
   Different safety subchat independently **approved**: **48 focused tests
-  passed**, plus 19 actual line/heatmap acquisitions, ten correctly refused
-  selections and nine valid controls, 38 Fraction/Decimal oracles, 57 protected
-  comparisons and 57 Copy checks. Captured dialog text survives selection
-  changes; valid selections recover. All 38 dialogs, 19 plots and snapshots
-  retire without callback errors or runtime warnings. Million-sample exact-zero
+  passed**, plus **on each of ARM and Intel** 19 actual line/heatmap acquisitions,
+  ten correctly refused selections and nine valid controls, 38 Fraction/Decimal
+  oracles, 57 protected comparisons and 57 Copy checks. Captured dialog text
+  survives selection changes; valid selections recover. All 38 dialogs, 19 plots and background
+  readers retire without callback errors or runtime warnings; no snapshot
+  directories were created. Million-sample exact-zero
   summaries take 0.484 s float / 0.207 s integer locally. Receipt:
-  `/private/tmp/qplot-r30-safety-c045-review-arm64-receipt.json`.
+  `/private/tmp/qplot-r30-safety-c045-review-{arm64,x86_64}-receipt.json`.
 - Independent packaging audit: **116 passed / 2 expected Windows skips**.
   App/docs/release metadata consistently target **1.6.3**, native/APSW pins stay
   **1.0.1 / 3.53.4.0**. Native tree
@@ -271,9 +279,27 @@ clean-round count remains zero; remaining authorized rounds are 30–32.
   descriptors pass. Both services, seven spools and writer retire. Cancellation
   and `close_async` return in 0.015 and 0.020 ms locally. Receipt:
   `/private/tmp/qplot-r30-safety-receipt.json`.
-- Finish both repairs/reviews, remaining fresh coverage and actual startup,
-  then proceed through rounds 31/32 within the authorization. Final full-suite,
-  stamped exact-artifact/compiler-free installs and CI acceptance remain due.
+- Fresh non-statistics composition on each architecture passes six real ragged,
+  planned and serpentine acquisitions: clipping, exact centering, nonuniform FFT
+  and raw CSV. Per architecture: 60 raw values, 30 exact clipped cells, 36
+  Fraction-interpolation/trigonometric-DFT oracles, 60 CSV round trips and 18
+  protected comparisons; all six readers and fixtures retire. Receipts:
+  `/private/tmp/qplot-r30-transform-composition-{arm64,x86_64}-receipt.json`.
+- Fresh UI composition exercises auto-plot dormant retries, unchanged-metadata
+  non-replay and real completion-metadata rearming, merged export and queue
+  disable/re-enable/Close Database. **27 controls** before first publication,
+  64 exact values, two exports, five actual Refresh clicks and ten protected
+  comparisons pass. Ten QObjects and the service retire without callback errors.
+  Actual project-venv qPlot **1.6.3** startup passes on both frozen fixes, with
+  source hashes, private settings/logs, visible window/event loop and exit 0.
+  Receipts: `/private/tmp/qplot-r30-ui-receipt.json` and
+  `/private/tmp/qplot-r30-ui-startup-receipt.json`.
+- Whole-tree Ruff, mypy (**88 files**) and diff checks pass. Campaign total:
+  **44 confirmed application/diagnostic repairs**, plus six historical test-only
+  CI corrections. Round 30 is not clean; clean-round count remains **0**.
+  Next: fresh rounds **31 and 32**, the two remaining authorized rounds. Final
+  full-suite, stamped exact-artifact/compiler-free installs and CI acceptance
+  remain due. Do not merge, tag or release.
 
 ## Campaign starting 2026-10-19 — round 27 completed 2026-10-21
 

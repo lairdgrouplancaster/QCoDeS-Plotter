@@ -18,6 +18,10 @@ All notable user-facing changes are recorded here.
 - Keep heatmap-cut color changes safe before data arrives or after a failed or
   empty load. During an axis change, recolor the existing cut and marker using
   their committed axes until the new data is ready.
+- Keep source heatmap markers at the committed cut position while cut axes are
+  changing, preserving merged traces and correct rollback after cancellation.
+- Explain when marquee-selection means or standard deviations are outside the
+  display range, including in copied statistics, instead of reporting false zeros.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.
