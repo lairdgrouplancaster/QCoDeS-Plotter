@@ -525,14 +525,20 @@ def pass_filter(
     # The controls retain the user's decimal text; direct float callers keep
     # their float value. Compare integers with a decimal bound exactly.
     exact_limit = limit if isinstance(limit, Decimal) else Decimal(str(limit))
-    float_limit = float(limit)
+    floating_limit: float | np.floating = float(limit)
+    if data.dtype.kind == "f" and data.dtype.itemsize > np.dtype(float).itemsize:
+        # Configured decimal text must reach extended samples without first
+        # rounding through binary64. That narrowing can erase the variation
+        # needed by later centering or differentiation. Direct float callers
+        # retain the exact binary value they supplied.
+        floating_limit = data.dtype.type(str(limit) if isinstance(limit, Decimal) else limit)
 
     # Set the bounds for arrays that already contain floating-point samples.
-    limit_arr: tuple[float | None, float | None]
+    limit_arr: tuple[float | np.floating | None, float | np.floating | None]
     if which == "low":
-        limit_arr = (None, float_limit)
+        limit_arr = (None, floating_limit)
     elif which == "high":
-        limit_arr = (float_limit, None)
+        limit_arr = (floating_limit, None)
     else:
         raise KeyError(f'Invalid value for which: {which}. Must be: "high" or "low"')
     
