@@ -1332,6 +1332,7 @@ class MainWindow(
         """
         plot_windows = self.windows.copy()
         if not plot_windows:
+            PlotActionsMixin._cancel_pending_plot_launches(self)
             if status:
                 self.show_status("No plot windows to close.", 3000)
             return True
@@ -1351,6 +1352,11 @@ class MainWindow(
                     self.show_status("Close all plot windows cancelled.", 3000)
                 return False
 
+        PlotActionsMixin._cancel_pending_plot_launches(self)
+        # Auto-plot and pending plot loads can publish while the modal
+        # confirmation runs its nested event loop. Close those windows too,
+        # before Close Database releases their dataset handles and readers.
+        plot_windows = self.windows.copy()
         if status:
             self.show_status("Closing plot windows...", 3000)
         for win in plot_windows:

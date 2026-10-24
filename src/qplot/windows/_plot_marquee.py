@@ -1,11 +1,16 @@
 from collections.abc import Callable
+from math import isfinite
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from qplot.tools.sample_statistics import finite_mean, finite_standard_deviation
+from qplot.tools.sample_statistics import (
+    finite_mean,
+    finite_standard_deviation,
+    finite_sum_is_zero,
+)
 
 from ._widgets import CopyableTableWidget
 
@@ -432,9 +437,20 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
                 f"Y range: {self.formatNum(y_low)} to {self.formatNum(y_high)}",
                 ))
 
+        average = finite_mean(values)
+        deviation = finite_standard_deviation(values)
+        if (not isfinite(average) or not isfinite(deviation)
+                or (deviation == 0 and values.min() != values.max())
+                or (average == 0 and not finite_sum_is_zero(values))):
+            # A small selection inside an otherwise drawable plot can have
+            # an unrepresentable mean/spread. Keep its geometry and Copy
+            # action available without presenting a false zero summary.
+            lines.append("Statistics: Selected values are outside the statistics display range.")
+            return "\n".join(lines)
+
         lines.extend((
-            f"Average: {self.formatNum(finite_mean(values))}",
-            f"Standard deviation: {self.formatNum(finite_standard_deviation(values))}",
+            f"Average: {self.formatNum(average)}",
+            f"Standard deviation: {self.formatNum(deviation)}",
             f"Max: {self.formatNum(float(values.max()))}",
             f"Min: {self.formatNum(float(values.min()))}",
             ))

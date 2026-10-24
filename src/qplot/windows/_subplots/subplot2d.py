@@ -153,12 +153,7 @@ class sweeper(plotWidget):
         main_line.del_box.setDisabled(True)
         main_line.axis_side.setDisabled(True)
         main_line.color_box.setColor(self.config.theme.colors[0])
-        main_line.color_box.selectedColor.connect(
-            lambda col: self.line.setPen(col)
-            )
-        main_line.color_box.selectedColor.connect( # emit update to main
-            lambda _: self.update_sweep()
-            )
+        main_line.color_box.selectedColor.connect(self._change_cut_color)
         self.axes_dock.addWidget(main_line)
         main_line.adjustSize()
         
@@ -186,6 +181,26 @@ class sweeper(plotWidget):
         self.axes_dock.content_layout.addStretch()
         
         
+    def _change_cut_color(self, color: Any) -> None:
+        """Recolor the committed cut without reading or republishing samples."""
+        self.line.setPen(color)
+        if not getattr(self, "fixed_indep_data", np.asarray([])).size:
+            return
+        # A pending request changes the selectors that merged traces consult.
+        # Do not advertise a sample publication until that request commits.
+        if self.__dict__.get("_axis_change_transaction") is None:
+            self.trace_updated.emit()
+        # Selectors may already describe a pending axis request. The existing
+        # trace and its marker still belong to the last committed axis pair.
+        self.sweep_moved.emit(
+            self.sweep_id,
+            self.sweep_indep,
+            self.fixed_indep,
+            self.fixed_value,
+            self.line.opts["pen"],
+            )
+
+
     def initFrame(self):
         """
         Sets up the initial plot and starting data.
@@ -850,6 +865,19 @@ class sweeper(plotWidget):
 
         """
         if sweep_id != self.sweep_id:
+            return
+
+        if self.__dict__.get("_axis_change_transaction") is not None:
+            # The cut slider is disabled while its axes load, but the parent
+            # heatmap can still move the marker. Restore its committed position
+            # without publishing old samples against the requested selectors.
+            self.sweep_moved.emit(
+                self.sweep_id,
+                self.sweep_indep,
+                self.fixed_indep,
+                self.fixed_value,
+                self.line.opts["pen"],
+                )
             return
 
         self.fixed_value = float(fixed_value)

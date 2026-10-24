@@ -178,6 +178,17 @@ class PlotActionsMixin:
 
     _selected_dataset_key: DatasetKey | None
 
+    def _cancel_pending_plot_launches(self):
+        """Retire requests accepted before Close All, retaining future launches."""
+        self._plot_launch_generation = getattr(self, "_plot_launch_generation", 0) + 1
+        pending = getattr(self, "_trusted_plot_pending", set())
+        for request in tuple(pending):
+            request.cancel()
+        pending.clear()
+        queue = getattr(self, "_auto_plot_queue", None)
+        if queue is not None:
+            queue.discard_pending()
+
     def _defer_trusted_plot_action(self, target, resume, *, target_window=None):
         if getattr(self, "_database_access_mode", None) != TRUSTED_LIVE_MODE:
             return False
@@ -225,11 +236,13 @@ class PlotActionsMixin:
             self.show_error("Plot Load Failed", "Could not load plot metadata.", str(error))
             return True
         pending.add(request)
+        launch_generation = getattr(self, "_plot_launch_generation", 0)
         timer = QtCore.QTimer(self)
         timer.setInterval(10)
 
         def poll():
             stale = (getattr(self, "_shutdown_started", False)
+                     or launch_generation != getattr(self, "_plot_launch_generation", 0)
                      or getattr(target_window, "_closed", False)
                      or service is not getattr(self, "_trusted_read_service", None)
                      or (selection is not None and selection != (
@@ -1211,7 +1224,10 @@ class PlotActionsMixin:
             dataset = self._load_run_csv_dataset(dataset_key)
             data = parameter_data_for_export(dataset, parameter_name)
             columns = _csv_scalar_columns(data, parameter_name)
-            stats_text = dataset_statistics_text(columns, parameter_name)
+            stats_text = dataset_statistics_text(
+                columns, parameter_name,
+                setpoint_names=dataset.paramspecs[parameter_name].depends_on_,
+            )
             self._require_run_csv_source_current(dataset_key)
         except DatabaseInstanceChangedError as err:
             self._handle_run_csv_source_replaced(dataset_key)

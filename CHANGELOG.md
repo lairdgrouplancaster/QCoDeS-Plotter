@@ -2,7 +2,39 @@
 
 All notable user-facing changes are recorded here.
 
-## 1.6.2 — Unreleased
+## 1.6.3 — Unreleased
+
+### Fixed
+
+- Use declared setpoints for full-dataset statistics of inferred QCoDeS
+  measurements. Numeric inference inputs no longer replace or swap the reported
+  axes, and text or complex inference inputs no longer prevent statistics.
+- Refuse full-dataset statistics for complex measurements or setpoints and for
+  finite values or summaries outside the display range, instead of silently
+  discarding imaginary components or displaying misleading infinities or zeros.
+- Distinguish an exactly cancelling mean from a nonzero mean that underflows to
+  zero, reporting unsupported statistics explicitly while retaining valid zero
+  means and recorded sample precision.
+- Keep heatmap-cut color changes safe before data arrives or after a failed or
+  empty load. During an axis change, recolor the existing cut and marker using
+  their committed axes until the new data is ready.
+- Keep source heatmap markers at the committed cut position while cut axes are
+  changing, preserving merged traces and correct rollback after cancellation.
+- Explain when marquee-selection means or standard deviations are outside the
+  display range, including in copied statistics, instead of reporting false zeros.
+- Preserve configured clipping-limit precision for extended floating-point
+  measurements, keeping subsequent derivatives and CSV exports correct.
+- Close plots published by Auto-plot or pending loads while a close confirmation
+  is open, before Close Database releases their readers and dataset handles.
+- Cancel plot requests already queued when Close All is accepted, including
+  Auto-plot requests, while preserving later explicit plots and new acquisitions.
+- Keep plot-launch profiling responsive when a small or cached preceding run
+  completes without capture steps; report unavailable requested stages promptly.
+
+The native dependency remains `qplotter-native==1.0.1`. No settings migrations
+are introduced. This entry prepares a bugfix release without publishing it.
+
+## 1.6.2 — 2026-10-22
 
 This bugfix release improves measurement correctness, live viewing and plot
 lifecycle reliability. The native dependency remains `qplotter-native==1.0.1`.
@@ -38,8 +70,7 @@ lifecycle reliability. The native dependency remains `qplotter-native==1.0.1`.
 - Main databases, WAL files and rollback journals remain physically read-only.
   Only the pinned native reader may modify the exact colocated SHM file.
 - Add regression coverage and independently reviewed fixes documented in
-  `BUG_HUNT.md`. No legacy settings migrations are introduced. This draft does
-  not publish a release.
+  `BUG_HUNT.md`. No legacy settings migrations are introduced.
 
 ## 1.6.1
 

@@ -1,5 +1,705 @@
 # qPlot bug-hunt campaign
 
+## Resumed — one additional round, 33
+
+The user authorized one additional round after rounds 28–32. Stop after round
+33 and its repairs, independent review and integration; do not begin round 34.
+Continue on `codex/qplot-bug-hunt-2026-10-23`, preparing bugfix 1.6.3 in
+[draft PR #91](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/91).
+Do not merge, tag or release. Preserve the database-access invariant and
+current QCoDeS support; do not add legacy settings migrations.
+
+### Round-33 verified baseline and scope
+
+- Clean starting revision: `29e96a1576a4a97621934bd5aadf4e46d4f1566c`, matching
+  the branch upstream and draft PR head. Fresh GitHub API verification finds
+  **47/47 completed successful checks**, including `Required checks`. Every
+  returned SHA matches, all check IDs are unique, and the complete response
+  count equals the API total. The PR remains open, draft and unmerged.
+  [Successful baseline CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40011099582).
+  Evidence: `/private/tmp/qplot-r33-baseline-check-runs.json`.
+- Three fresh subchats own initial read-only investigation of database
+  safety/live reading, measurement correctness, and UI/lifecycle. The
+  coordinator covers packaging, entry points, generation, diagnostics,
+  performance interactions and integration. Assign exact file ownership before
+  repairs and require a different subchat to independently review each
+  substantive fix. Use current-QCoDeS fixtures, concrete reproductions and
+  meaningful regression tests; do not count unsupported or previously repaired
+  behavior as a new finding.
+- The starting campaign total was 46 confirmed application/diagnostic
+  repairs plus six historical test-only CI corrections. Round 32 found two
+  bugs, so the consecutive clean-round count starts at zero.
+
+### Round-33 confirmed fixes
+
+- **C19-048: queued plots survive accepted Close All.** A real current-QCoDeS
+  WAL database and real Qt confirmation loop show one visible plot plus an
+  earlier pending metadata request before Yes. Close All returns with zero
+  windows, then the pending request creates a visible plot. The same sequence
+  occurs through the separate Auto Plot queue. No correctly preserves both
+  requests. This differs from C19-047: those plots were already published during
+  the dialog, whereas these requests remain pending when accepted close returns.
+  Evidence: `/private/tmp/qplot-r33-ui-pending-close-receipt.json` and
+  `/private/tmp/qplot-r33-ui-auto-pending-close-receipt.json`. UI author owns
+  `main.py`, `_plot_actions.py`, `_auto_plot.py` and its new regression module.
+  The repair invalidates/cancels manual launches accepted before Close All and
+  discards queued Auto Plot work while retaining completed-GUID history and
+  future acquisition support. The same cancellation applies when no plot window
+  exists yet. The real regression module fails **11 cases before repair**, with
+  three passing controls. Author validation: **223 tests plus two subtests**;
+  the final guarded regression module passes all **14 cases**. A separate safety
+  subchat independently **approved** final source/test hashes: **62 unique
+  focused tests pass**, followed by a final 14-case rerun. Four distinct real
+  nested-modal compositions exercise eight queued launches, including manual
+  and automatic subscribers sharing one broker operation, Yes/No/empty close,
+  completion races, same-GUID explicit reopening, new automatic acquisition and
+  replay prevention. **78 displayed values, 24 protected-file comparisons and
+  three writer checkpoints** pass; four services and 16 QObjects retire without
+  callback errors. Receipt:
+  `/private/tmp/qplot-r33-safety-c048-review-receipt.json`.
+- **C19-049: plot-launch profiling waits for absent capture steps.**
+  The real `benchmark_plot_launch.py --preceding-run 2 --repeats 2` workflow
+  waited 137.5 seconds before a controlled interrupt ran its normal cleanup.
+  A small first capture or a retained completed-run prefix can finish without
+  yielding, while the benchmark waits for a capture step. Its default wait is
+  3,660 seconds. Explicit aggregate/large-summary stage requests
+  similarly wait when a small valid run completes without entering that stage.
+  A different measurement subchat independently confirmed the source cause.
+  Evidence: `/private/tmp/qplot-r33-root-probe.log`. The coordinator owns
+  the benchmark script and `tests/test_campaign_profiling_scripts.py`; the
+  measurement subchat independently reviewed the frozen repair. The original
+  interrupted performance composition is not counted as a successful run.
+  The repair accepts completed captures for the default `any` stage and raises
+  an explicit diagnostic when a completed capture never entered a requested
+  named stage. Two representative regressions time out before the fix; all
+  **15 profiling tests pass** afterward, including three launch actions and both
+  unavailable-stage controls. A different measurement subchat independently
+  **approved** the frozen code/tests: another **15 tests pass**, and distinct
+  two-output/ragged-array acquisitions complete double-click and Run-button
+  three-repeat benchmarks plus both named-stage failure cases. All **26 QObjects
+  and four services** retire before application deletion, with protected files
+  unchanged. Receipt: `/private/tmp/qplot-r33-measurement-c049-review-receipt.json`.
+
+### Round-33 completed investigation coverage
+
+- **Safety/live/native:** no additional finding. **28 focused tests pass**;
+  a fresh two-run acquisition verifies **5,206,096 exact values**, independently
+  nullable outputs and ragged uint64/int64 BLOBs, completion/metadata changes
+  during suspended prefix capture, two helpers and service reopen, retained
+  prefixes/cache isolation and coalesced cancellation. **27 protected-file
+  comparisons, 16 physically read-only descriptors and two writer checkpoints**
+  pass; cancellation takes 0.032 ms locally. Native forbidden counters remain
+  zero. All three services, six spools, three native proofs and the owned writer
+  and fixture retire. Receipt: `/private/tmp/qplot-r33-safety-receipt.json`.
+- **Measurement:** no additional finding. **167 focused tests pass**; fresh
+  public-control compositions pass on **ARM and Intel**, each using 12 actual
+  current-QCoDeS acquisitions. Clipping, missing-cell fill, row/column centering,
+  nonuniform differentiation, CSV, Clear/reset and native cut centering/FFT
+  match independent Fraction/interpolation/trigonometric DFT oracles. Each
+  architecture checks **168 raw samples, 180 derivative cells, 180 CSV values,
+  180 reset cells, 60 centered values and 72 numeric oracles**, plus **108
+  protected-file comparisons**. All 24 QObjects, 12 services and fixtures per
+  architecture retire without callback errors. Receipt:
+  `/private/tmp/qplot-r33-measurement-receipt.json`.
+- **Coordinator/generation/settings/diagnostics/performance/packaging:**
+  **96 focused tests pass**. A fresh generated current-QCoDeS database contains
+  **131,714 rows** with descending line and map axes crossing the 65,536-row
+  page boundary; **197,891 exact coordinates and 32 independent scalar sine
+  oracles** match. Current-schema CLI updates persist, invalid updates preserve
+  prior bytes, database-as-settings recovery preserves the database, diagnostic
+  rotation works, and unselected sibling files remain untouched. With C19-049
+  repaired, two-repeat GUID/double-click/Run-button benchmarks with one worker
+  and a preceding map complete in 9.8–12.0 seconds locally, including actual Qt
+  painting. All seven protected-file comparisons pass and the fixture is
+  removed. Receipt: `/private/tmp/qplot-r33-root-receipt.json`. Native sources,
+  pinned native/APSW dependencies and build configuration remain unchanged;
+  no native rebuild is needed for these Python changes.
+- **UI/lifecycle:** the confirmed C19-048 is the only additional finding.
+  Broader pending-drop, mixed/source-promotion, owned-dialog, preferences and
+  CSV-selection-race coverage passes **145 tests**. Four author real-modal
+  manual/automatic Yes/No compositions check **50 exact values and 12 protected
+  file states**, retiring 12 plots, four services and four fixture roots with
+  no callback errors. Receipt: `/private/tmp/qplot-r33-ui-receipt.json`.
+- **Investigation is complete:** round 33 fixes **two confirmed bugs**, bringing
+  the campaign to **48 application/diagnostic repairs** plus seven test-only
+  CI corrections, including the integration correction below. The consecutive
+  clean-round count remains zero.
+  Do not begin round 34 without further authorization.
+- **Local integration complete:** both substantive fixes have independent approval;
+  the complete automated suite passes on frozen application code. An initial
+  sandboxed attempt was interrupted after local process-supervision IPC raised
+  `PermissionError` before those tests could exercise their intended behavior
+  (540 passed, 70 permission-related failures, exit 2). The complete run passed
+  with approved local IPC/process permissions; the interrupted attempt is not
+  counted as final validation. Its log is
+  `/private/tmp/qplot-r33-full-sandbox-interrupted.log`. Actual project-venv
+  `python -m qplot` startup already passes with a visible window, real Qt event
+  loop, exit 0, isolated settings/logs and complete cleanup; its receipt binds
+  all three changed application files:
+  `/private/tmp/qplot-r33-ui-startup-receipt.json`.
+
+### Round-33 artifact and installation validation
+
+- Frozen reviewed source revision: `735d7a2263373884a8491eddee1869c2128f7272`.
+  Source/test hashes match both independent approvals; receipt:
+  `/private/tmp/qplot-r33-integration-source.json`.
+- Built the app wheel/sdist in a clean detached worktree, with exact clean,
+  unreleased PR #91 provenance. Every tracked archive member matches that
+  revision; the sdist includes all **254 test modules plus conftest**. All four
+  app/native artifacts pass Twine. Artifacts:
+  `/private/tmp/qplot-bh20261023-735d7a2-dist`; manifest:
+  `/private/tmp/qplot-bh20261023-735d7a2-artifact-manifest.json`.
+- Native sources remain identical to the verified baseline. The native wheel
+  and sdist retain their audited hashes; two missing old scratch-cache copies
+  were restored from the prior round's surviving artifacts only after exact
+  hash verification. No native source or dependency change was needed.
+- Fresh **ARM and Intel compiler-free wheel installations both pass**, including
+  exact installed-file checks, actual qPlot startup, current QCoDeS reading,
+  native protected-file/cleanup/checkpoint behavior and dependency checks.
+  Dependencies install entirely from wheels; no compiler build occurs. All
+  temporary environments, the Intel host-Git metadata helper and the detached
+  build worktree are removed. Receipts:
+  `/private/tmp/qplot-r33-wheel-install-arm64-receipt.json` and
+  `/private/tmp/qplot-r33-artifact-intel-acceptance-receipt.json`.
+- A separate Intel pytest attempt could not collect because the old shared
+  scratch runtime lacked Python package files and fell back to an ARM-only
+  dependency. It ran no tests and is not counted as a pass. The successful
+  fresh Intel wheel installation above does not use that scratch runtime;
+  earlier completed ARM/Intel measurement compositions retain their own
+  explicit architecture checks and receipts.
+
+### Round-33 final local validation and publication checkpoint
+
+- Complete suite: **5,663 passed, 128 skipped, 61 warnings**, all **5,791 items**
+  accounted for, exit 0 in **932.93 seconds**. Command:
+  `QT_QPA_PLATFORM=offscreen MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-mac/bin/python -m pytest --no-cov -n 2 --dist=loadfile --no-loadscope-reorder`.
+  Log: `/private/tmp/qplot-r33-full.log`. Skips cover platform-specific cases;
+  extended-precision public workflows were independently exercised on Intel.
+- Whole-tree Ruff, mypy (**88 source files**), dependency and whitespace checks
+  pass. Application/script/native trees match frozen reviewed revision
+  `735d7a2263373884a8491eddee1869c2128f7272`. The later integration correction
+  below changes one test and this record. Startup and fresh ARM/Intel wheel
+  acceptance above use identical application source; their sdist contains the
+  original test. Final hosted CI validates the corrected test and artifacts.
+  No merge, tag or release is authorized.
+- Round 33 is complete with **two repairs**. The branch now contains **ten
+  confirmed fixes across rounds 28–33** for bugfix 1.6.3; native remains 1.0.1.
+  No additional investigation round is authorized.
+- Publication continuation: commit/push this validation record, verify all CI
+  checks for the resulting **exact final head**, and update draft PR #91. Record
+  the final hosted-CI observation in the linked PR, avoiding a further log-only
+  commit that would change the revision just validated. The complete API
+  receipt uses `/private/tmp/qplot-r33-ci-<shortsha>.json`. If interrupted, resume
+  only this integration checkpoint; do not start round 34 or merge/release.
+
+### Round-33 test-only CI integration correction
+
+- Hosted CI for `737d99116a300fceae95782f02a1d29ea6e507a1` exposed one obsolete
+  assertion in `test_closed_target_discards_pending_drop`: Windows Python 3.11,
+  Windows 3.14 and Linux observed two cancellations of the same request instead
+  of exactly one. Close All now cancels immediately; its already-queued stale
+  callback can also cancel before retiring. `TrustedLiveReadService.cancel`
+  immediately returns false for a completed request, so the second invocation
+  cannot repeat the underlying cancellation or affect another subscriber.
+  This is one test-only correction, not a third application finding.
+  [Affected CI run](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40039236029).
+- The test now waits for the specific deferred timer to stop or be deleted,
+  requires cancellation of the intended request and its completion, and retains
+  every unchanged no-publication, dataset-ownership and resource-use assertion.
+  This removes the scheduling-sensitive exact invocation count while ensuring
+  the stale callback actually retires before the final checks. Application
+  source is unchanged. All **32 affected lifecycle tests pass** locally in
+  **26.96 seconds**; whole-tree Ruff and whitespace checks pass. Log:
+  `/private/tmp/qplot-r33-ci-cancel-fix.log`.
+- The safety subchat independently **approved** this correction and reran all
+  **18 pending-drop cases**, passing in **15.29 seconds** with separate fixtures.
+  Its reviewed test hash and cleanup evidence are recorded in
+  `/private/tmp/qplot-r33-safety-ci-test-correction-receipt.json`.
+
+## Resumed 2026-10-23 — up to five rounds, 28–32
+
+The user authorized up to five additional rounds with substantial effort.
+Start a fresh clean-round count at zero; stop after two complete fresh rounds
+find no new actionable bugs, or after round 32. Maintain the database-access
+invariant, current QCoDeS support and no legacy settings migrations. Every
+substantive fix requires concrete reproduction, regression tests and independent
+review by a different subchat. Do not merge or release.
+
+### Verified resumption baseline
+
+- Previous PR #90 was merged externally on 2026-10-22; its remote branch was
+  deleted. The former local head `d3af0b2` has **47/47 successful checks**.
+- Fetched current `origin/main` / tag `v1.6.2`:
+  `4a0baf68be2b005e25ba802d2fc166a4da38d418`. The checkout was clean.
+  Verified **111 exact-SHA checks across both API pages: 110 successful and
+  one skipped `publish-native` job**. Both `Required checks` and
+  `validate / Required checks` succeeded. All check IDs are unique, every
+  returned head SHA matches and the combined length matches the API total.
+  [Main CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39772723874),
+  [release validation](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/39774775931).
+  Evidence: `/private/tmp/qplot-r28-main-baseline-all-checks.json`.
+- New dedicated branch: `codex/qplot-bug-hunt-2026-10-23`, based on that verified
+  main revision. [Draft PR #91](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/91)
+  was opened at `9f80242`; the merged PR is history.
+- Since round 27, main gained full-dataset statistics from thumbnail menus,
+  persistent CSV filename preferences, revised default plot tiling and related
+  validation. These changes are part of the baseline, not new campaign fixes.
+- Project venv: CPython 3.12.2, QCoDeS 0.61.0, NumPy 2.5.3, PyQt6 6.11.0,
+  pyqtgraph 0.14.0, APSW 3.53.4.0 and native 1.0.1. Use the fixed Matplotlib
+  cache and offscreen Qt for automated startup checks.
+
+### Round 28 — complete: two confirmed bugs fixed
+
+Three fresh subchats investigate safety/live/native reading, measurement
+correctness and UI/lifecycle. The coordinator owns settings, entry points,
+generation, diagnostics, packaging, integration and this log. Investigation
+begins read-only; exact source/test ownership is assigned before any edit.
+Initial emphasis is new statistics acquisition/precision/lifecycle and CSV
+filename preference/export-path interactions, then other application seams.
+
+#### C19-040 — Inferred dataset statistics use basis columns as axes
+
+- Confirmed through real current-QCoDeS scalar and ragged-array recordings:
+  `converted(x)` also carries an inferred `basis` column. Statistics inferred
+  its axes from every non-output column, reporting X=basis and Y=x instead of
+  X=x and Y=converted. A text/complex basis made statistics fail. For a two-axis
+  measurement, adding a basis column reversed the displayed default axes.
+- Fix: take the ordered setpoint names from the requested parameter's actual
+  `depends_on_` metadata and pass them explicitly to the statistics summarizer.
+  Inference inputs remain available in recorded data but never define axes.
+- Twelve real QCoDeS regressions cover line/heatmap, scalar/ragged-array and
+  numeric/text/complex bases. All fail on the previous implementation and pass
+  after the repair. Author related suite: **91 passed**. Logs:
+  `/private/tmp/qplot-r28-measurement-before-final.log` and
+  `/private/tmp/qplot-r28-measurement-after.log`.
+- Independent UI reviewer **approved** the frozen repair: **16 tests passed**
+  plus a distinct two-output acquisition with opposite dependency ordering and
+  numeric, text and complex bases together. The original helper reverses both
+  outputs' X/Y ranges; corrected real row-menu dialogs match seven-line literal
+  oracles and retain copied text after Close Database. Protected files and
+  cleanup pass, with no callback errors. Receipt:
+  `/private/tmp/qplot-r28-ui-independent-review-receipt.json`.
+
+#### C19-041 — Unsupported statistics values silently become real, infinite or zero
+
+- Reproduced through the actual thumbnail context-menu action: complex measured
+  values lose their imaginary parts; pure-imaginary measurements report four
+  zero summaries. On Intel, current-QCoDeS extended array values such as `1e400`
+  or `1e-400` produce infinity/NaN or zero despite finite nonzero recordings.
+  Distinct extended samples whose narrow values coincide can report zero spread.
+- Fix: validate actual measurements and declared setpoints before conversion,
+  explicitly refusing complex data, finite samples outside the display range,
+  nonfinite summaries and an unrepresentable nonzero spread. Keep original
+  arrays for exact centering; complex ancillary inference inputs remain valid.
+- Fifteen meaningful regressions fail before the repair on Intel. The related
+  author suite passes **46 tests / 7 expected platform skips on ARM**, **53 on
+  Intel**, including four positive precision/extreme-value controls. Logs:
+  `/private/tmp/qplot-r28-measurement-c041-after-{arm,intel}.log`.
+- Different safety subchat independently **approved** source and real menu
+  behavior: **7 ARM / 10 Intel compositions**, **28 passed / 7 expected skips
+  on ARM**, **35 passed on Intel**. Warning-free refusals, ragged and map axes,
+  complex ancillary bases, no-finite handling and valid recovery all pass.
+  **57 protected-file comparisons**, 17 retired snapshots and all helper/dialog
+  cleanup checks pass. Receipts:
+  `/private/tmp/qplot-r28-safety-numeric-review-{arm64,x86_64}-receipt.json`.
+
+#### Round-28 completed coverage
+
+- Safety lane found no additional bug: **40 focused tests passed**. Fresh live
+  current-QCoDeS array composition verified **2,100,086 exact values**, 18
+  protected-file comparisons, five writer-owned checkpoints and eight physically
+  read-only main/WAL descriptors across two helpers. Coalesced cancellation,
+  active-WAL statistics refusal/checkpoint recovery and copied-run local versus
+  captured identifiers passed. All helpers, snapshots, prefixes and writers
+  retired. Receipt: `/private/tmp/qplot-r28-safety-receipt.json`.
+- UI lane found no additional bug: **126 focused tests and 17 subtests passed**.
+  Three real menu actions, eleven captured-dialog clipboard checks, switching,
+  Close Database and two nested-menu source transitions pass without callback
+  errors. Four dialogs and background resources retire; a million int64 samples
+  generate statistics in 0.265 s locally. Receipt:
+  `/private/tmp/qplot-r28-ui-receipt.json`.
+- Coordinator settings/preferences/package checks: **108 passed**. Fresh real
+  QCoDeS/Qt export composition: **1 passed**, six CSV/TSV exports preserving 60
+  exact values, three persisted filename-format changes, one rejected atomic
+  settings write and one cancelled export. Correct suggestions remain available
+  through the reused exporter; source artifacts are unchanged and owned UI and
+  reader resources close. Receipt:
+  `/private/tmp/qplot-r28-coordinator-receipt.json`.
+- Fresh measurement composition on each architecture covers eight real inferred
+  array runs and 24 incremental snapshots: repeated coordinates, ragged records,
+  planned-shape overruns, missing text bases, signed/unsigned/float16/extended and
+  nonfinite/extreme samples. Each passes **128 exact sample checks**, **92
+  independent Fraction/100-digit Decimal summary oracles**, 24 protected-file
+  comparisons and reader cleanup. Receipts:
+  `/private/tmp/qplot-r28-measurement-oracles-{arm64,x86_64}.json`.
+- Actual project-venv `python -m qplot` startup on the frozen repairs passes:
+  visible window, running Qt event loop, isolated settings/logs and clean exit 0.
+  Receipt: `/private/tmp/qplot-r28-ui-startup-receipt.json`.
+- Target is the next bugfix **1.6.3**, retaining native **1.0.1**. Native source
+  did not change and does not need rebuilding for these Python repairs.
+- Campaign total: **40 confirmed application/diagnostic repairs**, plus six
+  earlier test-only CI corrections. Round 28 is not clean; clean-round count
+  remains **0**. Next: fresh round 29, then further review until two consecutive
+  complete clean rounds or the authorized round-32 limit; finish full validation
+  and update the new draft PR without merging or releasing.
+
+### Round 29 — complete: two confirmed bugs fixed
+
+Three fresh subchats review native/snapshot failure recovery, measurement
+composition and live-cut/dialog lifecycle. The coordinator examines generator,
+settings, diagnostics, entry points and packaging. Exact edit ownership is
+assigned before changes; no overlapping author files.
+
+- **C19-042 confirmed:** current-QCoDeS scalar and array measurements containing
+  `[2 * smallest_subnormal, -smallest_subnormal]` show `Average: 0.000` even
+  though the exact Fraction mean is nonzero and the displayed spread is positive.
+  Nine real menu compositions reproduce both signs and mixed integer/float
+  records, with protected sources and cleanup. Fix: check exact cancellation
+  only when the computed mean is zero, reusing the existing exact accumulator
+  without changing `finite_mean` or rendering semantics. Author focused suites:
+  **67 passed / 8 expected skips on ARM**, **75 passed on Intel**. Evidence:
+  `/private/tmp/qplot-r29-measurement-underflow-receipt.json`.
+  Different safety subchat independently **approved**: **49 passed / 8 skips
+  on ARM**, **57 passed on Intel**, plus 21 distinct real menu acquisitions
+  involving large cancellation, mixed uint64/int64/float residuals, ragged exact
+  zeros and ordinary/large-offset controls. All 63 protected-file comparisons,
+  21 retired snapshots, exact-helper oracles and cancellation checks pass.
+  Million-record zero-mean menus take 0.550/0.235 s for float/int on ARM and
+  1.081/0.397 s on Intel. Receipts:
+  `/private/tmp/qplot-r29-safety-c042-review-{arm64,x86_64}-receipt.json`.
+- **C19-043 confirmed:** change a newly opened heatmap cut's enabled color
+  selector before its queued first data publication. The Qt callback calls
+  `update_sweep()` without `dataGrid`, raising an uncaught `AttributeError`.
+  The actual 3×4 current-QCoDeS heatmap reproduction preserves source files.
+  Recoloring during a pending axis swap also moves/hides the old marker using
+  requested axes against committed samples. Fix: recolor the existing trace and
+  marker without rereading data; retain chosen color before first publication.
+  Notify sample consumers only when no axis transaction is pending.
+  Author related suite: **183 tests and 10 subtests passed**, including seven
+  new lifecycle regressions. Evidence: `/private/tmp/qplot-r29-ui-color-probe.log`.
+  Independent measurement review caught an initial repair gap: a merged overlay
+  cleared during pending recolor and stayed empty after cancellation. Two
+  strengthened real-overlay regressions fail before the notification guard and
+  pass afterward; final relevant subset **22 passed**. Different reviewer
+  approved the corrected source with two horizontal/vertical cuts, nine recolors,
+  17 marker checks, seven merged-consumer checks, 59 exact quadratic sample
+  checks and 18 protected-file comparisons. Both rollback and committed-axis
+  changes preserve the intended data/appearance policy. No callback errors and
+  complete cleanup. Receipt:
+  `/private/tmp/qplot-r29-measurement-c043-review-receipt.json`.
+- Safety investigation is complete with no additional finding: **34 tests
+  passed**; 19 native refusals and 20 successful recoveries, cancellation and
+  deadline expiry, **1,620,126 exact values**, 36 protected-file comparisons,
+  five writer-owned checkpoints and eight physically read-only descriptors.
+  Private spool/copy ENOSPC, cancellation after connection open and deadline
+  after snapshot attachment all retire resources correctly; reopening recovers.
+  No prohibited VFS operations or proof leaks. Native runtime pins verify APSW
+  3.53.4.0, SQLite 3.53.4 and native 1.0.1. Receipt:
+  `/private/tmp/qplot-r29-safety-receipt.json`.
+- Fresh numeric composition on **each** architecture covers eight actual
+  QCoDeS acquisitions and 64 workers, with 288 exact raw-sample checks, 288 CSV
+  round trips, 192 grid, 192 centering and 384 derivative oracles. All eight
+  protected-file comparisons and reader cleanup checks pass. Receipts:
+  `/private/tmp/qplot-r29-measurement-composition-{arm64,x86_64}-receipt.json`.
+- Final UI composition passes 87 exact plotted/exported values, 14 protected
+  comparisons, six color actions, three pending swaps, six live refreshes,
+  two CSV/TSV exports and six dialog-reuse cycles. Tiling wrap/reset, source
+  switching, rejected ranges/exports and public Close Database recover normally.
+  Nine owned QObjects, five dialogs and both services retire without callback
+  errors. Final corrected-source actual module startup also passes with private
+  settings, visible window/event loop and exit 0. Receipts:
+  `/private/tmp/qplot-r29-ui-receipt.json` and
+  `/private/tmp/qplot-r29-ui-startup-receipt.json`.
+- Coordinator focused generator/auxiliary/diagnostic/distribution suite:
+  **122 passed**. Fresh generator-to-reader-to-persistence composition passes:
+  literal `#`, `%`, `?`, spaces and Unicode filename, 78 exact setpoint checks,
+  four closed readers, nine protected-file comparisons, rejected unconfirmed
+  overwrite, cancellation during generation, safe settings/log refusal at the
+  measurement path, recovery of settings/log rotation and explicit selected
+  synthetic-output replacement. All fixtures retired. Receipt:
+  `/private/tmp/qplot-r29-coordinator-receipt.json`.
+- Whole-tree Ruff, mypy (**88 files**) and project-venv dependency check pass.
+  The project editable metadata now reports **1.6.3**. Initial draft-head CI at
+  exact `9f802428ee25103ec5182c68a34bc5cbe1c94c19`: 46 checks, 10 successful,
+  20 running, 16 queued, no failure; not yet a complete green result.
+- Two actual `python -m qplot` launches load the exact generated database with
+  literal filename punctuation/Unicode, once as a plain positional argument and
+  once following Qt style options and `--`. Both show the window, enter the Qt
+  event loop, load/select the run and exit 0 with isolated settings, unchanged
+  protected files and removed fixtures. Receipt:
+  `/private/tmp/qplot-r29-startup-path-receipt.json`.
+- Round 29 is not clean; consecutive clean-round count remains **0**. Campaign
+  total is **42 confirmed application/diagnostic repairs**, plus six earlier
+  test-only CI corrections. Next: fresh round 30, then 31/32 as needed. Final
+  full-suite, exact-artifact/install and hosted CI validation remains due.
+
+### Round 30 — complete: two confirmed bugs fixed
+
+Three new subchats began from clean, committed `2602ea7`, pushed to draft PR #91.
+The coordinator owns packaging/native-install acceptance and profiling. The
+clean-round count remains zero; remaining authorized rounds are 30–32.
+
+- **C19-044 confirmed:** while a heatmap cut's axis change is pending, drag its
+  still-enabled source marker and cancel. The cut restores committed samples,
+  but the marker remains on a different row and the merged overlay remains
+  empty. Actual current-QCoDeS/Qt reproduction, protected files and cleanup
+  verified. Fix: restore the committed marker position/axes and avoid sample
+  publication while a cut-axis transaction is pending. Eight real regressions
+  fail before, covering horizontal/vertical cuts, commit/cancel and both outer
+  bounds. Author related suites: **221 passed and 10 subtests**. Different
+  measurement subchat independently **approved**: **16 focused tests passed**,
+  eight requests, 26 marker actions (edge, keyboard and group), cancellation,
+  supersession and injected failures; **846 exact samples**, 54 CSV values and
+  24 protected comparisons. All QObjects/readers/fixtures retire. Evidence:
+  `/private/tmp/qplot-r30-ui-marker-receipt.json`.
+  Independent receipt: `/private/tmp/qplot-r30-c044-independent-receipt.json`.
+- **C19-045 confirmed:** select `[2*tiny, -tiny]` in a heatmap containing other
+  normal-scale cells, where `tiny` is the smallest binary64 subnormal. The
+  enabled marquee Stats dialog displays a zero mean despite a nonzero exact
+  Fraction oracle. Selecting `[0, tiny]` also displays zero spread for distinct
+  samples. The older selection formatter bypasses full-dataset summary guards.
+  Fix: compute summaries once and return a copyable explanation with selection
+  count/ranges when finite means/spread cannot be represented. Preserve exact
+  cancellation and constant-zero results. Twelve real line/heatmap and mixed
+  record regressions fail before; eight exact-zero controls remain valid.
+  Author related suite: **94 passed / 8 expected ARM skips**. Reproduction:
+  `/private/tmp/qplot-r30-marquee-probe.log`.
+  Different safety subchat independently **approved**: **48 focused tests
+  passed**, plus **on each of ARM and Intel** 19 actual line/heatmap acquisitions,
+  ten correctly refused selections and nine valid controls, 38 Fraction/Decimal
+  oracles, 57 protected comparisons and 57 Copy checks. Captured dialog text
+  survives selection changes; valid selections recover. All 38 dialogs, 19 plots and background
+  readers retire without callback errors or runtime warnings; no snapshot
+  directories were created. Million-sample exact-zero
+  summaries take 0.484 s float / 0.207 s integer locally. Receipt:
+  `/private/tmp/qplot-r30-safety-c045-review-{arm64,x86_64}-receipt.json`.
+- Independent packaging audit: **116 passed / 2 expected Windows skips**.
+  App/docs/release metadata consistently target **1.6.3**, native/APSW pins stay
+  **1.0.1 / 3.53.4.0**. Native tree
+  `6c9809d7830d69ae5fbe78e96417f5886f28009b` matches the verified baseline;
+  all eight tracked native paths match the cached sdist, both cached artifact
+  hashes match 14 earlier exact-source receipts and the wheel contains arm64
+  and x86_64 slices. Runtime SQLite/source-ID checks pass. No native rebuild is
+  needed; final fresh environments will exercise the exact cached native wheel.
+- Fresh diagnostic profiling of 140,000 generated current-QCoDeS samples passes
+  three repeated paged scans in both optimized and full-path-validation native
+  modes, with identical result checksums, no prohibited VFS operations and
+  unchanged protected files. Literal path punctuation/Unicode and cleanup pass.
+  Receipt: `/private/tmp/qplot-r30-profiler-receipt.json`.
+- Safety lane complete with no additional bug: **117 focused tests passed**.
+  A fresh three-run composition covers 129 queued cancellations plus a coalesced
+  cancellation, 131 priority changes, an expired queued deadline, writer append
+  and checkpoint during paused BLOB capture, immutable old/fresh prefixes,
+  asynchronous close and reopened namespaces. **1,114,208 exact values**, 12
+  protected comparisons, four writer checkpoints and eight physically read-only
+  descriptors pass. Both services, seven spools and writer retire. Cancellation
+  and `close_async` return in 0.015 and 0.020 ms locally. Receipt:
+  `/private/tmp/qplot-r30-safety-receipt.json`.
+- Fresh non-statistics composition on each architecture passes six real ragged,
+  planned and serpentine acquisitions: clipping, exact centering, nonuniform FFT
+  and raw CSV. Per architecture: 60 raw values, 30 exact clipped cells, 36
+  Fraction-interpolation/trigonometric-DFT oracles, 60 CSV round trips and 18
+  protected comparisons; all six readers and fixtures retire. Receipts:
+  `/private/tmp/qplot-r30-transform-composition-{arm64,x86_64}-receipt.json`.
+- Fresh UI composition exercises auto-plot dormant retries, unchanged-metadata
+  non-replay and real completion-metadata rearming, merged export and queue
+  disable/re-enable/Close Database. **27 controls** before first publication,
+  64 exact values, two exports, five actual Refresh clicks and ten protected
+  comparisons pass. Ten QObjects and the service retire without callback errors.
+  Actual project-venv qPlot **1.6.3** startup passes on both frozen fixes, with
+  source hashes, private settings/logs, visible window/event loop and exit 0.
+  Receipts: `/private/tmp/qplot-r30-ui-receipt.json` and
+  `/private/tmp/qplot-r30-ui-startup-receipt.json`.
+- Whole-tree Ruff, mypy (**88 files**) and diff checks pass. Campaign total:
+  **44 confirmed application/diagnostic repairs**, plus six historical test-only
+  CI corrections. Round 30 is not clean; clean-round count remains **0**.
+  Next: fresh rounds **31 and 32**, the two remaining authorized rounds. Final
+  full-suite, stamped exact-artifact/compiler-free installs and CI acceptance
+  remain due. Do not merge, tag or release.
+
+### Round 31 — complete: no new actionable bugs
+
+Three fresh subchats independently reviewed committed `1a7c7d7`. The coordinator
+validated stamped distribution artifacts and fresh compiler-free installations.
+Application, tests and native source did not change during this round.
+
+- Safety: **56 focused tests passed**. A new two-helper composition covers
+  partial array capture, clean and abrupt writer restarts, helper termination,
+  sibling service/prefix survival and reopened namespaces. **3,960,990 exact
+  values**, 407 literal NPY 3.0 bytes, 27 protected-file comparisons, 20 physically
+  read-only descriptors and four writer-owned checkpoints pass. The failed
+  helper retires in 3.46 ms locally; the longest checkpoint takes 6.07 ms.
+  All four services, the direct native reader, three writers and 13 spools
+  retire. Native prohibited-operation counters remain zero; proof handles
+  balance. Receipt: `/private/tmp/qplot-r31-safety-receipt.json`.
+- Measurement: **234 focused tests passed**. On **each of ARM and Intel**, eight
+  current-QCoDeS acquisitions and 40 workers cover empty/ragged/planned arrays,
+  endian/Fortran storage, large signed/unsigned integers, unsupported complex
+  data and operation-limit recovery. Per architecture: 432 exact raw values,
+  432 raw CSV cells, 336 grid checks, 288 directional-fill oracles, 24 exact bin
+  means, 864 derived CSV cells, six preview comparisons and 42 Fraction/Decimal
+  statistics oracles pass. Fifteen protected comparisons, six readers, eight
+  prefix directories and service/fixture retirement pass; both processes exit 0.
+  Temporary-directory finalizer notifications were checked against the actual
+  paths: all were absent, with no runtime warnings. A suspected operated-grid
+  narrowing path is unreachable because real workers enforce the full-resolution
+  operation limit first. Receipts:
+  `/private/tmp/qplot-r31-measurement-composition-{arm64,x86_64}-receipt.json`.
+- UI: **98 focused tests passed**. A distinct cross-database mixed workflow
+  covers retained hidden sources, provenance, Top/Right reassignment,
+  visibility/opacity/width changes, preferences with appearance open, injected
+  promotion failure/recovery, two source promotions and SVG/CSV export.
+  **72 exact values**, 24 protected comparisons, 11 destroyed QObjects and two
+  closed services pass, with no callback errors or remaining fixtures/helpers.
+  The print-dialog lead was withdrawn: stubbing `exec()` bypasses the installed
+  SIP `sipTransferBack` ownership transition, exactly the historical withdrawn
+  BH-027 reproduction. No speculative print change was made. Receipt:
+  `/private/tmp/qplot-r31-ui-receipt.json`.
+- Coordinator built app **1.6.3** wheel/sdist with clean-source provenance for
+  exact `1a7c7d7b5771e46455ca13590b23c48e751c035f`, unreleased/draft PR #91.
+  Verified every tracked archive member against that commit: 133 wheel members
+  (127 runtime files), 418 sdist members, all 251 test modules and conftest.
+  Reused native **1.0.1** artifacts only after unchanged-source/hash verification;
+  Twine passes all four artifacts. Manifest:
+  `/private/tmp/qplot-bh20261023-1a7c7d7-artifact-manifest.json`.
+- Fresh compiler-free **ARM and Intel wheel and editable** acceptance
+  pass: wheel-only dependencies, actual installed qPlot startup, native live-reader
+  proof, installed-file hashes and environment cleanup. Intel's temporary harness
+  runs only Git metadata queries as ARM because this host's CommandLineTools
+  `libxcrun` lacks an Intel slice; parent and installed Python are independently
+  verified x86_64. No application workaround or compiler build is used.
+  Logs: `/private/tmp/qplot-r31-{wheel,editable}-install-{arm64,x86_64}.log`.
+- Round 31 is the **first consecutive complete clean round**. Campaign total
+  remains **44 confirmed application/diagnostic repairs**, plus six historical
+  test-only CI corrections. Fresh **round 32 is in progress and is the final
+  authorized round**. Finish final-source full-suite/artifact/CI validation and
+  update draft PR #91 without merging or releasing.
+
+### Round 32 — complete: two confirmed bugs fixed
+
+Three fresh subchats reviewed native rollback/WAL transitions and derived
+shutdown, operation-chain correctness, and modal-dialog/live-plot lifecycle.
+Every repair had a different subchat's independent review before commit.
+
+- **C19-046 fixed:** on Intel, enter an exactly
+  representable extended-precision clipping bound through the normal Limit
+  Maximum/Minimum control, then apply a derivative. The clipping helper narrows
+  the configured Decimal bound through binary64 first, so both the plotted
+  derivative and its CSV export are wrong. Two real current-QCoDeS/public-control
+  reproductions fail without warnings; source protections and cleanup pass.
+  Reproduction: `/private/tmp/qplot-r32-measurement-clip-before.log`.
+  Fix: convert configured decimal text directly to the homogeneous extended
+  sample dtype, preserving direct float-call semantics and the existing exact
+  integer/object path. The final real shaped-QCoDeS regression fixture has
+  **8 failures before** (six public line/row/column operation chains and two
+  Decimal controls). Related suites: **45 passed / 34 expected ARM skips**,
+  **79 passed on Intel**. Drawing, CSV and Clear/reset use exact oracles.
+  Author receipt: `/private/tmp/qplot-r32-measurement-c046-author-receipt.json`.
+  Different safety reviewer independently **approved**: **35 passed / 12
+  expected skips on ARM**, **47 passed on Intel**. Distinct public min/max then
+  derivative compositions pass **12 ARM / 24 Intel acquisitions**, 280/560 exact
+  displayed/processed cells, 140/280 raw-reset cells, 140/280 TSV cells and 36/72
+  protected comparisons. Intel's old function gives the wrong result for all
+  four signed-bound combinations; corrected results match Fraction oracles.
+  Float/Decimal/NaN/Inf controls pass. All 36/72 QObjects and 12/24 services
+  retire without callback/runtime warnings. Receipts:
+  `/private/tmp/qplot-r32-safety-c046-review-{arm64,x86_64}-receipt.json`.
+- **C19-047 fixed:** while the real Close Database
+  confirmation is open, a live QCoDeS writer adds a run and normal Auto-plot
+  publishes it. The close routine's pre-dialog window snapshot omits that plot;
+  accepting the dialog releases its dataset handle while leaving it visible,
+  and subsequent refresh fails. Reproduction uses the actual modal event loop,
+  not a mocked dialog. Fix: re-snapshot current plot windows after accepting
+  the confirmation, before closing windows and releasing their readers.
+  Evidence: `/private/tmp/qplot-r32-ui-close-confirmation.log`.
+  Red regressions: **2 failed,
+  2 passed**; author related suite **175 passed and 2 subtests**. A different
+  measurement subchat passes **36 focused tests** plus four distinct real modal
+  cases with queued two-output heatmaps and an existing parent/cut. **256 exact
+  samples**, 48 CSV values, eight deferred publications and 48 protected-file
+  comparisons pass; 16 QObjects and four services retire. An extra pending
+  request immediately before accepted Close Database is cancelled, with no
+  post-close publication after service retirement and event-loop pumping.
+  Independent **approval** receipt:
+  `/private/tmp/qplot-r32-measurement-c047-independent-receipt.json`.
+- Fresh safety lane finds no additional defect: **23 focused tests passed**;
+  50,154 exact values, 48 protected comparisons, 12 physically read-only
+  descriptors, five native sessions with clean audits and six writer-owned
+  checkpoints. DELETE→WAL→DELETE, genuine held-journal refusal, last-writer
+  close/reopen and immutable-prefix reuse after derived/service cancellation
+  pass. A stopped helper retires in 0.154 s locally; three services, two spools,
+  writer and fixture retire. A probe that skipped normal bootstrap/basic-page
+  acceptance was corrected, not counted as an application bug. Receipt:
+  `/private/tmp/qplot-r32-safety-receipt.json`.
+- Fresh UI composition covers retained Color Scale/Appearance editors, heatmap
+  and cut, real Preferences dialogs, settings-save failure/rollback/retry,
+  two settings applies, cancelled Quit and accepted Quit during pending refresh.
+  **80 exact samples**, 18 protected comparisons, three Preferences sessions
+  and two real quit confirmations pass. All dialogs/plots/readers retire with
+  no callback errors. Actual project-venv `python -m qplot` startup passes with
+  version **1.6.3**, visible window/event loop and exit 0. Both final source
+  hashes are recorded before launch and unchanged afterward; private settings
+  retire. Receipts: `/private/tmp/qplot-r32-ui-receipt.json` and
+  `/private/tmp/qplot-r32-ui-startup-receipt.json`.
+- Whole-tree Ruff, mypy (**88 source files**), dependency and whitespace checks
+  pass. Application fixes are committed as `952f56b` (C19-047) and `e0895df`
+  (C19-046). The native sources remain unchanged; no native rebuild is needed.
+- The integration run against `1a7c7d7` was deliberately interrupted before
+  changing application source: **2,419 passed, 34 skipped**, no test failures,
+  pytest exit 2 from requested SIGINT. This is **not** a complete-suite pass.
+  Its log is `/private/tmp/qplot-r32-interrupted-full-1a7c7d7.log`. The complete
+  final-source suite and rebuilt app-artifact acceptance are next; round-31
+  installs remain evidence for their exact recorded revision.
+- All **five authorized rounds, 28–32, are complete**, with **eight confirmed
+  repairs** (2, 2, 2, 0, 2). Campaign total: **46 confirmed application/diagnostic
+  repairs**, plus six historical test-only CI corrections. Round 32 resets the
+  consecutive clean-round count to **0**; the two-clean-round target was not
+  reached within this authorization. Do not start round 33 without a new request.
+- Integration checkpoint: preserve frozen code/tests, finish full-suite and
+  exact-artifact/compiler-free installation/CI acceptance, record the results,
+  commit/push and update draft PR #91 for bugfix **1.6.3**. No merge, tag or release.
+
+### Final integration validation — local acceptance complete
+
+- Frozen validation revision: **`f1f0efa990967411f8710ba17aa12e12d02267e6`**,
+  committed and pushed to draft PR #91. The code/tests are frozen; subsequent
+  validation-record edits affect only this campaign log.
+- Rebuilt app **1.6.3** wheel and sdist from that clean commit, with unreleased
+  PR #91 provenance. Verified every tracked member against Git: 133 wheel
+  members / 127 runtime files; 420 sdist members including all 253 test modules
+  and conftest. App/native Twine checks pass. Artifact manifest:
+  `/private/tmp/qplot-bh20261023-f1f0efa-artifact-manifest.json`.
+- All **four compiler-free installs pass**, using these exact final app/native
+  artifacts: ARM and Intel, wheel and editable. Each checks installed file
+  hashes, dependency consistency, entry points, actual qPlot startup and native
+  trusted-live behavior. Editable source edits take effect without reinstall;
+  native files remain unchanged. Intel interpreter architectures are verified.
+  All owned environments and temporary host-Git helpers are removed. Receipt:
+  `/private/tmp/qplot-r32-install-acceptance-receipt.json`; logs:
+  `/private/tmp/qplot-r32-{wheel,editable}-install-{arm64,x86_64}.log`.
+- Native source tree still matches the verified baseline exactly. The cached
+  native **1.0.1** universal wheel/sdist hashes match the audited sources; no
+  local native rebuild was necessary. Hosted CI additionally rebuilt all four
+  native platform wheels successfully for the frozen revision.
+- Complete final-source suite: **5,644 passed, 128 skipped, 61 warnings** in
+  **949.67 seconds**, exit **0**, accounting for all **5,772 collected items**.
+  Run with offscreen Qt, the fixed Matplotlib cache and project-venv
+  `python -m pytest --no-cov -n 2 --dist=loadfile --no-loadscope-reorder`.
+  Extended-precision cases skipped on ARM are covered by the Intel author and
+  independent-review runs above. Log: `/private/tmp/qplot-r32-final-full.log`.
+- Hosted CI for the frozen source has no reported failure at this checkpoint;
+  native/application builds and 30 checks have succeeded, with remaining matrix
+  jobs running or queued. The final documentation-only head must receive its own
+  required-check acceptance; do not infer a final green result from these partial
+  observations. Exact-SHA receipts are retained under
+  `/private/tmp/qplot-r32-ci-<shortsha>.json`, with the final observation recorded
+  in the [draft PR](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/91).
+- Investigation and local acceptance are complete at the authorized five-round
+  limit. Remaining integration task: push this validation record, verify hosted
+  CI for the exact final head, and update draft PR #91 with its result. This log
+  is the only file changed after frozen-source validation. No further round,
+  merge, tag or release is authorized here.
+
 ## Campaign starting 2026-10-19 — round 27 completed 2026-10-21
 
 **The one additional authorized round, 27, is complete: no new actionable bugs.**

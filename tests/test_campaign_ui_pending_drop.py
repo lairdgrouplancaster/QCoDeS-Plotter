@@ -1,7 +1,7 @@
 """Deferred preview drops belong to the plot window that received them."""
 
 import pytest
-from PyQt6 import QtCore
+from PyQt6 import QtCore, sip
 from PyQt6 import QtWidgets as qtw
 
 from tests.windows.test_mixed_plot_drops import (
@@ -20,7 +20,10 @@ def test_closed_target_discards_pending_drop(mixed_plot, monkeypatch, source_nam
     assert main._database_access_mode == "trusted_live"
     original_items = list(target._plot_item_order)
     source_key = main._current_dataset_key(runs[source_name].guid)
+    direct_children = QtCore.Qt.FindChildOption.FindDirectChildrenOnly
+    timers_before = set(main.findChildren(QtCore.QTimer, options=direct_children))
     _drop(target, runs[source_name])
+    timer, = set(main.findChildren(QtCore.QTimer, options=direct_children)) - timers_before
     request, = main._trusted_plot_pending
     cancellations = []
     cancel = type(request).cancel
@@ -37,10 +40,14 @@ def test_closed_target_discards_pending_drop(mixed_plot, monkeypatch, source_nam
     else:
         target.close()
     assert target not in main.windows
-    _wait_for(lambda: not main._trusted_plot_pending)
+    # Close All cancels immediately; the deferred poll may cancel again before
+    # retiring. Wait for that callback before checking that nothing published.
+    _wait_for(lambda: not main._trusted_plot_pending
+              and (sip.isdeleted(timer) or not timer.isActive()))
     qtw.QApplication.processEvents()
 
-    assert cancellations == [request]
+    assert cancellations
+    assert request.done
     assert target._plot_item_order == original_items
     assert source_key not in main.dataset_holder
     assert all(handle.users == 0 for handle in main.dataset_holder.values())
