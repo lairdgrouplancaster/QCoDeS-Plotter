@@ -121,8 +121,9 @@ current QCoDeS support; do not add legacy settings migrations.
   file states**, retiring 12 plots, four services and four fixture roots with
   no callback errors. Receipt: `/private/tmp/qplot-r33-ui-receipt.json`.
 - **Investigation is complete:** round 33 fixes **two confirmed bugs**, bringing
-  the campaign to **48 application/diagnostic repairs** plus six historical
-  test-only CI corrections. The consecutive clean-round count remains zero.
+  the campaign to **48 application/diagnostic repairs** plus seven test-only
+  CI corrections, including the integration correction below. The consecutive
+  clean-round count remains zero.
   Do not begin round 34 without further authorization.
 - **Local integration complete:** both substantive fixes have independent approval;
   the complete automated suite passes on frozen application code. An initial
@@ -175,10 +176,12 @@ current QCoDeS support; do not add legacy settings migrations.
   Log: `/private/tmp/qplot-r33-full.log`. Skips cover platform-specific cases;
   extended-precision public workflows were independently exercised on Intel.
 - Whole-tree Ruff, mypy (**88 source files**), dependency and whitespace checks
-  pass. All application/test/script/native trees match frozen reviewed revision
-  `735d7a2263373884a8491eddee1869c2128f7272`; the final record changes only
-  `BUG_HUNT.md`. Startup and fresh ARM/Intel wheel acceptance above use this
-  identical application source. No merge, tag or release is authorized.
+  pass. Application/script/native trees match frozen reviewed revision
+  `735d7a2263373884a8491eddee1869c2128f7272`. The later integration correction
+  below changes one test and this record. Startup and fresh ARM/Intel wheel
+  acceptance above use identical application source; their sdist contains the
+  original test. Final hosted CI validates the corrected test and artifacts.
+  No merge, tag or release is authorized.
 - Round 33 is complete with **two repairs**. The branch now contains **ten
   confirmed fixes across rounds 28–33** for bugfix 1.6.3; native remains 1.0.1.
   No additional investigation round is authorized.
@@ -188,6 +191,30 @@ current QCoDeS support; do not add legacy settings migrations.
   commit that would change the revision just validated. The complete API
   receipt uses `/private/tmp/qplot-r33-ci-<shortsha>.json`. If interrupted, resume
   only this integration checkpoint; do not start round 34 or merge/release.
+
+### Round-33 test-only CI integration correction
+
+- Hosted CI for `737d99116a300fceae95782f02a1d29ea6e507a1` exposed one obsolete
+  assertion in `test_closed_target_discards_pending_drop`: Windows Python 3.11,
+  Windows 3.14 and Linux observed two cancellations of the same request instead
+  of exactly one. Close All now cancels immediately; its already-queued stale
+  callback can also cancel before retiring. `TrustedLiveReadService.cancel`
+  immediately returns false for a completed request, so the second invocation
+  cannot repeat the underlying cancellation or affect another subscriber.
+  This is one test-only correction, not a third application finding.
+  [Affected CI run](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40039236029).
+- The test now waits for the specific deferred timer to stop or be deleted,
+  requires cancellation of the intended request and its completion, and retains
+  every unchanged no-publication, dataset-ownership and resource-use assertion.
+  This removes the scheduling-sensitive exact invocation count while ensuring
+  the stale callback actually retires before the final checks. Application
+  source is unchanged. All **32 affected lifecycle tests pass** locally in
+  **26.96 seconds**; whole-tree Ruff and whitespace checks pass. Log:
+  `/private/tmp/qplot-r33-ci-cancel-fix.log`.
+- The safety subchat independently **approved** this correction and reran all
+  **18 pending-drop cases**, passing in **15.29 seconds** with separate fixtures.
+  Its reviewed test hash and cleanup evidence are recorded in
+  `/private/tmp/qplot-r33-safety-ci-test-correction-receipt.json`.
 
 ## Resumed 2026-10-23 — up to five rounds, 28–32
 
