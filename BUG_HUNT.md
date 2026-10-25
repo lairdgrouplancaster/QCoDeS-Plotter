@@ -335,11 +335,15 @@ current QCoDeS and do not introduce legacy settings migrations.
   comparisons** pass; 45 QObjects, ten services and all three fixture roots
   retire without callback errors or pending resources. Original failing review
   receipts are preserved. `/private/tmp/qplot-r36-c054-safety-review-receipt.json`.
+- Final author integration also passes **127 tests** on the approved hashes;
+  `/private/tmp/qplot-r36-ui-receipt.json` binds the completed tests, startup,
+  final code/regressions and fresh two-source lifecycle evidence. The five
+  reviewed extension fixes are committed and pushed through `870d488`.
 - Round 36 completes with **one confirmed repair**, bringing this extension
   to **five fixes** and the campaign to **53 application/diagnostic repairs**
   plus seven historical test-only CI corrections. The clean-round count is zero.
 
-### Round 37 — fresh independent investigation in progress
+### Round 37 — complete: one confirmed bug fixed
 
 - Three fresh subchats cover safety/live/native access, measurement correctness
   and UI/lifecycle on the final independently approved C19-054 candidate. The
@@ -355,10 +359,79 @@ current QCoDeS and do not introduce legacy settings migrations.
   counters stay zero; all proof handles, writer and fixtures retire. The
   exercised database/native source hashes did not change during C19-054 edits.
   `/private/tmp/qplot-r37-safety-receipt.json`.
-- Next: finish the fresh measurement/UI lanes and package checks, then round 38.
-  At most two rounds remain in this authorization. Run final full integration
-  only after investigation settles, update the draft PR and verify its exact
-  final CI head. Do not merge, tag or release.
+- Measurement completes without a finding: **144 focused tests pass**, with
+  eight ARM longdouble skips. A fresh four-stage live inferred/multiple-output
+  acquisition checks **180 raw cells, 120 mapped cells, 146 average/FFT cells,
+  274 CSV cells, 32 statistics checks and 27 protected-file comparisons**.
+  Eleven QObjects, one service and fixtures retire without callback errors.
+  The receipt binds **115 unchanged application-source hashes**, including
+  final C19-054. Snapshot export/statistics use explicit fixture-writer
+  checkpoint phases; live plots exercise committed WAL before those phases.
+  `/private/tmp/qplot-r37-measurement-receipt.json`.
+- Coordinator clean distributions at `870d488` pass exact tracked-member
+  verification, clean unreleased PR91 provenance and all four Twine checks.
+  The sdist contains all **258 test modules plus conftest**; all 127 app runtime
+  wheel files match the committed source. Unchanged native artifacts retain
+  their audited hashes. Final fresh installation acceptance follows after the
+  UI candidate's disposition.
+  `/private/tmp/qplot-bh20261025-870d488-artifact-manifest.json`.
+- **C19-055 confirmed:** double-click run A's actual rendered table thumbnail,
+  then select B before the broker publishes A. The explicit A plot correctly
+  opens with exact samples, but `_selected_run_guid` and the selected preview's
+  `current_guid` revert to A while the table and run-ID field remain B. This
+  falsely associates A's preview with selected run B. The UI subchat is
+  capturing subsequent plot/export consequences and red regressions, and owns
+  `_plot_actions.py` plus a new focused test module. The different fresh
+  measurement subchat independently reviews the repair. Preserve explicit A
+  launches, B's selection, cancellation/ownership guards and database safety.
+- The stronger actual-Qt reproduction confirms wrong measurement output:
+  selected-preview CSV exports A's `[59,51,54,75,114]` while row/ID show B;
+  the unchanged main CSV button correctly exports B's
+  `[509,501,504,525,564]`. Plot All Measurements in Selected Run also reuses A
+  without opening B. Protected main/WAL/journal remain unchanged and every
+  QObject, service and owned fixture retires. Evidence:
+  `/private/tmp/qplot-r37-ui-probe-receipt.json`. Author additionally owns the
+  single unit expectation in `test_plot_actions.py` that asserted the unwanted
+  selected-dataset mutation; it will require explicit GUID forwarding and
+  preservation of selection state instead. Real-Qt regressions cover the
+  actual user consequence, not only that unit expectation.
+- Round 37 is therefore **not clean**. Round 38 is the final authorized round;
+  finish confirmed repairs, independent review and full integration even if the
+  two-consecutive-clean-round target cannot be met within this extension.
+- **C19-055 repaired and independently approved:** resolve the explicit
+  thumbnail's dataset locally and forward its GUID without replacing the
+  current selection. Close the local view unless another consumer owns it.
+  The real-Qt module changes from **four failures and one passing control** to
+  **five passing cases**; **64 related author tests pass**. Actual project-venv
+  module startup, whole-tree Ruff, mypy (**88 files**) and whitespace checks pass.
+  `/private/tmp/qplot-r37-ui-receipt.json`.
+- A different measurement subchat independently **approves** frozen source
+  `ce3a6fe3babfddca7e42c1f6463cd174a166d7b2c507c9e53632bf44688c5a82` and both
+  changed test files. **66 focused tests and the final five-case module pass**.
+  Seven distinct inferred/ragged-array scenarios verify **132 plotted cells,
+  72 CSV cells, eight statistics checks and 42 protected-file comparisons**.
+  All 22 QObjects, six services and 11 snapshot views retire. Snapshot fallback
+  explicitly proves that the local metadata copy closes while the separate
+  plot-owned copy remains readable, then both retire. Its duplicate-copy cost
+  is an unbenchmarked limit, not an additional confirmed finding.
+  `/private/tmp/qplot-r37-c055-measurement-review-receipt.json`.
+- Round 37 completes with **one repair**: this extension now contains **six
+  fixes**, bringing the campaign to **54 application/diagnostic repairs** plus
+  seven historical test-only CI corrections. The clean-round count is zero.
+
+### Round 38 — final authorized round, investigation in progress
+
+- Fresh safety, measurement and UI subchats cover new compositions on the
+  independently approved C19-055 source. Safety exercises the actual 512 MiB
+  prefix-cache byte limit with a retained evicted capture, alternating source
+  families and native packaging/reader proofs. Measurement covers exact
+  duplicate heatmaps, ordered operations, transposed promotion and live append.
+  UI covers actual controls, pending work, dialogs and resource ownership.
+- The coordinator integrates the six reviewed repairs and reserves final full
+  tests, startup, clean distributions, fresh ARM/Intel installations and exact
+  head CI for the settled candidate. Do not start round 39: round 38 is the
+  user-authorized cap. The two-clean-round target cannot be met within this
+  extension after round 37's finding. Do not merge, tag or release.
 
 ## Resumed — one additional round, 33
 

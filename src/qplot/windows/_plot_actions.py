@@ -1818,23 +1818,31 @@ class PlotActionsMixin:
             return
 
         dataset_key = self._current_dataset_key(guid)
-        if (
-            self.ds is None
-            or getattr(self, "_selected_dataset_key", None) != dataset_key
-        ):
-            try:
-                handle = self._dataset_handle_for_key(dataset_key)
-                if handle is None:
-                    dataset = self._load_dataset(dataset_key)
-                else:
-                    dataset = handle.dataset
-                self._replace_selected_dataset(dataset, dataset_key)
-            except Exception as err:
-                log_exception("Preview plot run load failed", err, __name__)
-                self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
-                return
+        try:
+            if (self.ds is not None
+                    and getattr(self, "_selected_dataset_key", None) == dataset_key):
+                dataset = self.ds
+            else:
+                dataset = self._dataset_for_key(dataset_key)
+        except Exception as err:
+            log_exception("Preview plot run load failed", err, __name__)
+            self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
+            return
 
-        self.open_preview_plot(parameter_name)
+        try:
+            # This explicit thumbnail request survives later row selection.
+            # Keep its dataset local so publication cannot replace that newer
+            # selection or redirect its preview, statistics and CSV actions.
+            for param in dataset.get_parameters():
+                if param.name == parameter_name and param.depends_on != "":
+                    self.openPlot(guid=guid, params=[param])
+                    return
+            self.show_status(f"No preview plot found for {parameter_name}.", 5000)
+        finally:
+            self._close_dataset_if_unowned(
+                dataset,
+                context="Preview plot dataset cleanup failed",
+            )
 
 
     @QtCore.pyqtSlot(object, object, str)
