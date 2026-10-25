@@ -7,6 +7,7 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
+from PyQt6 import QtGui, QtWidgets, sip
 from qcodes.dataset import (
     Measurement,
     initialise_or_create_database_at,
@@ -110,3 +111,70 @@ def test_main_keeps_private_database_alive_until_capture_failure_cleanup(
     assert len(observed) == 1
     assert not observed[0].parent.exists()
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.fixture
+def screenshot_widget(qapplication):
+    widget = QtWidgets.QLabel("Owned screenshot safety test")
+    widget.resize(320, 80)
+    widget.show()
+    try:
+        yield widget
+    finally:
+        widget.close()
+        sip.delete(widget)
+
+
+@pytest.mark.parametrize("destination", ["database", "hardlink", "symlink"])
+def test_screenshot_preserves_existing_qcodes_output(
+    screenshot_script, screenshot_widget, qapplication, tmp_path, destination,
+):
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    screenshot_script.ASSET_DIR = assets
+    output = assets / "qplot-main-window.png"
+    database = output if destination == "database" else tmp_path / "measurement.db"
+    initialise_or_create_database_at(str(database), journal_mode="DELETE")
+    experiment = load_or_create_experiment("protected_screenshot", sample_name="owned")
+    signal = ManualParameter("signal")
+    measurement = Measurement(exp=experiment)
+    measurement.register_parameter(signal)
+    try:
+        with measurement.run(write_in_background=False) as saver:
+            saver.add_result((signal, 123.456))
+    finally:
+        experiment.conn.close()
+    if destination == "hardlink":
+        output.hardlink_to(database)
+    elif destination == "symlink":
+        try:
+            output.symlink_to(database)
+        except OSError as error:
+            pytest.skip(f"Symlink creation unavailable: {error}")
+    original = database.read_bytes()
+    assert original.startswith(b"SQLite format 3\x00")
+    database_stat = database.stat()
+    output_stat = output.lstat()
+
+    with pytest.raises(OSError):
+        screenshot_script.save_widget(qapplication, screenshot_widget, output.name)
+
+    assert database.read_bytes() == original
+    for after, before in ((database.stat(), database_stat), (output.lstat(), output_stat)):
+        for field in ("st_ino", "st_size", "st_nlink", "st_mtime_ns", "st_ctime_ns"):
+            assert getattr(after, field) == getattr(before, field)
+    assert list(assets.iterdir()) == [output]
+
+
+def test_screenshot_creates_and_updates_normal_png(
+    screenshot_script, screenshot_widget, qapplication, tmp_path,
+):
+    screenshot_script.ASSET_DIR = tmp_path / "assets"
+    path = screenshot_script.save_widget(qapplication, screenshot_widget, "qplot-main-window.png")
+    original = path.read_bytes()
+    assert original.startswith(b"\x89PNG\r\n\x1a\n")
+    assert not QtGui.QImage(str(path)).isNull()
+    screenshot_widget.setText("Updated owned screenshot")
+    assert screenshot_script.save_widget(qapplication, screenshot_widget, path.name) == path
+    assert path.read_bytes() != original
+    assert not QtGui.QImage(str(path)).isNull()

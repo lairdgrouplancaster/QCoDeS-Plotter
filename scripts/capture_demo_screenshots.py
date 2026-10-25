@@ -11,6 +11,8 @@ from pathlib import Path
 
 import numpy as np
 
+from qplot._auxiliary_paths import ensure_safe_auxiliary_path
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ASSET_DIR = REPO_ROOT / "docs" / "assets"
 ASSET_DIR = Path(os.environ.get("QPLOT_DEMO_ASSET_DIR", str(DEFAULT_ASSET_DIR)))
@@ -125,6 +127,7 @@ def save_widget(app, widget, filename):
     pixmap = widget.grab()
     if pixmap.isNull():
         raise RuntimeError(f"Could not capture {filename}")
+    ensure_safe_auxiliary_path(path)
     if not pixmap.save(str(path)):
         raise RuntimeError(f"Could not save {path}")
     return path

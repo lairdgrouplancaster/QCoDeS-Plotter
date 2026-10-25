@@ -1,5 +1,112 @@
 # qPlot bug-hunt campaign
 
+## Resumed 2026-10-25 — up to five rounds, 34–38
+
+The user authorized up to five further rounds. Start at round 34 and stop after
+two complete fresh rounds find no new actionable bugs, or after round 38.
+Round 33 found two bugs, so the consecutive clean-round count starts at zero.
+The campaign currently contains **48 application/diagnostic repairs** and
+**seven test-only CI corrections**. Continue preparing bugfix 1.6.3 on
+`codex/qplot-bug-hunt-2026-10-23` and update
+[draft PR #91](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/91).
+Do not merge, tag or release. Preserve the database-access invariant, support
+current QCoDeS and do not introduce legacy settings migrations.
+
+### Verified resumption baseline
+
+- Clean local revision and freshly fetched upstream:
+  `f3f8dea197ead97eb77c65c970b2fcf3c0141ecd`. The PR is still open, draft and
+  unmerged with that exact head. Main remains
+  `4a0baf68be2b005e25ba802d2fc166a4da38d418`.
+- Fresh GitHub API verification finds **47/47 completed successful checks**,
+  including `Required checks`. The response contains the full API total,
+  47 unique IDs and matching head SHAs throughout. Evidence:
+  `/private/tmp/qplot-r34-baseline-check-runs.json`;
+  [baseline CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40043107821).
+- Three fresh subchats investigate database safety/live reading/native access,
+  measurement correctness, and UI/lifecycle. The coordinator covers generation,
+  settings, entry points, diagnostics, packaging and performance. Rotate coverage
+  in later rounds, use real current-QCoDeS acquisitions and independent oracles,
+  and require concrete evidence before counting a finding. Coordinate exact
+  file ownership before edits; another subchat reviews every substantive fix.
+
+### Round 34 — in progress
+
+- All three lanes begin with read-only investigation and owned scratch fixtures.
+  Local process-supervision tests need approved IPC permissions; sandbox-denied
+  setup errors are not application findings. Use the project venv and fixed
+  Matplotlib cache throughout. Do not reuse the known broken old Intel scratch
+  runtime without validating or replacing it.
+- Next: complete fresh coverage, reproduce and repair confirmed bugs, obtain
+  independent reviews and targeted regression results, then record this round
+  before advancing. Reserve final integration for the full required checks,
+  qPlot startup, applicable native/artifact validation and exact-head hosted CI.
+
+#### C19-050 — Screenshot output overwrites existing measurement files
+
+- The documentation screenshot helper passes a fixed PNG pathname directly to
+  `QPixmap.save`. A real Qt capture to a pre-existing hard link changed an owned
+  current-QCoDeS database from **77,824 SQLite bytes to 3,324 PNG bytes**. No
+  concurrent namespace substitution is involved. Direct SQLite content under
+  the PNG name and a pre-existing symlink reproduce the same problem.
+  Evidence: `/private/tmp/qplot-r34-screenshot-probe-receipt.json`.
+- Repair: reuse `ensure_safe_auxiliary_path` immediately before the Qt save.
+  Existing database/journal signatures, hard links, symlinks and special files
+  are refused; ordinary PNG creation and replacement remain supported. The
+  coordinator owns `scripts/capture_demo_screenshots.py` and
+  `tests/test_demo_database_safety.py`. Three real-QCoDeS/Qt regressions fail
+  before the fix while the normal PNG control passes.
+- Different safety subchat independently **approved** the frozen code/tests:
+  **28 focused tests pass**, plus nine distinct actual-Qt refusals involving a
+  separate real-QCoDeS writer's main, WAL, SHM and genuinely held rollback journal.
+  **50 protected-file comparisons** and two ordinary PNG saves pass. Writer,
+  Qt objects and all owned fixtures retire. Receipt:
+  `/private/tmp/qplot-r34-c050-safety-review-receipt.json`.
+- Coordinator related settings/generation/diagnostics/packaging validation:
+  **227 passed, two Windows-specific skips and 25 subtests passed** in 9.31 s.
+  Changed-file Ruff and whitespace checks pass. The real screenshot script's
+  complete entry point also passes: all four expected screenshots are valid
+  PNGs, its reader cleanup audit passes, and all disposable settings, databases
+  and outputs are removed. Receipts/logs:
+  `/private/tmp/qplot-r34-root-focused.log` and
+  `/private/tmp/qplot-r34-screenshot-smoke-receipt.json`.
+
+#### Round-34 coverage recorded so far
+
+- **Safety/live/native:** no additional finding. **43 tests pass**. Fresh
+  13-run acquisition verifies **3,151,936 exact values**, eight-entry cache
+  eviction with retained consumers, coalesced cancellation, queued deadline,
+  partial BLOB capture, schema addition, checkpoints and service reopen.
+  **27 protected-file comparisons, 16 physically read-only descriptors and
+  three writer checkpoints** pass. Cancellation takes 0.134 ms locally; maximum
+  checkpoint duration is 24.98 ms. Both services, 16 spools, three native proof
+  handles and owned fixtures retire; prohibited native counters remain zero.
+  ARM macOS execution does not exercise the 512 MiB cache threshold or replace
+  other-platform CI. Receipt: `/private/tmp/qplot-r34-safety-receipt.json`.
+- **Measurement:** no additional finding. **183 tests pass**, plus a fresh
+  live three-output acquisition through four unequal stages, using opposing
+  heatmap dependency orders and an independent line. Independent Fraction,
+  interpolation and direct DFT oracles verify **84 raw/reset grid cells, 350
+  derivative values, 114 cut values, 50 FFT oracles, 76 CSV cells and 144
+  coordinates**. **39 protected-file comparisons**, five retired plot objects,
+  one retired service and complete fixture cleanup pass without callback errors.
+  Receipt: `/private/tmp/qplot-r34-measurement-receipt.json`.
+- **UI/lifecycle:** **159 focused tests pass**. A fresh shared-source live
+  composition passes both host types: **204 exact values, 18 protected-file
+  comparisons, four real Qt drops, eight Refresh clicks and two promotions**.
+  All 20 QObjects and both services retire. Receipt:
+  `/private/tmp/qplot-r34-ui-live-receipt.json`.
+- **C19-051 confirmed; repair in progress:** opening a cut's Custom Color
+  picker, then replacing an owned source through an external test writer while
+  the real 100 ms refresh timer runs, automatically closes the plots but leaves
+  the unparented modal picker visible. Accepting it changes the already-closed
+  cut's color. There is no programmatic Close All call in this reproduction.
+  Evidence: `/private/tmp/qplot-r34-ui-color-replacement-receipt.json`. UI author
+  owns the color widget and its regressions; measurement subchat independently
+  reviews the repair. Round 34 is not yet complete. C19-050 brings confirmed
+  repairs to **49**, with C19-051 still pending; test-only CI corrections remain
+  seven and the clean-round count remains zero.
+
 ## Resumed — one additional round, 33
 
 The user authorized one additional round after rounds 28–32. Stop after round

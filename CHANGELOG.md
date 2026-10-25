@@ -30,6 +30,8 @@ All notable user-facing changes are recorded here.
   Auto-plot requests, while preserving later explicit plots and new acquisitions.
 - Keep plot-launch profiling responsive when a small or cached preceding run
   completes without capture steps; report unavailable requested stages promptly.
+- Protect existing databases and sidecars from documentation screenshot outputs,
+  including output paths that link to measurement files.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.
