@@ -43,6 +43,11 @@ All notable user-facing changes are recorded here.
   from the remaining traces.
 - Keep the current run selection and its preview, CSV and plot actions correct
   when an earlier thumbnail launch finishes after a different run is selected.
+- Keep overview, metadata, raw-details and station-snapshot copy menus working
+  when live refresh replaces their rows while the menu is open, including
+  keyboard shortcuts.
+- Preserve selected Overview cells when opening their context menu, so Copy
+  Selection includes the complete selection.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.

@@ -12,6 +12,22 @@ At resumption the campaign contained **48 application/diagnostic repairs** and
 Do not merge, tag or release. Preserve the database-access invariant, support
 current QCoDeS and do not introduce legacy settings migrations.
 
+All five authorized rounds are now complete, with **eight independently
+reviewed repairs**. The campaign total is **56 application/diagnostic repairs**
+plus seven historical test-only CI corrections; PR #91 contains 18 fixes.
+
+| Round | Confirmed bugs fixed |
+| --- | ---: |
+| 34 | 2 |
+| 35 | 2 |
+| 36 | 1 |
+| 37 | 1 |
+| 38 | 2 |
+
+The round-38 cap is reached. Two consecutive clean rounds were not achieved;
+the current clean-round count is zero. Final full integration and distribution
+acceptance are underway on the reviewed source. Do not start another round.
+
 ### Verified resumption baseline
 
 - Clean local revision and freshly fetched upstream:
@@ -419,7 +435,7 @@ current QCoDeS and do not introduce legacy settings migrations.
   fixes**, bringing the campaign to **54 application/diagnostic repairs** plus
   seven historical test-only CI corrections. The clean-round count is zero.
 
-### Round 38 — final authorized round, investigation in progress
+### Round 38 — complete: two confirmed bugs fixed
 
 - Fresh safety, measurement and UI subchats cover new compositions on the
   independently approved C19-055 source. Safety exercises the actual 512 MiB
@@ -432,6 +448,170 @@ current QCoDeS and do not introduce legacy settings migrations.
   head CI for the settled candidate. Do not start round 39: round 38 is the
   user-authorized cap. The two-clean-round target cannot be met within this
   extension after round 37's finding. Do not merge, tag or release.
+- Measurement completes clean: **71 focused tests pass**, with ten ARM
+  extended-precision skips. Fresh normal/transposed source promotions, live
+  appends and ordered fill/clipping/centering/derivative operations verify
+  **24 exact raw cells, 80 processed cells, 24 overlay cells, 60 cut values,
+  480 CSV cells, eight statistics oracles and 36 protected-file comparisons**.
+  All ten plots, six appearance/export dialogs, two services and both fixtures
+  retire. All 115 runtime Python source hashes remain unchanged, including
+  C19-054 and C19-055. `/private/tmp/qplot-r38-measurement-receipt.json`.
+- Safety completes without an additional finding: **88 tests pass**. A fresh
+  large acquisition verifies **132,130,554 exact values, 42 protected-file
+  comparisons and 40 physically read-only descriptors**. Five 117,608,448-byte
+  captures exercise the actual 512 MiB byte limit: four cached captures total
+  470,433,792 bytes while a retained consumer can still read the evicted one.
+  Alternating source families, colliding run IDs, metadata/schema updates and
+  reopen pass. Six services, twelve captures, two writers and all 12 proof
+  handles retire; four checkpoints complete (maximum 0.796 s), with native
+  prohibited counters zero. The installed universal2 ABI3 extension matches
+  RECORD and pinned versions; neither Mach-O slice links SQLite symbols.
+  `/private/tmp/qplot-r38-safety-receipt.json`. An earlier giant-single-record
+  reply deadline is preserved separately as incomplete stress coverage, not
+  counted as a passed probe or an independently confirmed application bug.
+- A separate final integration audit of the six extension fixes finds no
+  concrete portability, ownership or evidence discrepancy. It verifies the
+  counts: **six extension fixes, 54 campaign repairs and 16 fixes in PR #91**.
+  `/private/tmp/qplot-r38-measurement-integration-audit.json`.
+- Coordinator packaging/profiling checks pass **64 tests**; whole-tree Ruff,
+  mypy (**88 files**), dependency checks and actual project-venv qPlot startup
+  with normal exit/isolated-settings cleanup pass. Clean distributions at
+  `1601cfc30d22c322ce03d5486b38637b431971c0` have exact tracked-member hashes,
+  clean unreleased PR91 provenance, all **259 test modules plus conftest**, and
+  all four Twine checks passing. Native source/pins are unchanged from baseline;
+  reused native artifacts match their audited hashes. No native rebuild needed.
+  `/private/tmp/qplot-bh20261025-1601cfc-artifact-manifest.json`;
+  `/private/tmp/qplot-r38-root-startup-receipt.json`.
+- Continuation checkpoint: safety/UI probes and fresh ARM/Intel compiler-free
+  wheel acceptance are running. Finish them, then run the full suite on the
+  settled source, record final results, commit/push and update the draft PR.
+  Verify hosted CI against that final pushed revision; do not start round 39.
+- **C19-056 confirmed:** keep the actual Metadata → Copy Row popup open while
+  the normal 100 ms monitor reads a metadata update committed by the fixture's
+  QCoDeS writer. Refresh deletes the captured QTreeWidgetItem after 109 ms.
+  Clicking Copy Row through actual Qt mouse events raises `RuntimeError`
+  (deleted wrapped C++ object) and fails to update the clipboard. Protected
+  main/WAL/journal remain unchanged; seven QObjects, the service and fixtures
+  retire. `/private/tmp/qplot-r38-ui-context-receipt.json`.
+- UI owns `details_tables.py` and a new real-Qt regression module. The narrow
+  repair will capture the chosen row's text before entering the menu's nested
+  event loop, with live-refresh, normal-copy and cancellation controls. A
+  different measurement subchat independently reviews. Round 38 is **not clean**;
+  this is the extension's **seventh confirmed bug**, pending reviewed repair.
+  Existing `1601cfc` artifacts predate this repair and are superseded for final
+  acceptance. Finish this repair/review, then final integration; no round 39.
+- The row-only candidate passes **55 author tests**, with eight ARM precision
+  skips, plus actual startup and static checks. Independent review withholds
+  approval after reproducing two manifestations of the same menu-lifetime
+  defect: after refresh, Copy Value leaves the prior clipboard untouched and
+  Copy Selection replaces it with empty text. Copy Row succeeds with the
+  initial repair. Extend only the tree's menu-specific copy actions to capture
+  their original text/selection; keep ordinary keyboard methods unchanged.
+  Preserve the review's red evidence and obtain final independent approval.
+- The expanded candidate passes **104 related author tests**, including **28
+  new regressions/controls**. Six additional live-refresh cases fail against
+  the row-only candidate while 21 controls pass. The tree menu now captures
+  its clicked value, row and selected text; only its menu-local copy actions
+  change. The temporary menu retires after use, safely handling deletion of
+  its owner during the nested event loop. Shared keyboard actions remain.
+  Final source is `e3ab19eff92f7de0bba6ed0b222f4d686120ef5f34d40272367b533dc5e60eac`;
+  regression module is
+  `4f4625c0c38c974918f0ba9495d49304957a4b721e4ab11e40ebd406043bbf60`.
+- Broader fresh UI coverage passes four large-snapshot pages, five exact
+  Unicode/CRLF copies, 12 plotted cells, 12 TSV cells and 24 protected-file
+  comparisons. Eight QObjects, the service and fixtures retire; Close Database
+  completes in 152 ms locally. Final actual startup, Ruff, mypy (**88 files**),
+  dependency and whitespace checks pass. Independent menu-keyboard/teardown
+  review and final full-suite/distribution acceptance remain pending.
+- Independent actual key-event review **withholds approval** on that candidate:
+  after a timer replaces the focused tree's items, Ctrl+Shift+C copies the new
+  current value and Ctrl+C copies the replacement row, while menu mouse actions
+  correctly copy the captured text. Stable-popup and post-close keyboard
+  controls pass; nested owner/window teardown also passes. This is the same
+  C19-056 menu-target defect. Extend the narrow repair so popup mouse and
+  keyboard copy actions use identical targets, then repeat final validation.
+  `/private/tmp/qplot-r38-c056-keyboard-red-receipt.json`.
+- The reviewer also reproduces the same mechanism in the actual Overview
+  table: after normal live refresh deletes its current GUID row in 154–163 ms,
+  Copy Cell leaves the clipboard unchanged and Copy Selection writes empty
+  text. **27 protected comparisons** and
+  service/fixture cleanup pass. This evidence authorizes extending C19-056 to
+  both details-copy widget classes in the same source file, including popup
+  mouse/keyboard consistency, exact multi-cell TSV and post-close shortcuts.
+  `/private/tmp/qplot-r38-c056-live-adjacent-red-receipt.json`. The early real-window
+  key probes in that receipt lacked explicit widget focus and are excluded
+  from failure evidence; the separately focused key reproduction above is valid.
+- **C19-057 separately confirmed:** with refresh disabled, actual Ctrl-clicks
+  select Sample and GUID rows in Overview. Ctrl+C correctly copies both
+  complete TSV rows. Opening the normal context menu alone collapses the
+  selection to one row; clicking Copy Selection loses the other row. No item
+  retirement or live update occurs. The corrected no-modifier reproduction
+  passes **15 protected-file comparisons** and retires both menus, the service
+  and fixture. This is a distinct selection-collapse
+  mechanism, not another count of C19-056.
+  `/private/tmp/qplot-r38-c057-nomodifier-red-receipt.json`.
+- UI owns the narrow C19-057 table-selection repair in the same source file:
+  preserve the selection when the context click is inside it and retain normal
+  targeting when clicking outside it. Add concrete multirow/context-copy and
+  outside-selection controls; the other subchat independently reviews both
+  final fixes. Round 38 now contains **two confirmed bugs**, bringing this
+  extension to **eight findings** pending final approval and integration.
+- Hosted CI for the first six extension fixes at
+  `1601cfc30d22c322ce03d5486b38637b431971c0` completes with **47/47 successful
+  checks**, including Required checks. The complete API total, unique IDs and
+  matching head SHAs are verified. This does not claim validation of C19-056
+  or C19-057. `/private/tmp/qplot-r38-ci-verified-1601cfc.json`;
+  [six-fix CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40187466747).
+- Fresh ARM and explicitly verified Intel compiler-free installations of the
+  `1601cfc` wheels also pass. All dependencies resolve as wheels; installed
+  hashes, actual startup and native live-reader acceptance pass, and both
+  environments plus the Intel host-Git helper are removed. These successful
+  artifacts are superseded by the two pending round-38 Python repairs.
+  `/private/tmp/qplot-r38-wheel-install-arm64-receipt.json`;
+  `/private/tmp/qplot-r38-wheel-install-x86_64-receipt.json`.
+- Final author validation of both round-38 fixes passes **129 tests**, including
+  **43 C19-056 cases and ten C19-057 cases**. C19-057's isolated original
+  selection behavior fails seven cases while three outside-selection controls
+  pass; all ten pass with the repair. Independent no-modifier reproduction
+  explicitly releases Control/Shift before opening the menu and still proves
+  the original selection loss; its unrelated Name-row control passes.
+  `/private/tmp/qplot-r38-c057-red-baseline-binding.json`;
+  `/private/tmp/qplot-r38-c057-nomodifier-red-receipt.json`.
+- Both fixes are frozen at source
+  `083259ec8f2206d4d1be9a7f21959d3aabae099cecb505cbe8cca9919c52d208`.
+  Final-source actual qPlot startup, Ruff, mypy (**88 files**), whitespace and
+  the fresh snapshot/Unicode/TSV composition pass. Independent final green
+  review is running; full-suite and final artifact acceptance follow approval.
+- Final test hygiene explicitly releases simulated modifiers after copy-key
+  sequences; it changes no application code. The repeated author batch passes
+  **129 tests** on the final regression modules:
+  `ba48a2acb729fe55023f0f621496c1ace2972697b8560716758f5031e9143300`
+  (refresh/lifetime) and
+  `06f4666f02cc72a268fd4818a4eda98dc7792037ba8cce1cfdbaadaafc583752`
+  (selection). `/private/tmp/qplot-r38-ui-receipt.json` records final author
+  evidence; independent test-teardown verification is completing.
+- **C19-056 and C19-057 independently approved** on the final source and both
+  final test hashes above. **183 focused tests** pass on the identical
+  application source; the final **53 regression tests** also pass with zero
+  simulated modifiers left after every teardown. **38 distinct independent
+  cases**, 105 protected-file comparisons, exact clipboard contents and all
+  mouse/keyboard/selection/owner-lifetime checks pass. All 38 menus, one full
+  value dialog, three reader services and three fixtures retire, without
+  callback errors. Preserved red receipts distinguish valid reproductions from
+  corrected test-harness assumptions. No outstanding confirmed defect remains.
+  `/private/tmp/qplot-r38-c056-measurement-review-receipt.json`;
+  `/private/tmp/qplot-r38-c057-measurement-review-receipt.json`.
+- The final repair uses temporary immutable copy text only while the relevant
+  popup is open, shared by its existing mouse and keyboard actions; after close,
+  ordinary current-selection copying resumes. Only the two details popup menus
+  gain deterministic cleanup. The table preserves selected cells for context
+  clicks inside the selection and retains normal outside-click targeting.
+- **Round 38 is complete with two repairs.** The five-round extension finishes
+  with eight fixes; the campaign has 56 application/diagnostic repairs and
+  seven historical test-only CI corrections. The consecutive clean count is
+  zero. Continue only integration: final full suite, source-bound distributions,
+  ARM/Intel acceptance, final log/commit/push and exact-head CI on draft PR #91.
+  No round 39, merge, tag or release is authorized.
 
 ## Resumed — one additional round, 33
 

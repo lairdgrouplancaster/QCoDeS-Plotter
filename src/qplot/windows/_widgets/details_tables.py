@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, cast
 
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.trusted_presentation import (
@@ -216,6 +216,7 @@ class infoTree(qtw.QTreeWidget):
         self.expand_all = expand_all
         self.expand_top_level = expand_top_level
         self.truncate_values = truncate_values
+        self._copy_menu_text: tuple[str, str] | None = None
         self._snapshot_session_token = ""
         self._snapshot_root_handle: TrustedSnapshotContainerHandle | None = None
         self._snapshot_pending_requests: list[SnapshotTreePageRequest] = []
@@ -958,25 +959,43 @@ class infoTree(qtw.QTreeWidget):
         ):
             menu.addAction(self.view_full_value_action)
             menu.addSeparator()
+        # Live refresh can replace these items during the menu's nested event loop.
+        copied_value = item.text(1)
+        copied_row = row_text(item)
+        selected_items = self.selectedItems()
+        copied_selection = "\n".join(row_text(selected) for selected in selected_items)
         menu.addAction(self.copy_value_action)
 
         copy_row = QtGui.QAction("Copy Row", menu)
-        copy_row.triggered.connect(lambda: copy_to_clipboard(row_text(item)))
+        copy_row.triggered.connect(lambda: copy_to_clipboard(copied_row))
         menu.addAction(copy_row)
 
-        if self.selectedItems():
+        if selected_items:
             menu.addAction(self.copy_selection_action)
 
         viewport = self.viewport()
-        if viewport is not None:
-            menu.exec(viewport.mapToGlobal(pos))
+        previous_copy_text = self._copy_menu_text
+        self._copy_menu_text = (copied_value, copied_selection)
+        try:
+            if viewport is not None:
+                menu.exec(viewport.mapToGlobal(pos))
+        finally:
+            self._copy_menu_text = previous_copy_text
+            if not sip.isdeleted(menu):
+                menu.deleteLater()
 
     def copyValue(self):
+        if self._copy_menu_text is not None:
+            copy_to_clipboard(self._copy_menu_text[0])
+            return
         item = self.currentItem()
         if item is not None:
             copy_to_clipboard(item.text(1))
 
     def copySelection(self):
+        if self._copy_menu_text is not None:
+            copy_to_clipboard(self._copy_menu_text[1])
+            return
         items = self.selectedItems()
         current_item = self.currentItem()
         if not items and current_item is not None:
@@ -987,6 +1006,7 @@ class infoTree(qtw.QTreeWidget):
 class CopyableTableWidget(qtw.QTableWidget):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._copy_menu_text: tuple[str, str] | None = None
         self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.openCopyMenu)
 
@@ -1003,26 +1023,46 @@ class CopyableTableWidget(qtw.QTableWidget):
         if item is None:
             return
 
-        self.setCurrentItem(item)
+        if item.isSelected():
+            self.setCurrentItem(item, QtCore.QItemSelectionModel.SelectionFlag.NoUpdate)
+        else:
+            self.setCurrentItem(item)
 
         menu = qtw.QMenu(self)
         menu.addAction(self.copy_cell_action)
         menu.addAction(self.copy_selection_action)
 
         viewport = self.viewport()
-        if viewport is not None:
-            menu.exec(viewport.mapToGlobal(pos))
+        previous_copy_text = self._copy_menu_text
+        self._copy_menu_text = (item.text(), self._selected_text())
+        try:
+            if viewport is not None:
+                menu.exec(viewport.mapToGlobal(pos))
+        finally:
+            self._copy_menu_text = previous_copy_text
+            if not sip.isdeleted(menu):
+                menu.deleteLater()
 
     def copyCell(self):
+        if self._copy_menu_text is not None:
+            copy_to_clipboard(self._copy_menu_text[0])
+            return
         item = self.currentItem()
         if item is not None:
             copy_to_clipboard(item.text())
 
     def copySelection(self):
+        text = (
+            self._copy_menu_text[1]
+            if self._copy_menu_text is not None else self._selected_text()
+        )
+        copy_to_clipboard(text)
+
+    def _selected_text(self):
         ranges = self.selectedRanges()
-        if not ranges and self.currentItem() is not None:
-            self.copyCell()
-            return
+        current_item = self.currentItem()
+        if not ranges and current_item is not None:
+            return current_item.text()
 
         sections = []
         for selected_range in ranges:
@@ -1038,7 +1078,7 @@ class CopyableTableWidget(qtw.QTableWidget):
                 rows.append("\t".join(values))
             sections.append("\n".join(rows))
 
-        copy_to_clipboard("\n".join(section for section in sections if section))
+        return "\n".join(section for section in sections if section)
 
 
 def dictToTree(d: dict, truncate_values=False):
