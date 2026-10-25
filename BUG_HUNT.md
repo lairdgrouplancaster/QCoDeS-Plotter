@@ -25,8 +25,10 @@ plus seven historical test-only CI corrections; PR #91 contains 18 fixes.
 | 38 | 2 |
 
 The round-38 cap is reached. Two consecutive clean rounds were not achieved;
-the current clean-round count is zero. Final full integration and distribution
-acceptance are underway on the reviewed source. Do not start another round.
+the current clean-round count is zero. Final local integration and distribution
+acceptance pass on the reviewed source: **5,777 tests passed, 128 skipped**.
+The final pushed-head CI result will be recorded in draft PR #91. Do not start
+another round.
 
 ### Verified resumption baseline
 
@@ -520,7 +522,8 @@ acceptance are underway on the reviewed source. Do not start another round.
 - Broader fresh UI coverage passes four large-snapshot pages, five exact
   Unicode/CRLF copies, 12 plotted cells, 12 TSV cells and 24 protected-file
   comparisons. Eight QObjects, the service and fixtures retire; Close Database
-  completes in 152 ms locally. Final actual startup, Ruff, mypy (**88 files**),
+  completes in approximately 172 ms in the final replay. Final actual startup,
+  Ruff, mypy (**88 files**),
   dependency and whitespace checks pass. Independent menu-keyboard/teardown
   review and final full-suite/distribution acceptance remain pending.
 - Independent actual key-event review **withholds approval** on that candidate:
@@ -612,6 +615,57 @@ acceptance are underway on the reviewed source. Do not start another round.
   zero. Continue only integration: final full suite, source-bound distributions,
   ARM/Intel acceptance, final log/commit/push and exact-head CI on draft PR #91.
   No round 39, merge, tag or release is authorized.
+
+### Final integration — local validation complete
+
+- Reviewed code and regressions are committed at
+  `33fb1e94256fc48f9c6febec8d6001667d91e99c`. The final source manifest freezes
+  **416 application/native/script/test/build files**; all still match.
+  `/private/tmp/qplot-r38-final-source.json`.
+- Clean-worktree wheel/sdist validation passes on that revision: all **261
+  test modules plus conftest** are included; all 127 runtime wheel files and
+  tracked archive members match source; unreleased 1.6.3/PR91 provenance and
+  all four Twine checks pass. Native source and pins are unchanged, and native
+  artifacts match their verified hashes. The temporary build worktree is removed.
+  `/private/tmp/qplot-bh20261025-33fb1e9-artifact-manifest.json`.
+- Fresh compiler-free ARM wheel acceptance passes, including exact installed
+  file hashes, actual startup, native live-reader/supervision/checkpoint checks
+  and complete environment cleanup. All dependencies resolve as wheels; no
+  compiler builds occur. `/private/tmp/qplot-r38-final-wheel-install-arm64-receipt.json`.
+- Fresh compiler-free Intel acceptance also passes, with the parent and new
+  isolated interpreter explicitly observed as x86_64. Installed files match
+  the final wheels; actual startup and native live-reader acceptance pass.
+  The environment and temporary ARM host-Git metadata helper are removed; all
+  application/native execution stayed Intel. No compiler builds occur.
+  `/private/tmp/qplot-r38-final-wheel-install-x86_64-receipt.json`.
+- Full suite on the final frozen source: **5,777 passed, 128 skipped, 61
+  warnings**, exit 0 in **991.60 s**, with two workers and coverage disabled.
+  Platform skips and expected numerical-stress/deprecation warnings were
+  reviewed; no unhandled-thread/callback warning appears. All **416 frozen
+  source/test/build files** still match after the run. Earlier interrupted
+  suites remain superseded partial evidence only.
+  `/private/tmp/qplot-r38-final-full.log`;
+  `/private/tmp/qplot-r38-final-validation-receipt.json`.
+- Whole-tree Ruff, mypy (**88 files**), dependency and whitespace checks pass.
+  The actual project-venv `python -m qplot` entry point creates its window,
+  enters the event loop and exits normally with isolated settings removed;
+  its receipt binds all six changed runtime files. No native source/pin or
+  database-access code changed during this extension. No settings migration.
+  `/private/tmp/qplot-r38-final-startup-receipt.json`.
+- Different safety subchat independently approves the final integration
+  evidence audit: all 416 frozen files, both final review bindings, six probe
+  hashes, 65 current-section evidence paths, repair counts and ARM/Intel
+  receipt/log/manifest bindings agree. Native/datahandling sources and pins
+  remain unchanged. The final UI timing above was aligned with its final replay.
+  `/private/tmp/qplot-r38-safety-final-integration-audit.json`.
+- Publishing checkpoint: commit this final validation record and push the
+  dedicated branch, then update draft PR #91 and verify its exact final head
+  has the complete successful hosted matrix, including Required checks.
+  The PR description records that final observation after the documentation
+  commit, avoiding another log-only commit/CI cycle. Artifacts and all local
+  runtime validation bind code revision `33fb1e9`; only this log changes later.
+  If final CI finds a concrete issue, inspect and repair it before claiming
+  completion. Do not begin round 39, merge, tag or release.
 
 ## Resumed — one additional round, 33
 
