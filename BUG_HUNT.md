@@ -5,7 +5,7 @@
 The user authorized up to five further rounds. Start at round 34 and stop after
 two complete fresh rounds find no new actionable bugs, or after round 38.
 Round 33 found two bugs, so the consecutive clean-round count starts at zero.
-The campaign currently contains **48 application/diagnostic repairs** and
+At resumption the campaign contained **48 application/diagnostic repairs** and
 **seven test-only CI corrections**. Continue preparing bugfix 1.6.3 on
 `codex/qplot-bug-hunt-2026-10-23` and update
 [draft PR #91](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/91).
@@ -226,7 +226,7 @@ current QCoDeS and do not introduce legacy settings migrations.
   **two repairs**, bringing the campaign to **52 application/diagnostic repairs**
   plus seven historical test-only CI corrections. The clean-round count is zero.
 
-### Round 36 — fresh rotated investigation in progress
+### Round 36 — complete: one confirmed bug fixed
 
 - Round-35 safety reviewer now covers measurement/native transforms/cuts; its
   measurement reviewer covers UI/lifecycle; its UI reviewer covers database
@@ -236,6 +236,129 @@ current QCoDeS and do not introduce legacy settings migrations.
 - Continue through round 38 at most, stopping after two complete clean rounds.
   If interrupted, resume these three read-only lanes and the running full suite,
   then finish exact-source artifact checks, commit/push and draft PR #91 update.
+
+- **C19-054 confirmed:** use Appearance to remove the primary trace from a real
+  three-trace acquisition with native averaging, mean downsampling by four and
+  Clip to View enabled. The promoted plot resets all three controls: its actual
+  average curve disappears and its displayed trace grows from 16 to 64 samples.
+  Removing a secondary trace preserves those controls and the average. Remaining
+  original samples are intact. Two services, seven QObjects and fixtures retire.
+  `/private/tmp/qplot-r36-promotion-controls-receipt.json`. The rotated UI author
+  owns `_plot_source_promotion.py` and a new regression module; the rotated
+  measurement subchat independently reviews. No unrelated refactoring.
+- The superseded round-35 full suite was stopped cleanly before application
+  edits: **1,814 passed, 33 skipped, 17 warnings**, exit 2 after 468.66 s,
+  no failures. It is partial evidence, not final validation. Final integration
+  will restart after C19-054 is frozen and reviewed.
+- Fresh coordinator CLI composition passes all 18 actual console commands:
+  version/help do not create settings; five current-schema values persist;
+  four invalid updates preserve settings bytes; reset and recovery of an
+  invalid current-format numeric setting work. Owned settings are removed.
+  `/private/tmp/qplot-r36-root-settings-receipt.json`.
+- Clean `af87ea6` distributions have exact tracked-member hashes and PR91
+  provenance, all **257 test modules plus conftest**, and all four Twine passes.
+  Fresh ARM and Intel compiler-free installations pass, including native
+  installed-file/read/startup checks and complete temporary-environment cleanup.
+  These artifacts precede C19-054
+  and must be rebuilt for final acceptance; native sources/pins remain unchanged.
+  `/private/tmp/qplot-bh20261025-af87ea6-artifact-manifest.json`;
+  `/private/tmp/qplot-r36-wheel-install-arm64-receipt.json`.
+  Intel receipt: `/private/tmp/qplot-r36-wheel-install-x86_64-receipt.json`.
+- Hosted CI completes successfully for committed round-35 revision
+  `af87ea63b88fbb528e05d17e8951efe0efb2c1af`: **47/47 checks pass**, including
+  Required checks, with matching SHAs and a verified complete API total/unique
+  IDs. This validates the first four fixes, not the pending C19-054 repair.
+  `/private/tmp/qplot-r35-ci-verified-af87ea6.json`;
+  [round-35 CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40182445306).
+- **Measurement lane:** no additional finding; **142 focused tests and six fresh
+  real-QCoDeS cases pass**. Descending/reversing/mixed signed-and-unsigned/large
+  uint64 line acquisitions plus planned/unplanned heatmaps exercise native
+  transforms, clipping/log caches, refresh, cuts and both CSV routes. Independent
+  Fraction/secant/interpolation/direct-DFT oracles verify **3,488 mapped values,
+  1,970 raw values, 564 CSV cells, eight statistics oracles and 36 protected-file
+  comparisons**. Eight plots, six services and both fixture roots retire.
+  `/private/tmp/qplot-r36-measurement-receipt.json`.
+- **Safety/native lane:** no finding; **25 tests pass**. Two live sources verify
+  **1,835,491 exact values, 27 protected-file comparisons, 20 physically
+  read-only descriptors and five writer checkpoints** (maximum 6.79 ms).
+  Cancellation returns in 0.494 ms through the helper and 0.238 ms natively.
+  Terminating an owned active helper releases locks and a subsequent query
+  recovers; the independent service, retained payload and capture watermark
+  remain valid. Effective UID is unprivileged; forbidden native counters stay
+  zero. Two services, a direct supervisor, five spools, three native proofs,
+  writers and fixtures retire with explicit zero-resource assertions.
+  `/private/tmp/qplot-r36-safety-receipt.json`.
+- **Coordinator performance:** a fresh generated current-QCoDeS scalar run
+  verifies **196,609 exact coordinates**. Both cached and full-path native
+  validation modes match independent aggregate checksums over four 65,536-row
+  intervals, for three repeats each. Reads take **17.8–48.0 ms** locally;
+  protected identities, hashes and timestamps stay unchanged. All owned
+  fixtures are removed. Probe-only table-name/case assumptions were corrected;
+  no application finding. `/private/tmp/qplot-r36-root-profile-receipt.json`.
+- **Broader UI lifecycle:** a fresh two-database composition passes **48 exact
+  plotted/cut/overlay values, 44 CSV cells and 18 protected-file comparisons**.
+  Keyboard launches, retained hidden producer refresh, statistics Copy and
+  reused export/axis dialogs survive switching sources. Close Database No
+  preserves consumers; Yes closes in 47.8 ms locally. Four plots, four dialogs,
+  two services and fixtures retire without callback errors.
+  `/private/tmp/qplot-r36-ui-lifecycle-receipt.json`.
+- C19-054's initial 12-case repair passes **123 author tests** and actual startup.
+  Independent review deliberately **withheld approval** after finding further
+  instances of the same missing-control-copy mechanism: opacity changes from
+  0.110889 to 1.0, enabled grids turn off, and Max Traces 1 resets, showing two
+  traces. Secondary-removal controls preserve each choice. These extend the
+  same finding; they are not counted as separate bugs. Author adds concrete
+  regressions and narrow control transfers before final review. Evidence:
+  `/private/tmp/qplot-r36-c054-adjacent.log` and
+  `/private/tmp/qplot-r36-c054-maxtraces.log`.
+- The initial C19-054 full suite was stopped before this extension: **1,844
+  passed, eight skipped, 17 warnings**, no failures, exit 2 after 182.98 s.
+  `/private/tmp/qplot-r36-full.log` is superseded partial evidence. Final full
+  integration is deferred until the remaining authorized investigation rounds
+  settle, then runs on the final frozen source. Round-37 safety investigation
+  has started on unchanged database/native paths; the complete round cannot be
+  counted clean until the final C19-054 review and other fresh lanes finish.
+- **C19-054 final repair independently approved:** transfer only the proven
+  native processing/rendering controls, including inactive saved choices;
+  reconstruct averages from the surviving source curves after mapping/view
+  restoration and then restore trace limits. No broad PlotItem state restore
+  or generated-average transfer. The complete module changes from **eight
+  failures/eight passing controls** to **16 passing cases**. Final-hash startup,
+  whole-tree Ruff, mypy (**88 files**) and whitespace checks pass.
+- A different subchat independently **approves** final source
+  `e40290cded329f359bb5628514e094fe2ff7503ae6da76186f0c1b541ff1c204` and regression
+  module `fee059473b236014f2bd27c17bdf2e59bea061401e1f1318b43f01f6d7a26c39`:
+  **ten fresh cases plus 26 focused regressions pass**. Distinct remaining
+  acquisitions exercise native derivative/FFT/downsampling/log/clipping,
+  regenerated averages, raw/average CSV and every independently confirmed
+  control loss. **2,304 exact values, 304 mapped values and 60 protected-file
+  comparisons** pass; 45 QObjects, ten services and all three fixture roots
+  retire without callback errors or pending resources. Original failing review
+  receipts are preserved. `/private/tmp/qplot-r36-c054-safety-review-receipt.json`.
+- Round 36 completes with **one confirmed repair**, bringing this extension
+  to **five fixes** and the campaign to **53 application/diagnostic repairs**
+  plus seven historical test-only CI corrections. The clean-round count is zero.
+
+### Round 37 — fresh independent investigation in progress
+
+- Three fresh subchats cover safety/live/native access, measurement correctness
+  and UI/lifecycle on the final independently approved C19-054 candidate. The
+  coordinator covers clean distributions/installed packages, entry points and
+  remaining application integration. File ownership remains read-only until
+  a concrete new finding is confirmed and assigned.
+- Safety completes without a finding: **83 tests and three subtests pass**;
+  a fresh 73-point QCoDeS acquisition verifies **292 exact values, 48 protected
+  comparisons, four physically read-only descriptors**, seven auxiliary-write
+  refusals and two generation refusals against actual WAL/journal artifacts.
+  Oversized metadata omission/recovery, four cancellation/deadline exits
+  (maximum 45.11 ms) and a writer checkpoint (14.61 ms) pass. Native prohibited
+  counters stay zero; all proof handles, writer and fixtures retire. The
+  exercised database/native source hashes did not change during C19-054 edits.
+  `/private/tmp/qplot-r37-safety-receipt.json`.
+- Next: finish the fresh measurement/UI lanes and package checks, then round 38.
+  At most two rounds remain in this authorization. Run final full integration
+  only after investigation settles, update the draft PR and verify its exact
+  final CI head. Do not merge, tag or release.
 
 ## Resumed — one additional round, 33
 

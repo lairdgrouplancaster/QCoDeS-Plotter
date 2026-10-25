@@ -38,6 +38,9 @@ All notable user-facing changes are recorded here.
   Clip to View is enabled, preserving acquisition order and full CSV data.
 - Plot the selected measurement when Return, keypad Enter or Ctrl+Return is
   pressed after typing a run ID, while still cancelling genuinely stale requests.
+- Preserve averaging, downsampling, clipping, opacity, grids and trace limits
+  when removing the primary dataset from a merged plot, recomputing its average
+  from the remaining traces.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.
