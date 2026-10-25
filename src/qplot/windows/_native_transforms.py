@@ -290,6 +290,7 @@ class NativePlotDataItem(pg.PlotDataItem):
 
     def clear(self):
         self._qplot_range_dataset = None
+        self._qplot_clip_dataset = None
         super().clear()
 
     def axisDataBounds(self, ax, frac=1.0, orthoRange=None):
@@ -512,6 +513,7 @@ class NativePlotDataItem(pg.PlotDataItem):
             # New data or processing can restore a representable range. Let
             # native autorange consume those bounds before settled validation.
             self._qplot_view_range_rejected = False
+            self._qplot_clip_dataset = None
         if self._qplot_precision_error == LINE_DISPLAY_RANGE_MESSAGE:
             self._qplot_precision_error = None
         dataset = self._get_mapped_display_dataset()
@@ -529,6 +531,37 @@ class NativePlotDataItem(pg.PlotDataItem):
             self._qplot_precision_error = LINE_DISPLAY_RANGE_MESSAGE
             return None
         return dataset
+
+    def _get_coordinate_safe_display_dataset(self) -> PlotDataset | None:
+        """Use native viewport slicing only for ordered mapped coordinates."""
+        clipping = self.opts["clipToView"]
+        if self._datasetMapped is None:
+            dataset = super()._getDisplayDataset()
+            if not clipping or self._datasetMapped is None:
+                return dataset
+        mapped = self._datasetMapped
+        if clipping:
+            if getattr(self, "_qplot_clip_dataset", None) is not mapped:
+                x = mapped.x
+                self._qplot_clip_ordered = bool(
+                    np.all(numeric_isfinite(x)) and np.all(x[1:] >= x[:-1])
+                )
+                self._qplot_clip_dataset = mapped
+                if not self._qplot_clip_ordered:
+                    # Upstream may have just mapped and sliced a new dataset.
+                    # Discard that slice before it reaches the curve renderer.
+                    self._datasetDisplay = None
+            if not self._qplot_clip_ordered:
+                # PyQtGraph bisects X assuming increasing order. Descending
+                # sweeps and phase maps must retain their acquisition order,
+                # including every branch. Keep the requested control intact
+                # and still allow native downsampling and range limiting.
+                self.opts["clipToView"] = False
+                try:
+                    return super()._getDisplayDataset()
+                finally:
+                    self.opts["clipToView"] = clipping
+        return super()._getDisplayDataset()
 
     def _get_mapped_display_dataset(self) -> PlotDataset | None:
         # Isolate the private PyQtGraph mapping hook here. Seed only the mapped
@@ -581,7 +614,7 @@ class NativePlotDataItem(pg.PlotDataItem):
                     x, y = self._precision_checked_samples(source.x, source.y)
                     if self._qplot_precision_error:
                         self._datasetMapped = PlotDataset(x, y)
-                return super()._getDisplayDataset()
+                return self._get_coordinate_safe_display_dataset()
             x, y = self._precision_checked_samples(x, y)
             if x.dtype.kind == "O":
                 x = x.astype(np.float64)
@@ -591,4 +624,4 @@ class NativePlotDataItem(pg.PlotDataItem):
             if True in self.opts["logMode"]:
                 mapped.applyLogMapping(self.opts["logMode"])
             self._datasetMapped = mapped
-        return super()._getDisplayDataset()
+        return self._get_coordinate_safe_display_dataset()
