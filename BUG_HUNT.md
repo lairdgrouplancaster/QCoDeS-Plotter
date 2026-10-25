@@ -30,7 +30,7 @@ current QCoDeS and do not introduce legacy settings migrations.
   and require concrete evidence before counting a finding. Coordinate exact
   file ownership before edits; another subchat reviews every substantive fix.
 
-### Round 34 — in progress
+### Round 34 — complete: two confirmed bugs fixed
 
 - All three lanes begin with read-only investigation and owned scratch fixtures.
   Local process-supervision tests need approved IPC permissions; sandbox-denied
@@ -71,7 +71,7 @@ current QCoDeS and do not introduce legacy settings migrations.
   `/private/tmp/qplot-r34-root-focused.log` and
   `/private/tmp/qplot-r34-screenshot-smoke-receipt.json`.
 
-#### Round-34 coverage recorded so far
+#### Round-34 completed coverage and second repair
 
 - **Safety/live/native:** no additional finding. **43 tests pass**. Fresh
   13-run acquisition verifies **3,151,936 exact values**, eight-entry cache
@@ -96,16 +96,37 @@ current QCoDeS and do not introduce legacy settings migrations.
   comparisons, four real Qt drops, eight Refresh clicks and two promotions**.
   All 20 QObjects and both services retire. Receipt:
   `/private/tmp/qplot-r34-ui-live-receipt.json`.
-- **C19-051 confirmed; repair in progress:** opening a cut's Custom Color
+- **C19-051 repaired and independently approved:** opening a cut's Custom Color
   picker, then replacing an owned source through an external test writer while
   the real 100 ms refresh timer runs, automatically closes the plots but leaves
   the unparented modal picker visible. Accepting it changes the already-closed
   cut's color. There is no programmatic Close All call in this reproduction.
-  Evidence: `/private/tmp/qplot-r34-ui-color-replacement-receipt.json`. UI author
-  owns the color widget and its regressions; measurement subchat independently
-  reviews the repair. Round 34 is not yet complete. C19-050 brings confirmed
-  repairs to **49**, with C19-051 still pending; test-only CI corrections remain
-  seven and the clean-round count remains zero.
+  Evidence: `/private/tmp/qplot-r34-ui-color-replacement-receipt.json`. The minimal
+  repair parents the real color dialog to its owning widget, so established
+  plot closure rejects it before releasing the source. UI author owns
+  `src/qplot/windows/_widgets/dropbox.py` and the new
+  `tests/windows/test_custom_color_dialog_lifecycle.py`. The actual-modal module
+  fails **five cases before the fix**, with two passing accept/cancel controls;
+  the related author batch passes **46 tests** afterward. Watchdogs bound every
+  modal test. Windows skips only the open-file replacement scenario; ordinary
+  ownership and close cases remain cross-platform.
+- Different measurement subchat independently **approved** the frozen C19-051
+  code/tests: **29 focused tests pass**, plus six distinct real dialogs exercising
+  accept/cancel/owner close, retained overlays, public Close Database and active
+  centered FFT cuts. **180 exact values and 18 protected-file comparisons** pass;
+  six plots, two services and owned fixtures retire without callback errors.
+  Receipt: `/private/tmp/qplot-r34-measurement-c051-review-receipt.json`.
+- Actual project-venv `python -m qplot` startup on the frozen repairs passes:
+  visible window, real event loop, correct version, exit 0 and isolated settings
+  cleanup. The receipt binds the changed widget's hash:
+  `/private/tmp/qplot-r34-ui-startup-receipt.json`. Whole-tree Ruff, mypy and
+  dependency checks run at this integration boundary; the full automated suite
+  is in progress on frozen hashes in `/private/tmp/qplot-r34-frozen-source.json`.
+- Round 34 is complete with **two confirmed repairs**, bringing the campaign
+  to **50 application/diagnostic repairs** plus seven test-only CI corrections.
+  The clean-round count remains zero. Next: fresh round 35, continuing up to
+  round 38 or until two complete clean rounds, then finish exact-source artifact
+  acceptance/full validation and update the draft PR. No merge or release.
 
 ## Resumed — one additional round, 33
 

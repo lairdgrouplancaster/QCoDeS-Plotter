@@ -32,6 +32,8 @@ All notable user-facing changes are recorded here.
   completes without capture steps; report unavailable requested stages promptly.
 - Protect existing databases and sidecars from documentation screenshot outputs,
   including output paths that link to measurement files.
+- Close a cut's Custom Color dialog when its plot closes or a replaced database
+  invalidates the source, without applying a new color to the retired cut.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.

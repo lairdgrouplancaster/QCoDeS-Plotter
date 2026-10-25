@@ -251,7 +251,7 @@ class colorBox(qtw.QComboBox):
         # Allow user to select a custom colour
         if index and self.itemText(index) == "Custom":
             self.setCurrentText("") 
-            color = qtw.QColorDialog.getColor()
+            color = qtw.QColorDialog.getColor(parent=self)
 
             # Check user did note exit out
             if not color.isValid():
