@@ -120,13 +120,122 @@ current QCoDeS and do not introduce legacy settings migrations.
   visible window, real event loop, correct version, exit 0 and isolated settings
   cleanup. The receipt binds the changed widget's hash:
   `/private/tmp/qplot-r34-ui-startup-receipt.json`. Whole-tree Ruff, mypy and
-  dependency checks run at this integration boundary; the full automated suite
-  is in progress on frozen hashes in `/private/tmp/qplot-r34-frozen-source.json`.
+  dependency checks pass at this integration boundary. The full automated suite
+  on `/private/tmp/qplot-r34-frozen-source.json` was deliberately interrupted
+  after round 35 confirmed another code change: **4,672 passed, 121 skipped**,
+  no failures, exit 2 after 764.03 s. This partial, superseded run is not final
+  validation; log: `/private/tmp/qplot-r34-full.log`.
 - Round 34 is complete with **two confirmed repairs**, bringing the campaign
   to **50 application/diagnostic repairs** plus seven test-only CI corrections.
   The clean-round count remains zero. Next: fresh round 35, continuing up to
   round 38 or until two complete clean rounds, then finish exact-source artifact
   acceptance/full validation and update the draft PR. No merge or release.
+
+### Round 35 — complete: two confirmed bugs fixed
+
+- Fresh independent safety, measurement and UI subchats have rotated their
+  scenarios. The coordinator is exercising the real GUI synthetic-generation
+  replacement workflow and checking artifacts, entry points and integration.
+- **C19-052 confirmed:** native Clip to View assumes ascending coordinates;
+  descending, reversing and phase-map traces lose valid visible points. Actual
+  Qt controls reproduce losses of 11/11, 11/22 and 6/12 in-range samples,
+  respectively, while original/snapping/export arrays remain correct. Thirteen
+  regressions fail before repair, with four ascending controls passing.
+  Evidence: `/private/tmp/qplot-r35-clip-probe-receipt.json` and
+  `/private/tmp/qplot-r35-c052-red.log`. Measurement owns `_native_transforms.py`
+  and `test_native_clip_coordinates.py`; the UI subchat independently reviews.
+- **C19-053 confirmed:** clear the run-table selection, type a valid run ID,
+  choose measurement 2 and press Return. Actual Qt signal ordering changes
+  `(run_id, None)` to `(run_id, GUID)` after queuing metadata; the stale-selection
+  guard discards the legitimate launch. Zero plots open. The unchanged Plot
+  button opens the requested trace with all 62 coordinates/values correct.
+  Evidence: `/private/tmp/qplot-r35-ui-receipt.json`. UI owns `_run_controls.py`
+  and `test_typed_run_keyboard_launch.py`; measurement independently reviews.
+- **Interim distribution validation at `9fd221c`:** clean-worktree app wheel
+  and sdist, source-member inventories and all four Twine checks pass. The
+  native wheel/sdist are unchanged and match their previously verified hashes.
+  Fresh ARM compiler-free wheel acceptance passes, including installed-file
+  hashes, actual startup, live reading, supervision, checkpoints and cleanup.
+  These artifacts predate round-35 repairs and are not final-candidate evidence.
+  `/private/tmp/qplot-bh20261025-9fd221c-artifact-manifest.json`;
+  `/private/tmp/qplot-r34-wheel-install-arm64-validated.log`.
+- Next: finish both narrow repairs and independent reviews, complete coordinator
+  coverage, then proceed through round 38 at most or two complete clean rounds.
+  Final full integration and distribution acceptance must use the final source.
+
+#### Round-35 repair and coverage evidence
+
+- C19-052 now guards upstream viewport slicing using the actual mapped X
+  coordinates. Finite nondecreasing coordinates retain optimized clipping;
+  other acquisitions retain every branch in original order, with the user's
+  checkbox intent, downsampling, snapping and raw CSV preserved. The new module
+  passes **17 tests**, and **171 author tests** pass across transforms, snapping,
+  FFT policies and axis reassignment. Actual startup passes. A different UI
+  subchat independently **approved** the frozen code/tests with a fresh live
+  acquisition covering duplicate descending coordinates, log gaps, phase-map
+  toggles, inverted/secondary axes and ascending-to-reversing live refresh:
+  **282 visible pairs, 616 snap pairs, 80 CSV pairs and 10 protected-file
+  comparisons** pass; nine QObjects, one service and the fixture retire.
+  `/private/tmp/qplot-r35-ui-c052-review-receipt.json`.
+- C19-053 now synchronizes the typed row before accepting the UI launch request;
+  the existing stale-request guards are unchanged. The regression module goes
+  from **six failures and six passing controls** to **12 passing cases**.
+  **213 author tests and two subtests** pass. Canonical mypy, Ruff and actual
+  project-venv module startup pass on both frozen repairs. A different
+  measurement subchat independently **approved** the final code/tests:
+  **50 focused tests pass**. Distinct real live-WAL ragged-array workflows
+  exercise run-ID Return, Measurement Return, Ctrl+Return and keypad Enter with
+  one/all outputs: **72 raw cells, 72 exact CSV cells, 18 Fraction-centered values
+  and 15 protected-file comparisons** pass. Six QObjects, one service and owned
+  fixtures retire without callback errors.
+  `/private/tmp/qplot-r35-c053-measurement-review-receipt.json`.
+- **Safety/live/native:** no additional finding; **46 tests pass**. A fresh
+  suspended-BLOB/source-replacement composition checks **917,574 exact values,
+  30 protected-file comparisons and ten physically read-only descriptors**.
+  All 14 remaining subscribers reject the replaced source while retained
+  captures stay byte-identical. Reopen, snapshot fallback, active-WAL refusal
+  and writer-checkpoint recovery pass. Five services, four spools, three native
+  proof handles and fixtures retire; forbidden native counters remain zero.
+  Cancellation takes 0.0095 ms and checkpoint 1.78 ms locally. An external
+  diagnostic `lsof` hang was bounded and cleaned up, not counted as a product
+  finding. `/private/tmp/qplot-r35-safety-receipt.json`.
+- **UI broader coverage:** sorted and keyboard run selection, real Preferences
+  Apply during pending reads, axis editing, PDF/CSV/clipboard output and
+  refresh/Close Database with an export dialog pass: **197 exact values/CSV
+  cells and six protected-file comparisons**; six QObjects and one service
+  retire without callback errors. `/private/tmp/qplot-r35-ui-receipt.json`.
+- **Coordinator generation/publication:** **107 tests pass**, plus a fresh real
+  GUI replacement using explicitly selected disposable inputs. No preserves
+  plots/readers and source bytes; Yes retires old consumers, generates 124
+  points, publishes only the selected database and reloads new GUIDs. **65 exact
+  values/coordinates**, unselected sibling protection and unchanged CSV pass;
+  four plots, two services and fixtures retire. Existing SQLite sidecars were
+  separately refused safely; the success fixture's owning writer resolves WAL
+  before viewing. Probe corrections for expected QObject retention and QCoDeS
+  scalar serialization are not findings. Final receipt:
+  `/private/tmp/qplot-r35-root-generation-receipt.json`.
+- Whole-tree Ruff, mypy (**88 files**), dependency and whitespace checks pass.
+  Native sources and pins remain unchanged. Full integration is running on the
+  frozen repairs; `/private/tmp/qplot-r35-full.log`. Fresh rotated round-36
+  reviews begin on these same files; any further repair invalidates affected
+  coverage before a clean round can be counted.
+- C19-052 independent related batch completes with **203 passing tests**.
+  The C19-053 fixed broad UI replay also passes all original workflow/data/
+  protection assertions, now opening the correct plot with Return. Both
+  substantive repairs have independent approval. Round 35 is complete with
+  **two repairs**, bringing the campaign to **52 application/diagnostic repairs**
+  plus seven historical test-only CI corrections. The clean-round count is zero.
+
+### Round 36 — fresh rotated investigation in progress
+
+- Round-35 safety reviewer now covers measurement/native transforms/cuts; its
+  measurement reviewer covers UI/lifecycle; its UI reviewer covers database
+  safety/live/native access. The coordinator covers the remaining application,
+  packaging, settings/entry points and performance. Use new compositions and
+  independent oracles on the independently approved frozen round-35 source.
+- Continue through round 38 at most, stopping after two complete clean rounds.
+  If interrupted, resume these three read-only lanes and the running full suite,
+  then finish exact-source artifact checks, commit/push and draft PR #91 update.
 
 ## Resumed — one additional round, 33
 

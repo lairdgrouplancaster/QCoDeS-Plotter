@@ -131,7 +131,7 @@ class RunControlsMixin:
         self.run_idBox.setToolTip("Run ID to plot")
         self.run_idBox.textEdited.connect(self.update_run_id)
         self.run_idBox.editingFinished.connect(self.sync_run_id_selection)
-        self.run_idBox.returnPressed.connect(self.openRun)
+        self.run_idBox.returnPressed.connect(self._open_entered_run)
         sublayout.addWidget(self.run_idBox)
 
         sublayout.addWidget(qtw.QLabel("Measurement:"))
@@ -141,7 +141,7 @@ class RunControlsMixin:
         self.measurementBox.setFixedWidth(46)
         self.measurementBox.setText("*")
         self.measurementBox.setToolTip("Measurement to plot; * to plot all")
-        self.measurementBox.returnPressed.connect(self.openRun)
+        self.measurementBox.returnPressed.connect(self._open_entered_run)
         sublayout.addWidget(self.measurementBox)
 
         self.plotRunButton = qtw.QToolButton()
@@ -152,7 +152,7 @@ class RunControlsMixin:
         self.plotRunButton.setToolTip("Plot (Ctrl+Return)")
         self.plotRunButton.setAccessibleName("Plot measurement")
         self.plotRunButton.setFixedSize(28, 26)
-        self.plotRunButton.clicked.connect(self.openRun)
+        self.plotRunButton.clicked.connect(self._open_entered_run)
         sublayout.addWidget(self.plotRunButton)
 
         self.exportCsvButton = qtw.QToolButton()
@@ -672,6 +672,15 @@ class RunControlsMixin:
             self.selected_run_id = int(text)
         except ValueError:
             self.selected_run_id = None
+
+    @QtCore.pyqtSlot()
+    def _open_entered_run(self):
+        """Commit the typed target before accepting an asynchronous plot request."""
+        # Return is emitted before editingFinished. Without this sync, the
+        # request captures a missing GUID and the subsequent selection update
+        # makes that same requested run look stale to the publication guard.
+        self.sync_run_id_selection()
+        self.openRun()
 
     @QtCore.pyqtSlot()
     def sync_run_id_selection(self):

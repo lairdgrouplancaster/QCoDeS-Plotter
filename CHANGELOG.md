@@ -34,6 +34,10 @@ All notable user-facing changes are recorded here.
   including output paths that link to measurement files.
 - Close a cut's Custom Color dialog when its plot closes or a replaced database
   invalidates the source, without applying a new color to the retired cut.
+- Keep valid visible samples in descending, reversing and phase-map traces when
+  Clip to View is enabled, preserving acquisition order and full CSV data.
+- Plot the selected measurement when Return, keypad Enter or Ctrl+Return is
+  pressed after typing a run ID, while still cancelling genuinely stale requests.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.
