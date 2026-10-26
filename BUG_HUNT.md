@@ -62,8 +62,16 @@ No merge, tag, release or legacy settings migrations are authorized.
   `tests/windows/test_native_fft_coordinate_origin.py`. Rebase finite floating
   coordinates before interpolation, retaining the original coordinates if
   subtraction would collapse distinct samples. **Five regression failures and
-  six passing controls** are recorded before repair. Independent safety review
-  and the complete related green batch are pending; not yet counted repaired.
+  six passing controls** are recorded before repair. **Repaired and independently
+  approved:** 115 related author tests and 11 frozen regressions pass. Different
+  safety reviewer passes 137 related tests and 35 fresh independent scenarios:
+  actual scalar/array/cut acquisitions plus independent Fraction/direct-DFT
+  controls verify 448 spectrum cells, 734 raw values and 15 protected-file
+  comparisons. A separate valid baseline-only replay shows a **36.36%** error
+  on a distinct six-sample negative-offset trace, corrected by this repair.
+  Source hash: `0dcebb4db0401da2516ff34f15266810e890b708acc2700519923ece15e105ba`.
+  Receipts: `/private/tmp/qplot-r39-c058-author-receipt.json` and
+  `/private/tmp/qplot-r39-safety-c058-review.json`.
 - A separate scalar probe correctly refuses coordinates already collapsed by
   acquisition; it is not this finding. A blocked cut scratch probe was stopped
   and is not claimed as successful coverage.

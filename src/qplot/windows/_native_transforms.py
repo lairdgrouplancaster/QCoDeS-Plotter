@@ -237,14 +237,17 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
                 dtype=np.float64, count=len(exact),
             )
             dx = np.diff(x)
-    elif x.dtype.kind == "f" and x.dtype.itemsize > 8:
+    elif x.dtype.kind == "f":
         # Uniform targets near a large recorded offset can round to an
         # acquired coordinate before interpolation. Remove the offset while
-        # retaining the extended spacing and the original stored samples.
+        # retaining the recorded spacing and the original stored samples.
         with np.errstate(over="ignore", invalid="ignore"):
             rebased = x - x[0]
         if (np.all(np.isfinite(rebased))
-                and rebased[-1] <= np.finfo(float).max):
+                and rebased[-1] <= np.finfo(float).max
+                and np.all(np.diff(rebased) > 0)):
+            # A wide sweep across zero can instead merge nearby coordinates
+            # when rebased. Keep its original interpolation coordinates.
             x = rebased
     with np.errstate(over="ignore", invalid="ignore"):
         span = float(x[-1] - x[0])

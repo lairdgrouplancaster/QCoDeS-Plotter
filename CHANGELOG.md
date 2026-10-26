@@ -50,6 +50,8 @@ All notable user-facing changes are recorded here.
   Selection includes the complete selection.
 - Close marquee menus when their plot or source is retired, preventing stale
   actions from reopening statistics for a closed plot.
+- Preserve FFT amplitudes for uneven, closely spaced timestamps and other
+  floating-point coordinates with a large common offset.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.
