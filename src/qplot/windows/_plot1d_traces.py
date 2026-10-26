@@ -1499,6 +1499,9 @@ class _TraceAppearanceDialog(qtw.QDialog):
             if combo_view is not None:
                 combo_view.setMinimumWidth(color_combo_width)
         for spin in (self.line_width, self.dots_size, self.marker_size):
+            # Applying a style rebuilds the selection controls. Commit typed
+            # fractions first so that refresh cannot insert decimals mid-edit.
+            spin.setKeyboardTracking(False)
             spin.setObjectName("traceAppearanceSpin")
             spin.setFixedWidth(76)
         self.opacity.setFixedWidth(68)

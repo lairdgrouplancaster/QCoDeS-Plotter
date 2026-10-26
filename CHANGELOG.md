@@ -62,6 +62,11 @@ All notable user-facing changes are recorded here.
 - Close native plot-control menus with retired plots and ignore delayed copy,
   PDF and export actions, avoiding stale clipboard images and callback errors
   after database replacement.
+- Preserve finite FFT amplitudes when resampling uneven coordinates would
+  overflow or underflow an intermediate interpolation slope, without slowing
+  large sweeps with a per-sample exact-arithmetic fallback.
+- Preserve fractional values typed into Appearance line-width, dot-size and
+  marker-size controls, including commits by Return, Tab or changing selection.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.
