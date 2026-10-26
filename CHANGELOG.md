@@ -56,6 +56,9 @@ All notable user-facing changes are recorded here.
   old menu cannot silently launch a different measurement.
 - Prevent stale Window-menu actions from showing retired plots, including
   Minimize, Maximize and Full Screen after automatic source replacement.
+- Keep ready heatmap layers renderable while a promoted primary plot loads or
+  retries, using shared color limits that preserve manual ranges and include
+  the first primary data even when automatic color refresh is disabled.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.

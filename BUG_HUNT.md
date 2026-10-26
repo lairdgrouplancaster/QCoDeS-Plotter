@@ -63,7 +63,8 @@ The clean-round count is zero. Commits: `bcac2ff` (C19-059), `d07daf4`
   `[4, 1.8856180832, 1.3333333333]`. Ascending and descending acquisitions
   reproduce the error. Absolute uniform targets round before interpolation;
   the Nyquist amplitude is **25% too small**. Raw recorded values survive.
-  `/private/tmp/qplot-r39-measurement-probe.log` contains the live reproduction.
+  `/private/tmp/qplot-r39-measurement-probe.log` contains the actual Qt reproduction
+  (reader mode was not asserted in that particular scratch probe).
 - Measurement author owns `_native_transforms.py` and
   `tests/windows/test_native_fft_coordinate_origin.py`. Rebase finite floating
   coordinates before interpolation, retaining the original coordinates if
@@ -210,9 +211,15 @@ The clean-round count is zero. Commits: `bcac2ff` (C19-059), `d07daf4`
   records source binding and limits. No new measurement finding in that lane.
 - A broad UI composition reported PyQtGraph float-image callbacks during a
   theme-change/source-promotion sequence, alongside an unrelated scratch helper
-  assertion error. Two subchats are isolating the callback before classifying
-  it; this remains a candidate, not a counted or repaired finding. Full-suite
-  integration waits for this candidate and C19-061 review to resolve.
+  assertion error. Two subchats independently localized the callback, now
+  recorded as C19-062 below. C19-061 is independently approved and committed;
+  full-suite integration waits for C19-062 repair and review.
+- A different subchat's evidence audit confirms eight reviewed runtime/test
+  files match commit `4033d53`, database/native/settings/pins are unchanged,
+  round-39 artifacts/ARM acceptance correctly bind `73d4988`, startup cleanup
+  and hashes agree, and all 27 referenced receipts/logs exist. Two editorial
+  qualifications identified by the audit are corrected here; no substantive
+  source/evidence discrepancy. `/private/tmp/qplot-r40-safety-integration-audit-receipt.json`.
 
 #### C19-061 — Window-menu entries resurrect retired plots
 
@@ -249,12 +256,54 @@ The clean-round count is zero. Commits: `bcac2ff` (C19-059), `d07daf4`
   promotion, rather than Preferences or export. The new heatmap host contains
   a ready secondary image while its first primary worker is pending; both
   secondary image levels and host colorbar are absent. Actual Qt paint raises
-  `levels argument is required for float input types`. The original theme
-  change is not yet established as necessary; a minimal normal-workflow
-  reproduction is being reduced. `/private/tmp/qplot-r40-measurement-promotion-probe.log`.
-- Rotated measurement reviewer is preparing exact ownership and regression
-  proof; the rotated UI reviewer will independently review the repair. No fix
-  or clean round is claimed while this confirmed callback remains unresolved.
+  `levels argument is required for float input types`. Minimal ordinary trigger:
+  add two ready heatmaps to a line host and remove the primary line through
+  Appearance. Theme changes, exports and reordered layers are unnecessary.
+  `/private/tmp/qplot-r40-measurement-promotion-minimal.log` records the failure.
+- Rotated measurement author owns `_mixed_plots.py`, `plot2d.py` and
+  `test_heatmap_promotion_color_lifecycle.py`. Initialize one shared host scale
+  from ready overlays while primary data is pending; include the first primary
+  values when they arrive even with automatic refresh disabled, preserving
+  explicit manual limits. **193 related tests pass**, including 16 regressions;
+  Ruff, mypy (88 files), actual startup/normal exit and private-settings cleanup
+  pass. `/private/tmp/qplot-r40-measurement-c062-author-receipt.json`.
+- Independent UI review is running with unequal source ranges, uniform/mesh
+  renderers, manual/automatic limits and cancelled/failed primary retries.
+  **Now complete and independently approved:** **86 focused tests** and 14 fresh
+  actual-path scenarios pass. **360 primary/overlay cells, 432 heatmap CSV cells
+  through 24 real dialogs, 240 broad-composition cells, 24 line CSV cells,
+  12 pending paints, four clipboard SVG/PNG outputs and 36 protected comparisons**
+  pass; 14 trusted-reader services and all owned resources retire without
+  callbacks. `/private/tmp/qplot-r40-ui-c062-independent-receipt.json`.
+- The one initial mesh assertion inspected a deliberately invalidated lazy
+  picture cache before paint; the corrected probe forces real painting and
+  retains every output/data/level/callback assertion. Review of the pending-primary
+  marker found no concrete stale-publication limit error; no speculative
+  extra repair was added. Source/test hashes remain frozen in both receipts.
+
+#### C19-063 — Native plot menus act on retired measurement windows
+
+- Broader same-class audit of remaining PyQtGraph menus finds a material stale
+  action path distinct from marquee/run-list/Window menus. In explicitly
+  trusted-live mode, right-click a cut or heatmap, replace its source through
+  the owned external writer and allow automatic refresh to close the plot.
+  The ViewBox menu stays visible. Actual Copy Plot Image replaces the clipboard
+  using the retired plot; actual PDF raises an uncaught Qt callback RuntimeError
+  when dataset-backed filename generation detects the replaced source.
+  `/private/tmp/qplot-r40-native-menu-copy.json` and
+  `/private/tmp/qplot-r40-native-menu-pdf.log` record the evidence. Native FFT
+  controls mutating only hidden display state are not counted separately.
+- Original measurement subchat owns `_plotWin.py`, `_plot_export.py` and new
+  native-menu lifecycle regressions: close owned menu levels on retirement and
+  guard delayed context/copy/PDF/export callbacks before accessing retired data.
+  Original UI subchat independently reproduces the failure and will review the
+  repair. Preserve active-window exports and normal native controls; no data
+  access or blanket exception-suppression changes are authorized.
+- **Continuation checkpoint:** round 40 has C19-061 and C19-062 independently
+  approved, with C19-063 repair/review in progress. Do not start round 41 or claim
+  a clean round until it is resolved. Final full tests, rebuilt application
+  artifacts, startup, push and exact-head draft-PR CI remain pending. Stop no
+  later than round 43, or after two complete consecutive clean rounds.
 
 ## Resumed 2026-10-25 — up to five rounds, 34–38
 
