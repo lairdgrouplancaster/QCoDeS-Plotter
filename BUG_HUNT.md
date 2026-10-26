@@ -23,14 +23,14 @@ No merge, tag, release or legacy settings migrations are authorized.
   application areas, settings, generation, diagnostics, packaging and
   subsystem interactions. Begin with read-only investigations; assign exact
   file ownership before edits and obtain different-subchat review of fixes.
-- **Round 39 underway.** Preserve the database-access invariant and use owned
+- **Round 40 underway; round 39 completed with three repairs.** Preserve the database-access invariant and use owned
   synthetic fixtures, current QCoDeS and current settings. Next: complete all
   lanes, reproduce confirmed findings, repair with meaningful regressions and
   independent review, then rotate coverage for the next fresh round. Reserve
   final integration for required tests, startup, applicable native/artifact
   checks, commit/push and exact-head CI before updating the draft PR.
 
-### Round 39 — in progress
+### Round 39 — complete: three confirmed bugs fixed
 
 - Coordinator settings/generation/diagnostics/distribution batch: **254 passed,
   28 subtests passed**. An initial command named a nonexistent test module and
@@ -47,6 +47,12 @@ No merge, tag, release or legacy settings migrations are authorized.
   that remains usable after its plot closes. Neither candidate is counted as
   repaired before a reachable reproduction, regression tests and independent
   review are complete. Safety/live/native investigation continues.
+
+The entries above preserve the investigation checkpoint. All three findings
+below are now fixed and independently approved. Campaign total: **59 repairs**
+plus seven historical test-only corrections; PR #91 will contain **21 fixes**.
+The clean-round count is zero. Commits: `bcac2ff` (C19-059), `d07daf4`
+(C19-058), `73d4988` (C19-060). Round 40 begins on the latter frozen source.
 
 #### C19-058 — FFT interpolation rounds uneven timestamp grids
 
@@ -127,10 +133,20 @@ No merge, tag, release or legacy settings migrations are authorized.
   venv `python -m qplot` startup shows the window, runs the event loop and exits
   normally, with private settings removed. `/private/tmp/qplot-r39-startup-receipt.json`
   binds the repaired runtime files. No native/database-access sources or pins
-  changed. Final fresh UI workflow coverage is finishing before round 40.
+  changed.
 
 #### Additional completed round-39 coverage
 
+- UI lane's fresh composed live workflow passes **seven scenarios, 72 plotted/
+  CSV cells and 12 protected comparisons**. It explicitly asserts trusted-live
+  mode on a canonical Unicode pathname; physical header/row clicks, preview
+  Space launch, real Preferences, regenerated previews/annotations, Auto-plot
+  on a new writer acquisition, Shift+F10 and public Close Database all pass.
+  Seven QObjects and one service retire, with no callbacks or stuck modifiers.
+  `/private/tmp/qplot-r39-ui-workflow-receipt.json`. Earlier scratch runs used
+  a noncanonical `/var` alias and fell back to snapshots; their mistaken live
+  service cleanup assertion is excluded. Other real-QCoDeS UI tests which did
+  not assert access mode are not claimed as trusted-live-specific coverage.
 - Measurement lane's fresh shaped/unshaped uint64 duplicate-grid acquisition
   verifies **170 raw/processed/cut cells, 71 CSV cells and four statistics
   oracles** using independent Fraction/Decimal expectations. Missing cells,
@@ -146,6 +162,99 @@ No merge, tag, release or legacy settings migrations are authorized.
   and three native proof handles retire. Installed native RECORD/pins match;
   both Mach-O slices have no dynamically linked SQLite symbols. Prohibited
   native counters remain zero. `/private/tmp/qplot-r39-safety-receipt.json`.
+
+### Round 40 — underway, rotated ownership
+
+- Measurement subchat now covers safety/live/native/performance; safety subchat
+  covers UI/lifecycle; UI subchat covers measurement correctness. Coordinator
+  covers entry points, configuration, diagnostics, generation and packaging.
+  Fresh scenarios begin on reviewed application revision
+  `73d498831431ec03cd717ec40d6a784313b06d6c`; no speculative findings or edits.
+- Clean isolated application build passes exact inventories/source-byte checks
+  and all four Twine checks: **127 runtime wheel files, 431 sdist files and
+  264 test modules plus conftest**. Build provenance binds the above commit,
+  unreleased 1.6.3 and PR #91. Native artifacts are reused only after audited
+  SHA-256 checks and proof that native/database-access sources and pins have
+  not changed. The temporary worktree is removed. Manifest:
+  `/private/tmp/qplot-r39-artifact-manifest.json`. Fresh compiler-free wheel
+  acceptance passes on ARM, including actual startup, installed-file hashes,
+  native live-reader/supervision checks and cleanup of its disposable environment.
+  `/private/tmp/qplot-r39-wheel-install-arm64-receipt.json`. These artifacts bind
+  round-39 source; a new round-40 repair will require rebuilding the application.
+  The final full suite/CI remain pending.
+- Coordinator's fresh actual `python -m qplot -platform offscreen DATABASE`
+  workflow combines Qt option parsing, a Unicode live-database pathname and
+  recovery from invalid current settings. It plots **38 exact values**, retains
+  all three protected artifact states, preserves the invalid settings backup,
+  reloads current defaults, exits normally and permits the external writer's
+  checkpoint. Explicit trusted-live mode, visible main/plot windows and complete
+  fixture cleanup pass. `/private/tmp/qplot-r40-entry-receipt.json`.
+- Rotated safety lane: **101 focused tests pass**. Fresh native cancellation
+  takes 0.887 ms and deadline completion 350.117 ms; both leave no reader
+  transaction and permit immediate exact query reuse. Of 96 coalesced selected
+  metadata requests during an uncommitted writer transaction, 64 return exact
+  results and 32 cancel. Completion refresh/reopen, **21 protected comparisons,
+  eight physically read-only descriptors and three writer checkpoints** pass
+  (maximum checkpoint 1.81 ms). Native prohibited counters stay zero; two
+  services, reader thread, writer and fixture retire. Universal2 ABI3 RECORD,
+  pins/source ID and both slices' linkage pass. Receipts:
+  `/private/tmp/qplot-r40-safety-native-concurrency-receipt.json` and
+  `/private/tmp/qplot-r40-safety-native-package-receipt.json`. No new finding.
+- Rotated measurement lane: **188 focused tests pass**. Fresh explicitly
+  trusted-live uint64/float acquisition through three stages checks **80 raw
+  cells, 80 processed cells, 32 cut values, 294 CSV cells, five statistics
+  oracles and 12 protected comparisons** using independent Fraction expectations.
+  Reversing rows, duplicate means, an inserted earlier coordinate, axis-exchanged
+  cuts and processed versus original CSV pass. Five QObjects, service and
+  fixture retire; no callback errors. `/private/tmp/qplot-r40-measurement-receipt.json`
+  records source binding and limits. No new measurement finding in that lane.
+- A broad UI composition reported PyQtGraph float-image callbacks during a
+  theme-change/source-promotion sequence, alongside an unrelated scratch helper
+  assertion error. Two subchats are isolating the callback before classifying
+  it; this remains a candidate, not a counted or repaired finding. Full-suite
+  integration waits for this candidate and C19-061 review to resolve.
+
+#### C19-061 — Window-menu entries resurrect retired plots
+
+- Fresh trusted-live Qt reproduction: open the main Window menu, replace the
+  owned QCoDeS source through the external writer, let the real 100 ms refresh
+  close its plots, then click the old heatmap/cut entry. The retired plot becomes
+  visible despite `_closed=True` and absence from `main.windows`. Two actual
+  popup cases reproduce the defect. Evidence:
+  `/private/tmp/qplot-r40-ui-window-menu-heatmap.json` and
+  `/private/tmp/qplot-r40-ui-window-menu-cut.json`.
+- Rotated UI reviewer owns `_window_controls.py` and new Window-menu lifetime
+  regressions. **Repaired and independently approved.** Close a plot's Window
+  menu when its owner closes and reject cached focus/minimize/maximize/fullscreen
+  activations against closed or deleted targets. Ordinary live/hidden/minimized
+  main and plot windows retain their normal controls.
+- Same-class audit confirms all six actual plot-owned popup variants (heatmap/
+  cut crossed with Minimize/Maximize/Full Screen) also reshow retired plots after
+  automatic source replacement. These variants are grouped under C19-061.
+  `/private/tmp/qplot-r40-ui-window-owner-probe.log` records the trusted-live
+  reproductions. Baseline regressions: **20 failures, eight passing controls
+  and one deleted-target callback error**. Final author batch: **56 passed**,
+  including 30 new cases. Ruff, mypy and actual startup/window/event-loop/normal
+  exit pass. `/private/tmp/qplot-r40-ui-c061-author-receipt.json`.
+- Different safety reviewer: **50 focused tests** and 52 fresh trusted-live
+  menu interactions pass, with **48 window-state checks, 120 preserved cells
+  and eight main-file hashes** plus sidecar fixture assertions. Six menus,
+  six QObjects, two services and two fixtures retire. Source hash
+  `e3e5fca3` (full SHA-256 in receipt); no reviewer edits. Approval:
+  `/private/tmp/qplot-r40-safety-c061-independent-receipt.json`.
+
+#### C19-062 — Pending promoted heatmap renders without color levels
+
+- Two independent subchats localize the broad UI callback to line-host source
+  promotion, rather than Preferences or export. The new heatmap host contains
+  a ready secondary image while its first primary worker is pending; both
+  secondary image levels and host colorbar are absent. Actual Qt paint raises
+  `levels argument is required for float input types`. The original theme
+  change is not yet established as necessary; a minimal normal-workflow
+  reproduction is being reduced. `/private/tmp/qplot-r40-measurement-promotion-probe.log`.
+- Rotated measurement reviewer is preparing exact ownership and regression
+  proof; the rotated UI reviewer will independently review the repair. No fix
+  or clean round is claimed while this confirmed callback remains unresolved.
 
 ## Resumed 2026-10-25 — up to five rounds, 34–38
 

@@ -54,6 +54,8 @@ All notable user-facing changes are recorded here.
   floating-point coordinates with a large common offset.
 - Dismiss run-list menus when their selection or database is replaced, so an
   old menu cannot silently launch a different measurement.
+- Prevent stale Window-menu actions from showing retired plots, including
+  Minimize, Maximize and Full Screen after automatic source replacement.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.
