@@ -1,5 +1,180 @@
 # qPlot bug-hunt campaign
 
+## Resumed 2026-10-26 — one additional round, 43
+
+The user explicitly authorized one more round after rounds 41–42 completed
+cleanly. This supersedes the previous extension's stopping instruction for
+round 43 only; do not start round 44. Continue on the dedicated branch and
+update draft PR #91, preparing unreleased bugfix 1.6.3. No merge, tag, release
+or legacy settings migrations. The database-access invariant remains binding.
+
+**Investigation and local validation complete:** round 43 found **two confirmed bugs**, both fixed,
+independently approved and committed. There are no unresolved findings. The
+one-round cap is reached; **do not start round 44**. Full suite: **5,937 passed,
+128 skipped, 119 subtests passed**, exit 0. Static checks, startup and fresh
+ARM/Intel package acceptance pass. The final log commit changes only this file;
+its exact pushed-head CI result will be recorded in draft PR #91 to avoid
+another documentation-only commit solely to record its own CI.
+
+| Round | Confirmed bugs fixed |
+| --- | ---: |
+| 43 | 2 |
+
+### Verified baseline and active checkpoint
+
+- Clean local HEAD, freshly fetched upstream and the open, unmerged draft
+  [PR #91](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/91) all
+  identify `6099ac8207819fdc4d8a4df23f11d110fbfcd896`.
+- Fresh complete check-run response verifies **47/47 successful checks**,
+  including Required checks, unique IDs and exact head SHAs throughout.
+  `/private/tmp/qplot-r43-baseline-check-runs.json`;
+  [baseline CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40315846174).
+- Three fresh independent subchats cover database safety/live/native reading,
+  measurement correctness, and UI/lifecycle. The coordinator covers settings,
+  entry points, generation, diagnostics, distribution and remaining subsystem
+  interactions. Investigation is initially read-only; assign explicit file
+  ownership before repairs and have a different subchat review each fix.
+- Starting totals: **62 application/diagnostic repairs**, seven historical
+  test-only CI corrections and 24 fixes in draft PR #91. Round 43 is complete;
+  two findings are now repaired, independently approved and committed.
+  Local validation is complete; the remaining publication steps are the final
+  log commit, push, exact-head CI verification and draft-PR update. No round 44.
+
+### Completed round-43 coverage
+
+- Coordinator settings, diagnostics, generation and distribution batch:
+  **264 passed, 28 subtests passed**, exit 0 in 9.42 s.
+  `/private/tmp/qplot-r43-root-focused.log`.
+- Fresh actual project-venv `python -m qplot -platform offscreen DATABASE`
+  starts, loads an owned current-QCoDeS source in asserted trusted-live mode
+  and plots it through the real button. Quit during actual background
+  generation leaves no published output or staged artifacts; a second actual
+  launch successfully retries generation while preserving the selected source
+  and plotted samples. **20 plotted cells, 17 generated coordinates, 17 finite
+  generated samples and nine protected-artifact comparisons** pass. Both
+  processes exit 0; Quit-to-reaped bounds are 1.18 s and 0.27 s, and all private
+  settings/fixtures are removed. `/private/tmp/qplot-r43-root-entry-receipt.json`.
+- Safety/native lane: **45 focused tests** and five fresh composed scenarios
+  pass. Ten-run cache eviction/retained prefixes, coalesced cancellation, live
+  BLOB append, snapshot handoff and same-run-ID source replacement/reopen
+  verify **10,011,404 exact cells, 24 protected comparisons and three cache
+  hits**. Five external-writer checkpoints succeed (maximum 1.277 ms); four
+  main/WAL descriptors are physically read-only, native prohibited counters
+  remain zero and proofs balance. Two services/IPC, the writer, snapshot,
+  14 spools and owned fixture directories retire. Native RECORD/pins/source-ID
+  and both universal2 linkages pass. No safety finding.
+  `/private/tmp/qplot-r43-safety-receipt.json` and
+  `/private/tmp/qplot-r43-safety-native-package-receipt.json`.
+- UI focused batch: **128 tests pass**. Fresh trusted-live UI composition
+  passes ten stages, **172 exact plotted/CSV values and 30 protected
+  comparisons**, including keyboard launching, merged-trace appearance/live
+  append, real CSV Save, primary promotion, operation validation/recovery,
+  modal Preferences with open heatmap editors, SVG clipboard and cuts.
+  Thirteen QObjects/service and the fixture retire without callbacks.
+  `/private/tmp/qplot-r43-ui-composition-receipt.json`. Preliminary probe
+  setup/oracle mistakes are explicitly excluded from successful coverage.
+- Measurement's six fresh grid/cut/export scenarios verify
+  **59 raw cells, 64 processed cells, 78 CSV cells and 21 protected comparisons**.
+  Ragged signed/unsigned duplicate means use exact Fraction oracles; gap fill,
+  row centering, irregular derivatives, independent cuts, acquired gap closure,
+  processed CSV and actual Appearance transpose/reset preserve measured values.
+  Window/plot reads explicitly assert trusted-live mode. A one-shot raw export
+  initially correctly refuses unproven active WAL; after
+  an explicit owned-writer checkpoint, raw CSV passes (its reader mode was not
+  asserted). Four QObjects/service
+  and the fixture retire without callbacks. No additional finding.
+  `/private/tmp/qplot-r43-measurement-receipt.json` and
+  `/private/tmp/qplot-r43-measurement-grid.json`.
+
+### C19-064 — FFT interpolation loses finite spectra at extreme slope scales
+
+- Actual trusted-live current-QCoDeS FFT checkbox with
+  `x = [0,1,2,4] * 2**-20`, `y = [0,1,2,4] * 2**1018` returns
+  `[inf,nan,nan]` instead of the finite exact-interpolation/direct-DFT spectrum
+  `[2,0.9428090415820634,2/3] * 2**1018`. Ascending/descending array and scalar
+  acquisitions reproduce it. Coordinates `[0,1,2,4] * 2**900` and samples
+  `[0,1,2,4] * 2**-400` produce finite wrong DC/Nyquist amplitudes (12.5% errors).
+  The internal interpolation slope overflows or underflows even though source
+  values, interpolated samples and expected spectra are representable.
+- Seven initial cases include two ordinary-scale passing controls; 24 protected
+  comparisons pass and eight QObjects/service retire. The scalar oracle uses
+  the actual writer-recorded cells. `/private/tmp/qplot-r43-measurement-fft-repro.json`.
+- **Repaired and independently approved**, commit `21879ee`. Preserve ordinary
+  interpolation; recover unsafe finite slopes using independently calculated
+  bounded endpoint weights, retaining exact fallback for genuinely exceptional
+  arithmetic. The initial per-target exact approach measured 0.649 s/100,000
+  targets and was replaced before approval to avoid slowing large traces.
+- Baseline: **12 failures, 17 passing controls**; final new suite **32 passed**,
+  with 192 related author tests. Independent safety reviewer: **111 tests**,
+  eight actual trusted-live Qt scenarios and five nonfinite/constant controls
+  pass. Distinct eight-point Fraction/140-digit Decimal DFT oracles verify
+  **320 spectrum cells, 384 raw cells and 27 protected comparisons**; baseline
+  errors include nonfinite output, 38.04% and 0.4808% amplitude errors. Nine
+  QObjects/service and fixture retire. Two-million-target interpolation takes
+  **0.201–0.256 s with zero per-target Fraction calls**, with normal/constant
+  and full-FFT baseline controls showing no new performance blocker.
+  `/private/tmp/qplot-r43-safety-c064-review.json` and
+  `/private/tmp/qplot-r43-safety-c064-performance.json`.
+
+### C19-065 — Appearance fields overwrite fractional keyboard input
+
+- In actual trusted-live current-QCoDeS line plots, select all and type `4.5`
+  in Appearance Width, then Return: the rendered width becomes `4.0`. Values
+  `10.5`/`12.5`, Dots size `7.5` and Markers size `12.5` similarly lose their
+  fractional digit. Per-key events show intermediate `valueChanged` refreshes
+  rows and rewrites the editor; plain Qt spinbox controls accept the same input.
+- Nine protected comparisons pass; five owned QObjects/service and fixtures
+  retire. `/private/tmp/qplot-r43-ui-width-receipt.json`.
+- **Repaired and independently approved**, commit `8af653b`. Disable keyboard
+  tracking on the three fractional editors; commit complete text on Return/
+  focus loss while preserving immediate step actions. **19 baseline failures**
+  become **22 passing regressions**, including three active live-refresh cases.
+  Author batch: **161 passed, 29 subtests**. Different measurement reviewer
+  passes 21 fresh trusted-live Qt scenarios, **61 style values, 420 sample
+  identities, 20 CSV cells and 66 protected comparisons**: primary/secondary
+  targets, Return/Tab/other-row commits, multi-selection, arrow keys and
+  close/reopen controls. Four QObjects/service and fixture retire.
+  `/private/tmp/qplot-r43-ui-c065-author-receipt.json` and
+  `/private/tmp/qplot-r43-measurement-c065-review.json`.
+
+### Final integration and publication checkpoint
+
+- Both repairs are committed; the campaign now has **64 application/diagnostic
+  repairs** plus seven historical test-only CI corrections. Draft PR #91 will
+  contain 26 fixes. The one-round authorization ends with round 43.
+- Full suite: **5,937 passed, 128 skipped, 61 warnings, 119 subtests passed**,
+  exit 0 in **1155.53 s**. Expected platform skips, QCoDeS deprecations and
+  deliberate numerical-stress/missing-data warnings were reviewed; no
+  unhandled-thread or unraisable-exception warning. The 54 new regressions
+  pass alongside the existing suite. `/private/tmp/qplot-r43-full.log`.
+- All **424 frozen source/test/build files** match reviewed code
+  `8af653bb543a2019e167fa6d1179b741221a16e1`. Whole-tree Ruff, configured mypy
+  (**88 files**), dependency and whitespace checks pass. Actual project-venv
+  `python -m qplot` starts, shows the window, enters the event loop and exits 0
+  on both final runtime hashes; private settings are removed.
+  `/private/tmp/qplot-r43-measurement-startup-receipt.json`.
+- Fresh application artifacts pass exact source/runtime inventories and bytes,
+  unreleased 1.6.3/PR #91 provenance and all four Twine checks. The application
+  sdist has **436 files, including 269 test modules plus conftest**; the wheel
+  has 126 byte-matching runtime source files plus validated generated provenance.
+  Native/database-access sources and pins are unchanged, so exact-hash-audited
+  native artifacts were reused. The isolated build worktree is removed.
+  `/private/tmp/qplot-r43-artifact-manifest.json`.
+- Fresh compiler-free **ARM and explicitly verified Intel** installations pass
+  installed-file hashes, actual startup, native live reading and supervision.
+  Intel parent and fresh environment both execute as `x86_64`; only its Git
+  metadata helper runs as ARM. All environments and helper directories retire.
+  `/private/tmp/qplot-r43-wheel-install-arm64-receipt.json` and
+  `/private/tmp/qplot-r43-wheel-install-x86_64-receipt.json` bind their logs.
+- Final validation receipt binds **24 evidence files** and all 424 frozen
+  sources: `/private/tmp/qplot-r43-final-validation-receipt.json`.
+- **Publication checkpoint:** commit this completed log, push the dedicated
+  branch and verify the complete exact-head CI check set, including Required
+  checks. Record that live result in draft PR #91. If CI exposes a confirmed
+  issue, investigate and repair it with independent review before claiming
+  completion. Do not start round 44; keep the bugfix unreleased and do not
+  merge or tag.
+
 ## Resumed 2026-10-26 — completed rounds 39–42
 
 The user authorized up to five further rounds. Continue on
