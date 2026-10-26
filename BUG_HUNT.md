@@ -1,6 +1,6 @@
 # qPlot bug-hunt campaign
 
-## Resumed 2026-10-26 — up to five rounds, 39–43
+## Resumed 2026-10-26 — completed rounds 39–42
 
 The user authorized up to five further rounds. Continue on
 `codex/qplot-bug-hunt-2026-10-23`, preparing unreleased bugfix 1.6.3 and updating
@@ -9,6 +9,28 @@ Stop after two complete fresh clean rounds or after round 43. Round 38 found
 two bugs; the consecutive clean count starts at zero. The campaign starts with
 56 application/diagnostic repairs and seven historical test-only corrections.
 No merge, tag, release or legacy settings migrations are authorized.
+
+**Complete:** four of the five authorized rounds were needed. Rounds 39 and 40
+found and repaired six bugs; fresh independent rounds 41 and 42 found none on
+the final application source. The two-clean-round stopping condition is met;
+**do not start round 43**. All six repairs are independently approved and
+committed. The campaign totals **62 application/diagnostic repairs** plus seven
+historical test-only CI corrections; draft PR #91 contains **24 fixes**.
+
+| Round | Confirmed bugs fixed |
+| --- | ---: |
+| 39 | 3 |
+| 40 | 3 |
+| 41 | 0 |
+| 42 | 0 |
+
+Final local suite: **5,883 passed, 128 skipped, 119 subtests passed**, exit 0.
+Ruff, configured mypy, dependency checks, actual qPlot startup and fresh ARM/
+Intel compiler-free package acceptance pass. All **422 frozen source/test/build
+files** match reviewed code commit `db4575fe1e8b8bbc8b3d943106cf51ddfc44f36f`.
+The final log commit changes only this file. The exact pushed-head CI outcome
+will be recorded in draft PR #91 after the final push, so recording its own CI
+does not create another documentation-only commit and another CI run.
 
 ### Verified baseline and working checkpoint
 
@@ -23,12 +45,11 @@ No merge, tag, release or legacy settings migrations are authorized.
   application areas, settings, generation, diagnostics, packaging and
   subsystem interactions. Begin with read-only investigations; assign exact
   file ownership before edits and obtain different-subchat review of fixes.
-- **Rounds 39–40 complete with six repairs; round 41 is next.** Preserve the database-access invariant and use owned
-  synthetic fixtures, current QCoDeS and current settings. Next: complete all
-  lanes, reproduce confirmed findings, repair with meaningful regressions and
-  independent review, then rotate coverage for the next fresh round. Reserve
-  final integration for required tests, startup, applicable native/artifact
-  checks, commit/push and exact-head CI before updating the draft PR.
+- **Investigation and local integration complete.** Preserve current QCoDeS,
+  the database-access invariant and current settings. No new investigation
+  round is authorized or required within this extension. At this log's commit,
+  the remaining publication steps are push, exact-head CI verification and the
+  final draft-PR update; the PR records their outcome. No merge/tag/release.
 
 ### Round 39 — complete: three confirmed bugs fixed
 
@@ -333,6 +354,135 @@ The clean-round count is zero. Commits: `bcac2ff` (C19-059), `d07daf4`
   results until revalidated. Native/database-access sources and pins remain
   unchanged. Draft PR update, push and exact-head CI verification remain
   pending; no merge, tag or release.
+
+### Round 41 — complete and clean
+
+Three new independent subchats start from reviewed commit
+`db4575fe1e8b8bbc8b3d943106cf51ddfc44f36f`. None authored the earlier repairs.
+All **422 frozen source/test/build files** remain byte-identical after the round.
+
+- **Safety/live/native:** 52 focused tests pass. Fresh DELETE/PERSIST/TRUNCATE/
+  WAL acquisitions check **4,718,592 array values, 1,572,864 BLOB bytes and
+  162 protected comparisons**, including uncommitted spilled writes, rollback,
+  commit, absent-WAL promotion and 16 WAL reset cycles. Seventeen writer-owned
+  checkpoints succeed (maximum 0.125 ms); four main/WAL handles are physically
+  read-only, prohibited counters stay zero and proof handles balance. Reader,
+  four writers, 12 private snapshots and fixtures retire. Installed ABI3/pins/
+  RECORD and both Mach-O linkages pass. `/private/tmp/qplot-r41-safety-receipt.json`.
+- **Measurement:** 123 focused tests pass, eight extended-float platform skips.
+  Nine fresh actual-QCoDeS scenarios verify **111 raw cells, 126 processed/cut
+  values, 104 CSV cells, four exact statistics oracles and 36 protected
+  comparisons**. Inferred metadata, ragged mixed integers, irregular serpentine
+  grids, clipping/centering/derivative composition, cut processing and reset pass.
+  Both fixtures explicitly use trusted live; the separate snapshot statistics
+  path runs after owned-writer checkpoints. Five QObjects, two services/threads
+  and fixtures retire. `/private/tmp/qplot-r41-measurement-receipt.json` and
+  `/private/tmp/qplot-r41-measurement-grid-receipt.json`.
+- **UI/lifecycle:** 28 focused tests and nine fresh trusted-live scenarios pass.
+  Selected detail/full-value fences, writer append during a real CSV dialog,
+  pending-drop close/retry, line→irregular-heatmap→line promotion, cut editors,
+  transpose/PDF/SVG and public shutdown verify **56 data/scale values and
+  24 protected comparisons**. Sixteen QObjects, two services and fixtures retire
+  with no callbacks. `/private/tmp/qplot-r41-ui-receipt.json`. Offscreen coverage;
+  no claim of a physical printer or manual desktop check.
+- Initial scratch setup/NumPy-encoding/click-coordinate mistakes and ordinary
+  one-ULP rounding were excluded from findings. Targeted tests accidentally
+  produced ignored coverage files; full integration uses `--no-cov`, so no
+  coverage-result collision occurred. Final hosted coverage remains separate.
+- **Coordinator integration:** fresh clean artifacts at `db4575f` pass exact
+  inventories/source-byte/provenance and four Twine checks: 127 wheel runtime
+  files, 434 sdist files, 267 test modules plus conftest. Fresh compiler-free ARM
+  install, actual startup, installed/native hash checks, live-reader/supervision
+  acceptance and environment cleanup pass. Whole-tree Ruff, configured mypy
+  (88 files) and dependency checks pass. Receipts:
+  `/private/tmp/qplot-r40-artifact-manifest.json`,
+  `/private/tmp/qplot-r40-wheel-install-arm64-receipt.json` and
+  `/private/tmp/qplot-r40-frozen-source.json`. The full suite is still running;
+  no complete full-suite or final CI claim is made yet.
+- **No actionable bug found. Consecutive clean-round count: one.** Begin
+  rotated fresh round 42 on the same source; stop if it is also completely
+  clean, otherwise continue only through the authorized round-43 cap.
+
+### Round 42 — complete and clean
+
+The fresh reviewers rotate areas again on unchanged `db4575f`.
+
+- **Measurement:** 68 focused tests and eight fresh trusted-live scenarios
+  pass. Widely separated binary scales, cancellation-sensitive averaging,
+  subsampling, centering, descending secants, phase maps, FFTs and source
+  removal/restoration verify **336 raw cells, 382 processed/rendered cells,
+  366 CSV cells and four independent statistics oracles**. Six real export
+  dialogs and 30 protected comparisons pass; four QObjects, service and fixture
+  retire. `/private/tmp/qplot-r42-measurement-receipt.json`.
+- **UI/lifecycle:** 69 focused tests and eight fresh trusted-live scenarios
+  pass. Two WAL databases share run IDs/parameter names while a hidden retained
+  line and independent cut continue from the first database. Cancel/retry,
+  real Preferences during writer append, diagnostic Copy, cross-source CSV
+  and Close Database No/Yes preserve **80 sample/CSV cells (including eight
+  exported cells)** and 60 protected comparisons. Ten QObjects, three services
+  and both fixtures retire without callbacks. `/private/tmp/qplot-r42-ui-receipt.json`.
+- **Safety/live/native/performance:** 88 focused tests and 12 fresh scenarios
+  pass. Whole-batch cancellation/deadline/mutation/size/SQL failures publish no
+  partial result and permit exact reuse. Derived-cache format generations,
+  disk replays, metadata invalidation, reopen, actual maximum-size PNG encoding
+  cancellation and foreign-cache lock refusal pass. **79 exact values, 12
+  cache replays, 60 protected comparisons and eight physically read-only
+  handles** are verified. Cancellation takes at most 0.94 ms, encode-close
+  55.39 ms, writer checkpoint 0.56 ms in these local observations. Prohibited
+  counters stay zero; reader, two coordinators/executors, broker/IPC and fixtures
+  retire. Native RECORD, pins/source ID and both architecture linkages match.
+  `/private/tmp/qplot-r42-safety-receipt.json`.
+- **Coordinator generation/entry points:** actual generator CLI accepts a BOM
+  CSV and a Unicode/punctuation output pathname, creates both declared runs,
+  refuses unconfirmed replacement, refuses an explicitly selected active-WAL
+  output, then replaces only the selected quiescent output when `--overwrite`
+  is explicit. **78 exact axis cells, 48 finite measurement cells and 20
+  selected/adjacent artifact-state comparisons** pass. The unselected database
+  and sidecars survive; private settings and fixtures are removed.
+  `/private/tmp/qplot-r42-generator-receipt.json`.
+- **No actionable bug found. Consecutive clean-round count: two.** Rounds 41
+  and 42 complete the requested fresh independent stopping condition on final
+  source `db4575f`. No round 43. No unresolved confirmed finding or required
+  manual test remains.
+
+### Final integration and publication checkpoint
+
+- Full suite on the frozen source: **5,883 passed, 128 skipped, 61 warnings,
+  119 subtests passed**, exit 0 in **995.57 s**. Expected platform skips,
+  numerical-stress warnings and QCoDeS deprecations were reviewed; no unhandled
+  thread/callback warning. Log: `/private/tmp/qplot-r40-full.log`.
+- Whole-tree Ruff, configured mypy (**88 files**), dependency and whitespace
+  checks pass. Actual project-venv `python -m qplot` starts, shows its window,
+  enters Qt's event loop and exits normally on the final runtime. Independently
+  installed package entry points also start and close normally.
+- Clean application/native distributions pass source-member inventories,
+  exact source bytes, unreleased 1.6.3/PR #91 provenance and four Twine checks.
+  The application sdist has **434 files, including 267 test modules plus
+  conftest**; 126 runtime source files match byte-for-byte, plus validated
+  generated build provenance. Native
+  sources/database-access code/pins remain unchanged, so the audited native
+  artifacts were reused after exact SHA-256 verification; no rebuild was needed
+  locally. `/private/tmp/qplot-r40-artifact-manifest.json`.
+- Fresh compiler-free **ARM and explicitly verified Intel** environments pass
+  installation/installed-file audits, actual startup, native live-reading,
+  supervision and cleanup. Intel parent and fresh environment both report
+  `x86_64`; only its Git metadata helper runs as native ARM. All acceptance
+  environments, helper directory and the isolated build worktree are removed.
+  `/private/tmp/qplot-r40-wheel-install-arm64-receipt.json` and
+  `/private/tmp/qplot-r40-wheel-install-x86_64-receipt.json`.
+- All **422 frozen files** still match code revision
+  `db4575fe1e8b8bbc8b3d943106cf51ddfc44f36f`. The final validation receipt binds
+  full-suite/artifact/architecture and clean-round evidence:
+  `/private/tmp/qplot-r42-final-validation-receipt.json`.
+- A different subchat independently audited the frozen sources, six repair
+  approvals, clean rounds, full-suite evidence, artifacts and both architecture
+  acceptances. Approved: `/private/tmp/qplot-r42-final-independent-audit.json`.
+- **Publication checkpoint:** commit this completed record, push the dedicated
+  branch, verify the complete exact-head CI check set, and update draft PR #91
+  with the final head/result. The PR records that live outcome. If CI exposes a
+  confirmed issue, investigate and repair it with independent review before
+  claiming completion; do not start an extra investigation round. Keep the PR
+  draft, the bugfix unreleased, and do not merge or tag.
 
 ## Resumed 2026-10-25 — up to five rounds, 34–38
 
