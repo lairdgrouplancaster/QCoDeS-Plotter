@@ -48,6 +48,8 @@ All notable user-facing changes are recorded here.
   keyboard shortcuts.
 - Preserve selected Overview cells when opening their context menu, so Copy
   Selection includes the complete selection.
+- Close marquee menus when their plot or source is retired, preventing stale
+  actions from reopening statistics for a closed plot.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.

@@ -3,7 +3,7 @@ from math import isfinite
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 import pyqtgraph as pg
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.tools.sample_statistics import (
@@ -36,6 +36,7 @@ if TYPE_CHECKING:
         marquee_outline: qtw.QGraphicsRectItem
         plot: Any
         vb: Any
+        closed: QtCore.pyqtBoundSignal
 
         def formatNum(self, value: float) -> str: ...
         def _view_range_changed_programmatically(self) -> None: ...
@@ -229,16 +230,24 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         Open the marquee context menu when a right-click lands inside it.
 
         """
-        if not self.marquee_contains_scene_pos(scene_pos):
+        if self.__dict__.get("_closed", False) or not self.marquee_contains_scene_pos(scene_pos):
             return False
 
         menu = self._new_marquee_context_menu()
+        menu.setParent(self, menu.windowFlags())
+        # Source replacement can close a plot while this nested event loop is
+        # running. Its temporary popup must stop accepting actions at that point.
+        self.closed.connect(menu.close)
         if global_pos is None:
             global_pos = QtGui.QCursor.pos()
         elif isinstance(global_pos, QtCore.QPointF):
             global_pos = global_pos.toPoint()
 
-        menu.exec(global_pos)
+        try:
+            menu.exec(global_pos)
+        finally:
+            if not sip.isdeleted(menu):
+                menu.deleteLater()
         return True
 
     def _new_marquee_context_menu(self) -> qtw.QMenu:
@@ -307,6 +316,8 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         return action
 
     def _execute_marquee_action(self, callback: _MarqueeAction) -> None:
+        if self.__dict__.get("_closed", False):
+            return
         if callback():
             self.clear_marquee()
 

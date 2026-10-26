@@ -1,5 +1,126 @@
 # qPlot bug-hunt campaign
 
+## Resumed 2026-10-26 — up to five rounds, 39–43
+
+The user authorized up to five further rounds. Continue on
+`codex/qplot-bug-hunt-2026-10-23`, preparing unreleased bugfix 1.6.3 and updating
+[draft PR #91](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/91).
+Stop after two complete fresh clean rounds or after round 43. Round 38 found
+two bugs; the consecutive clean count starts at zero. The campaign starts with
+56 application/diagnostic repairs and seven historical test-only corrections.
+No merge, tag, release or legacy settings migrations are authorized.
+
+### Verified baseline and working checkpoint
+
+- Clean local HEAD, freshly fetched upstream and the open, unmerged draft PR
+  all point to `777f793f9502929cfdb7aa51899fb6fa8d25b049`.
+- Fresh complete GitHub check response: **47/47 completed successful checks**,
+  including Required checks, with unique IDs and the exact head SHA throughout.
+  Receipt: `/private/tmp/qplot-r39-baseline-check-runs.json`;
+  [baseline CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40193160345).
+- Three fresh subchats start database safety/live reading/native access,
+  measurement correctness, and UI/lifecycle. Coordinator covers remaining
+  application areas, settings, generation, diagnostics, packaging and
+  subsystem interactions. Begin with read-only investigations; assign exact
+  file ownership before edits and obtain different-subchat review of fixes.
+- **Round 39 underway.** Preserve the database-access invariant and use owned
+  synthetic fixtures, current QCoDeS and current settings. Next: complete all
+  lanes, reproduce confirmed findings, repair with meaningful regressions and
+  independent review, then rotate coverage for the next fresh round. Reserve
+  final integration for required tests, startup, applicable native/artifact
+  checks, commit/push and exact-head CI before updating the draft PR.
+
+### Round 39 — in progress
+
+- Coordinator settings/generation/diagnostics/distribution batch: **254 passed,
+  28 subtests passed**. An initial command named a nonexistent test module and
+  exited before collection; the corrected complete batch above passed.
+  Log: `/private/tmp/qplot-r39-root-focused.log`.
+- Fresh coordinator probe checks real CLI parsing/persistence with Unicode
+  paths, invalid-number rejection, failed atomic multi-setting writes, safe
+  recovery when a current-QCoDeS database occupies the settings destination,
+  explicit CSV overwrite refusal, and all diagnostic-rotation destinations.
+  **11 checks and six protected-file comparisons pass**, with complete owned
+  fixture cleanup. `/private/tmp/qplot-r39-root-receipt.json` binds the sources.
+- Measurement lane is reproducing a material FFT error for uneven floating
+  coordinates with a large common offset. UI lane is testing a marquee popup
+  that remains usable after its plot closes. Neither candidate is counted as
+  repaired before a reachable reproduction, regression tests and independent
+  review are complete. Safety/live/native investigation continues.
+
+#### C19-058 — FFT interpolation rounds uneven timestamp grids
+
+- Current-QCoDeS array acquisition with coordinates
+  `2**30 + [0, 1, 2, 4] * 2**-22` and samples `[0, 2, 4, 8]`, through the
+  actual Qt FFT checkbox, reports magnitudes `[4, 2.1213203436, 1]` instead of
+  the independent exact-interpolation/direct-DFT oracle
+  `[4, 1.8856180832, 1.3333333333]`. Ascending and descending acquisitions
+  reproduce the error. Absolute uniform targets round before interpolation;
+  the Nyquist amplitude is **25% too small**. Raw recorded values survive.
+  `/private/tmp/qplot-r39-measurement-probe.log` contains the live reproduction.
+- Measurement author owns `_native_transforms.py` and
+  `tests/windows/test_native_fft_coordinate_origin.py`. Rebase finite floating
+  coordinates before interpolation, retaining the original coordinates if
+  subtraction would collapse distinct samples. **Five regression failures and
+  six passing controls** are recorded before repair. Independent safety review
+  and the complete related green batch are pending; not yet counted repaired.
+- A separate scalar probe correctly refuses coordinates already collapsed by
+  acquisition; it is not this finding. A blocked cut scratch probe was stopped
+  and is not claimed as successful coverage.
+
+#### C19-059 — Marquee popup survives automatic source invalidation
+
+- With the real marquee menu open, an external test writer replaces an owned
+  current-QCoDeS source. The real 100 ms main refresh detects replacement and
+  closes the plot, but its unparented popup stays visible. An actual mouse click
+  on Stats then opens a visible dialog for the retired plot. No direct close
+  call or programmatic action trigger is used in this reproduction.
+  `/private/tmp/qplot-r39-ui-menu-replacement.log` records the before/after state.
+- UI author owns `_plot_marquee.py` and the new marquee-menu lifecycle tests.
+  Scope: parent/retire this temporary menu, close it with its owner and guard
+  delayed actions. **Repaired and independently approved.** Valid baseline:
+  **nine failures, six passing ordinary-action controls**; final author batch
+  **75 passed**, including 16 new cases. Initial scratch harness mistakes are
+  excluded from those counts. Different measurement reviewer: **51 tests pass**
+  and 14 fresh actual-menu scenarios, 16 zoom bounds, eight summary oracles and
+  12 protected main-file comparisons plus fixture sidecar assertions. All
+  14 menus/four owners/two fixtures retire without callback errors. Source hash
+  `ec6504f2cceff8c66e9d7c13dc6d611c4d691d696bd633213329a559e260ce13`.
+  Evidence: `/private/tmp/qplot-r39-ui-focused.log` and
+  `/private/tmp/qplot-r39-c059-independent-receipt.json`.
+
+#### C19-060 — Run-list popup launches a replacement measurement
+
+- Open a run's parameter menu, then replace the owned database through the
+  external test writer. The actual 100 ms refresh loads a different GUID with
+  the same run ID while the popup stays visible. Clicking its parameter action
+  silently plots the replacement measurement. This is separate from C19-059:
+  the run-list owner remains alive, but the menu's dataset target has retired.
+  `/private/tmp/qplot-r39-ui-run-menu-replacement.log` records both GUIDs and
+  the actual clicked action's result.
+- UI author owns `_widgets/treeWidgets.py` and new run-menu lifecycle tests.
+  Preserve ordinary incremental refresh, but retire this temporary popup when
+  its item/selection is reset and guard delayed actions against stale targets.
+  Regression tests and independent safety review are pending.
+
+#### Additional completed round-39 coverage
+
+- Measurement lane's fresh shaped/unshaped uint64 duplicate-grid acquisition
+  verifies **170 raw/processed/cut cells, 71 CSV cells and four statistics
+  oracles** using independent Fraction/Decimal expectations. Missing cells,
+  clipping/fill, centering, derivative, transpose and cuts pass; six QObjects
+  and two fixtures retire, with source/sidecar protection and no callbacks.
+  `/private/tmp/qplot-r39-measurement-composition-receipt.json`.
+
+- Safety/live/native lane is complete with no new finding: **50 focused tests
+  pass** plus **4,063,431 exact values, 27 protected-file comparisons and three
+  writer checkpoints** (maximum 1.161 ms). Fresh ragged-array capture exercises
+  coalesced cancellation, queued deadlines, writer appends/metadata during BLOB
+  capture, retained immutable prefixes and reopen. Two services, five spools
+  and three native proof handles retire. Installed native RECORD/pins match;
+  both Mach-O slices have no dynamically linked SQLite symbols. Prohibited
+  native counters remain zero. `/private/tmp/qplot-r39-safety-receipt.json`.
+
 ## Resumed 2026-10-25 — up to five rounds, 34–38
 
 The user authorized up to five further rounds. Start at round 34 and stop after
