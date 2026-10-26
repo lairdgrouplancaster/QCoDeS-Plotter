@@ -109,7 +109,25 @@ No merge, tag, release or legacy settings migrations are authorized.
 - UI author owns `_widgets/treeWidgets.py` and new run-menu lifecycle tests.
   Preserve ordinary incremental refresh, but retire this temporary popup when
   its item/selection is reset and guard delayed actions against stale targets.
-  Regression tests and independent safety review are pending.
+  **Repaired and independently approved.** Capture GUID/item/load-generation
+  identity and recheck before dispatch. Model-reset signals also close the menu
+  while RunList's own signals are blocked; ordinary live updates stay usable.
+  **Ten valid baseline failures and four normal-refresh controls** become
+  14 passing regressions. Related author batch: **102 passed, three subtests**.
+- Different safety reviewer: **86 related tests, three subtests and nine fresh
+  scenarios pass**, including actual writer append/metadata/new-run insertion,
+  forced same-path reload, delayed actions and repeated keyboard dismissal.
+  **84 plotted cells, 27 protected comparisons and 20 popup retirements** pass;
+  four explicit services plus fixture resources retire. Source hash
+  `e69519074cdc29ae3670594365ab88ebda20cdff94c172eb4337fc641b5ece1f`.
+  `/private/tmp/qplot-r39-safety-c060-review.json` records approval.
+
+- All three round-39 repairs are independently approved. Whole-tree Ruff,
+  mypy (**88 files**), dependency and whitespace checks pass. Actual project
+  venv `python -m qplot` startup shows the window, runs the event loop and exits
+  normally, with private settings removed. `/private/tmp/qplot-r39-startup-receipt.json`
+  binds the repaired runtime files. No native/database-access sources or pins
+  changed. Final fresh UI workflow coverage is finishing before round 40.
 
 #### Additional completed round-39 coverage
 

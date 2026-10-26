@@ -52,6 +52,8 @@ All notable user-facing changes are recorded here.
   actions from reopening statistics for a closed plot.
 - Preserve FFT amplitudes for uneven, closely spaced timestamps and other
   floating-point coordinates with a large common offset.
+- Dismiss run-list menus when their selection or database is replaced, so an
+  old menu cannot silently launch a different measurement.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.
