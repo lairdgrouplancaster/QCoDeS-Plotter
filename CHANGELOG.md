@@ -59,6 +59,9 @@ All notable user-facing changes are recorded here.
 - Keep ready heatmap layers renderable while a promoted primary plot loads or
   retries, using shared color limits that preserve manual ranges and include
   the first primary data even when automatic color refresh is disabled.
+- Close native plot-control menus with retired plots and ignore delayed copy,
+  PDF and export actions, avoiding stale clipboard images and callback errors
+  after database replacement.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.

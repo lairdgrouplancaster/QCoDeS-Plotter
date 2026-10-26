@@ -23,7 +23,7 @@ No merge, tag, release or legacy settings migrations are authorized.
   application areas, settings, generation, diagnostics, packaging and
   subsystem interactions. Begin with read-only investigations; assign exact
   file ownership before edits and obtain different-subchat review of fixes.
-- **Round 40 underway; round 39 completed with three repairs.** Preserve the database-access invariant and use owned
+- **Rounds 39–40 complete with six repairs; round 41 is next.** Preserve the database-access invariant and use owned
   synthetic fixtures, current QCoDeS and current settings. Next: complete all
   lanes, reproduce confirmed findings, repair with meaningful regressions and
   independent review, then rotate coverage for the next fresh round. Reserve
@@ -164,7 +164,7 @@ The clean-round count is zero. Commits: `bcac2ff` (C19-059), `d07daf4`
   both Mach-O slices have no dynamically linked SQLite symbols. Prohibited
   native counters remain zero. `/private/tmp/qplot-r39-safety-receipt.json`.
 
-### Round 40 — underway, rotated ownership
+### Round 40 — complete: three confirmed bugs fixed
 
 - Measurement subchat now covers safety/live/native/performance; safety subchat
   covers UI/lifecycle; UI subchat covers measurement correctness. Coordinator
@@ -299,11 +299,40 @@ The clean-round count is zero. Commits: `bcac2ff` (C19-059), `d07daf4`
   Original UI subchat independently reproduces the failure and will review the
   repair. Preserve active-window exports and normal native controls; no data
   access or blanket exception-suppression changes are authorized.
-- **Continuation checkpoint:** round 40 has C19-061 and C19-062 independently
-  approved, with C19-063 repair/review in progress. Do not start round 41 or claim
-  a clean round until it is resolved. Final full tests, rebuilt application
-  artifacts, startup, push and exact-head draft-PR CI remain pending. Stop no
-  later than round 43, or after two complete consecutive clean rounds.
+- **Repaired and independently approved.** Close the root/native submenu levels
+  on the owning plot's `closed` signal and reuse the retired/deleted-window
+  predicate before context/copy/PDF/export dispatch. Author: **173 tests and
+  19 subtests pass**, including 19 new lifecycle cases, plus Ruff, configured
+  mypy (88 files), whitespace and actual startup/normal Quit/cleanup. Direct
+  mypy on the legacy `_plotWin.py` has the same 27 diagnostics as the baseline;
+  no unrelated typing changes were made. Three existing copy tests now
+  initialize/retire their real Qt bases; all clipboard/resolution assertions
+  remain unchanged. These are supporting fixtures, not additional findings.
+  `/private/tmp/qplot-r40-native-menu-author-receipt.json`.
+- Different measurement reviewer: **22 fresh actual-menu scenarios, 19 authored
+  regressions and three repaired fixture tests pass**. Fresh checks cover
+  **62 actual menus, 60 stale actions, 216 exact cells, 84 protected comparisons,
+  two PDF/four PNG/two SVG exports and 14 Escape actions**. Twenty-two trusted
+  services and 46 plot QObjects retire. Final runtime/test hashes match the
+  author's freeze. `/private/tmp/qplot-r40-measurement-c063-independent-receipt.json`.
+- Additional native-control scope probe confirms six retained-source controls
+  affect only their hidden source display; **320 overlay/raw cells** and
+  protected artifacts stay unchanged. This is clean coverage, not another bug.
+  `/private/tmp/qplot-r40-native-menu-retained.json`.
+
+#### Completed round-40 checkpoint
+
+- All three repairs are independently approved: C19-061 (`4033d53`), C19-062
+  (`93b52c4`) and C19-063 (commit containing this entry). The extension has
+  **six repaired findings**; campaign total **62 application/diagnostic repairs**
+  plus seven historical test-only CI corrections. PR #91 contains **24 fixes**.
+- Consecutive clean-round count is zero. Start fresh round 41 with rotated
+  assignments, then stop after two complete clean rounds or at round 43.
+  Final full-suite integration and rebuilt application artifact acceptance
+  begin on this frozen source. Any later source change invalidates those
+  results until revalidated. Native/database-access sources and pins remain
+  unchanged. Draft PR update, push and exact-head CI verification remain
+  pending; no merge, tag or release.
 
 ## Resumed 2026-10-25 — up to five rounds, 34–38
 
