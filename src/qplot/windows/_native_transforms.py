@@ -139,8 +139,42 @@ def _interpolate_fft_samples(targets, coordinates, samples):
             result = np.where(targets == right, after, result)
         else:
             result = np.interp(targets, coordinates, samples)
-    repair = (~np.isfinite(differences[segments])
-              & np.isfinite(samples[segments]) & np.isfinite(samples[segments + 1]))
+    finite_endpoints = np.isfinite(samples[segments]) & np.isfinite(samples[segments + 1])
+    repair = ~np.isfinite(differences[segments])
+    if not extended:
+        # np.interp divides the sample difference by the coordinate distance
+        # first. That slope can overflow or lose precision to underflow even
+        # when the interpolated sample is finite and far from either limit.
+        with np.errstate(over="ignore", under="ignore", invalid="ignore", divide="ignore"):
+            slopes = differences / np.diff(coordinates)
+        unsafe = (~np.isfinite(slopes)
+                  | ((np.abs(slopes) < np.finfo(float).tiny) & (differences != 0)))
+        positions = np.flatnonzero(unsafe[segments] & ~repair & finite_endpoints)
+        if positions.size:
+            # A whole large sweep can have unrepresentable slopes. Bounded
+            # interpolation weights avoid a Python/Fraction loop per sample.
+            selected = segments[positions]
+            left, right = coordinates[selected], coordinates[selected + 1]
+            target = targets[positions]
+            before, after = samples[selected], samples[selected + 1]
+            with np.errstate(over="ignore", under="ignore", invalid="ignore", divide="ignore"):
+                span = right - left
+                before_weight = (right - target) / span
+                after_weight = (target - left) / span
+                # Compute both weights independently: 1 - after_weight can
+                # erase a small, representable contribution near an endpoint.
+                recovered = before * before_weight + after * after_weight
+            at_left, at_right = target == left, target == right
+            recovered = np.where(at_left, before, np.where(at_right, after, recovered))
+            result[positions] = recovered
+            # A tiny weight can still contribute a representable sample when
+            # multiplied by a large amplitude. Preserve that rare exact path;
+            # actual endpoints need no interpolation and remain vectorized.
+            repair[positions] = (~(at_left | at_right)
+                                 & (~np.isfinite(recovered)
+                                    | (np.abs(before_weight) < np.finfo(float).tiny)
+                                    | (np.abs(after_weight) < np.finfo(float).tiny)))
+    repair &= finite_endpoints
     for index in np.flatnonzero(repair):
         segment = segments[index]
         left, right, target = map(sample_fraction, (
