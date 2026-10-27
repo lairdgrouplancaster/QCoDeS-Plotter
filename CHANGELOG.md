@@ -67,6 +67,9 @@ All notable user-facing changes are recorded here.
   large sweeps with a per-sample exact-arithmetic fallback.
 - Preserve fractional values typed into Appearance line-width, dot-size and
   marker-size controls, including commits by Return, Tab or changing selection.
+- Preserve unrelated styles and axis assignments when changing one Appearance
+  property across selected traces or heatmaps, including independent opacity
+  and visibility and the intended dots/markers toggle behavior.
 
 The native dependency remains `qplotter-native==1.0.1`. No settings migrations
 are introduced. This entry prepares a bugfix release without publishing it.
