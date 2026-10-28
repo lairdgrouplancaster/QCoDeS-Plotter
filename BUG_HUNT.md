@@ -13,7 +13,7 @@ access invariant throughout.
 Current checkpoint: round 44 is complete with two confirmed repairs,
 independently approved and committed as `88ff3b7` (Appearance) and `9d0c429`
 (FFT). Rounds 45 and 46 are complete and clean. There are now
-**66 repaired application/diagnostic bugs**, seven historical test-only CI
+**66 repaired application/diagnostic bugs**, eight test-only CI
 corrections and **28 fixes in draft PR #91**. Final full integration,
 startup/package acceptance, push and exact-head CI verification follow the
 authorized rounds; update the draft PR with the final results. **Stop at round
@@ -28,13 +28,15 @@ stopping condition. No unresolved finding or manual test remains.
 
 ### Final local validation and publication checkpoint
 
-- All 434 frozen runtime/test/build/workflow/instruction files match committed
+- At completion of full local validation, all 434 frozen runtime/test/build/workflow/instruction files matched committed
   `9d0c42966c92458cfb80b17bd93a404a1a955c93`. The only repository change remaining
-  is this log. `/private/tmp/qplot-r44-46-frozen-source.json`.
+  was this log. The later CI-only test correction below changes one test file;
+  all application/native/build sources remain unchanged.
+  `/private/tmp/qplot-r44-46-frozen-source.json`.
 - Full suite: **6,030 passed, 130 skipped, 119 subtests passed**, exit 0 in
   **1,081.99 s**. The 61 established numerical-stress/deprecation/fixture-data
-  warnings and expected platform skips were reviewed. No test-only corrections
-  were needed. `/private/tmp/qplot-r44-46-full.log` and
+  warnings and expected platform skips were reviewed. This full run precedes
+  the CI-only cleanup correction below. `/private/tmp/qplot-r44-46-full.log` and
   `/private/tmp/qplot-r44-46-final-validation.json` bind the final source and
   validation evidence.
 - Whole-tree Ruff, configured mypy (**88 files**), dependency consistency and
@@ -63,6 +65,31 @@ stopping condition. No unresolved finding or manual test remains.
   verify complete exact-head CI. The final log commit
   changes only this file, and its live CI result is recorded in the PR to avoid
   another documentation commit solely to record its own checks. No merge/tag/release.
+
+### CI follow-up — mapping-backed QCoDeS test configuration
+
+- Initial pushed head `e5469d3450b2d7a1f9d36165a33de97651ade952` encounters
+  teardown errors after the exported-NetCDF connection test itself succeeds.
+  [Linux evidence](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40672710977/job/122763995856)
+  and [macOS evidence](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40672710977/job/122763995687)
+  both show `DotDict` attribute deletion during `monkeypatch.undo()`; six more
+  failing compatibility jobs have the identical error. Application artifact
+  installation checks pass, including fresh local QCoDeS 0.62 environments.
+- Pytest 9.2 records static instance-attribute state for this mapping-backed
+  value, then tries to delete an attribute that lives only as a dictionary key.
+  Exact downloaded-wheel replay using project Python reproduces **two passing
+  test bodies and two teardown errors**. Installed dependencies are unchanged.
+- Replace only `monkeypatch.setattr` with `monkeypatch.setitem` in the existing
+  test. Every connection-lifetime, snapshot cleanup and protected-directory
+  assertion remains intact. **Nine focused cases pass** under exact pytest 9.2
+  and project pytest 9.1.1; Ruff and whitespace checks pass. A different subchat
+  **independently approves** the frozen one-word change and verifies five
+  mapping-restoration controls. `/private/tmp/qplot-r44-46-ci-test-correction.json`.
+- This is the eighth test-only CI correction (seven historical plus this one),
+  not an application finding or another bug-hunt round. Application source,
+  28 PR fixes, 66 campaign repairs and the two clean rounds remain unchanged.
+  Commit/push the reviewed correction and this log, update the draft PR and
+  verify all checks on the new exact head; no merge/tag/release.
 
 ### Round 46 — complete and clean
 

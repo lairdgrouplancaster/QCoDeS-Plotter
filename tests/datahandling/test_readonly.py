@@ -1130,7 +1130,7 @@ def test_exported_netcdf_closes_non_owning_dataset_connection(
         writable_dataset.export(export_type="netcdf", path=tmp_path)
         writable_dataset.conn.close()
         writable_dataset = None
-        monkeypatch.setattr(
+        monkeypatch.setitem(
             qcodes.config.dataset,
             "load_from_exported_file",
             True,
