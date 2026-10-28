@@ -1,6 +1,7 @@
 """qPlot's coordinate-safe mapping for PyQtGraph's native line controls."""
 
 from fractions import Fraction
+from math import lcm
 from typing import cast
 
 import numpy as np
@@ -174,7 +175,7 @@ def _interpolate_fft_samples(targets, coordinates, samples):
                                  & (~np.isfinite(recovered)
                                     | (np.abs(before_weight) < np.finfo(float).tiny)
                                     | (np.abs(after_weight) < np.finfo(float).tiny)))
-    repair &= finite_endpoints
+    repair &= finite_endpoints & (coordinates[segments] != coordinates[segments + 1])
     for index in np.flatnonzero(repair):
         segment = segments[index]
         left, right, target = map(sample_fraction, (
@@ -218,6 +219,145 @@ def _normalized_real_fft(samples):
         spectrum += (np.ldexp(tail_spectrum.real, -tail_shift)
                      + 1j * np.ldexp(tail_spectrum.imag, -tail_shift))
     return spectrum
+
+
+def _fft_sample_ratio(value):
+    if isinstance(value, (int, np.integer, bool, np.bool_)):
+        return int(value), 1
+    return value.as_integer_ratio()
+
+
+def _resample_fft_samples(coordinates, samples, recorded_coordinates):
+    """Recover interpolation whose signal is sensitive to grid rounding."""
+    targets = np.linspace(coordinates[0], coordinates[-1], len(coordinates))
+    result = _interpolate_fft_samples(targets, coordinates, samples)
+    result[0], result[-1] = samples[0], samples[-1]
+    if np.all(samples == samples[0]):
+        return result
+    first, last = map(sample_fraction, (recorded_coordinates[0], recorded_coordinates[-1]))
+    step = (last - first) / (len(coordinates) - 1)
+    projection_exact = False
+    if coordinates[0] == 0:
+        if recorded_coordinates.dtype.kind in "iu":
+            exact = recorded_coordinates.astype(object) - int(recorded_coordinates[0])
+            projection_exact = bool(np.all(np.equal(exact, coordinates)))
+        elif recorded_coordinates.dtype.kind == "f" and recorded_coordinates.dtype.itemsize <= 8:
+            numeric = recorded_coordinates.astype(float, copy=False)
+            with np.errstate(over="ignore", invalid="ignore"):
+                relative = numeric - numeric[0]
+                virtual_anchor = numeric - relative
+                residual = (numeric - (relative + virtual_anchor)) + (virtual_anchor - numeric[0])
+            projection_exact = bool(np.array_equal(relative, coordinates) and np.all(residual == 0))
+    if projection_exact:
+        # The bit bound proves every binary grid-index product is exact.
+        if (step.denominator & (step.denominator - 1) == 0
+                and (abs(step.numerator) * (len(coordinates) - 1)).bit_length() <= 53
+                and sample_fraction(float(step)) == step):
+            return result
+    indices = np.arange(len(targets))
+    if projection_exact:
+        # Only division to form the step and multiplication by the index can
+        # move this grid. Full ULP bounds also cover subnormal steps/targets;
+        # do not round a subnormal remainder away before multiplying it.
+        step_ulp = 2 * np.spacing(float(step) / 2)
+        uncertainty = indices * step_ulp + 2 * np.spacing(np.abs(targets) / 2)
+        uncertainty = np.maximum(uncertainty, 8 * np.nextafter(0., 1.))
+    else:
+        # Include coordinate projection, spacing and target arithmetic.
+        span = float(coordinates[-1] - coordinates[0])
+        uncertainty = np.full(len(targets), max(
+            8 * np.finfo(float).eps * max(
+                abs(float(coordinates[0])), abs(float(coordinates[-1])), abs(span),
+            ),
+            8 * np.nextafter(0., 1.),
+        ))
+    segments = np.clip(np.searchsorted(coordinates, targets, side="right") - 1,
+                       0, len(coordinates) - 2)
+
+    def needs_exact(intervals, points):
+        before = samples[intervals].astype(result.dtype, copy=False)
+        after = samples[intervals + 1].astype(result.dtype, copy=False)
+        width = coordinates[intervals + 1] - coordinates[intervals]
+        scale = np.maximum(np.maximum(np.abs(before), np.abs(after)), np.abs(result[points]))
+        scale = np.where(scale > 0, scale, 1.)
+        with np.errstate(over="ignore", under="ignore", divide="ignore", invalid="ignore"):
+            difference = np.abs(before / scale - after / scale) + 2 * np.finfo(result.dtype).eps
+            error = (uncertainty[points] / width) * difference
+            # Bound relative signal error, not just coordinate displacement.
+            # Ordinary floating interpolation stays unchanged below sqrt(eps);
+            # a zero or small residual therefore receives stricter recovery.
+            allowance = np.sqrt(np.finfo(float).eps) * np.abs(result[points] / scale)
+        # If uncertainty spans a whole interval, it may cross further source
+        # cells too. Exact bracketing resolves those collapsed/narrow groups.
+        return ((width <= uncertainty[points])
+                | ((before != after)
+                   & ((error > allowance) | ~np.isfinite(error)
+                      | ~np.isfinite(allowance) | (error == 0))))
+
+    selected = needs_exact(segments, indices)
+    # A rounded target can land in a flat bracket while its true position
+    # remains in a changing neighbour. Check both sides of uncertain edges.
+    for offset, boundary in ((-1, segments), (1, segments + 1)):
+        neighbours = segments + offset
+        near = ((neighbours >= 0) & (neighbours < len(coordinates) - 1)
+                & (np.abs(targets - coordinates[boundary]) <= uncertainty))
+        points = indices[near]
+        selected[near] |= needs_exact(neighbours[near], points)
+    selected[[0, -1]] = False
+    positions = np.flatnonzero(selected)
+    if not positions.size:
+        return result
+
+    # Keep the target as integer numerator/denominator even when no float can
+    # represent it. Binary64 recovery needs no per-target Fraction objects.
+    common = lcm(first.denominator, last.denominator)
+    first_numerator = first.numerator * (common // first.denominator)
+    delta = last.numerator * (common // last.denominator) - first_numerator
+    denominator = common * (len(coordinates) - 1)
+    start = first_numerator * (len(coordinates) - 1)
+
+    for position in positions:
+        numerator = start + delta * int(position)
+        segment = int(segments[position])
+        left, left_d = _fft_sample_ratio(recorded_coordinates[segment])
+        right, right_d = _fft_sample_ratio(recorded_coordinates[segment + 1])
+        if numerator * left_d < left * denominator or numerator * right_d > right * denominator:
+            low, high = 0, len(recorded_coordinates) - 1
+            while high - low > 1:
+                middle = (low + high) // 2
+                value, divisor = _fft_sample_ratio(recorded_coordinates[middle])
+                if value * denominator <= numerator * divisor:
+                    low = middle
+                else:
+                    high = middle
+            segment = low
+            left, left_d = _fft_sample_ratio(recorded_coordinates[segment])
+            right, right_d = _fft_sample_ratio(recorded_coordinates[segment + 1])
+        before, after = samples[segment], samples[segment + 1]
+        weight_n = (numerator * left_d - left * denominator) * right_d
+        weight_d = denominator * (right * left_d - left * right_d)
+        if weight_n == 0:
+            result[position] = before
+        elif weight_n == weight_d:
+            result[position] = after
+        elif np.isfinite(before) and np.isfinite(after):
+            before_n, before_d = _fft_sample_ratio(before)
+            after_n, after_d = _fft_sample_ratio(after)
+            interpolated_n = (
+                before_n * after_d * weight_d
+                + (after_n * before_d - before_n * after_d) * weight_n
+            )
+            interpolated_d = before_d * after_d * weight_d
+            if result.dtype.itemsize > 8:
+                result[position] = _fraction_as_extended_float(
+                    Fraction(interpolated_n, interpolated_d), result.dtype,
+                )
+            else:
+                result[position] = interpolated_n / interpolated_d
+        else:
+            # Preserve missing/infinite interpolation for an interior target.
+            result[position] = np.interp(.5, [0., 1.], [before, after])
+    return result
 
 
 def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, bool]:
@@ -293,7 +433,10 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
         dx = np.diff(x)
     with np.errstate(over="ignore", invalid="ignore"):
         spacing = float(x[-1] - x[0]) / (len(x) - 1)
-    if not (np.isfinite(spacing) and spacing > 0 and np.all(np.diff(x) > 0)):
+    # The recorded coordinates were strictly monotonic above. Their float
+    # projection can merge a narrow interval; exact resampling below retains
+    # its original endpoints instead of rejecting the acquired sweep.
+    if not (np.isfinite(spacing) and spacing > 0 and np.all(np.diff(x) >= 0)):
         raise _FFTCoordinatesError(message)
     period = spacing * len(x)
     frequency_step = ((1. / period) if np.isfinite(period)
@@ -462,6 +605,7 @@ class NativePlotDataItem(pg.PlotDataItem):
         Mean subtraction has already run in the mapped dataset before this hook.
         """
         self._qplot_fft_error = None
+        recorded_coordinates = x
         try:
             x, dx, frequency_step, reverse = _prepare_fft_coordinates(x)
         except _FFTCoordinatesError as error:
@@ -473,6 +617,7 @@ class NativePlotDataItem(pg.PlotDataItem):
             return np.array([0.]), np.abs(y.astype(np.float64))
         if reverse:
             y = y[::-1]
+            recorded_coordinates = recorded_coordinates[::-1]
         if y.dtype.kind == "f" and y.dtype.itemsize < 8:
             # NumPy's FFT retains float32 precision. Widen before its internal
             # unnormalized sum can overflow, not just before normalization.
@@ -518,8 +663,7 @@ class NativePlotDataItem(pg.PlotDataItem):
                 y = y - anchor
         # Match PyQtGraph's uniformity tolerance and normalized real FFT.
         if resampled:
-            uniform_x = np.linspace(x[0], x[-1], len(x))
-            y = _interpolate_fft_samples(uniform_x, x, y)
+            y = _resample_fft_samples(x, y, recorded_coordinates)
             if dc_offset is None and np.all(np.isfinite(y)):
                 if float_anchor is None:
                     float_dc = finite_mean(y)

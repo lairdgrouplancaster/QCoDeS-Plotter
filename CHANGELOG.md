@@ -52,6 +52,9 @@ All notable user-facing changes are recorded here.
   actions from reopening statistics for a closed plot.
 - Preserve FFT amplitudes for uneven, closely spaced timestamps and other
   floating-point coordinates with a large common offset.
+- Preserve small FFT signals when coordinate rebasing or uniform-grid rounding
+  moves a target within a narrow recorded interval, including cancellation and
+  targets that cannot be represented exactly as floating-point numbers.
 - Dismiss run-list menus when their selection or database is replaced, so an
   old menu cannot silently launch a different measurement.
 - Prevent stale Window-menu actions from showing retired plots, including
