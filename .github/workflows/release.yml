@@ -24,7 +24,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Require a release tag matching the application and dependency pins
         id: mode
         run: python scripts/release.py preflight
@@ -46,7 +46,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       # No run-id/token: only immutable artifacts from THIS validated run.
       - uses: actions/download-artifact@v4
         with:
@@ -81,7 +81,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - uses: actions/download-artifact@v4
         with:
           name: qplot-release
@@ -110,7 +110,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - uses: actions/download-artifact@v4
         with:
           name: qplot-release
@@ -150,7 +150,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - uses: actions/download-artifact@v4
         with:
           name: qplot-release
@@ -175,7 +175,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - uses: actions/download-artifact@v4
         with:
           name: qplot-release
@@ -195,7 +195,7 @@ jobs:
       fail-fast: false
       matrix:
         platform: [linux-x86_64, macos-arm64, macos-intel, windows-x64]
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.12", "3.13", "3.14"]
         include:
           - platform: linux-x86_64
             os: ubuntu-latest

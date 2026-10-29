@@ -3,7 +3,7 @@
 [![release](https://img.shields.io/github/v/release/lairdgrouplancaster/QCoDeS-Plotter?label=release)](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/releases/latest)
 [![CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/lairdgrouplancaster/QCoDeS-Plotter)](LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.11–3.14-blue?logo=python)](#requirements)
+[![Python](https://img.shields.io/badge/Python-3.12–3.14-blue?logo=python)](#requirements)
 [![PyPI](https://img.shields.io/pypi/v/qplotter)](https://pypi.org/project/qplotter/)
 
 [![pre-release](https://img.shields.io/github/v/release/lairdgrouplancaster/QCoDeS-Plotter?include_prereleases&label=pre-release&sort=semver)](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/releases)
@@ -14,8 +14,12 @@ line plots, heatmaps, 1D cut extraction, CSV export, and simple data operations.
 
 ## Requirements
 
-qPlot supports standard CPython 3.11–3.14. Free-threaded Python and PyPy are
+qPlot supports standard CPython 3.12–3.14. Free-threaded Python and PyPy are
 outside the supported matrix.
+
+Python 3.15 is not yet supported: the pinned APSW release and QCoDeS's h5py
+dependency lack compatible wheels. See the [compatibility check](docs/distribution.md#python-315-readiness)
+for the upstream evidence and remaining validation work.
 
 Runtime dependencies are declared in `pyproject.toml` and are installed
 automatically when qPlot is installed.
@@ -121,8 +125,8 @@ validated local artifacts as described in [Distribution](docs/distribution.md).
 
 Create a folder for qPlot, open it in Terminal, and execute:
 ```console
-py -3.11 --version
-py -3.11 -m venv .venv
+py -3.12 --version
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
 ```
@@ -130,8 +134,8 @@ python -m pip install -U pip
 
 Create a folder for qPlot, open Terminal there, and execute:
 ```console
-python3 --version
-python3 -m venv .venv-mac
+python3.12 --version
+python3.12 -m venv .venv-mac
 source .venv-mac/bin/activate
 python -m pip install -U pip
 ```
@@ -179,7 +183,7 @@ packages and are unaffected by pip uninstall.
 
 ### Troubleshooting
 
-If the version check above reports Python 3.10 or older, install Python 3.11 or newer
+If the version check above reports Python 3.11 or older, install standard CPython 3.12–3.14
 first and use that launcher instead, for example `python3.12` on macOS.
 
 Virtual environments are not portable between operating systems. If the

@@ -52,11 +52,11 @@ def test_windows_full_matrix_runs_both_partitions_with_existing_containment(
     )
     windows_full = [(version, partition) for os_name, version, suite, partition in entries
                     if os_name == "windows-2025" and suite == "full"]
-    assert sorted(windows_full) == [("3.11", "1/2"), ("3.11", "2/2"),
+    assert sorted(windows_full) == [("3.12", "1/2"), ("3.12", "2/2"),
                                     ("3.14", "1/2"), ("3.14", "2/2")]
     mac_full = [(version, partition) for os_name, version, suite, partition in entries
                 if os_name == "macos-latest" and suite == "full"]
-    assert sorted(mac_full) == [("3.11", "1/2"), ("3.11", "2/2"),
+    assert sorted(mac_full) == [("3.12", "1/2"), ("3.12", "2/2"),
                                 ("3.14", "1/2"), ("3.14", "2/2")]
     assert all(not partition for os_name, _version, suite, partition in entries
                if suite != "full")

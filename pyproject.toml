@@ -9,7 +9,7 @@ description = "PyQt-based viewer for completed and running QCoDeS database exper
 readme = "README.md"
 authors = [{name="Ben Wordsworth", email="b.wordsworth@lancaster.ac.uk"},{name="Edward Laird", email="e.a.laird@lancaster.ac.uk"}]
 license = "MIT"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 keywords = ["qcodes", "pyqt", "pyqtgraph", "data-visualization", "scientific-computing"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -19,7 +19,6 @@ classifiers = [
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -93,6 +92,9 @@ skip_covered = true
 
 [tool.ruff.lint]
 select = ["F", "B", "I", "UP"]
+# Keep existing runtime type aliases and generics. Raising the Python minimum
+# enables these PEP 695 rewrites, whose runtime semantics differ from typing.
+ignore = ["UP040", "UP046"]
 
 [tool.mypy]
 check_untyped_defs = true

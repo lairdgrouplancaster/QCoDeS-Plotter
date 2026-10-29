@@ -24,26 +24,26 @@ git merge upstream/main
 
 ## Development Environment
 
-Use standard CPython 3.11–3.14 in a virtual environment.
+Use standard CPython 3.12–3.14 in a virtual environment.
 
 Windows:
 
 ```console
-py -3.11 -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
 macOS:
 
 ```console
-python3 -m venv .venv-mac
+python3.12 -m venv .venv-mac
 source .venv-mac/bin/activate
 ```
 
 Linux:
 
 ```console
-python3 -m venv .venv-linux
+python3.12 -m venv .venv-linux
 source .venv-linux/bin/activate
 ```
 
@@ -224,7 +224,7 @@ GitHub Actions is configured to build the application wheel once and separate
 `cp311-abi3` native wheels for Windows x64, macOS ARM64, macOS Intel, and Linux
 x86_64. Linux publication wheels use cibuildwheel's `manylinux_2_28` image and
 auditwheel repair. Each platform exercises the same run's matching native wheel
-and shared application wheel on Python 3.11, 3.12, 3.13, and 3.14. The existing
+and shared application wheel on Python 3.12, 3.13, and 3.14. The existing
 full and compatibility suites, Linux coverage, source-distribution validation,
 Ruff, and mypy remain required. Pytest disables the checkout's `src` import
 path in CI and verifies installed file hashes and module origins against the

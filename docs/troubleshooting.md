@@ -5,34 +5,34 @@ This page covers common setup and runtime problems. For normal usage, see
 
 ## Creating a Virtual Environment
 
-Use Python 3.11 or newer.
+Use standard CPython 3.12–3.14.
 
 Windows PowerShell:
 
 ```console
-py -3.11 -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 ```
 
 macOS:
 
 ```console
-python3.11 -m venv .venv-mac
+python3.12 -m venv .venv-mac
 source .venv-mac/bin/activate
 ```
 
 Linux development:
 
 ```console
-python3.11 -m venv .venv-linux
+python3.12 -m venv .venv-linux
 source .venv-linux/bin/activate
 ```
 
 Your prompt should start with the virtual environment name, such as `(.venv)`
 on Windows, `(.venv-mac)` on macOS, or `(.venv-linux)` on Linux. Windows and
-macOS are the currently supported and GUI-tested desktop platforms. A source
-install may work on Linux, but Linux is not currently part of the GUI test or
-support matrix.
+macOS are the supported desktop platforms. Linux x86_64 receives headless
+installation, GUI and reader validation; interactive Linux desktop support
+is not claimed.
 
 ## Creating a Virtual Environment in VS Code
 
@@ -42,7 +42,7 @@ If you prefer VS Code to terminal setup:
 2. Open the Command Palette with `Ctrl+Shift+P`.
 3. Run `Python: Create Environment`.
 4. Choose `Venv`.
-5. Choose a Python 3.11 or newer base interpreter.
+5. Choose a standard CPython 3.12–3.14 base interpreter.
 6. Open a new VS Code terminal with `Terminal -> New Terminal`.
 
 The terminal prompt should start with the virtual environment name described
