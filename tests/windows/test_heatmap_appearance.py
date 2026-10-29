@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pyqtgraph as pg
+from PyQt6 import QtCore, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._dataset_handle import DatasetKey, TraceKey
@@ -10,6 +11,11 @@ from qplot.windows._plot2d_layers import (
     Plot2DLayerMixin,
     _HeatmapAppearanceDialog,
 )
+from tests.windows.test_native_transform_labels import (
+    no_callback_errors as _no_callback_errors_fixture,
+)
+
+no_callback_errors = _no_callback_errors_fixture
 
 
 class _Layer:
@@ -20,6 +26,7 @@ class _Layer:
             param=SimpleNamespace(name=key.parameter_name),
         )
         self.data_grid = np.array([[0.0, 1.0], [2.0, 3.0]])
+        self.geometry = None
         self.image = pg.ImageItem(axisOrder="row-major")
         self.heatmap_mesh = pg.PColorMeshItem()
         self.opacity = DEFAULT_OVERLAY_OPACITY
@@ -70,6 +77,9 @@ class _Host(Plot2DLayerMixin, qtw.QMainWindow):
             for axis, dropdown in self.axis_dropdown.items()
         }
 
+    def _heatmap_geometry(self):
+        return None
+
     def refreshWindow(self, *, force=False):
         self.refreshes.append(force)
 
@@ -80,11 +90,23 @@ class _Host(Plot2DLayerMixin, qtw.QMainWindow):
         self.color_scale_opens += 1
 
 
+def _retire_appearance_widgets(host, dialog):
+    app = qtw.QApplication.instance()
+    # Validate queued axis changes while the test still owns its doubles.
+    app.processEvents()
+    dialog.deleteLater()
+    host.deleteLater()
+    app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    app.processEvents()
+    assert sip.isdeleted(dialog)
+    assert sip.isdeleted(host)
+
+
 def _key(guid, parameter):
     return TraceKey(DatasetKey("database.db", guid), parameter)
 
 
-def test_heatmap_appearance_matches_trace_dialog_structure_with_image_preview():
+def test_heatmap_appearance_matches_trace_dialog_structure_with_image_preview(no_callback_errors):
     host = _Host()
     overlay_key = _key("overlay-guid", "overlay")
     overlay = _Layer(overlay_key)
@@ -113,11 +135,10 @@ def test_heatmap_appearance_matches_trace_dialog_structure_with_image_preview():
         dialog.color_scale_button.click()
         assert host.color_scale_opens == 1
     finally:
-        dialog.deleteLater()
-        host.deleteLater()
+        _retire_appearance_widgets(host, dialog)
 
 
-def test_heatmap_appearance_applies_visibility_opacity_order_and_axis_swap():
+def test_heatmap_appearance_applies_visibility_opacity_order_and_axis_swap(no_callback_errors):
     host = _Host()
     overlay_key = _key("overlay-guid", "overlay")
     overlay = _Layer(overlay_key)
@@ -146,11 +167,10 @@ def test_heatmap_appearance_applies_visibility_opacity_order_and_axis_swap():
         assert host._heatmap_axis_sides(overlay) == ("Top", "Right")
         assert host.refreshes == [True]
     finally:
-        dialog.deleteLater()
-        host.deleteLater()
+        _retire_appearance_widgets(host, dialog)
 
 
-def test_heatmap_appearance_add_and_remove_use_owner_lifecycle_hooks():
+def test_heatmap_appearance_add_and_remove_use_owner_lifecycle_hooks(no_callback_errors):
     host = _Host()
     candidate_key = _key("candidate-guid", "candidate")
     host._heatmap_candidate_provider = lambda: [
@@ -189,5 +209,4 @@ def test_heatmap_appearance_add_and_remove_use_owner_lifecycle_hooks():
         assert candidate_key not in host.heatmaps
         assert dialog.table.rowCount() == 1
     finally:
-        dialog.deleteLater()
-        host.deleteLater()
+        _retire_appearance_widgets(host, dialog)

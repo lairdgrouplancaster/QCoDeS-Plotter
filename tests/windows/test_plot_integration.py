@@ -108,38 +108,41 @@ def build_synthetic_database(db_path):
     initialise_or_create_database_at(str(db_path), journal_mode="DELETE")
     experiment = load_or_create_experiment("qplot_integration", sample_name="synthetic")
 
-    gate = ManualParameter("gate", label="Gate voltage", unit="V")
-    bias = ManualParameter("bias", label="Bias voltage", unit="mV")
-    current = ManualParameter("current", label="Current", unit="nA")
-    conductance = ManualParameter("conductance", label="Conductance", unit="uS")
+    try:
+        gate = ManualParameter("gate", label="Gate voltage", unit="V")
+        bias = ManualParameter("bias", label="Bias voltage", unit="mV")
+        current = ManualParameter("current", label="Current", unit="nA")
+        conductance = ManualParameter("conductance", label="Conductance", unit="uS")
 
-    line_meas = Measurement(exp=experiment, name="line_integration")
-    line_meas.register_parameter(gate)
-    line_meas.register_parameter(current, setpoints=(gate,))
-    with line_meas.run() as datasaver:
-        for gate_value in np.linspace(-1.5, 1.5, 11):
-            datasaver.add_result(
-                (gate, float(gate_value)),
-                (current, float(np.sin(gate_value) * 20.0)),
-            )
-        line_run_id = datasaver.dataset.run_id
-
-    heatmap_meas = Measurement(exp=experiment, name="heatmap_integration")
-    heatmap_meas.register_parameter(gate)
-    heatmap_meas.register_parameter(bias)
-    heatmap_meas.register_parameter(conductance, setpoints=(gate, bias))
-    with heatmap_meas.run() as datasaver:
-        for gate_value in np.linspace(-1.0, 1.0, 7):
-            for bias_value in np.linspace(-0.6, 0.6, 5):
-                value = np.cos(gate_value * 2.0) + np.sin(bias_value * 3.0)
+        line_meas = Measurement(exp=experiment, name="line_integration")
+        line_meas.register_parameter(gate)
+        line_meas.register_parameter(current, setpoints=(gate,))
+        with line_meas.run() as datasaver:
+            for gate_value in np.linspace(-1.5, 1.5, 11):
                 datasaver.add_result(
                     (gate, float(gate_value)),
-                    (bias, float(bias_value)),
-                    (conductance, float(value)),
+                    (current, float(np.sin(gate_value) * 20.0)),
                 )
-        heatmap_run_id = datasaver.dataset.run_id
+            line_run_id = datasaver.dataset.run_id
 
-    return line_run_id, heatmap_run_id
+        heatmap_meas = Measurement(exp=experiment, name="heatmap_integration")
+        heatmap_meas.register_parameter(gate)
+        heatmap_meas.register_parameter(bias)
+        heatmap_meas.register_parameter(conductance, setpoints=(gate, bias))
+        with heatmap_meas.run() as datasaver:
+            for gate_value in np.linspace(-1.0, 1.0, 7):
+                for bias_value in np.linspace(-0.6, 0.6, 5):
+                    value = np.cos(gate_value * 2.0) + np.sin(bias_value * 3.0)
+                    datasaver.add_result(
+                        (gate, float(gate_value)),
+                        (bias, float(bias_value)),
+                        (conductance, float(value)),
+                    )
+            heatmap_run_id = datasaver.dataset.run_id
+
+        return line_run_id, heatmap_run_id
+    finally:
+        experiment.conn.close()
 
 
 def append_nonuniform_heatmap_run():
@@ -147,27 +150,30 @@ def append_nonuniform_heatmap_run():
         "qplot_csv_export",
         sample_name="nonuniform",
     )
-    gate = ManualParameter("offset_gate", label="Offset gate", unit="V")
-    bias = ManualParameter("uneven_bias", label="Uneven bias", unit="mV")
-    signal = ManualParameter("mapped_signal", label="Mapped signal", unit="uS")
-    measurement = Measurement(exp=experiment, name="nonuniform_csv_export")
-    measurement.register_parameter(gate)
-    measurement.register_parameter(bias)
-    measurement.register_parameter(signal, setpoints=(gate, bias))
+    try:
+        gate = ManualParameter("offset_gate", label="Offset gate", unit="V")
+        bias = ManualParameter("uneven_bias", label="Uneven bias", unit="mV")
+        signal = ManualParameter("mapped_signal", label="Mapped signal", unit="uS")
+        measurement = Measurement(exp=experiment, name="nonuniform_csv_export")
+        measurement.register_parameter(gate)
+        measurement.register_parameter(bias)
+        measurement.register_parameter(signal, setpoints=(gate, bias))
 
-    missing_coordinate = (-0.25, 13.0)
-    with measurement.run() as datasaver:
-        for gate_value in (-2.0, -0.25, 4.5):
-            for bias_value in (7.0, 13.0, 28.0):
-                if (gate_value, bias_value) == missing_coordinate:
-                    continue
-                datasaver.add_result(
-                    (gate, gate_value),
-                    (bias, bias_value),
-                    (signal, gate_value * 1000.0 + bias_value),
-                )
+        missing_coordinate = (-0.25, 13.0)
+        with measurement.run() as datasaver:
+            for gate_value in (-2.0, -0.25, 4.5):
+                for bias_value in (7.0, 13.0, 28.0):
+                    if (gate_value, bias_value) == missing_coordinate:
+                        continue
+                    datasaver.add_result(
+                        (gate, gate_value),
+                        (bias, bias_value),
+                        (signal, gate_value * 1000.0 + bias_value),
+                    )
 
-        return datasaver.dataset.run_id, missing_coordinate
+            return datasaver.dataset.run_id, missing_coordinate
+    finally:
+        experiment.conn.close()
 
 
 def build_missing_cell_array_database(db_path):
@@ -176,26 +182,29 @@ def build_missing_cell_array_database(db_path):
         "qplot_missing_array_cells",
         sample_name="synthetic",
     )
-    measurement = Measurement(exp=experiment, name="missing_array_cells")
-    measurement.register_custom_parameter("slow")
-    measurement.register_custom_parameter("fast", paramtype="array")
-    measurement.register_custom_parameter(
-        "signal",
-        setpoints=("slow", "fast"),
-        paramtype="array",
-    )
-    with measurement.run() as datasaver:
-        datasaver.add_result(
-            ("slow", 0.0),
-            ("fast", np.zeros(5)),
-            ("signal", np.full(5, 10.0)),
+    try:
+        measurement = Measurement(exp=experiment, name="missing_array_cells")
+        measurement.register_custom_parameter("slow")
+        measurement.register_custom_parameter("fast", paramtype="array")
+        measurement.register_custom_parameter(
+            "signal",
+            setpoints=("slow", "fast"),
+            paramtype="array",
         )
-        datasaver.add_result(
-            ("slow", 1.0),
-            ("fast", np.ones(5)),
-            ("signal", np.full(5, 20.0)),
-        )
-        return datasaver.dataset.run_id
+        with measurement.run() as datasaver:
+            datasaver.add_result(
+                ("slow", 0.0),
+                ("fast", np.zeros(5)),
+                ("signal", np.full(5, 10.0)),
+            )
+            datasaver.add_result(
+                ("slow", 1.0),
+                ("fast", np.ones(5)),
+                ("signal", np.full(5, 20.0)),
+            )
+            return datasaver.dataset.run_id
+    finally:
+        experiment.conn.close()
 
 
 def export_real_plot_csv(monkeypatch, plot_window, target):
