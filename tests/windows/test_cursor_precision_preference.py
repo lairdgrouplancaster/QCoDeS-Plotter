@@ -47,7 +47,7 @@ def test_invalid_precision_is_rejected(cfg, value):
 
 
 @pytest.mark.parametrize("heatmap", [False, True])
-@pytest.mark.parametrize("figures, expected", [(6, " 1.23457e+000"), (3, " 1.23e+000"), (1, "  1e+000")])
+@pytest.mark.parametrize("figures, expected", [(6, " 1.23457e+00"), (3, " 1.23e+00"), (1, "  1e+00")])
 def test_free_and_heatmap_readouts(cfg, heatmap, figures, expected):
     cfg.update(CURSOR_SIGNIFICANT_FIGURES_KEY, figures)
     point = QtCore.QPointF(1.23456789, 1.23456789)
@@ -83,11 +83,11 @@ def test_existing_plot_updates_when_precision_is_applied(loaded_plot, snapped):
     qtw.QApplication.processEvents()
     point = owner.mapViewToScene(QtCore.QPointF(1.23456789, 1.23456789))
     window.mouseMoved(point)
-    assert window.pos_labels["x"].text() == " 1.23457e+000"
+    assert window.pos_labels["x"].text() == " 1.23457e+00"
     window.config.update(CURSOR_SIGNIFICANT_FIGURES_KEY, 3)
     window.apply_current_settings()
-    assert window.pos_labels["x"].text() == " 1.23e+000"
-    assert window.pos_labels["y"].text() == " 1.23e+000"
+    assert window.pos_labels["x"].text() == " 1.23e+00"
+    assert window.pos_labels["y"].text() == " 1.23e+00"
 
 
 @pytest.mark.parametrize("window_type", [plotWidget, plot2d])

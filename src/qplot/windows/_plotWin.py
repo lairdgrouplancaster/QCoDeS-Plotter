@@ -1494,9 +1494,9 @@ class plotWidget(
         """Format a coordinate using the current cursor precision preference."""
         figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
         if not isfinite(value):
-            return f"{value:>{figures + 7}}"
+            return f"{value:>{figures + 6}}"
         mantissa, exponent = f"{value:.{figures - 1}e}".split("e")
-        return f"{mantissa:>{figures + 2}}e{int(exponent):+04d}"
+        return f"{mantissa:>{figures + 2}}e{int(exponent):+03d}"
 
 
     def apply_cursor_label_widths(self) -> None:
@@ -1504,6 +1504,7 @@ class plotWidget(
         labels = self.__dict__.get("pos_labels", {})
         figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
         for axis, label in labels.items():
+            # Leave room for rare three-digit exponents without clipping them.
             characters = (18 if "z" in labels else 9) if axis == "index" else figures + 7
             label.setFixedWidth(label.fontMetrics().horizontalAdvance("0" * characters))
 
