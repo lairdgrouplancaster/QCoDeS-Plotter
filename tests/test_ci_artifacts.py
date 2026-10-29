@@ -54,7 +54,10 @@ def test_every_advertised_python_runs_installed_smoke_on_every_platform(workflow
         if re.fullmatch(r'Programming Language :: Python :: 3\.\d+', classifier)
     }
     native_project = tomllib.loads((repository / 'native/pyproject.toml').read_text())['project']
-    assert project['requires-python'] == native_project['requires-python'] == '>=3.11'
+    assert project['requires-python'] == '>=3.12'
+    # The unchanged native release still uses the CPython 3.11 stable ABI.
+    assert native_project['requires-python'] == '>=3.11'
+    assert supported == {'3.12', '3.13', '3.14'}
     wheels = text.split('  platform-wheels:\n', 1)[1].split('  required-checks:\n', 1)[0]
     versions = re.search(r'python-version: \[([^\n]+)\]', wheels)
     assert versions is not None
@@ -80,6 +83,22 @@ def test_pytest_cannot_shadow_the_installed_pair(workflow):
         assert commands and all('-o pythonpath=' in command for command in commands)
     windows = text.split('Run full test suite as a standard Windows user\n', 1)[1]
     assert '"-m", "pytest", "-o", "pythonpath="' in windows
+
+
+def test_application_matrices_drop_311_but_keep_native_abi_build(workflow):
+    text, repository = workflow
+    checks = text.split('  checks:\n', 1)[1].split('    env:\n', 1)[0]
+    entries = re.findall(r'- os: ([^\n]+)\n\s+python-version: "([^"]+)"', checks)
+    assert set(entries) == {
+        (platform, version)
+        for platform in ('windows-2025', 'macos-latest', 'macos-15-intel', 'ubuntu-latest')
+        for version in ('3.12', '3.13', '3.14')
+    }
+    assert text.count('python-version: "3.11"') == 1  # native build only
+    for filename in ('release.yml', 'revalidate-published.yml'):
+        release = (repository / '.github/workflows' / filename).read_text()
+        assert '"3.11"' not in release
+        assert 'python-version: ["3.12", "3.13", "3.14"]' in release
 
 
 def test_published_recheck_has_no_publishing_permissions_or_steps(workflow):

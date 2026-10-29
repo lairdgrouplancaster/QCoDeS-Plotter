@@ -6,6 +6,9 @@ All notable user-facing changes are recorded here.
 
 ### Changed
 
+- Raise the application minimum to Python 3.12. Standard CPython 3.12–3.14
+  remains supported; Python 3.15 awaits dependency wheels and native-reader
+  validation. Retain the existing `cp311-abi3` native wheel and SQLite pin.
 - Make preview tooltips easier to scan with bold parameter names and each
   setpoint on its own line below "A vs".
 - Enable snap-to-trace by default and make it available for traces over heatmaps.

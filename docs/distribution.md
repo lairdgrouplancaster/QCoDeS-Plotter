@@ -109,10 +109,10 @@ and `v1.6.0b1`, retain their original packaging.
 
 | Platform | Native publication wheel | Application validation |
 | --- | --- | --- |
-| Windows x64 | `cp311-abi3-win_amd64` | CPython 3.11–3.14; unprivileged reader/GUI checks |
-| macOS ARM64 | `cp311-abi3-macosx_*_arm64` | CPython 3.11–3.14 |
-| macOS Intel | `cp311-abi3-macosx_*_x86_64` | CPython 3.11–3.14 |
-| Linux x86_64 | repaired `cp311-abi3-manylinux_2_28_x86_64` | CPython 3.11–3.14; headless GUI/reader checks |
+| Windows x64 | `cp311-abi3-win_amd64` | CPython 3.12–3.14; unprivileged reader/GUI checks |
+| macOS ARM64 | `cp311-abi3-macosx_*_arm64` | CPython 3.12–3.14 |
+| macOS Intel | `cp311-abi3-macosx_*_x86_64` | CPython 3.12–3.14 |
+| Linux x86_64 | repaired `cp311-abi3-manylinux_2_28_x86_64` | CPython 3.12–3.14; headless GUI/reader checks |
 
 Windows and macOS are the supported desktop platforms. Linux native wheels
 require glibc 2.28 or newer; runtime wheels may impose further OS requirements,
@@ -120,6 +120,48 @@ and system Qt libraries such as `libegl1` may be needed. Interactive Linux GUI
 support is not claimed. ARM Linux, Windows ARM64/32-bit, musl Linux, PyPy and
 free-threaded CPython are outside this matrix. The exact release must pass its
 hosted jobs before these configured checks count as acceptance.
+
+### Python 3.15 readiness
+
+Checked against upstream on **29 October 2026**. The application minimum is
+3.12, and the supported range remains standard CPython 3.12–3.14.
+
+- [APSW 3.53.4.0](https://pypi.org/pypi/apsw/3.53.4.0/json), the current exact
+  pin, has no CPython 3.15 wheels.
+- [APSW 3.54.1.0](https://pypi.org/pypi/apsw/3.54.1.0/json) has ordinary
+  `cp315-cp315` wheels for Windows x64, both Mac architectures and Linux x86_64.
+- [QCoDeS 0.62.0](https://pypi.org/pypi/qcodes/0.62.0/json) requires Python
+  3.12 or newer and depends on `h5py>=3.10.0`. Earlier QCoDeS releases allowed
+  by qPlot also require h5py. [h5py's published files](https://pypi.org/pypi/h5py/json)
+  contain no CPython 3.15 wheels across any release, including prereleases;
+  the latest release is 3.16.0.
+- [QCoDeS's test workflow](https://github.com/microsoft/Qcodes/blob/a34b9646d8e89d74e47b7495bf34c7c7b43d64fb/.github/workflows/pytest.yaml)
+  includes Python 3.15 only on Linux and installs HDF5 development headers to
+  build h5py from source. This does not establish compiler-free installation.
+
+Wheel-only pip resolver probes were executed from the project CPython 3.12.2
+venv, targeting ordinary CPython 3.15 on Windows x64, macOS 14 ARM64/Intel,
+and glibc Linux x86_64. Even with APSW 3.54.1.0 substituted **only in the
+dependency probe**, all four failed on h5py. The probe omitted qplotter-native
+to isolate upstream readiness; it did not install packages or load the reader
+against an unaudited SQLite. Cross-platform resolution is a prerequisite
+check, not execution on those platforms, and the failure can mask further
+dependency issues.
+
+Consequently this change retains APSW 3.53.4.0 / SQLite 3.53.4, its source ID,
+ABI declarations, runtime guards, and qplotter-native 1.0.1 unchanged. The
+native distribution's `Requires-Python: >=3.11`, build interpreter and
+`cp311-abi3` tag describe its retained stable ABI; they do not advertise
+application support for Python 3.11.
+
+Before adding 3.15, require wheel-only resolution of the complete dependency
+chain on each target, audit the candidate SQLite's upstream changes, internal
+layouts and VFS/SHM assumptions, and release a separately versioned native
+package with coordinated exact APSW, SQLite/source-ID and ABI checks. Then run
+the existing compiler-free wheel/editable installation, installed artifact,
+database safety, live-reader, cancellation/shutdown and GUI checks on 3.15,
+including Linux headless validation. Free-threaded Python and PyPy remain
+outside scope. No source-build fallback is part of ordinary installation.
 
 ## Native development
 
@@ -267,7 +309,7 @@ metadata, thumbnails, and previews; the competing legacy producers remain
 disabled. The bridge module and Stage 5C source regressions participate in the
 same exact wheel/sdist inventory and configured mypy checks.
 
-CI builds the application wheel and sdist once on Python 3.11. A separate native
+CI builds the application wheel and sdist once on Python 3.12. A separate native
 build matrix produces one `cp311-abi3` wheel each for Windows x64, macOS ARM64,
 macOS Intel, and Linux x86_64. Linux uses cibuildwheel's `manylinux_2_28` image
 and auditwheel repair rather than publishing an ordinary Ubuntu
@@ -285,12 +327,12 @@ The retained Linux package job compares both sdists and wheels with the source
 inventory, runs the extracted sdists' complete test suite in an isolated venv,
 and exercises the installed wheel pair in another venv. Linux coverage still
 runs the complete suite. The Windows and ARM64 macOS full suites retain both
-partitions on Python 3.11 and 3.14; their middle versions use the existing
-compatibility subset. Intel macOS runs that subset on all four versions, with
-additional Linux compatibility checks on 3.11 and 3.13. The compatibility
+partitions on Python 3.12 and 3.14; Python 3.13 uses the existing
+compatibility subset. Intel macOS and Linux run that subset on all three
+versions. The compatibility
 subset retains the database protections, concurrent-writer tests and focused
 Stage 4 coverage. All four platforms run the complete installed-package smoke
-on each advertised CPython version, 3.11, 3.12, 3.13 and 3.14, reusing the same
+on each advertised CPython version, 3.12, 3.13 and 3.14, reusing the same
 platform's stable-ABI wheel across versions. Free-threaded CPython and PyPy are
 not part of the advertised CPython support matrix.
 
@@ -429,7 +471,7 @@ published application files against the validated hashes. Application-only
 releases pass the same native verification gate without a native upload.
 
 After application publication and byte verification, `public-installations`
-runs on all four platforms and every advertised CPython version (3.11–3.14).
+runs on all four platforms and every advertised CPython version (3.12–3.14).
 Each entry creates two fresh environments outside the original checkout.
 The ordinary path runs `python -m pip install --only-binary=:all:
 qplotter==1.7.0` against the public PyPI index with all runtime dependencies.
@@ -567,7 +609,7 @@ and hashes, and checks the published PyPI bytes against those receipts. The
 artifact must still be available; a missing/expired receipt is a failed gate,
 not permission to substitute a new build. The receipts are comparison inputs;
 ordinary and editable dependencies are still installed from public PyPI.
-All four platforms and CPython 3.11-3.14 run both installation paths, including
+All four platforms and CPython 3.12–3.14 run both installation paths, including
 GUI startup and the trusted live reader/database-protection smokes. Windows
 runs unprivileged. The workflow has only read permissions and no publishing
 jobs or deployment approvals.
@@ -610,7 +652,7 @@ Before creating a tagged release:
     trusted-WAL-helper smoke, the Stage 4 application-adapter smoke, and the
     installed Stage 5B live-WAL backend and Stage 5C Qt-bridge smokes.
 11. Confirm unprivileged Windows x64, ARM64 macOS, Intel macOS, and Linux
-    installed-wheel jobs passed on Python 3.11–3.14 for the exact source, and
+    installed-wheel jobs passed on Python 3.12–3.14 for the exact source, and
     use the repaired manylinux artifact for Linux publication.
 12. Run the manual GUI check from `CONTRIBUTING.md`.
 13. Confirm README install and compatibility notes still match the release.

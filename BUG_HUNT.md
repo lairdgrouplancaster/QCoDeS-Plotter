@@ -1,6 +1,6 @@
 # qPlot bug-hunt campaign
 
-## Campaign 2026-10-29 — rounds 47–49 complete; local validation passed
+## Campaign 2026-10-29 — rounds 47–49 complete; current-main integration
 
 The new request authorizes up to three rounds after the historical round 46,
 with early stopping after two consecutive complete clean rounds. Confirmed
@@ -383,7 +383,88 @@ unchanged and their earlier stopping instructions apply to those campaigns.
 
 ### Publication checkpoint and recommendation
 
-- **Outstanding CI follow-up:** final pushed documentation head
+- **Concurrent upstream integration:** while the campaign was validating,
+  main advanced to **`f8c1e5ee0a4e62f52faf9a8a5ed705f67386cc5c`** by merging
+  user PR #93. Before integrating it, the connected app verified **41/41
+  distinct completed successful checks**, every head SHA matching that exact
+  revision, including the Required checks gate and both Windows 3.14 full
+  partitions. [Current-main CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40962485822),
+  `/private/tmp/qplot-r47-49-upstream-main-ci.json`.
+  The original `e65c30c` baseline and its 47 checks remain historical evidence.
+  The new upstream matrix targets Python 3.12–3.14 and retains native ABI3;
+  its changed job count is inherited from PR #93, not a campaign coverage cut.
+- Current main independently changes the same keyboard test. It waits for
+  exposure/activation before typing and then observes an actual completed
+  replacement publication instead of a fixed 150 ms interval. Exact pending
+  text, final styles/rendering and raw-data assertions remain; additional
+  assertions require retained focus, no commit signal and unchanged precommit
+  style. Its publication helper temporarily fences timer signals while leaving
+  timers active, then restores delivery; existing precision coverage checks
+  that contract. This is a meaningful observation change, not proof of the
+  historical Windows event origin. The upstream synchronization is **not
+  counted as a campaign finding or repair**.
+  Independent read-only review: `/private/tmp/qplot-upstream-keyboard-integration-review.json`.
+- The diagnostic push `cc3227ad190312188b06f1c8bf16f4ec9448d31e` conflicted with
+  that upstream keyboard change, so ordinary PR CI did not start. Its CodeQL
+  activity is not a full CI pass. Current main is integrated into this dedicated
+  branch, preserving all 15 upstream files exactly and resolving the sole
+  keyboard conflict using the exact upstream file. The superseded diagnostic is removed from the
+  final diff; all approved campaign application and test repairs are retained.
+  The campaign PR remains draft; no version, native source or released artifact
+  is changed by the campaign. The proposed local overlay partition run never started;
+  its preflight is stale/unexecuted and is not validation evidence.
+- Current-main integration validation: **418 passed / 9 skips in 120.60 s**
+  across both application regressions, both test-only corrections, keyboard/
+  refresh/typed-launch/appearance neighbors and upstream CI/release policies.
+  Six skips require wider floating exponents and three require PowerShell.
+  Whole-tree Ruff, configured mypy (**88 files**), dependency consistency and
+  whitespace checks pass. An accidental explicit-directory mypy invocation
+  expanded beyond the configured file list and reported 585 existing type
+  errors in unchanged mixin modules; it is not a successful whole-runtime
+  type check. The required configured invocation passes without source edits.
+  Actual project-venv `-m qplot` again shows its window, enters the event loop,
+  exits 0 and retires the owned fixture. Logs/receipts:
+  `/private/tmp/qplot-r47-49-upstream-integration.log`,
+  `qplot-r47-49-upstream-mypy.log`, `qplot-r47-49-upstream-startup.json`.
+  A fresh complete local suite runs on the stable integrated source, in parallel
+  with exact-final-head hosted validation. Earlier 6,296-pass local evidence
+  remains attached to its historical freeze; it is not relabelled as this run.
+  `/private/tmp/qplot-r47-49-upstream-focused-receipt.json` binds the focused
+  checks to all 455 integrated source/test/build files.
+- Independent staged-merge audit approves all 15 exact upstream blobs, all
+  seven unchanged approved campaign source/test hashes and the final eight-file
+  diff against current main. All 126 runtime members equal the reviewed
+  application commit `1459397`; all eight native files remain unchanged.
+  `/private/tmp/qplot-upstream-staged-merge-review.json`, SHA256
+  `8558b6e6a82c986e8032d1a9b39e13066b149f225d1370adbb291c2a8cb28f0b`.
+  The 382,070-byte historical log suffix is byte-identical to the original
+  baseline (SHA256 `196a1a5be4de6ce4863e1ac276a602fd8c9740d96206ef139fc66ab1d4966ef3`).
+- Refreshed isolated application artifacts preserve all 455 frozen source
+  files: wheel 132 members / 131 verified RECORD hashes, sdist 440 regular
+  files / 437 source byte matches / 274 test modules. Metadata reports version
+  **1.7.0** and inherited `Requires-Python: >=3.12`; only METADATA and RECORD
+  differ from the earlier validated wheel. Both strict Twine checks pass.
+  No native rebuild is required by these unchanged native bytes. Evidence:
+  `/private/tmp/qplot-r47-49-upstream-source.json`,
+  `qplot-r47-49-upstream-artifacts.json` and `qplot-r47-49-upstream-dist`.
+  A different subchat independently verifies the build copy, all runtime bytes,
+  exact current metadata, RECORD, source archive and historical-log preservation:
+  `/private/tmp/qplot-upstream-artifact-review.json`, SHA256
+  `1f24c6f7a84850642e6228b2e5c900a0e5c31ab6a5e58a3084d2d5d0cde0b17b`.
+- Refreshed installed-package smoke passes **ten bounded commands**: version,
+  settings/readback/rejection, generation/refused replacement/protected export,
+  exact immutable SQL, GUI startup, and public `qplot.run()` loading the owned
+  nine-point database and returning normally. All 126 installed runtime bytes,
+  import/metadata origins and native binary identity verify; main/WAL/journal
+  states remain unchanged and the generated data/settings fixture retires.
+  An added API observer initially asserted that `localLastFile` was the current
+  database, although that field deliberately retains the previous path. Its
+  timer assertion caused a modal-error timeout; correcting the scratch observer
+  to check `fileTextbox` passes with the same 55 s bound. This is an excluded
+  harness error, not an application or repository-test finding. Receipt:
+  `/private/tmp/qplot-r47-49-upstream-installed-receipt.json`, SHA256
+  `c83fb3e888f4f3057bfce7d1d3070d7399b85cad4b4edee34686662c4cc9ccde`.
+- **Historical Windows CI follow-up:** pushed documentation head
   `6ab5b2790896d664c0f25c4274336f71b917c4bf` passed the complete local suite,
   but its Windows Python 3.14 shard 1/2 reports **3,091 passed, 127 skipped,
   71 passing subtests and one failure**. Existing keyboard/live-refresh test
@@ -422,7 +503,7 @@ unchanged and their earlier stopping instructions apply to those campaigns.
   `/private/tmp/qplot-final-keyboard-integration-review.json`.
   Retry evidence: `/private/tmp/qplot-r47-49-windows-retry-failure.log`,
   [retry job](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40957089132/job/123759005935).
-- A bounded, independently approved diagnostic now observes only the three
+- A bounded, independently approved diagnostic was prepared for the three
   existing live-edit cases in `test_appearance_numeric_keyboard.py`. It records
   focus/window/key events, text/value/commit signals, delegated control updates
   and retained phase checkpoints; failure output stays within the Windows log
@@ -448,12 +529,14 @@ unchanged and their earlier stopping instructions apply to those campaigns.
   integration corrections are independently approved; final local validation,
   startup, artifact and evidence checks pass. Application commit `1459397`
   and test-correction commit `55db3fa` contain the reviewed implementation.
-- At this checkpoint, publish the reviewed diagnostic, inspect its actual
-  Windows focus/commit evidence, and resolve any confirmed cause with separate
-  review and regression validation. Verify the exact final pushed revision.
+- Current-main integration review, focused checks, rebuilt artifacts and installed
+  checks pass. At this checkpoint, finish the already-running complete local
+  suite and verify hosted CI for the exact final pushed revision. The Windows failure
+  cause is not retrospectively attributed without event evidence.
   [Draft PR #94](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/94)
-  records the final SHA, required check results and links, avoiding a recursive
-  log edit solely to embed its own commit hash. Pending checks are not passes.
+  records the final SHA, complete local-suite outcome, required check results
+  and links, avoiding a recursive log edit solely to embed its own commit hash
+  and rerun documentation-only CI. Pending checks are not passes.
   A concrete CI failure must still be investigated before completion.
 - Keep the PR draft for review; no merge, tag, release or version change.
   No immediate additional investigation campaign is recommended after these
