@@ -464,6 +464,52 @@ unchanged and their earlier stopping instructions apply to those campaigns.
   harness error, not an application or repository-test finding. Receipt:
   `/private/tmp/qplot-r47-49-upstream-installed-receipt.json`, SHA256
   `c83fb3e888f4f3057bfce7d1d3070d7399b85cad4b4edee34686662c4cc9ccde`.
+- The fresh complete run from the OneDrive working checkout was interrupted
+  cleanly after **4,923 passed, 119 skipped, 116 passing subtests, nine failures
+  and two setup errors**, 1,161.23 s. This is **incomplete and not a full-suite
+  pass**. Two fixtures exceeded their unchanged 12 s database-load waits;
+  one also exceeded its 12 s teardown wait. Nine later cases in
+  `test_window_menu_target_lifecycle.py` could not find expected focus actions.
+  All 455 source files match before/after and committed `4ff0bb5`; the full
+  log and interruption receipt are retained separately:
+  `/private/tmp/qplot-r47-49-upstream-full-interrupted.log` and
+  `qplot-r47-49-upstream-full-interrupt.json`.
+- Unchanged focused replay gives **38/38** passes for both load-error cases
+  and their parameter neighbors, and **30/30** for the window-menu module.
+  A bounded owned-fixture startup stall reproduces the exact shutdown-state
+  diagnostic after 12 s request wait plus 12 s cleanup; the unpublished helper,
+  dispatcher and control thread all retire at the existing **30.012 s** startup
+  deadline. Normal bootstrap/close takes 0.323 s. Both original fixture databases
+  pass integrity and independent checks of seven completed runs / 41 stored
+  rows; protected main/WAL/journal state remains unchanged. No permanent service
+  deadlock, measurement damage, application repair or longer wait is established.
+  `/private/tmp/qplot-upstream-two-errors-diagnosis-receipt.json`, SHA256
+  `34f82e4b729aa12d3d06d843b5de1fd7cd4d7e7710fb11ff3320be089430756f`.
+- A retained-main-window control explains a possible cascade: seven of the
+  same nine original menu cases fail identically when Qt's actual enumeration
+  selects the retained empty main window; two pass when it selects the current
+  window. Failure menus contain only the qPlot entry; passing menus contain the
+  expected plots. Poll depth stays one, so reentry is unnecessary. All injected
+  stale widgets retire. The earlier failing fixture can leave its Qt window
+  because teardown raises before deletion, but the original enumeration was
+  not captured. These controls establish mechanisms, **not the original transient
+  cause**, and are not counted as new campaign findings or fixes.
+  `/private/tmp/qplot-window-menu-integration-receipt.json`, SHA256
+  `6ef8b8c4f85f9afe74373b6bdbc23606380545d34288521b7b3f736137482f92`.
+- Ordinary source-file reads and redundant Git reads independently stalled in
+  the OneDrive checkout during this phase; their cause is also unproven. The
+  interrupted read-only probes were stopped without changing source. To separate
+  workspace I/O from unchanged application behavior, a fresh local checkout of
+  exact remote commit `4ff0bb5e04537cd0b59fc03f5172013e75b433a0` was verified clean
+  with all **455** source/test/build hashes and **126** runtime files matching.
+  Its complete suite uses the original project venv, the same two-worker schedule,
+  assertions, limits and writable caches. qPlot and both reader helper modules
+  resolve inside that checkout. No code or test adjustment is made. Current
+  full-suite result and exact-final-head CI acceptance are recorded in draft
+  PR #94 and the retained validation receipts; pending runs are not passes.
+  `/private/tmp/qplot-r47-49-local-checkout-receipt.json`,
+  `qplot-r47-49-local-checkout-full.log` and
+  `qplot-r47-49-local-checkout-full-receipt.json`.
 - **Historical Windows CI follow-up:** pushed documentation head
   `6ab5b2790896d664c0f25c4274336f71b917c4bf` passed the complete local suite,
   but its Windows Python 3.14 shard 1/2 reports **3,091 passed, 127 skipped,
