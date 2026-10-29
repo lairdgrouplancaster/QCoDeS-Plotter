@@ -1579,6 +1579,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             [
                 {
                     "parameter": "signal",
+                    "axes": ["x"],
                     "title": "signal vs x",
                     "image": render_sparkline_preview(
                         np.array([0, 1], dtype=float),
@@ -1588,6 +1589,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 },
                 {
                     "parameter": "image",
+                    "axes": ["x", "y"],
                     "title": "image vs x and y",
                     "image": render_heatmap_preview(
                         np.array([0, 1, 0, 1], dtype=float),
@@ -1608,7 +1610,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(len(cards), 2)
         for card, title in zip(
             cards,
-            ["signal vs x", "image vs x and y"],
+            ["<b>signal</b> vs <b>x</b>", "<b>image</b> vs <b>x</b> and <b>y</b>"],
             strict=False,
         ):
             labels = card.findChildren(qtw.QLabel)

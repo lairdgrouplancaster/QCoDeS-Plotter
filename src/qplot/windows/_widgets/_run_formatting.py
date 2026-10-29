@@ -2,6 +2,29 @@ import html
 from datetime import datetime
 
 
+def preview_title(parameter, axes, *, rich_text=False):
+    """Describe a measurement and its setpoints in reading order."""
+    def name(value):
+        text = str(value)
+        return f"<b>{html.escape(text)}</b>" if rich_text else text
+
+    names = [name(axis) for axis in axes if axis]
+    if not names:
+        return name(parameter)
+    if len(names) <= 2:
+        axis_text = " and ".join(names)
+    else:
+        axis_text = f"{', '.join(names[:-1])}, and {names[-1]}"
+    return f"{name(parameter)} vs {axis_text}"
+
+
+def preview_tooltip_text(preview):
+    """Bold parameter names in image tooltips, keeping plain titles accessible."""
+    if "axes" in preview and not preview.get("unsupported"):
+        return preview_title(preview["parameter"], preview.get("axes") or [], rich_text=True)
+    return preview.get("title", "")
+
+
 def run_tooltip_text(metadata):
     """
     Builds the summary shown when hovering over a run table row.
