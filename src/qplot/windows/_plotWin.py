@@ -945,7 +945,7 @@ class plotWidget(
             if axis == "z" and getattr(self, "operation_kind", None) != "plot2d":
                 continue
             if axis != "index":
-                separator = qtw.QLabel(" (" if axis == "x" else ", ")
+                separator = qtw.QLabel(" (" if axis == "x" else ",")
                 separator.setFont(font)
                 separator.setFixedWidth(separator.fontMetrics().horizontalAdvance(separator.text()))
                 layout.addWidget(separator)
@@ -953,6 +953,7 @@ class plotWidget(
                     self._cursor_z_separator = separator
             label = qtw.QLabel("")
             label.setFont(font)
+            label.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Preferred)
             label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
             layout.addWidget(label)
             self.pos_labels[axis] = label
@@ -1493,20 +1494,26 @@ class plotWidget(
     def format_cursor_number(self, value: float) -> str:
         """Format a coordinate using the current cursor precision preference."""
         figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
+        mantissa_width = figures + 2 if figures > 1 else 2
         if not isfinite(value):
-            return f"{value:>{figures + 6}}"
+            return f"{value:>{mantissa_width + 4}}"
         mantissa, exponent = f"{value:.{figures - 1}e}".split("e")
-        return f"{mantissa:>{figures + 2}}e{int(exponent):+03d}"
+        return f"{mantissa:>{mantissa_width}}e{int(exponent):+03d}"
 
 
     def apply_cursor_label_widths(self) -> None:
         """Keep monospaced fields stable across signs, values and exponents."""
         labels = self.__dict__.get("pos_labels", {})
         figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
+        mantissa_width = figures + 2 if figures > 1 else 2
         for axis, label in labels.items():
-            # Leave room for rare three-digit exponents without clipping them.
-            characters = (18 if "z" in labels else 9) if axis == "index" else figures + 7
-            label.setFixedWidth(label.fontMetrics().horizontalAdvance("0" * characters))
+            if axis == "index":
+                characters = 17 if "z" in labels else 9
+                label.setFixedWidth(label.fontMetrics().horizontalAdvance("0" * characters))
+            else:
+                # Two exponent digits are enough for ordinary measurements.
+                # Qt can grow a field for an exceptional three-digit exponent.
+                label.setMinimumWidth(label.fontMetrics().horizontalAdvance("0" * (mantissa_width + 4)))
 
 
     def _set_cursor_index_label(self, text: str) -> None:
@@ -1518,7 +1525,7 @@ class plotWidget(
         if label is not None:
             if text:
                 indices = text.strip("[]").split(",")
-                text = "[" + ", ".join(index.strip().rjust(7) for index in indices) + "]"
+                text = "[" + ",".join(index.strip() for index in indices) + "]"
             label.setText(text)
 
 
@@ -1995,7 +2002,7 @@ class plotWidget(
                 )
             if sample is not None:
                 i, j, x, y, z = sample
-                index_txt = f"[{i}, {j}]"
+                index_txt = f"[{i},{j}]"
                 x_txt = self.format_cursor_number(x)
                 y_txt = self.format_cursor_number(y)
                 self.pos_labels["z"].setText(self.format_cursor_number(z))

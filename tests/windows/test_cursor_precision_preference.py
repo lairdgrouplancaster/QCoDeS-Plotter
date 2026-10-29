@@ -47,7 +47,7 @@ def test_invalid_precision_is_rejected(cfg, value):
 
 
 @pytest.mark.parametrize("heatmap", [False, True])
-@pytest.mark.parametrize("figures, expected", [(6, " 1.23457e+00"), (3, " 1.23e+00"), (1, "  1e+00")])
+@pytest.mark.parametrize("figures, expected", [(6, " 1.23457e+00"), (3, " 1.23e+00"), (1, " 1e+00")])
 def test_free_and_heatmap_readouts(cfg, heatmap, figures, expected):
     cfg.update(CURSOR_SIGNIFICANT_FIGURES_KEY, figures)
     point = QtCore.QPointF(1.23456789, 1.23456789)
@@ -111,27 +111,34 @@ def test_coordinate_fields_have_equal_stable_fixed_widths(cfg, window_type):
                       if axis in window.pos_labels]
             widths = {label.minimumWidth() for label in labels}
             assert len(widths) == 1
-            assert all(label.maximumWidth() == label.minimumWidth() for label in labels)
             index_label = window.pos_labels["index"]
             assert index_label.minimumWidth() == index_label.maximumWidth()
             positions = None
             for index, value in zip(
                 (("[0,0]", "[9999999,9999999]", "") if window_type is plot2d
                  else ("[0]", "[9999999]", "")),
-                (0.0, -1.23456789e-308, 1.7976931348623157e308),
+                (0.0, -1.23456789e-98, 1.7976931348623157e98),
                 strict=True,
             ):
                 window._set_cursor_index_label(index)
+                assert index_label.text() == index
                 assert index_label.fontMetrics().horizontalAdvance(index_label.text()) <= index_label.width()
                 for axis, label in window.pos_labels.items():
                     if axis in ("x", "y", "z"):
                         label.setText(window.format_cursor_number(value))
-                        assert label.fontMetrics().horizontalAdvance(label.text()) <= label.width()
                 qtw.QApplication.processEvents()
+                assert all(label.fontMetrics().horizontalAdvance(label.text()) <= label.width()
+                           for label in labels)
                 current = [label.geometry().x() for label in labels]
                 if positions is not None:
                     assert current == positions
                 positions = current
+            for value in (-1.23456789e-308, 1.7976931348623157e308):
+                for label in labels:
+                    label.setText(window.format_cursor_number(value))
+                qtw.QApplication.processEvents()
+                assert all(label.fontMetrics().horizontalAdvance(label.text()) <= label.width()
+                           for label in labels)
     finally:
         window.close()
         window.deleteLater()
