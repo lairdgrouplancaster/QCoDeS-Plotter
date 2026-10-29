@@ -51,7 +51,7 @@ def assert_scene_cursor(window, physical_x, physical_y, view_x, view_y, index):
     assert float(window.pos_labels["y"].text().removeprefix("y = ")) == pytest.approx(
         physical_y[index], rel=0.006
     )
-    assert window.pos_labels["index"].text() == f"[{index}]"
+    assert window.pos_labels["index"].text().replace(" ", "") == f"[{index}]"
     return point
 
 
@@ -63,6 +63,7 @@ def assert_scene_cursor(window, physical_x, physical_y, view_x, view_y, index):
 )
 def test_free_cursor_main_axis_pair_and_log_inverse(loaded_plot, axes, log_modes):
     window = loaded_plot
+    window.snap_to_trace_action.setChecked(False)
     owner = assign_axes(window, *axes)
     window.open_axis_scale_dialog("x")
     for dimension, enabled in zip(("x", "y"), log_modes, strict=True):
@@ -92,7 +93,7 @@ def test_free_cursor_main_axis_pair_and_log_inverse(loaded_plot, axes, log_modes
     )
     qtw.QApplication.sendEvent(viewport, event)
     qtw.QApplication.processEvents()
-    assert window.pos_labels["index"].text() == "[32]"
+    assert window.pos_labels["index"].text().replace(" ", "") == "[32]"
 
 
 @pytest.mark.parametrize("loaded_plot", [True], indirect=True)
@@ -101,6 +102,7 @@ def test_free_cursor_transformed_main_trace_survives_merged_axis_reassignment(
     loaded_plot, control
 ):
     window = loaded_plot
+    window.snap_to_trace_action.setChecked(False)
     assert len(window.lines) == 2
     click_control(window, control)
     original_x = np.arange(64, dtype=float)
@@ -127,6 +129,7 @@ def test_free_cursor_transformed_main_trace_survives_merged_axis_reassignment(
 @pytest.mark.parametrize("line_state", ["missing", "detached"])
 def test_free_cursor_uses_primary_axes_without_owned_main_line(loaded_plot, line_state):
     window = loaded_plot
+    window.snap_to_trace_action.setChecked(False)
     assign_axes(window, "Top", "Right")
     window.open_axis_scale_dialog("x2")
     window._axis_scale_controls["x2"].logCheck.setChecked(True)

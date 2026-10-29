@@ -49,6 +49,7 @@ from qplot.datahandling.trusted_work_scheduler import (
 )
 
 from ._auto_plot import update_auto_plot
+from ._widgets._run_formatting import preview_title
 
 if TYPE_CHECKING:
     from qplot.windows.main import MainWindow
@@ -1579,9 +1580,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
                 return [], "A derived PNG could not be decoded safely."
             parameter = parameters.get(dependent)
             axes = list(parameter.depends_on) if parameter is not None else []
-            title = dependent
-            if axes:
-                title += " vs " + ", ".join(axes)
+            title = preview_title(dependent, axes)
             previews.append(
                 {
                     "parameter": dependent,

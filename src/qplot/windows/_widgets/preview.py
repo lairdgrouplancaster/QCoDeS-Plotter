@@ -28,6 +28,8 @@ from qplot.datahandling.trusted_presentation import bounded_presentation_error
 from qplot.diagnostics import log_exception
 
 from .._dragdrop import make_run_preview_mime
+from ._run_formatting import preview_title as _preview_title
+from ._run_formatting import preview_tooltip_text
 
 PREVIEW_SIZE = 200
 PREVIEW_THUMBNAIL_SIZE = 64
@@ -1246,7 +1248,7 @@ class PreviewCard(qtw.QWidget):
         image.setFixedSize(preview_size, preview_size)
         image.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         image.setPixmap(QtGui.QPixmap.fromImage(preview["image"]))
-        image.setToolTip(preview["title"])
+        image.setToolTip(preview_tooltip_text(preview))
         image.set_preview_accessibility(preview["title"])
         image.plotRequested.connect(self.plotRequested)
         image.exportRequested.connect(self.exportRequested)
@@ -1842,19 +1844,6 @@ def _preview_2d(
         "title": _preview_title(parameter, axes),
         "image": image,
         }
-
-
-def _preview_title(parameter, axes):
-    axes = [str(axis) for axis in axes if axis]
-    if len(axes) == 0:
-        return str(parameter)
-    if len(axes) == 1:
-        axis_text = axes[0]
-    elif len(axes) == 2:
-        axis_text = f"{axes[0]} and {axes[1]}"
-    else:
-        axis_text = f"{', '.join(axes[:-1])}, and {axes[-1]}"
-    return f"{parameter} vs {axis_text}"
 
 
 def render_displayed_plot_preview(worker, parameter, size):

@@ -112,7 +112,7 @@ source builds, and release validation.
 ## Install
 
 Install qPlot inside a supported Python virtual environment. This checkout
-prepares the stable application release `1.6.3`, with native `1.0.1`.
+prepares the stable application release `1.7.0`, with native `1.0.1`.
 The installation examples below work after publication; until then, use
 validated local artifacts as described in [Distribution](docs/distribution.md).
 
@@ -143,9 +143,9 @@ For ordinary installation after a stable PyPI release is available:
 python -m pip install --only-binary=:all: qplotter
 ```
 
-To select version 1.6.3 explicitly after publication:
+To select version 1.7.0 explicitly after publication:
 ```console
-python -m pip install --only-binary=:all: qplotter==1.6.3
+python -m pip install --only-binary=:all: qplotter==1.7.0
 ```
 
 Both commands install the full runtime dependency set as wheels, with no C
@@ -167,7 +167,7 @@ installing the new packages:
 
 ```console
 python -m pip uninstall -y qplot qcodes-plotter qcodes-plotter-native qplotter qplotter-native
-python -m pip install --only-binary=:all: qplotter==1.6.3
+python -m pip install --only-binary=:all: qplotter==1.7.0
 python -m pip check
 ```
 

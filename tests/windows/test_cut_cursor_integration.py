@@ -48,12 +48,28 @@ def heatmap_cut(tmp_path, monkeypatch):
         cut = window.windows[-1]
         wait_for(lambda: hasattr(cut, "axis_data") and not cut.worker.running)
         cut.monitor.stop()
+        assert cut.snap_to_trace_action.isChecked()
+        cut.snap_to_trace_action.setChecked(False)
         cut.show()
         qtw.QApplication.processEvents()
         yield heatmap, cut
     finally:
         close_main_window(window)
         assert database_artifact_state(database_path) == protected
+
+
+def test_cut_snaps_to_recorded_sample(heatmap_cut):
+    _, cut = heatmap_cut
+    cut.snap_to_trace_action.setChecked(True)
+    x, y = cut.line.getData()
+    cut.line.getViewBox().autoRange()
+    qtw.QApplication.processEvents()
+    point = cut.line.getViewBox().mapViewToScene(QtCore.QPointF(float(x[1]), float(y[1])))
+    cut.mouseMoved(point)
+    assert cut.pos_labels["index"].text().replace(" ", "") == "[1]"
+    assert float(cut.pos_labels["x"].text()) == pytest.approx(x[1])
+    assert float(cut.pos_labels["y"].text()) == pytest.approx(y[1])
+    assert cut.snap_marker is not None
 
 
 def assert_toolbar_index(cut, x, index, *, x_range=None):
@@ -64,7 +80,7 @@ def assert_toolbar_index(cut, x, index, *, x_range=None):
     pos = cut.vb.mapViewToScene(QtCore.QPointF(float(x), 0))
     assert cut.plot.sceneBoundingRect().contains(pos)
     cut.mouseMoved(pos)
-    assert cut.pos_labels["index"].text() == ("" if index is None else f"[{index}]")
+    assert cut.pos_labels["index"].text().replace(" ", "") == ("" if index is None else f"[{index}]")
 
 
 @pytest.mark.parametrize("method", ["subsample", "mean", "peak"])
@@ -143,7 +159,7 @@ def test_cut_cursor_updates_after_moving_and_swapping_axes(heatmap_cut):
     assert_toolbar_index(cut, cut.axis_data["x"][-1], 6)
     # The parent heatmap retains its [column,row] coordinate readout.
     heatmap.mouseMoved(heatmap._primary_heatmap_viewbox().mapViewToScene(QtCore.QPointF(0, 0)))
-    assert heatmap.pos_labels["index"].text() == "[2,3]"
+    assert heatmap.pos_labels["index"].text().replace(" ", "") == "[2,3]"
 
 
 @pytest.mark.parametrize("x,expected", [

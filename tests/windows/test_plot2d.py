@@ -2076,10 +2076,10 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         plotWidget.mouseMoved(window, scene_pos)
 
         self.assertEqual(shown_indices, [(1, 1)])
-        self.assertEqual(window.pos_labels["index"].text(), "[1,1]")
-        self.assertEqual(window.pos_labels["x"].text(), "x = 1.0")
-        self.assertEqual(window.pos_labels["y"].text(), "y = 1.0")
-        self.assertEqual(window.pos_labels["z"].text(), "z = 4.0")
+        self.assertEqual(window.pos_labels["index"].text().replace(" ", ""), "[1,1]")
+        self.assertEqual(window.pos_labels["x"].text(), "1.0")
+        self.assertEqual(window.pos_labels["y"].text(), "1.0")
+        self.assertEqual(window.pos_labels["z"].text(), "4.0")
 
     def test_nonuniform_hover_reports_recorded_setpoint(self):
         widget = pg.GraphicsLayoutWidget()
@@ -2112,10 +2112,10 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         try:
             plotWidget.mouseMoved(window, scene_pos)
 
-            self.assertEqual(window.pos_labels["index"].text(), "[1,1]")
-            self.assertEqual(window.pos_labels["x"].text(), "x = 1.0")
-            self.assertEqual(window.pos_labels["y"].text(), "y = 13.0")
-            self.assertEqual(window.pos_labels["z"].text(), "z = 5.0")
+            self.assertEqual(window.pos_labels["index"].text().replace(" ", ""), "[1,1]")
+            self.assertEqual(window.pos_labels["x"].text(), "1.0")
+            self.assertEqual(window.pos_labels["y"].text(), "13.0")
+            self.assertEqual(window.pos_labels["z"].text(), "5.0")
         finally:
             widget.deleteLater()
 
@@ -2154,8 +2154,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             plotWidget.mouseMoved(window, inside)
             plotWidget.mouseMoved(window, outside)
 
-            self.assertEqual(window.pos_labels["index"].text(), "")
-            self.assertEqual(window.pos_labels["z"].text(), "z =")
+            self.assertEqual(window.pos_labels["index"].text().replace(" ", ""), "")
+            self.assertEqual(window.pos_labels["z"].text(), "")
             self.assertEqual(hidden, [True])
         finally:
             widget.deleteLater()
@@ -2175,8 +2175,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             )
 
         self.assertIsNone(window.z_index)
-        self.assertEqual(window.pos_labels["index"].text(), "")
-        self.assertEqual(window.pos_labels["z"].text(), "z =")
+        self.assertEqual(window.pos_labels["index"].text().replace(" ", ""), "")
+        self.assertEqual(window.pos_labels["z"].text(), "")
 
     def test_nonuniform_sweep_uses_recorded_centres_and_edges(self):
         window = plot2d.__new__(plot2d)
@@ -2289,10 +2289,10 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         try:
             plotWidget.mouseMoved(window, scene_pos)
 
-            self.assertEqual(window.pos_labels["index"].text(), "[2,1]")
-            self.assertEqual(window.pos_labels["x"].text(), "x = 2.5")
-            self.assertEqual(window.pos_labels["y"].text(), "y = 1.5")
-            self.assertEqual(window.pos_labels["z"].text(), "z = 6.0")
+            self.assertEqual(window.pos_labels["index"].text().replace(" ", ""), "[2,1]")
+            self.assertEqual(window.pos_labels["x"].text(), "2.5")
+            self.assertEqual(window.pos_labels["y"].text(), "1.5")
+            self.assertEqual(window.pos_labels["z"].text(), "6.0")
         finally:
             widget.deleteLater()
 

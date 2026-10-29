@@ -740,7 +740,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
             plotWidget.mouseMoved(window, scene_pos)
 
-            self.assertEqual(window.pos_labels["index"].text(), "[1]")
+            self.assertEqual(window.pos_labels["index"].text().replace(" ", ""), "[1]")
         finally:
             widget.deleteLater()
 
@@ -767,9 +767,9 @@ class SnapToTraceTestCase(unittest.TestCase):
             scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.3, 0.7))
             plotWidget.mouseMoved(window, scene_pos)
 
-            self.assertEqual(window.pos_labels["x"].text(), "x = 20")
-            self.assertEqual(window.pos_labels["y"].text(), "y = 5.01")
-            self.assertEqual(window.pos_labels["index"].text(), "[1]")
+            self.assertEqual(window.pos_labels["x"].text(), "20")
+            self.assertEqual(window.pos_labels["y"].text(), "5.01")
+            self.assertEqual(window.pos_labels["index"].text().replace(" ", ""), "[1]")
         finally:
             widget.deleteLater()
 
@@ -806,9 +806,9 @@ class SnapToTraceTestCase(unittest.TestCase):
 
             plot1d.mouseMoved(window, scene_pos)
 
-            self.assertEqual(window.pos_labels["index"].text(), "[2]")
-            self.assertEqual(window.pos_labels["x"].text(), "x = 5.0")
-            self.assertEqual(window.pos_labels["y"].text(), "y = 25.0")
+            self.assertEqual(window.pos_labels["index"].text().replace(" ", ""), "[2]")
+            self.assertEqual(window.pos_labels["x"].text(), "5.0")
+            self.assertEqual(window.pos_labels["y"].text(), "25.0")
         finally:
             action.deleteLater()
             widget.deleteLater()

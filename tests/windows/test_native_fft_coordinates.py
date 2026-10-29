@@ -153,7 +153,7 @@ def test_descending_fft_secondary_log_snap_and_phase(fft_plots, no_callback_erro
     frequencies = np.array([0., 1 / 12, 1 / 6])
     magnitudes = np.abs(np.fft.rfft([1., 13., 39., 82.]) / 4)
     assert_spectrum(line, frequencies, magnitudes)
-    descending.snap_to_trace_action.trigger()
+    descending.snap_to_trace_action.setChecked(True)
     for log_x in (True, False, True):
         descending._axis_scale_log_toggled("x", log_x)
         descending._axis_scale_log_toggled("x2", log_x)
@@ -352,7 +352,7 @@ def test_zero_span_fft_rejection_keeps_ui_exports_and_retry_usable(
         assert_axis(host, side, "Coordinate", "V")
     for side in ("left", "right"):
         assert_axis(host, side, label, "A")
-    host.snap_to_trace_action.trigger()
+    host.snap_to_trace_action.setChecked(True)
     originals = []
     for trace_key, line in host.lines.items():
         assert not line.opts["fftMode"]

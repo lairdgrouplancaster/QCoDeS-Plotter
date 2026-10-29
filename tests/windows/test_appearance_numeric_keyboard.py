@@ -60,7 +60,11 @@ def _select_line(host, dialog, line, modifier=QtCore.Qt.KeyboardModifier.NoModif
 
 def _replace_text(spin, value):
     editor = spin.lineEdit()
+    spin.window().activateWindow()
+    qtw.QApplication.processEvents()
     editor.setFocus()
+    qtw.QApplication.processEvents()
+    assert editor.hasFocus()
     QtTest.QTest.keyClick(editor, QtCore.Qt.Key.Key_A,
                          QtCore.Qt.KeyboardModifier.ControlModifier)
     assert editor.selectedText() == editor.text()

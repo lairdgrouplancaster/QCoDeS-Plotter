@@ -1,7 +1,11 @@
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from ._run_formatting import one_dimensional_duplicate_point_count, run_tooltip_text
+from ._run_formatting import (
+    one_dimensional_duplicate_point_count,
+    preview_tooltip_text,
+    run_tooltip_text,
+)
 from .preview import (
     DraggablePreviewImageLabel,
     PreviewImageLabel,
@@ -141,7 +145,7 @@ class RunPreviewCell(qtw.QWidget):
         label.setObjectName("measurementPreviewImage")
         label.setFixedSize(self.icon_size, self.icon_size)
         label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        label.setToolTip(preview.get("title", ""))
+        label.setToolTip(preview_tooltip_text(preview))
         label.set_preview_accessibility(preview.get("title"))
         label.setPixmap(
             QtGui.QPixmap.fromImage(preview["image"]).scaled(

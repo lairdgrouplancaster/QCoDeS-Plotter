@@ -44,10 +44,6 @@ class plot1d(Plot1DSnapMixin, MixedPlotMixin, plotWidget):
         self.right_vb = None
         self.top_vb = None
         self.top_right_vb = None
-        self.snap_to_trace_action = None
-        self.trace_label = None
-        self.snap_marker = None
-        self._snap_marker_view = None
         super().__init__(*args, **kargs)
         
         

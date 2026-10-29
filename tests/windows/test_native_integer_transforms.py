@@ -331,7 +331,7 @@ def test_integer_phase_combinations_refresh_and_secondary_snapping(
     wait_for(lambda: not plot.worker.running)
     plot.monitor.stop()
     assert_integer_mapping(plot, x, y, slopes, phase=phase)
-    plot.snap_to_trace_action.trigger()
+    plot.snap_to_trace_action.setChecked(True)
     plot.line.setVisible(False)
     owner = line.getViewBox()
     mapped_x = y[:-1] if phase else x[:-1]
