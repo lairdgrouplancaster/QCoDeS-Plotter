@@ -143,6 +143,7 @@ def promote_plot_source(main: Any, owner: Any, selected: list[tuple[str, Any]]) 
                      refrate=refresh_interval_value(owner.spinBox), show=True)
         replacement = next(win for win in main.windows if win not in previous_windows)
         _copy_window_layout(owner, replacement)
+        replacement.snap_to_trace_action.setChecked(owner.snap_to_trace_action.isChecked())
         _copy_operations(
             source.oper_widget, replacement.oper_widget,
             transpose=primary.plan.axis_order == ("y", "x"),
