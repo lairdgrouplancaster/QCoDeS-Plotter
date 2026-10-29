@@ -539,8 +539,8 @@ def test_snap_and_statistics_use_full_samples_after_downsampling(
     assert nearest.y_view_value == pytest.approx(point.y())
     window.snap_to_trace_action.setChecked(True)
     window.mouseMoved(scene_pos)
-    assert "47" in window.pos_labels["x"].text()
-    assert "57" in window.pos_labels["y"].text()
+    assert window.pos_labels["x"].text() == window.format_cursor_number(47)
+    assert window.pos_labels["y"].text() == window.format_cursor_number(57)
     assert "point 47" in window.trace_label.text()
     np.testing.assert_allclose(window.snap_marker.getData(), [[point.x()], [point.y()]])
 
