@@ -6,7 +6,7 @@ from PyQt6 import QtCore, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from tests.windows.test_plot_integration import wait_for
-from tests.windows.test_refresh_interval_precision import live_view
+from tests.windows.test_refresh_interval_precision import live_view, wait_for_plot_load
 from tests.windows.test_typed_run_keyboard_launch import (
     _drain,
     _launch,
@@ -60,11 +60,15 @@ def _select_line(host, dialog, line, modifier=QtCore.Qt.KeyboardModifier.NoModif
 
 def _replace_text(spin, value):
     editor = spin.lineEdit()
-    spin.window().activateWindow()
-    qtw.QApplication.processEvents()
+    window = spin.window()
+    # Window exposure/activation is asynchronous on the Windows CI runner.
+    # Finish it before typing: a late focus transition commits a spin box's
+    # partial text even when keyboard tracking is disabled.
+    assert QtTest.QTest.qWaitForWindowExposed(window)
+    window.activateWindow()
+    assert QtTest.QTest.qWaitForWindowActive(window)
     editor.setFocus()
-    qtw.QApplication.processEvents()
-    assert editor.hasFocus()
+    wait_for(editor.hasFocus)
     QtTest.QTest.keyClick(editor, QtCore.Qt.Key.Key_A,
                          QtCore.Qt.KeyboardModifier.ControlModifier)
     assert editor.selectedText() == editor.text()
@@ -138,9 +142,17 @@ def test_uncommitted_fraction_survives_live_refresh(
         if toggle is not None:
             QtTest.QTest.mouseClick(getattr(dialog, toggle), QtCore.Qt.MouseButton.LeftButton)
         editor = _replace_text(getattr(dialog, field), int(value))
+        original_style = getattr(plot._trace_styles[plot.label], style_name)
+        assert original_style != int(value)
+        committed = QtTest.QSignalSpy(getattr(dialog, field).editingFinished)
         worker = plot.worker
         wait_for(lambda: plot.worker is not worker)
-        QtTest.QTest.qWait(150)
+        # Observe a complete publication, independent of runner speed, while
+        # keeping both live timers active and restoring timeout delivery.
+        wait_for_plot_load(window, plot)
+        assert editor.hasFocus()
+        assert len(committed) == 0
+        assert getattr(plot._trace_styles[plot.label], style_name) == original_style
         assert editor.text() == str(int(value))
         QtTest.QTest.keyClicks(editor, ".5")
         QtTest.QTest.keyClick(editor, QtCore.Qt.Key.Key_Tab)
