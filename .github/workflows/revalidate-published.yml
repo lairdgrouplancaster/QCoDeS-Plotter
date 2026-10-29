@@ -28,7 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         platform: [linux-x86_64, macos-arm64, macos-intel, windows-x64]
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.12", "3.13", "3.14"]
         include:
           - platform: linux-x86_64
             os: ubuntu-latest

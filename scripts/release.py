@@ -30,21 +30,23 @@ PLATFORMS = ("linux-x86_64", "macos-arm64", "macos-intel", "windows-x64")
 PACKAGES = {"application": "qplotter", "native": "qplotter-native"}
 
 
-def projects(repository: Path) -> dict:
+def projects(repository: Path, *, application_requires_python: str = ">=3.12") -> dict:
     application = tomllib.loads((repository / "pyproject.toml").read_text())["project"]
     native = tomllib.loads((repository / "native/pyproject.toml").read_text())["project"]
     assert application["name"] == PACKAGES["application"]
     assert native["name"] == PACKAGES["native"]
     assert native["version"] == validator.PINNED_NATIVE_VERSION
     assert f"qplotter-native=={native['version']}" in application["dependencies"]
+    assert application["requires-python"] == application_requires_python
+    # The unchanged native distribution retains its cp311-abi3 baseline.
+    assert native["requires-python"] == ">=3.11"
     for project in (application, native):
         assert f"apsw=={validator.PINNED_APSW_VERSION}" in project["dependencies"]
-        assert project["requires-python"] == ">=3.11"
     return {"application": application, "native": native}
 
 
-def preflight(repository: Path, ref: str) -> bool:
-    metadata = projects(repository)
+def preflight(repository: Path, ref: str, *, application_requires_python: str = ">=3.12") -> bool:
+    metadata = projects(repository, application_requires_python=application_requires_python)
     paired = ref.startswith("refs/tags/native-and-app/v")
     prefix = "refs/tags/native-and-app/v" if paired else "refs/tags/v"
     assert ref == prefix + metadata["application"]["version"], "tag/version mismatch"

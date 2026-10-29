@@ -35,7 +35,8 @@ def artifact_set(tmp_path, monkeypatch):
         if not native:
             dependencies.append(f"qplotter-native=={release.validator.PINNED_NATIVE_VERSION}")
         path.write_text(f'[project]\nname = "{package}"\nversion = "{version}"\n'
-                        f'requires-python = ">=3.11"\ndependencies = {json.dumps(dependencies)}\n')
+                        f'requires-python = ">={"3.11" if native else "3.12"}"\n'
+                        f'dependencies = {json.dumps(dependencies)}\n')
     source = {"src/qplot/__init__.py", "native/src/qplot_native/__init__.py"}
     monkeypatch.setattr(release.validator, "source_files", lambda _: source)
     monkeypatch.setattr(release.validator, "validate_sdist", Mock())
@@ -46,7 +47,8 @@ def artifact_set(tmp_path, monkeypatch):
         project = metadata["native" if native else "application"]
         name = project["name"].replace("-", "_")
         version = project["version"]
-        info = (f"Name: {project['name']}\nVersion: {version}\nRequires-Python: >=3.11\n"
+        info = (f"Name: {project['name']}\nVersion: {version}\n"
+                f"Requires-Python: {project['requires-python']}\n"
                 + "".join(f"Requires-Dist: {dep}\n" for dep in project["dependencies"]))
         for tag in tags:
             abi = "cp311-abi3" if native else "py3-none"
@@ -102,10 +104,15 @@ def test_public_comparison_selects_only_matching_validated_wheels(artifact_set, 
 @pytest.mark.parametrize('mode', ['wheel', 'editable'])
 @pytest.mark.parametrize('fault', [None, 'wrong-run', 'wrong-source', 'wrong-tag',
                                   'changed-artifact', 'changed-pypi'])
-def test_published_recheck_binds_source_receipts_and_public_bytes(artifact_set, monkeypatch,
-                                                               mode, fault):
+@pytest.mark.parametrize('historical_python_minimum', [False, True])
+def test_published_recheck_binds_source_receipts_and_public_bytes(
+        artifact_set, monkeypatch, mode, fault, historical_python_minimum):
     repository, artifacts, bundle = artifact_set
     release.stage(repository, artifacts, bundle, **IDENTITY)
+    if historical_python_minimum:
+        # Current validation tools must still recheck old tagged sources.
+        path = repository / 'pyproject.toml'
+        path.write_text(path.read_text().replace('>=3.12', '>=3.11'))
     revision = 'b' * 40 if fault == 'wrong-source' else IDENTITY['revision']
     monkeypatch.setattr(revalidation.subprocess, 'check_output', lambda *a, **kw: revision)
     public_check = Mock()
@@ -197,6 +204,17 @@ def test_preflight_requires_exact_tag_version_and_coordinated_pins(artifact_set,
     monkeypatch.setenv("GITHUB_REPOSITORY", "someone/a-fork")
     with pytest.raises(AssertionError):
         release.preflight(repository, f"refs/tags/v{version}")
+
+
+def test_publication_rejects_old_application_minimum_without_changing_native(artifact_set):
+    repository, artifacts, output = artifact_set
+    assert release.projects(repository)['native']['requires-python'] == '>=3.11'
+    path = repository / 'pyproject.toml'
+    path.write_text(path.read_text().replace('>=3.12', '>=3.11'))
+    with pytest.raises(AssertionError):
+        release.preflight(repository, IDENTITY['ref'])
+    with pytest.raises(AssertionError):
+        release.stage(repository, artifacts, output, **IDENTITY)
 
 
 def remote_file(filename, data=b"validated"):
@@ -325,7 +343,7 @@ def test_workflow_gates_uploads_and_verifies_native_before_application():
     assert "python scripts/release.py fetch-native" in ci
     public = text.split('  public-installations:\n', 1)[1]
     assert 'needs: [prepare, verify-application]' in public
-    assert 'python-version: ["3.11", "3.12", "3.13", "3.14"]' in public
+    assert 'python-version: ["3.12", "3.13", "3.14"]' in public
     assert 'platform: [linux-x86_64, macos-arm64, macos-intel, windows-x64]' in public
     assert '--public-pypi' in public
     assert '--mode wheel public-expected' in public

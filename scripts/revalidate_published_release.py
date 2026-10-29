@@ -42,8 +42,12 @@ def _validate_installation(repository: Path, bundle: Path, *, tag: str,
     assert mode in ('wheel', 'editable'), mode
     assert re.fullmatch(r'[1-9][0-9]*', run_id), 'invalid original release run ID'
     ref = f'refs/tags/{tag}'
-    release.preflight(repository, ref)
-    metadata = release.projects(repository)
+    # A historical release keeps its recorded Python minimum. Publication
+    # still requires the current minimum through release.preflight's default.
+    application = tomllib.loads((repository / 'pyproject.toml').read_text())['project']
+    python_requirement = application['requires-python']
+    release.preflight(repository, ref, application_requires_python=python_requirement)
+    metadata = release.projects(repository, application_requires_python=python_requirement)
     revision = subprocess.check_output(
         ['git', '-c', f'safe.directory={repository}', 'rev-parse', 'HEAD'],
         cwd=repository, text=True,
