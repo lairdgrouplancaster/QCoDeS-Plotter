@@ -1,8 +1,16 @@
 """Appearance numeric edits commit intact through real Qt keyboard events."""
 
+import json
+import os
+import sys
+import time
+import traceback
+from collections import deque
+from contextlib import contextmanager
+
 import numpy as np
 import pytest
-from PyQt6 import QtCore, QtTest
+from PyQt6 import QtCore, QtGui, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 
 from tests.windows.test_plot_integration import wait_for
@@ -17,6 +25,156 @@ from tests.windows.test_typed_run_keyboard_launch import (
 )
 
 typed_run_window = _typed_run_window
+
+
+class _NumericEditTrace(QtCore.QObject):
+    """Observe one pending edit without delivering or consuming Qt events."""
+
+    FOCUS_EVENTS = (QtCore.QEvent.Type.FocusIn, QtCore.QEvent.Type.FocusOut)
+    WINDOW_EVENTS = (QtCore.QEvent.Type.Show, QtCore.QEvent.Type.Hide,
+                     QtCore.QEvent.Type.WindowActivate, QtCore.QEvent.Type.WindowDeactivate)
+    KEY_EVENTS = (QtCore.QEvent.Type.KeyPress, QtCore.QEvent.Type.KeyRelease)
+
+    def __init__(self, plot, dialog, spin, style_name):
+        super().__init__()
+        self.plot, self.dialog, self.spin = plot, dialog, spin
+        self.editor = spin.lineEdit()
+        self.style_name = style_name
+        self.started = time.monotonic_ns()
+        self.events = deque(maxlen=64)
+        self.checkpoints = {}
+        self.total_events = 0
+        self.phase = "setup"
+
+    @staticmethod
+    def identity(obj):
+        if obj is None:
+            return None
+        try:
+            title = obj.windowTitle() if isinstance(obj, qtw.QWidget) and obj.isWindow() else ""
+            if isinstance(obj, QtGui.QWindow):
+                title = obj.title()
+            return f"{type(obj).__name__}@{id(obj):x}:{obj.objectName()[:40]}:{title[:80]}"
+        except RuntimeError:
+            return "<deleted Qt object>"
+
+    @staticmethod
+    def callers():
+        return [f"{os.path.basename(frame.filename)}:{frame.lineno}:{frame.name}"
+                for frame in traceback.extract_stack(limit=4)[:-1]]
+
+    def record(self, kind, **detail):
+        app = qtw.QApplication.instance()
+        self.total_events += 1
+        entry = {"ns": time.monotonic_ns() - self.started,
+                 "phase": self.phase, "event": kind, **detail}
+        try:
+            native = self.dialog.windowHandle()
+            style = self.plot._trace_styles.get(self.plot.label)
+            entry.update(
+                text=self.editor.text(), focus=self.editor.hasFocus(),
+                value=self.spin.value(), style=getattr(style, self.style_name, None),
+                active=self.identity(app.activeWindow()),
+                focused=self.identity(app.focusWidget()),
+                focus_window=self.identity(app.focusWindow()),
+                native_active=native.isActive() if native is not None else None,
+                native_exposed=native.isExposed() if native is not None else None,
+            )
+        except RuntimeError as error:
+            entry["snapshot_error"] = str(error)
+        self.events.append(entry)
+
+    def checkpoint(self, phase):
+        self.phase = phase
+        self.record("checkpoint")
+        self.checkpoints[phase] = dict(self.events[-1])
+
+    def eventFilter(self, obj, event):
+        kind = event.type()
+        focus = kind in self.FOCUS_EVENTS
+        window = (kind in self.WINDOW_EVENTS
+                  and (isinstance(obj, QtGui.QWindow)
+                       or isinstance(obj, qtw.QWidget) and obj.isWindow()))
+        if focus or window:
+            self.record(kind.name, subject=self.identity(obj),
+                        reason=event.reason().name if focus else None,
+                        spontaneous=event.spontaneous())
+        elif kind in self.KEY_EVENTS and obj in (self.spin, self.editor):
+            self.record(kind.name, subject=self.identity(obj), key=event.key(), modifiers=event.modifiers().value,
+                        key_text=event.text(), spontaneous=event.spontaneous())
+        return False
+
+    def report(self):
+        app = qtw.QApplication.instance()
+        rows = list(self.events)
+        payload = {"pid": os.getpid(), "parent_pid": os.getppid(),
+                   "worker": os.environ.get("PYTEST_XDIST_WORKER", "main"),
+                   "platform": app.platformName(), "qt_runtime": QtCore.qVersion(),
+                   "qt_compile": QtCore.QT_VERSION_STR, "python": sys.version,
+                   "field": self.style_name, "checkpoints": self.checkpoints, "events": rows}
+        # The Windows wrapper retains only the last 32 KiB of pytest output.
+        while True:
+            payload["dropped_events"] = self.total_events - len(rows)
+            encoded = json.dumps(payload, separators=(",", ":"))
+            if len(encoded) <= 12000 or len(rows) <= 1:
+                break
+            rows.pop(0)
+        print("QPLOT_NUMERIC_EDIT_TRACE " + encoded, flush=True)
+
+
+@contextmanager
+def _numeric_edit_diagnostics(plot, dialog, spin, style_name):
+    trace = _NumericEditTrace(plot, dialog, spin, style_name)
+    app = qtw.QApplication.instance()
+    connections = []
+    with pytest.MonkeyPatch.context() as observe:
+        def watch_method(obj, name):
+            original = getattr(obj, name)
+
+            def call(*args, **kwargs):
+                trace.record(name, arguments=[str(value)[:60] for value in args],
+                             callers=trace.callers())
+                return original(*args, **kwargs)
+
+            observe.setattr(obj, name, call)
+
+        for name in ("refresh_rows", "_sync_controls_from_selection"):
+            watch_method(dialog, name)
+        watch_method(spin, "setValue")
+        for name, owner, signal in (("editingFinished", spin, spin.editingFinished),
+                                    ("valueChanged", spin, spin.valueChanged),
+                                    ("textChanged", trace.editor, trace.editor.textChanged),
+                                    ("applicationStateChanged", app, app.applicationStateChanged)):
+            def record_signal(*args, name=name):
+                trace.record(name, arguments=[str(value)[:60] for value in args],
+                             callers=trace.callers())
+
+            signal.connect(record_signal)
+            connections.append((owner, signal, record_signal))
+
+        def focus_changed(old, new):
+            trace.record("focusChanged", old=trace.identity(old), new=trace.identity(new))
+
+        def focus_window_changed(window):
+            trace.record("focusWindowChanged", new=trace.identity(window))
+
+        for signal, callback in ((app.focusChanged, focus_changed),
+                                 (app.focusWindowChanged, focus_window_changed)):
+            signal.connect(callback)
+            connections.append((app, signal, callback))
+        app.installEventFilter(trace)
+        try:
+            trace.checkpoint("before_toggle")
+            yield trace.checkpoint
+        except BaseException:
+            trace.checkpoint("failure")
+            trace.report()
+            raise
+        finally:
+            app.removeEventFilter(trace)
+            for owner, signal, callback in connections:
+                if not sip.isdeleted(owner):
+                    signal.disconnect(callback)
 
 
 @pytest.fixture
@@ -135,15 +293,23 @@ def test_uncommitted_fraction_survives_live_refresh(
         plot = open_plot("signal_a")
         plot.appearance_action.trigger()
         dialog = plot._plot_appearance_dialog
-        if toggle is not None:
-            QtTest.QTest.mouseClick(getattr(dialog, toggle), QtCore.Qt.MouseButton.LeftButton)
-        editor = _replace_text(getattr(dialog, field), int(value))
-        worker = plot.worker
-        wait_for(lambda: plot.worker is not worker)
-        QtTest.QTest.qWait(150)
-        assert editor.text() == str(int(value))
-        QtTest.QTest.keyClicks(editor, ".5")
-        QtTest.QTest.keyClick(editor, QtCore.Qt.Key.Key_Tab)
-        assert getattr(plot._trace_styles[plot.label], style_name) == value
-        assert _rendered_value(plot.line, field) == value
-        np.testing.assert_array_equal(plot.line.getOriginalDataset()[1], [1., 2., 3., 4.])
+        with _numeric_edit_diagnostics(
+            plot, dialog, getattr(dialog, field), style_name,
+        ) as checkpoint:
+            if toggle is not None:
+                QtTest.QTest.mouseClick(getattr(dialog, toggle), QtCore.Qt.MouseButton.LeftButton)
+            checkpoint("before_typing")
+            editor = _replace_text(getattr(dialog, field), int(value))
+            checkpoint("after_typing")
+            worker = plot.worker
+            wait_for(lambda: plot.worker is not worker)
+            checkpoint("worker_replaced")
+            QtTest.QTest.qWait(150)
+            checkpoint("before_text_assertion")
+            assert editor.text() == str(int(value))
+            checkpoint("commit_fraction")
+            QtTest.QTest.keyClicks(editor, ".5")
+            QtTest.QTest.keyClick(editor, QtCore.Qt.Key.Key_Tab)
+            assert getattr(plot._trace_styles[plot.label], style_name) == value
+            assert _rendered_value(plot.line, field) == value
+            np.testing.assert_array_equal(plot.line.getOriginalDataset()[1], [1., 2., 3., 4.])

@@ -383,12 +383,74 @@ unchanged and their earlier stopping instructions apply to those campaigns.
 
 ### Publication checkpoint and recommendation
 
+- **Outstanding CI follow-up:** final pushed documentation head
+  `6ab5b2790896d664c0f25c4274336f71b917c4bf` passed the complete local suite,
+  but its Windows Python 3.14 shard 1/2 reports **3,091 passed, 127 skipped,
+  71 passing subtests and one failure**. Existing keyboard/live-refresh test
+  expected uncommitted editor text `12` and observed normalized `12.0`.
+  The exact text assertion remains unchanged while targeted reproduction
+  distinguishes application behavior from focus/event orchestration.
+  No new application finding or test-only correction is classified yet.
+  The completed head has **45/47 successful checks**: every other job passed,
+  including coverage (**6,384 passed, 42 skipped, 91 warnings, 82% coverage**,
+  1,858.37 s); the failed Windows job also fails the Required checks gate.
+  Nine independent actual-Qt controls preserve raw `12` through live refresh
+  with uninterrupted focus, while queued focus loss alone produces `12.0`
+  through a normal commit. The original Windows focus-event source remains
+  unknown. Eighteen traced original workflows also pass with uninterrupted
+  focus and no intermediate control rebuild or commit. Independent review
+  concludes no application or test correction is justified; an attempted
+  activation-gap hypothesis was falsified and excluded. One unchanged
+  exact-head Windows rerun also failed: dots-size raw `7` became `7.0`
+  (first failure was marker-size `12` to `12.0`), with **3,091 passed,
+  127 skipped and 71 passing subtests**, 1,382.11 s. Blind retries stop here.
+  All 22 original tests also pass with an isolated official macOS Qt 6.12 /
+  QCoDeS 0.62 overlay. The regular local Qt is 6.11.2/QCoDeS 0.61; the project
+  environment remains unchanged. Eighty separate-process offscreen activation
+  cycles do not disturb editing; same-process activation causes a normal
+  commit. Qt's offscreen focus state is process-local, and the Windows launcher
+  preserves `QT_QPA_PLATFORM=offscreen`. Cross-worker native focus theft is not
+  supported by this evidence. The actual Windows event origin remains unknown.
+  `/private/tmp/qplot-windows-focus-environment-assessment.json` records the
+  dependency origins, controls and official Qt source comparison.
+  No repair is yet justified. Assertions and deadlines remain intact; no new
+  investigation round is authorized.
+  [Failure job](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40957089132/job/123740832020),
+  `/private/tmp/qplot-r47-49-final-windows-failure.log`,
+  `qplot-r47-49-final-coverage-success.log` and
+  `qplot-final-focus-contract-receipt.json`; independent review:
+  `/private/tmp/qplot-final-keyboard-integration-review.json`.
+  Retry evidence: `/private/tmp/qplot-r47-49-windows-retry-failure.log`,
+  [retry job](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40957089132/job/123759005935).
+- A bounded, independently approved diagnostic now observes only the three
+  existing live-edit cases in `test_appearance_numeric_keyboard.py`. It records
+  focus/window/key events, text/value/commit signals, delegated control updates
+  and retained phase checkpoints; failure output stays within the Windows log
+  tail budget. All 17 original assertions and all seven original functions'
+  operations/order are preserved after removing observation-only wrappers.
+  There are no added event pumps, waits, focus changes, retries or retyping.
+  Original 22 cases and three forced-focus controls pass; three independent
+  observer contracts verify pass-through, restoration, bounded reporting,
+  exception identity and safe cleanup even after owner deletion. The latter
+  intercepted a diagnostic-draft cleanup crash, corrected before application.
+  This is instrumentation, **not a third test-only correction or a Windows
+  repair**. Timing overhead and pre-dispatch observation remain limitations.
+  Frozen test hash: `df2c65b6c3569287bcfe34d1c8861b6e3a9e82643e12deaf4af6f99dbd002cb4`.
+  `/private/tmp/qplot-numeric-diagnostics-author-receipt.json` and
+  `qplot-numeric-diagnostics-review/receipt.json` bind author and independent
+  evidence. Earlier 455-file freezes/full-suite/artifact audits remain historical;
+  only this test module and the log change for the diagnostic run. All application,
+  native, workflow, dependency, assertions and timeout policies remain unchanged.
+  Coordinator verification of the applied module: **22 passed in 26.44 s**;
+  whole-tree Ruff and whitespace checks pass. Log:
+  `/private/tmp/qplot-numeric-diagnostics-repository.log`.
 - Investigation stops at round 49. Both application fixes and both test-only
   integration corrections are independently approved; final local validation,
   startup, artifact and evidence checks pass. Application commit `1459397`
   and test-correction commit `55db3fa` contain the reviewed implementation.
-- At this log's final update, publication of its documentation-only commit
-  and verification of that exact pushed revision are the remaining steps.
+- At this checkpoint, publish the reviewed diagnostic, inspect its actual
+  Windows focus/commit evidence, and resolve any confirmed cause with separate
+  review and regression validation. Verify the exact final pushed revision.
   [Draft PR #94](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/94)
   records the final SHA, required check results and links, avoiding a recursive
   log edit solely to embed its own commit hash. Pending checks are not passes.
