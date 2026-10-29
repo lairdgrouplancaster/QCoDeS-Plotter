@@ -37,9 +37,9 @@ def assert_snap(window, owner, key, physical_x, physical_y, view_x, view_y, inde
     scene_pos = owner.mapViewToScene(point)
     assert window.plot.sceneBoundingRect().contains(scene_pos)
     window.plot.scene().sigMouseMoved.emit(scene_pos)
-    assert window.pos_labels["x"].text() == f"x = {window.format_cursor_number(physical_x[index])}"
-    assert window.pos_labels["y"].text() == f"y = {window.format_cursor_number(physical_y[index])}"
-    assert window.pos_labels["index"].text() == f"[{index}]"
+    assert window.pos_labels["x"].text() == f"{window.format_cursor_number(physical_x[index])}"
+    assert window.pos_labels["y"].text() == f"{window.format_cursor_number(physical_y[index])}"
+    assert window.pos_labels["index"].text().replace(" ", "") == f"[{index}]"
     assert f"snapped to point {index})" in window.trace_label.text()
     nearest = window._nearest_trace_point(scene_pos)
     assert nearest.label == key
@@ -60,7 +60,7 @@ def test_phase_fft_log_x_keeps_first_sample_and_cursor_values(loaded_plot, no_ca
     click_control(window, "phasemapCheck")
     click_control(window, "fftCheck")
     click_control(window, "logXCheck")
-    window.snap_to_trace_action.trigger()
+    window.snap_to_trace_action.setChecked(True)
     assert window.snap_to_trace_action.isChecked()
     physical_x, physical_y = np.arange(10, 73), np.ones(63)
     view_x, view_y = np.log10(physical_x), physical_y
@@ -81,8 +81,8 @@ def test_phase_fft_log_x_keeps_first_sample_and_cursor_values(loaded_plot, no_ca
     )
     qtw.QApplication.sendEvent(viewport, event)
     qtw.QApplication.processEvents()
-    assert window.pos_labels["x"].text() == f"x = {window.format_cursor_number(10)}"
-    assert window.pos_labels["index"].text() == "[0]"
+    assert window.pos_labels["x"].text() == f"{window.format_cursor_number(10)}"
+    assert window.pos_labels["index"].text().replace(" ", "") == "[0]"
     # Log toggles and leaving/re-entering phase map must rebuild the sample
     # mapping without shifting indices or retaining the previous marker owner.
     for log_x in (False, True):
@@ -155,7 +155,7 @@ def test_supported_native_snap_samples_and_secondary_ownership(
     if subtract_mean:
         controls = (*controls, "subtractMeanCheck")
     set_controls(window, controls)
-    window.snap_to_trace_action.trigger()
+    window.snap_to_trace_action.setChecked(True)
     for key, line in window.lines.items():
         for other in window.lines.values():
             other.setVisible(other is line)
@@ -191,7 +191,7 @@ def test_native_snap_uses_full_samples_with_clipping_and_downsampling(
 ):
     window = loaded_plot
     set_controls(window, controls)
-    window.snap_to_trace_action.trigger()
+    window.snap_to_trace_action.setChecked(True)
     # Establish ownership before activating rendering reductions. Each case
     # then snaps both primary and merged data in their assigned viewbox.
     for key in window.lines:

@@ -2,7 +2,13 @@
 
 All notable user-facing changes are recorded here.
 
-## 1.6.3 — Unreleased
+## 1.7.0 — Unreleased
+
+### Changed
+
+- Enable snap-to-trace by default and make it available for traces over heatmaps.
+- Compact cursor coordinates into `[nx, ny] (vx, vy, vz)` with monospaced,
+  fixed-width numeric fields.
 
 ### Fixed
 

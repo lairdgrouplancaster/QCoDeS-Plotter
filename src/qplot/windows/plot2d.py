@@ -22,6 +22,7 @@ from ._display_precision import (
     heatmap_display_range_is_finite,
 )
 from ._mixed_plots import MixedPlotMixin
+from ._plot1d_snap import Plot1DSnapMixin
 from ._plot2d_sweeps import Plot2DSweepMixin
 from ._plot_axis_scaling import _install_flush_axis_draw_specs
 from ._plotWin import plotWidget
@@ -32,6 +33,7 @@ _HEATMAP_VIEW_RELOAD_MIN_FRACTION = 0.95
 
 
 class plot2d(
+        Plot1DSnapMixin,
         Plot2DSweepMixin,
         MixedPlotMixin,
         plotWidget,
@@ -332,10 +334,6 @@ class plot2d(
         self._install_plot_control_view_range_preserver()
         self.__dict__["z_index"] = None
         
-        posLabelx = qtw.QLabel("z= ")
-        self.toolbarCo_ord.addWidget(posLabelx)
-        self.pos_labels["z"] = posLabelx
-        self.apply_cursor_label_widths()
         self._init_heatmap_downsample_warning_button()
         
 ###############################################################################
@@ -1636,7 +1634,7 @@ class plot2d(
             index_label.setText("")
         z_label = labels.get("z")
         if z_label is not None:
-            z_label.setText("z =")
+            z_label.setText("")
 
 
     def _invalidate_heatmap_geometry(self) -> None:

@@ -215,11 +215,18 @@ def _scene_distance_squared(
 
 
 class Plot1DSnapMixin(_Plot1DSnapBase):
-    """Snap-to-trace cursor readout for 1D plot windows."""
+    """Snap-to-trace cursor readout for line and mixed plot windows."""
+
+    def __init__(self, *args, **kwargs):
+        self.snap_to_trace_action = None
+        self.trace_label = None
+        self.snap_marker = None
+        self._snap_marker_view = None
+        super().__init__(*args, **kwargs)
 
     def initLabels(self):
         """
-        Sets up coordinate labels and trace snapping command for 1d plots.
+        Sets up coordinate labels and the trace snapping command.
 
         """
         super().initLabels()
@@ -247,11 +254,12 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
                 )
             )
         self.snap_to_trace_action.toggled.connect(self._snap_to_trace_toggled)
+        self.snap_to_trace_action.setChecked(True)
 
 
     def initMenu(self):
         """
-        Adds 1d-specific commands to the plot window menu bar.
+        Adds trace snapping to the plot window menu bar.
 
         """
         super().initMenu()
@@ -316,12 +324,17 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         if nearest is None:
             self._hide_snap_marker()
             self._clear_snap_report()
-            self._set_cursor_index_label("")
+            super().mouseMoved(pos)
             return
 
+        if "z" in self.pos_labels:
+            self.hide_hover_pixel_outline()
+            self.pos_labels["z"].setText("")
+            self.pos_labels["z"].hide()
+            self._cursor_z_separator.hide()
         self._set_cursor_index_label(f"[{nearest.point_number - 1}]")
-        self.pos_labels["x"].setText(f"x = {self.format_cursor_number(nearest.x_value)}")
-        self.pos_labels["y"].setText(f"y = {self.format_cursor_number(nearest.y_value)}")
+        self.pos_labels["x"].setText(self.format_cursor_number(nearest.x_value))
+        self.pos_labels["y"].setText(self.format_cursor_number(nearest.y_value))
         self._show_snap_report(nearest.label, nearest.point_number)
         self._show_snap_marker(
             nearest.x_view_value,
@@ -349,24 +362,27 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
     def _update_coordinate_context(self, label=None, point_number=None):
         """Show ``Run N: measurement vs setpoint`` and optional snap detail."""
 
-        if self.trace_label is None:
+        trace_label = self.__dict__.get("trace_label")
+        if trace_label is None:
             return
 
         run_id, vertical, horizontal, tooltip = self._coordinate_context_parts(label)
         message = f"Run {run_id}: {vertical} vs {horizontal}"
         if point_number is not None:
             message += f" (snapped to point {point_number - 1})"
-        self.trace_label.setText(message)
-        self.trace_label.setToolTip(tooltip)
-        self.trace_label.adjustSize()
-        self.trace_label.updateGeometry()
+        trace_label.setText(message)
+        trace_label.setToolTip(tooltip)
+        trace_label.adjustSize()
+        trace_label.updateGeometry()
         self.toolbarCo_ord.updateGeometry()
 
 
     def _coordinate_context_parts(self, label=None):
         """Return run and human-readable plotted-axis names for the message."""
 
-        line = self.lines.get(label) if label is not None else self.__dict__.get("line")
+        line = self.__dict__.get("lines", {}).get(label) if label is not None else None
+        if line is None:
+            line = self.__dict__.get("line")
         source = getattr(line, "from_win", self)
         try:
             dataset = source.ds
@@ -405,6 +421,8 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             horizontal_axis,
             )
         vertical_name = source_options.get(source_axis)
+        if getattr(source, "operation_kind", None) == "sweeper" and source_axis == "y":
+            vertical_name = source.param.name
         if vertical_name is None:
             try:
                 source_param = source.param
@@ -449,7 +467,10 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         nearest = None
         nearest_distance = None
 
-        for label, line in self.lines.items():
+        lines = self.__dict__.get("lines")
+        if lines is None:
+            lines = {self.label: self.__dict__.get("line")}
+        for label, line in lines.items():
             data = _line_snap_data(line)
             if data is None:
                 continue

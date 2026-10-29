@@ -199,7 +199,7 @@ def test_real_ghz_plot_toolbar_and_marker_follow_pointer(ghz_plot, method, logar
     window.resize(1103, 731)
     # Use the actual user-facing action and scene signal, with floating-point
     # positions so tests can put the pointer exactly on plotted coordinates.
-    window.snap_to_trace_action.trigger()
+    window.snap_to_trace_action.setChecked(True)
     assert window.snap_to_trace_action.isChecked()
     window.plot.setLogMode(x=logarithmic, y=logarithmic)
     if method is not None:
@@ -226,10 +226,10 @@ def test_real_ghz_plot_toolbar_and_marker_follow_pointer(ghz_plot, method, logar
                 assert nearest.point_number == index + 1
                 assert nearest.x_value == raw_x[index]
                 window.plot.scene().sigMouseMoved.emit(point)
-                assert window.pos_labels["index"].text() == f"[{index}]"
+                assert window.pos_labels["index"].text().replace(" ", "") == f"[{index}]"
                 assert f"snapped to point {index})" in window.trace_label.text()
-                assert window.pos_labels["x"].text() == f"x = {window.format_cursor_number(raw_x[index])}"
-                assert window.pos_labels["y"].text() == f"y = {window.format_cursor_number(raw_y[index])}"
+                assert window.pos_labels["x"].text() == f"{window.format_cursor_number(raw_x[index])}"
+                assert window.pos_labels["y"].text() == f"{window.format_cursor_number(raw_y[index])}"
                 assert window._snap_marker_view is owner
                 np.testing.assert_array_equal(window.snap_marker.getData(), [[x[index]], [y[index]]])
 
@@ -247,4 +247,4 @@ def test_real_ghz_plot_toolbar_and_marker_follow_pointer(ghz_plot, method, logar
             )
             qtw.QApplication.sendEvent(viewport, event)
             qtw.QApplication.processEvents()
-            assert window.pos_labels["index"].text() == f"[{index}]"
+            assert window.pos_labels["index"].text().replace(" ", "") == f"[{index}]"

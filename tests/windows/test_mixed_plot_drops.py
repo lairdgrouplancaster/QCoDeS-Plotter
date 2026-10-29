@@ -105,6 +105,44 @@ def _added(target, run):
     return layer
 
 
+def test_snap_defaults_and_heatmap_trace_readout(mixed_plot):
+    _main, target, runs = mixed_plot
+    assert target.snap_to_trace_action.isChecked()
+    assert target.snap_to_trace_action in target._menu_by_title("&View").actions()
+    target.show()
+    qtw.QApplication.processEvents()
+    if target.operation_kind == "plot2d":
+        # A heatmap alone keeps its pixel readout even with snapping selected.
+        owner = target._primary_heatmap_viewbox()
+        point = owner.mapViewToScene(QtCore.QPointF(1, 10))
+        target.mouseMoved(point)
+        assert target.pos_labels["index"].text().replace(" ", "") == "[1,0]"
+        assert float(target.pos_labels["z"].text()) == 11
+        _drop(target, runs["line"])
+        line = _added(target, runs["line"])
+    else:
+        line = target.line
+    owner = line.getViewBox()
+    point = owner.mapViewToScene(QtCore.QPointF(1, 1))
+    target.mouseMoved(point)
+    assert target.pos_labels["index"].text().replace(" ", "") == "[1]"
+    assert float(target.pos_labels["x"].text()) == 1
+    assert float(target.pos_labels["y"].text()) == 1
+    assert target.snap_marker.isVisible()
+    target.resize(1200, 600)
+    qtw.QApplication.processEvents()
+    field = target.pos_labels["y"]
+    assert field.parentWidget().width() > field.geometry().right()
+    if target.operation_kind == "plot2d":
+        assert not target.hover_pixel_outline.isVisible()
+        assert target.pos_labels["z"].isHidden()
+        target.snap_to_trace_action.setChecked(False)
+        point = target._primary_heatmap_viewbox().mapViewToScene(QtCore.QPointF(1, 10))
+        target.mouseMoved(point)
+        assert not target.pos_labels["z"].isHidden()
+        assert float(target.pos_labels["z"].text()) == 11
+
+
 def _assert_scene_data_order(target):
     """Check Qt's drawing order, including graphics parents on spare axes."""
     scene_items = target.plot.scene().items()

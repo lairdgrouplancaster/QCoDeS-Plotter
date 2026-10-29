@@ -9,6 +9,7 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._dataset_handle import DatasetKey, TraceKey
 from qplot.windows._native_transforms import NativePlotDataItem
+from qplot.windows._plot1d_snap import Plot1DSnapMixin
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._widgets import (
     expandingComboBox,
@@ -73,7 +74,7 @@ class _AxisChangeTransaction:
     finalized: bool = False
 
 
-class sweeper(plotWidget):
+class sweeper(Plot1DSnapMixin, plotWidget):
     """
     A plotWidget which displays a 1d sweep on an 2d plot.
     Produced throught he context menu of the plotItem in plot2d.

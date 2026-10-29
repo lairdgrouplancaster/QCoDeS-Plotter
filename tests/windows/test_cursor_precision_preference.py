@@ -47,7 +47,7 @@ def test_invalid_precision_is_rejected(cfg, value):
 
 
 @pytest.mark.parametrize("heatmap", [False, True])
-@pytest.mark.parametrize("figures, expected", [(6, "1.23457"), (3, "1.23"), (1, "1")])
+@pytest.mark.parametrize("figures, expected", [(6, " 1.23457e+000"), (3, " 1.23e+000"), (1, "  1e+000")])
 def test_free_and_heatmap_readouts(cfg, heatmap, figures, expected):
     cfg.update(CURSOR_SIGNIFICANT_FIGURES_KEY, figures)
     point = QtCore.QPointF(1.23456789, 1.23456789)
@@ -66,10 +66,10 @@ def test_free_and_heatmap_readouts(cfg, heatmap, figures, expected):
     )
     host.format_cursor_number = lambda value: plotWidget.format_cursor_number(host, value)
     plotWidget.mouseMoved(host, point)
-    assert host.pos_labels["x"].text() == f"x = {expected}"
-    assert host.pos_labels["y"].text() == f"y = {expected}"
+    assert host.pos_labels["x"].text() == expected
+    assert host.pos_labels["y"].text() == expected
     if heatmap:
-        assert host.pos_labels["z"].text() == f"z = {expected}"
+        assert host.pos_labels["z"].text() == expected
 
 
 @pytest.mark.parametrize("snapped", [False, True])
@@ -83,11 +83,11 @@ def test_existing_plot_updates_when_precision_is_applied(loaded_plot, snapped):
     qtw.QApplication.processEvents()
     point = owner.mapViewToScene(QtCore.QPointF(1.23456789, 1.23456789))
     window.mouseMoved(point)
-    assert window.pos_labels["x"].text() == "x = 1.23457"
+    assert window.pos_labels["x"].text() == " 1.23457e+000"
     window.config.update(CURSOR_SIGNIFICANT_FIGURES_KEY, 3)
     window.apply_current_settings()
-    assert window.pos_labels["x"].text() == "x = 1.23"
-    assert window.pos_labels["y"].text() == "y = 1.23"
+    assert window.pos_labels["x"].text() == " 1.23e+000"
+    assert window.pos_labels["y"].text() == " 1.23e+000"
 
 
 @pytest.mark.parametrize("window_type", [plotWidget, plot2d])
@@ -101,7 +101,7 @@ def test_coordinate_fields_have_equal_stable_fixed_widths(cfg, window_type):
     window._install_plot_control_view_range_preserver = lambda: None
     window._init_heatmap_downsample_warning_button = lambda: None
     try:
-        window.initLabels()
+        plotWidget.initLabels(window)
         window.resize(1200, 400)
         window.show()
         for figures in (1, 6, 17):
@@ -116,16 +116,17 @@ def test_coordinate_fields_have_equal_stable_fixed_widths(cfg, window_type):
             assert index_label.minimumWidth() == index_label.maximumWidth()
             positions = None
             for index, value in zip(
-                ("[0,0]", "[9999999,9999999]", ""),
+                (("[0,0]", "[9999999,9999999]", "") if window_type is plot2d
+                 else ("[0]", "[9999999]", "")),
                 (0.0, -1.23456789e-308, 1.7976931348623157e308),
                 strict=True,
             ):
                 window._set_cursor_index_label(index)
-                assert index_label.fontMetrics().horizontalAdvance(index) < index_label.width()
+                assert index_label.fontMetrics().horizontalAdvance(index_label.text()) <= index_label.width()
                 for axis, label in window.pos_labels.items():
                     if axis in ("x", "y", "z"):
-                        label.setText(f"{axis} = {window.format_cursor_number(value)}")
-                        assert label.fontMetrics().horizontalAdvance(label.text()) < label.width()
+                        label.setText(window.format_cursor_number(value))
+                        assert label.fontMetrics().horizontalAdvance(label.text()) <= label.width()
                 qtw.QApplication.processEvents()
                 current = [label.geometry().x() for label in labels]
                 if positions is not None:

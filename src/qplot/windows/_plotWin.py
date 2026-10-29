@@ -932,21 +932,37 @@ class plotWidget(
         
         self.pos_labels = {}
 
-        posLabelIndex = qtw.QLabel("")
-        self.toolbarCo_ord.addWidget(posLabelIndex)
-        self.pos_labels["index"] = posLabelIndex
-        
-        posLabelx = qtw.QLabel("x= ")
-        self.toolbarCo_ord.addWidget(posLabelx)
-        self.pos_labels["x"] = posLabelx
-        
-        posLabely = qtw.QLabel("y= ")
-        self.toolbarCo_ord.addWidget(posLabely)
-        self.pos_labels["y"] = posLabely
-        
-        self.toolbarCo_ord.addWidget(qtw.QLabel("  "))
+        font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
+        container = qtw.QWidget()
+        # Allow small plot windows to clip the readout without increasing their
+        # minimum width, while retaining its full size hint when space permits.
+        container.setMinimumWidth(1)
+        layout = qtw.QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.toolbarCo_ord.addWidget(container)
+        for axis in ("index", "x", "y", "z"):
+            if axis == "z" and getattr(self, "operation_kind", None) != "plot2d":
+                continue
+            if axis != "index":
+                separator = qtw.QLabel(" (" if axis == "x" else ", ")
+                separator.setFont(font)
+                separator.setFixedWidth(separator.fontMetrics().horizontalAdvance(separator.text()))
+                layout.addWidget(separator)
+                if axis == "z":
+                    self._cursor_z_separator = separator
+            label = qtw.QLabel("")
+            label.setFont(font)
+            label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            layout.addWidget(label)
+            self.pos_labels[axis] = label
+        closing = qtw.QLabel(")")
+        closing.setFont(font)
+        closing.setFixedWidth(closing.fontMetrics().horizontalAdvance(")"))
+        layout.addWidget(closing)
+        layout.addStretch()
         self.apply_cursor_label_widths()
-        
+
         self.plot.scene().sigMouseMoved.connect(self.mouseMoved)
     
     
@@ -1476,37 +1492,20 @@ class plotWidget(
 
     def format_cursor_number(self, value: float) -> str:
         """Format a coordinate using the current cursor precision preference."""
-        return self.formatNum(value, sf=self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY))
+        figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
+        if not isfinite(value):
+            return f"{value:>{figures + 7}}"
+        mantissa, exponent = f"{value:.{figures - 1}e}".split("e")
+        return f"{mantissa:>{figures + 2}}e{int(exponent):+04d}"
 
 
     def apply_cursor_label_widths(self) -> None:
-        """Reserve equal coordinate widths independent of the current values."""
+        """Keep monospaced fields stable across signs, values and exponents."""
         labels = self.__dict__.get("pos_labels", {})
-        index_label = labels.get("index")
-        if index_label is not None:
-            index_width = max(
-                index_label.fontMetrics().horizontalAdvance(
-                    f"[{digit * 7},{digit * 7}]"
-                ) + 12
-                for digit in "0123456789"
-            )
-            index_label.setFixedWidth(index_width)
-        coordinates = [labels[axis] for axis in ("x", "y", "z") if axis in labels]
-        if not coordinates:
-            return
         figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
-        # Allow a sign, decimal point, three exponent digits.
-        # Measure every digit so proportional fonts also fit their widest one.
-        width = max(
-            label.fontMetrics().horizontalAdvance(
-                f"{axis} = -{digit}.{digit * (figures - 1)}e+{digit * 3}"
-            ) + 12
-            for label in coordinates
-            for axis in ("x", "y", "z")
-            for digit in "0123456789"
-        )
-        for label in coordinates:
-            label.setFixedWidth(max(self._label_width, width))
+        for axis, label in labels.items():
+            characters = (18 if "z" in labels else 9) if axis == "index" else figures + 7
+            label.setFixedWidth(label.fontMetrics().horizontalAdvance("0" * characters))
 
 
     def _set_cursor_index_label(self, text: str) -> None:
@@ -1516,6 +1515,9 @@ class plotWidget(
         """
         label = self.pos_labels.get("index")
         if label is not None:
+            if text:
+                indices = text.strip("[]").split(",")
+                text = "[" + ", ".join(index.strip().rjust(7) for index in indices) + "]"
             label.setText(text)
 
 
@@ -1927,7 +1929,7 @@ class plotWidget(
                 self.hide_hover_pixel_outline()
             z_label = self.pos_labels.get("z")
             if z_label is not None:
-                z_label.setText("z =")
+                z_label.setText("")
             return
     
         # get x, y values.
@@ -1976,9 +1978,12 @@ class plotWidget(
         
         # Format text into a easy to read format
         index_txt = ""
-        x_txt = f"x = {self.format_cursor_number(physical_x)}"
-        y_txt = f"y = {self.format_cursor_number(physical_y)}"
+        x_txt = self.format_cursor_number(physical_x)
+        y_txt = self.format_cursor_number(physical_y)
         
+        if "_cursor_z_separator" in self.__dict__:
+            self._cursor_z_separator.show()
+            self.pos_labels["z"].show()
         # For 2d plots.
         if self.pos_labels.get("z", 0):
             sample_at = getattr(self, "heatmap_sample_at", None)
@@ -1989,16 +1994,16 @@ class plotWidget(
                 )
             if sample is not None:
                 i, j, x, y, z = sample
-                index_txt = f"[{i},{j}]"
-                x_txt = f"x = {self.format_cursor_number(x)}"
-                y_txt = f"y = {self.format_cursor_number(y)}"
-                self.pos_labels["z"].setText(f"z = {self.format_cursor_number(z)}")
+                index_txt = f"[{i}, {j}]"
+                x_txt = self.format_cursor_number(x)
+                y_txt = self.format_cursor_number(y)
+                self.pos_labels["z"].setText(self.format_cursor_number(z))
                 if hasattr(self, "show_hover_pixel_outline"):
                     self.show_hover_pixel_outline(i, j)
                 else:
                     self.z_index = [i, j]
             else:
-                self.pos_labels["z"].setText("z =")
+                self.pos_labels["z"].setText("")
                 if hasattr(self, "hide_hover_pixel_outline"):
                     self.hide_hover_pixel_outline()
                 else:
