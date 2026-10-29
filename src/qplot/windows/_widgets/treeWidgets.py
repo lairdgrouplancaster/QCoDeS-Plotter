@@ -5,6 +5,7 @@ from typing import cast
 from PyQt6 import (
     QtCore,
     QtGui,
+    sip,
 )
 from PyQt6 import (
     QtWidgets as qtw,
@@ -1491,7 +1492,19 @@ class RunList(qtw.QTreeWidget):
             text="&Plot all",
         )
         self._set_action_shortcut(open_all, "run.plot_selected_all")
-        open_all.triggered.connect(lambda _,: main.open_selected_run_all())
+        guid = item.guid
+        load_generation = getattr(main, "_database_load_generation", None)
+
+        def launch_current(callback, *args, **kwargs):
+            # A queued input must not reuse this menu after selection or source
+            # publication has replaced the row that supplied its measurements.
+            if (getattr(main, "_database_load_generation", None) == load_generation
+                    and self._item_for_guid(guid) is item
+                    and self.currentItem() is item
+                    and item in self.selectedItems()):
+                callback(*args, **kwargs)
+
+        open_all.triggered.connect(lambda _: launch_current(main.open_selected_run_all))
         menu.addAction(open_all)
 
         if main.ds is None:
@@ -1523,19 +1536,29 @@ class RunList(qtw.QTreeWidget):
             # may be missing
             if param is None:
                 open_win.triggered.connect(
-                    lambda _, name=parameter_name: main.open_selected_measurement(name)
+                    lambda _, name=parameter_name: launch_current(main.open_selected_measurement, name)
                 )
             else:
                 open_win.triggered.connect(
-                    lambda _, selected_param=param: main.openPlot(
+                    lambda _, selected_param=param: launch_current(main.openPlot,
                         params=[selected_param]
                     )
                 )
 
             menu.addAction(open_win)
 
-        # Display context menu
-        menu.exec(self.mapToGlobal(pos))
+        # Model signals remain available when source publication blocks the
+        # RunList's own signals. Ordinary incremental metadata updates do not
+        # reset the model and leave this menu usable.
+        self.itemSelectionChanged.connect(menu.close)
+        model = self.model()
+        if model is not None:
+            model.modelAboutToBeReset.connect(menu.close)
+        try:
+            menu.exec(self.mapToGlobal(pos))
+        finally:
+            if not sip.isdeleted(menu):
+                menu.deleteLater()
 
     @QtCore.pyqtSlot()
     def openKeyboardMenu(self):

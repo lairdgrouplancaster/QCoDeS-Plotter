@@ -408,28 +408,38 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
 
     def _sync_heatmap_colorbar_items(self, *, rescale=False):
         self._update_plot_annotation()
-        if self.operation_kind == "plot1d":
+        line_host = self.operation_kind == "plot1d"
+        if line_host:
             layers = self.__dict__.get("heatmaps", {})
             if not layers:
                 bar = self.__dict__.get("bar")
                 if bar is not None:
                     bar.hide()
                 return
-            if "bar" not in self.__dict__ and self._data_colorbar_levels() is not None:
+        if "bar" not in self.__dict__ and self._data_colorbar_levels() is not None:
+            if line_host:
                 self._colorbar_manual_levels = None
                 self._init_colorbar_scale_controls()
-                items = self._heatmap_colorbar_items()
-                self.bar = self.plot.addColorBar(
-                    items, colorMap=self._colorbar_colormap(),
-                    rounding=self._data_colorbar_rounding(), width=self._configured_colorbar_width(),
-                    colorMapMenu=False,
-                )
-                self._heatmap_colorbar_item_ids = tuple(id(item) for item in items)
-                self._set_colorbar_tick_formatter()
+            else:
+                # Source promotion can attach ready overlays before this
+                # heatmap host publishes its first data. They need the shared
+                # scale now, including when the primary load fails or stalls.
+                self.__dict__["_colorbar_pending_primary"] = True
+            items = self._heatmap_colorbar_items()
+            self.bar = self.plot.addColorBar(
+                items, colorMap=self._colorbar_colormap(),
+                rounding=self._data_colorbar_rounding(), width=self._configured_colorbar_width(),
+                colorMapMenu=False,
+            )
+            self._heatmap_colorbar_item_ids = tuple(id(item) for item in items)
+            self._set_colorbar_tick_formatter()
+            if line_host:
                 for key, line in self.__dict__.get("lines", {}).items():
                     self._apply_trace_style(key, line)
-                self.config.theme.style_plotItem(self)
-                self.apply_axis_major_tick_count_preference()
+            self.config.theme.style_plotItem(self)
+            self.apply_axis_major_tick_count_preference()
+            rescale = True
+            if line_host:
                 action = QtGui.QAction("Color scale…", self)
                 action.triggered.connect(self.open_colorbar_scale_dialog)
                 menu_bar = self.menuBar()
@@ -439,6 +449,7 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
                         if menu is not None:
                             menu.addAction(action)
                         break
+        if line_host:
             bar = self.__dict__.get("bar")
             if bar is not None:
                 bar.show()

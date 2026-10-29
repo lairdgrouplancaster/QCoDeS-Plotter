@@ -177,7 +177,17 @@ def promote_plot_source(main: Any, owner: Any, selected: list[tuple[str, Any]]) 
             remapped_order.insert(0, (dataset.kind, key))
         replacement._plot_item_order = remapped_order
         replacement._sync_plot_item_order()
-        for name in ("subtractMeanCheck", "phasemapCheck", "fftCheck", "derivativeCheck"):
+        # Keep the retained curves' rendering choices, including settings the
+        # user may have temporarily disabled. Copy individual controls rather
+        # than PlotItem state, which would also replace axis ownership/views.
+        for name in ("downsampleSpin", "alphaSlider", "gridAlphaSlider", "maxTracesSpin"):
+            getattr(replacement.plot.ctrl, name).setValue(getattr(owner.plot.ctrl, name).value())
+        for name in (
+                "subtractMeanCheck", "phasemapCheck", "fftCheck", "derivativeCheck",
+                "downsampleCheck", "autoDownsampleCheck", "subsampleRadio",
+                "meanRadio", "peakRadio", "clipToViewCheck", "alphaGroup",
+                "autoAlphaCheck", "xGridCheck", "yGridCheck",
+                ):
             getattr(replacement.plot.ctrl, name).setChecked(getattr(owner.plot.ctrl, name).isChecked())
         if "_colorbar_colormap_name" in owner.__dict__:
             replacement._colorbar_colormap_name = owner._colorbar_colormap_name
@@ -187,6 +197,13 @@ def promote_plot_source(main: Any, owner: Any, selected: list[tuple[str, Any]]) 
         replacement._colorbar_manual_levels = owner.__dict__.get("_colorbar_manual_levels")
         replacement._sync_heatmap_colorbar_items(rescale=True)
         _copy_view(owner, replacement)
+        # Rebuild averages only after the surviving curves have their final
+        # mapping and viewport; never transfer the old generated average.
+        replacement.plot.ctrl.averageGroup.setChecked(owner.plot.ctrl.averageGroup.isChecked())
+        # Native trace limits include generated averages. Restore them only
+        # after those curves exist, retaining the same visibility semantics.
+        for name in ("forgetTracesCheck", "maxTracesCheck"):
+            getattr(replacement.plot.ctrl, name).setChecked(getattr(owner.plot.ctrl, name).isChecked())
         replacement.refreshWindow(force=True)
     except Exception:
         for win in list(main.windows):

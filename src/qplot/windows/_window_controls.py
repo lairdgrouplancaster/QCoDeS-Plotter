@@ -1,6 +1,6 @@
 from collections import Counter
 
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 
 from ._commands import create_action
@@ -70,6 +70,9 @@ def add_standard_window_controls(window):
 
     """
     window_menu = window.menuBar().addMenu("&Window")
+    closed = getattr(window, "closed", None)
+    if closed is not None and callable(getattr(closed, "connect", None)):
+        closed.connect(window_menu.close)
 
     main_front_back_action = create_action("window.main_front_back", window)
     main_front_back_action.triggered.connect(lambda: toggle_main_window_front_back(window))
@@ -78,7 +81,7 @@ def add_standard_window_controls(window):
     window_menu.addSeparator()
 
     minimize_action = create_action("window.minimize", window)
-    minimize_action.triggered.connect(window.showMinimized)
+    minimize_action.triggered.connect(lambda: minimize_window(window))
     window_menu.addAction(minimize_action)
 
     maximize_action = create_action("window.maximize_restore", window)
@@ -187,6 +190,8 @@ def _add_window_menu_action(menu, target_window, text):
 def focus_qplot_window(target_window):
     """Restore, raise, and activate a qPlot window selected from the menu."""
 
+    if _window_is_retired(target_window):
+        return
     if target_window.isMinimized():
         target_window.showNormal()
     elif not target_window.isVisible():
@@ -194,6 +199,19 @@ def focus_qplot_window(target_window):
 
     target_window.raise_()
     target_window.activateWindow()
+
+
+def _window_is_retired(window):
+    """Cached menu actions may outlive a plot's data and Qt ownership."""
+    return (
+        isinstance(window, QtCore.QObject) and sip.isdeleted(window)
+    ) or getattr(window, "_closed", False)
+
+
+def minimize_window(window):
+    """Minimize only a window which still owns its displayed data."""
+    if not _window_is_retired(window):
+        window.showMinimized()
 
 
 def add_confirmation_options(window, menu):
@@ -397,6 +415,8 @@ def toggle_maximized(window):
     Toggles a window between maximized and normal size.
 
     """
+    if _window_is_retired(window):
+        return
     if window.isMaximized():
         window.showNormal()
     else:
@@ -408,6 +428,8 @@ def toggle_fullscreen(window):
     Toggles a window between full-screen and normal size.
 
     """
+    if _window_is_retired(window):
+        return
     if window.isFullScreen():
         window.showNormal()
     else:

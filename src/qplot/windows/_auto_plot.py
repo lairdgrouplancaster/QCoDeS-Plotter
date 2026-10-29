@@ -96,6 +96,15 @@ class AutoPlotQueue(QtCore.QObject):
         self.runs.clear()
         self.finished.clear()
 
+    def discard_pending(self):
+        """Close queued plots without replaying them or disabling Auto-plot."""
+        self.timer.stop()
+        if self.active is not None:
+            self.active[1].cancel()
+            self.active = None
+        self.finished.update(self.runs)
+        self.runs.clear()
+
     def enqueue(self, guids):
         metadata = {
             run.get("guid"): run

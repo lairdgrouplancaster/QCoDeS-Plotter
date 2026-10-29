@@ -470,9 +470,13 @@ class plot2d(
                 > self.__dict__.get("_colorbar_operation_apply_generation", 0)
                 and self._colorbar_manual_levels is None
                 )
+            initial_primary_levels = bool(
+                self.__dict__.get("_colorbar_pending_primary", False)
+                and self._colorbar_manual_levels is None
+                )
             color_levels = self._colorbar_manual_levels
             if color_levels is None:
-                if not hasattr(self, "bar") or autoLevels or operation_auto_levels:
+                if not hasattr(self, "bar") or autoLevels or operation_auto_levels or initial_primary_levels:
                     color_levels = self._data_colorbar_levels()
                 else:
                     color_levels = self.bar.levels()
@@ -530,11 +534,12 @@ class plot2d(
             # The dependent-variable label may have changed when an operation
             # such as differentiation was added or removed.
             self._sync_colorbar_axis_scaling()
-            if autoLevels or operation_auto_levels:
+            if autoLevels or operation_auto_levels or initial_primary_levels:
                 self.__dict__["_colorbar_manual_levels"] = None
                 self.scaleColorbar()
             elif self._colorbar_manual_levels is not None:
                 self._set_colorbar_levels(*self._colorbar_manual_levels)
+            self.__dict__.pop("_colorbar_pending_primary", None)
             
             self._restore_heatmap_interactions()
             if not self._refresh_publication_source_is_current(

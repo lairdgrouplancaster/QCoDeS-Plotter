@@ -1917,10 +1917,10 @@ class _HeatmapAppearanceControls(qtw.QWidget):
 
         self.opacity_slider.valueChanged.connect(self.opacity.setValue)
         self.opacity.valueChanged.connect(self.opacity_slider.setValue)
-        self.opacity.valueChanged.connect(self._apply_selection)
-        self.visible.toggled.connect(self._apply_selection)
-        self.x_axis.currentTextChanged.connect(self._apply_axis_selection)
-        self.y_axis.currentTextChanged.connect(self._apply_axis_selection)
+        self.opacity.valueChanged.connect(lambda _value: self._apply_selection("opacity"))
+        self.visible.toggled.connect(lambda _checked: self._apply_selection("visible"))
+        self.x_axis.currentTextChanged.connect(lambda _text: self._apply_axis_selection("x"))
+        self.y_axis.currentTextChanged.connect(lambda _text: self._apply_axis_selection("y"))
         self.swap_axes.toggled.connect(self._swap_axes_toggled)
         self.color_scale_button.clicked.connect(self._open_color_scale)
         self.add_heatmap_combo.currentIndexChanged.connect(
@@ -2263,27 +2263,34 @@ class _HeatmapAppearanceControls(qtw.QWidget):
             bool(keys) and self.owner._primary_heatmap_key not in keys
         )
 
-    def _apply_selection(self, *_args: Any) -> None:
+    def _apply_selection(self, property_name: str) -> None:
         if self._building:
             return
         keys = self._selected_keys()
         self._update_control_enabled_states(bool(keys))
+        visible = self.visible.isChecked()
+        opacity = self.opacity.value() / 100
         for key in keys:
             layer = self.owner.heatmaps[key]
-            self.owner._set_layer_visibility(layer, self.visible.isChecked())
-            self.owner._set_layer_opacity(layer, self.opacity.value() / 100)
+            if property_name == "visible":
+                self.owner._set_layer_visibility(layer, visible)
+            else:
+                self.owner._set_layer_opacity(layer, opacity)
         self.refresh_rows()
 
-    def _apply_axis_selection(self, *_args: Any) -> None:
+    def _apply_axis_selection(self, axis: str) -> None:
         if self._building:
             return
         keys = self._selected_keys()
         self._update_control_enabled_states(bool(keys))
+        selected_side = self.x_axis.currentText() if axis == "x" else self.y_axis.currentText()
         for key in keys:
+            layer = self.owner.heatmaps[key]
+            x_side, y_side = self.owner._heatmap_axis_sides(layer)
             self.owner._set_layer_axes(
-                self.owner.heatmaps[key],
-                self.x_axis.currentText(),
-                self.y_axis.currentText(),
+                layer,
+                selected_side if axis == "x" else x_side,
+                selected_side if axis == "y" else y_side,
             )
 
 

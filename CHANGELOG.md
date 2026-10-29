@@ -2,7 +2,82 @@
 
 All notable user-facing changes are recorded here.
 
-## 1.6.2 — Unreleased
+## 1.6.3 — Unreleased
+
+### Fixed
+
+- Use declared setpoints for full-dataset statistics of inferred QCoDeS
+  measurements. Numeric inference inputs no longer replace or swap the reported
+  axes, and text or complex inference inputs no longer prevent statistics.
+- Refuse full-dataset statistics for complex measurements or setpoints and for
+  finite values or summaries outside the display range, instead of silently
+  discarding imaginary components or displaying misleading infinities or zeros.
+- Distinguish an exactly cancelling mean from a nonzero mean that underflows to
+  zero, reporting unsupported statistics explicitly while retaining valid zero
+  means and recorded sample precision.
+- Keep heatmap-cut color changes safe before data arrives or after a failed or
+  empty load. During an axis change, recolor the existing cut and marker using
+  their committed axes until the new data is ready.
+- Keep source heatmap markers at the committed cut position while cut axes are
+  changing, preserving merged traces and correct rollback after cancellation.
+- Explain when marquee-selection means or standard deviations are outside the
+  display range, including in copied statistics, instead of reporting false zeros.
+- Preserve configured clipping-limit precision for extended floating-point
+  measurements, keeping subsequent derivatives and CSV exports correct.
+- Close plots published by Auto-plot or pending loads while a close confirmation
+  is open, before Close Database releases their readers and dataset handles.
+- Cancel plot requests already queued when Close All is accepted, including
+  Auto-plot requests, while preserving later explicit plots and new acquisitions.
+- Keep plot-launch profiling responsive when a small or cached preceding run
+  completes without capture steps; report unavailable requested stages promptly.
+- Protect existing databases and sidecars from documentation screenshot outputs,
+  including output paths that link to measurement files.
+- Close a cut's Custom Color dialog when its plot closes or a replaced database
+  invalidates the source, without applying a new color to the retired cut.
+- Keep valid visible samples in descending, reversing and phase-map traces when
+  Clip to View is enabled, preserving acquisition order and full CSV data.
+- Plot the selected measurement when Return, keypad Enter or Ctrl+Return is
+  pressed after typing a run ID, while still cancelling genuinely stale requests.
+- Preserve averaging, downsampling, clipping, opacity, grids and trace limits
+  when removing the primary dataset from a merged plot, recomputing its average
+  from the remaining traces.
+- Keep the current run selection and its preview, CSV and plot actions correct
+  when an earlier thumbnail launch finishes after a different run is selected.
+- Keep overview, metadata, raw-details and station-snapshot copy menus working
+  when live refresh replaces their rows while the menu is open, including
+  keyboard shortcuts.
+- Preserve selected Overview cells when opening their context menu, so Copy
+  Selection includes the complete selection.
+- Close marquee menus when their plot or source is retired, preventing stale
+  actions from reopening statistics for a closed plot.
+- Preserve FFT amplitudes for uneven, closely spaced timestamps and other
+  floating-point coordinates with a large common offset.
+- Preserve small FFT signals when coordinate rebasing or uniform-grid rounding
+  moves a target within a narrow recorded interval, including cancellation and
+  targets that cannot be represented exactly as floating-point numbers.
+- Dismiss run-list menus when their selection or database is replaced, so an
+  old menu cannot silently launch a different measurement.
+- Prevent stale Window-menu actions from showing retired plots, including
+  Minimize, Maximize and Full Screen after automatic source replacement.
+- Keep ready heatmap layers renderable while a promoted primary plot loads or
+  retries, using shared color limits that preserve manual ranges and include
+  the first primary data even when automatic color refresh is disabled.
+- Close native plot-control menus with retired plots and ignore delayed copy,
+  PDF and export actions, avoiding stale clipboard images and callback errors
+  after database replacement.
+- Preserve finite FFT amplitudes when resampling uneven coordinates would
+  overflow or underflow an intermediate interpolation slope, without slowing
+  large sweeps with a per-sample exact-arithmetic fallback.
+- Preserve fractional values typed into Appearance line-width, dot-size and
+  marker-size controls, including commits by Return, Tab or changing selection.
+- Preserve unrelated styles and axis assignments when changing one Appearance
+  property across selected traces or heatmaps, including independent opacity
+  and visibility and the intended dots/markers toggle behavior.
+
+The native dependency remains `qplotter-native==1.0.1`. No settings migrations
+are introduced. This entry prepares a bugfix release without publishing it.
+
+## 1.6.2 — 2026-10-22
 
 This bugfix release improves measurement correctness, live viewing and plot
 lifecycle reliability. The native dependency remains `qplotter-native==1.0.1`.
@@ -38,8 +113,7 @@ lifecycle reliability. The native dependency remains `qplotter-native==1.0.1`.
 - Main databases, WAL files and rollback journals remain physically read-only.
   Only the pinned native reader may modify the exact colocated SHM file.
 - Add regression coverage and independently reviewed fixes documented in
-  `BUG_HUNT.md`. No legacy settings migrations are introduced. This draft does
-  not publish a release.
+  `BUG_HUNT.md`. No legacy settings migrations are introduced.
 
 ## 1.6.1
 

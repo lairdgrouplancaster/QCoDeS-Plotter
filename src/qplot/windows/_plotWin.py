@@ -62,6 +62,7 @@ from ._widgets import (
     operations_widget,
 )
 from ._window_controls import (
+    _window_is_retired,
     add_application_quit_action,
     add_standard_window_controls,
     main_window_for,
@@ -1036,6 +1037,15 @@ class plotWidget(
 
         self._init_axis_scale_dialogs()
 
+        # PyQtGraph's root menus have no QWidget parent. Their nested widget
+        # popups can remain usable after this plot's dataset is retired.
+        closed = getattr(self, "closed", None)
+        if closed is not None:
+            for root in (self.vbMenu, self.plot.ctrlMenu):
+                if root is not None:
+                    for menu in (root, *root.findChildren(qtw.QMenu)):
+                        closed.connect(menu.close)
+
 
     def _remove_scene_export_context_menu(self):
         """
@@ -1073,7 +1083,8 @@ class plotWidget(
         Opens the plot context menu from the keyboard.
 
         """
-        self.vbMenu.exec(self.widget.mapToGlobal(self.widget.rect().center()))
+        if not _window_is_retired(self):
+            self.vbMenu.exec(self.widget.mapToGlobal(self.widget.rect().center()))
 
 
     def _add_plot_area_resize_menu(self, window_menu):

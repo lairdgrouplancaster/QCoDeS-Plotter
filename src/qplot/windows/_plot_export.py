@@ -42,6 +42,7 @@ from ._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_SVG,
 )
 from ._svg_export import svg_bytes, write_svg_stage
+from ._window_controls import _window_is_retired
 
 if TYPE_CHECKING:
     from ._dataset_handle import DatasetKey
@@ -600,6 +601,8 @@ class PlotExportMixin(_PlotExportBase):
         Opens a fail-closed PyQtGraph format dialog for this plot.
 
         """
+        if _window_is_retired(self):
+            return
         try:
             dialog = self._install_safe_pyqtgraph_export_dialog()
             if dialog is None:
@@ -683,6 +686,8 @@ class PlotExportMixin(_PlotExportBase):
 
     def _export_pyqtgraph_exporter(self, exporter: Any) -> bool:
         """Route an allowlisted PyQtGraph file exporter through staging."""
+        if _window_is_retired(self):
+            return False
         specification = self._pyqtgraph_export_specification(exporter)
         if specification is None:
             self.show_status("That PyQtGraph export format is disabled.", 5000)
@@ -907,6 +912,8 @@ class PlotExportMixin(_PlotExportBase):
 
     def _copy_pyqtgraph_exporter(self, exporter: Any) -> bool:
         """Allow only known clipboard-only PyQtGraph exporters."""
+        if _window_is_retired(self):
+            return False
         if type(exporter) not in _SAFE_PYQTGRAPH_COPY_EXPORTERS:
             self.show_status("Copy is disabled for that export format.", 5000)
             return False
@@ -978,6 +985,8 @@ class PlotExportMixin(_PlotExportBase):
         Prompts for a filename and saves the visible plot area as a PDF.
 
         """
+        if _window_is_retired(self):
+            return False
         try:
             destination = choose_export_path(
                 self,
@@ -1131,6 +1140,8 @@ class PlotExportMixin(_PlotExportBase):
         and any open context menu are excluded.
 
         """
+        if _window_is_retired(self):
+            return False
         resolution = self._copy_plot_image_resolution()
         if resolution == COPY_PLOT_IMAGE_RESOLUTION_300_DPI:
             return self.copy_plot_image_at_dpi(_HIGH_DPI_COPY_RESOLUTION)

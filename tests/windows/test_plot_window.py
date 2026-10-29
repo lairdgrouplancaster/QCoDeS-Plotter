@@ -2073,6 +2073,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 return pixmap
 
         window = plotWidget.__new__(plotWidget)
+        qtw.QMainWindow.__init__(window)
+        self.addCleanup(window.deleteLater)
         window.widget = PlotImageSource()
         window.status_messages = []
         window.show_status = lambda message, timeout=0: (
@@ -2972,6 +2974,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
         plot.plot([0, 1], [1, 2])
 
         window = plotWidget.__new__(plotWidget)
+        qtw.QMainWindow.__init__(window)
+        self.addCleanup(window.deleteLater)
         window.config = Config()
         window.widget = widget
         window.plot = plot
@@ -3018,6 +3022,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
         plot.plot([0, 1], [1, 2])
 
         window = plotWidget.__new__(plotWidget)
+        qtw.QMainWindow.__init__(window)
+        self.addCleanup(window.deleteLater)
         window.config = Config()
         window.widget = widget
         window.plot = plot

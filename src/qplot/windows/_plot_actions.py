@@ -178,6 +178,17 @@ class PlotActionsMixin:
 
     _selected_dataset_key: DatasetKey | None
 
+    def _cancel_pending_plot_launches(self):
+        """Retire requests accepted before Close All, retaining future launches."""
+        self._plot_launch_generation = getattr(self, "_plot_launch_generation", 0) + 1
+        pending = getattr(self, "_trusted_plot_pending", set())
+        for request in tuple(pending):
+            request.cancel()
+        pending.clear()
+        queue = getattr(self, "_auto_plot_queue", None)
+        if queue is not None:
+            queue.discard_pending()
+
     def _defer_trusted_plot_action(self, target, resume, *, target_window=None):
         if getattr(self, "_database_access_mode", None) != TRUSTED_LIVE_MODE:
             return False
@@ -225,11 +236,13 @@ class PlotActionsMixin:
             self.show_error("Plot Load Failed", "Could not load plot metadata.", str(error))
             return True
         pending.add(request)
+        launch_generation = getattr(self, "_plot_launch_generation", 0)
         timer = QtCore.QTimer(self)
         timer.setInterval(10)
 
         def poll():
             stale = (getattr(self, "_shutdown_started", False)
+                     or launch_generation != getattr(self, "_plot_launch_generation", 0)
                      or getattr(target_window, "_closed", False)
                      or service is not getattr(self, "_trusted_read_service", None)
                      or (selection is not None and selection != (
@@ -1211,7 +1224,10 @@ class PlotActionsMixin:
             dataset = self._load_run_csv_dataset(dataset_key)
             data = parameter_data_for_export(dataset, parameter_name)
             columns = _csv_scalar_columns(data, parameter_name)
-            stats_text = dataset_statistics_text(columns, parameter_name)
+            stats_text = dataset_statistics_text(
+                columns, parameter_name,
+                setpoint_names=dataset.paramspecs[parameter_name].depends_on_,
+            )
             self._require_run_csv_source_current(dataset_key)
         except DatabaseInstanceChangedError as err:
             self._handle_run_csv_source_replaced(dataset_key)
@@ -1802,23 +1818,31 @@ class PlotActionsMixin:
             return
 
         dataset_key = self._current_dataset_key(guid)
-        if (
-            self.ds is None
-            or getattr(self, "_selected_dataset_key", None) != dataset_key
-        ):
-            try:
-                handle = self._dataset_handle_for_key(dataset_key)
-                if handle is None:
-                    dataset = self._load_dataset(dataset_key)
-                else:
-                    dataset = handle.dataset
-                self._replace_selected_dataset(dataset, dataset_key)
-            except Exception as err:
-                log_exception("Preview plot run load failed", err, __name__)
-                self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
-                return
+        try:
+            if (self.ds is not None
+                    and getattr(self, "_selected_dataset_key", None) == dataset_key):
+                dataset = self.ds
+            else:
+                dataset = self._dataset_for_key(dataset_key)
+        except Exception as err:
+            log_exception("Preview plot run load failed", err, __name__)
+            self.show_error("Run Load Failed", f"Could not load run with GUID {guid}.", str(err))
+            return
 
-        self.open_preview_plot(parameter_name)
+        try:
+            # This explicit thumbnail request survives later row selection.
+            # Keep its dataset local so publication cannot replace that newer
+            # selection or redirect its preview, statistics and CSV actions.
+            for param in dataset.get_parameters():
+                if param.name == parameter_name and param.depends_on != "":
+                    self.openPlot(guid=guid, params=[param])
+                    return
+            self.show_status(f"No preview plot found for {parameter_name}.", 5000)
+        finally:
+            self._close_dataset_if_unowned(
+                dataset,
+                context="Preview plot dataset cleanup failed",
+            )
 
 
     @QtCore.pyqtSlot(object, object, str)

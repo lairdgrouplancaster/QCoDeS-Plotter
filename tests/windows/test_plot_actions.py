@@ -451,5 +451,7 @@ def test_run_preview_loads_its_requested_dataset_without_a_selection(tmp_path):
     harness.open_run_preview_plot(dataset.guid, "y")
 
     assert len(harness.load_calls) == 1
-    assert harness.ds is dataset
+    assert harness.ds is None
+    assert harness._selected_dataset_key is None
+    assert harness.plot_calls[0][1]["guid"] == dataset.guid
     assert harness.plot_calls[0][1]["params"] == [dataset.parameter]

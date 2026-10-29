@@ -1499,6 +1499,9 @@ class _TraceAppearanceDialog(qtw.QDialog):
             if combo_view is not None:
                 combo_view.setMinimumWidth(color_combo_width)
         for spin in (self.line_width, self.dots_size, self.marker_size):
+            # Applying a style rebuilds the selection controls. Commit typed
+            # fractions first so that refresh cannot insert decimals mid-edit.
+            spin.setKeyboardTracking(False)
             spin.setObjectName("traceAppearanceSpin")
             spin.setFixedWidth(76)
         self.opacity.setFixedWidth(68)
@@ -1608,16 +1611,26 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.add_trace_button.clicked.connect(self._add_selected_trace)
         self.remove_trace_button.clicked.connect(self._remove_selected_traces)
         self.swap_axes.toggled.connect(self._swap_axes_toggled)
-        for _widget, signal in [
-            (self.line_enable, self.line_enable.toggled), (self.line_color, self.line_color.currentIndexChanged),
-            (self.line_width, self.line_width.valueChanged), (self.line_style, self.line_style.currentIndexChanged),
-            (self.dots_enable, self.dots_enable.toggled), (self.dots_color, self.dots_color.currentIndexChanged),
-            (self.dots_size, self.dots_size.valueChanged), (self.marker_enable, self.marker_enable.toggled),
-            (self.marker_color, self.marker_color.currentIndexChanged), (self.marker_symbol, self.marker_symbol.currentIndexChanged),
-            (self.marker_size, self.marker_size.valueChanged), (self.x_axis, self.x_axis.currentTextChanged),
-            (self.y_axis, self.y_axis.currentTextChanged), (self.visible, self.visible.toggled), (self.opacity, self.opacity.valueChanged),
+        for property_name, signal in [
+            ("line_enabled", self.line_enable.toggled),
+            ("line_color", self.line_color.currentIndexChanged),
+            ("line_width", self.line_width.valueChanged),
+            ("line_style", self.line_style.currentIndexChanged),
+            ("dots_enabled", self.dots_enable.toggled),
+            ("dots_color", self.dots_color.currentIndexChanged),
+            ("dots_size", self.dots_size.valueChanged),
+            ("markers_enabled", self.marker_enable.toggled),
+            ("markers_color", self.marker_color.currentIndexChanged),
+            ("markers_symbol", self.marker_symbol.currentIndexChanged),
+            ("markers_size", self.marker_size.valueChanged),
+            ("x_axis", self.x_axis.currentTextChanged),
+            ("y_axis", self.y_axis.currentTextChanged),
+            ("visible", self.visible.toggled),
+            ("opacity", self.opacity.valueChanged),
         ]:
-            signal.connect(self._apply_selection)
+            signal.connect(
+                lambda _value, name=property_name: self._apply_selection(name)
+            )
         self._update_control_enabled_states(False)
         self.sync_swap_axes_control()
 
@@ -2211,25 +2224,45 @@ class _TraceAppearanceDialog(qtw.QDialog):
                 for line in selected_lines
             )
         )
-    def _apply_selection(self, *_args):
+    def _apply_selection(self, property_name: str | None = None):
         if self._building:
             return
         if not self._resolve_custom_color_selection():
             self._update_control_enabled_states(bool(self._selected_labels()))
             return
         self._update_control_enabled_states(bool(self._selected_labels()))
+        changes = {
+            "line_enabled": self.line_enable.isChecked(),
+            "line_color": self._combo_value(self.line_color),
+            "line_width": self.line_width.value(),
+            "line_style": self._combo_value(self.line_style),
+            "dots_enabled": self.dots_enable.isChecked(),
+            "dots_color": self._combo_value(self.dots_color),
+            "dots_size": self.dots_size.value(),
+            "markers_enabled": self.marker_enable.isChecked(),
+            "markers_color": self._combo_value(self.marker_color),
+            "markers_symbol": self._combo_value(self.marker_symbol),
+            "markers_size": self.marker_size.value(),
+            "x_axis": self.x_axis.currentText(),
+            "y_axis": self.y_axis.currentText(),
+            "visible": self.visible.isChecked(),
+            "opacity": self.opacity.value() / 100,
+        }
+        if property_name is not None:
+            # Mixed selections display one trace's values. Changing one editor
+            # must not copy its other styles or axis assignments to every trace.
+            changes = {property_name: changes[property_name]}
+            if property_name == "dots_enabled" and changes[property_name]:
+                changes["markers_enabled"] = False
+            elif property_name == "markers_enabled" and changes[property_name]:
+                changes["dots_enabled"] = False
         for label in self._selected_labels():
             style = self.owner._trace_styles.setdefault(
                 label,
                 self.owner._initial_trace_style(),
                 )
-            style.line_enabled = self.line_enable.isChecked(); style.line_color = self._combo_value(self.line_color); style.line_width = self.line_width.value(); style.line_style = self._combo_value(self.line_style)
-            style.dots_enabled = self.dots_enable.isChecked(); style.dots_color = self._combo_value(self.dots_color); style.dots_size = self.dots_size.value()
-            style.markers_enabled = self.marker_enable.isChecked(); style.markers_color = self._combo_value(self.marker_color); style.markers_symbol = self._combo_value(self.marker_symbol); style.markers_size = self.marker_size.value()
-            style.x_axis = self.x_axis.currentText()
-            style.y_axis = self.y_axis.currentText()
-            style.visible = self.visible.isChecked()
-            style.opacity = self.opacity.value() / 100
+            for name, value in changes.items():
+                setattr(style, name, value)
             line = self.owner.lines.get(label)
             if line is not None:
                 self.owner._apply_trace_style(label, line)

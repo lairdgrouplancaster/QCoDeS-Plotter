@@ -46,6 +46,22 @@ def _binary_total(values, check_cancelled):
     return total, denominator
 
 
+def finite_sum_is_zero(values, *, check_cancelled=lambda: None):
+    """Distinguish exact cancellation from a finite mean rounded to zero."""
+    values = np.asarray(values)
+    exact = _binary_total(values, check_cancelled)
+    if exact is not None:
+        check_cancelled()
+        return exact[0] == 0
+    total = Fraction()
+    for index, value in enumerate(values.flat):
+        if index % 1024 == 0:
+            check_cancelled()
+        total += sample_fraction(value)
+    check_cancelled()
+    return total == 0
+
+
 def finite_mean(values, *, check_cancelled=lambda: None):
     """Mean finite recorded samples, retaining integer and decimal precision."""
     values = np.asarray(values)
