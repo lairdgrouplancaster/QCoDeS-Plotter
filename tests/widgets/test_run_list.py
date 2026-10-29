@@ -1891,7 +1891,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(images[0].guid, "run-guid")
             self.assertEqual(images[0].parameter, "signal")
             self.assertEqual(images[0].axes, ["x"])
-            self.assertEqual(images[0].toolTip(), "<b>signal</b> vs <b>x</b>")
+            self.assertEqual(images[0].toolTip(), "<b>signal</b> vs<br><b>x</b>")
             self.assertEqual(images[0].width(), treeWidgets.MEASUREMENT_PREVIEW_SIZE)
             self.assertEqual(images[0].height(), treeWidgets.MEASUREMENT_PREVIEW_SIZE)
 

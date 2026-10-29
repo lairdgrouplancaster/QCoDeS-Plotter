@@ -11,6 +11,8 @@ def preview_title(parameter, axes, *, rich_text=False):
     names = [name(axis) for axis in axes if axis]
     if not names:
         return name(parameter)
+    if rich_text:
+        return f"{name(parameter)} vs<br>" + "<br>".join(names)
     if len(names) <= 2:
         axis_text = " and ".join(names)
     else:
@@ -19,7 +21,7 @@ def preview_title(parameter, axes, *, rich_text=False):
 
 
 def preview_tooltip_text(preview):
-    """Bold parameter names in image tooltips, keeping plain titles accessible."""
+    """Show bold parameter names on separate lines in image tooltips."""
     if "axes" in preview and not preview.get("unsupported"):
         return preview_title(preview["parameter"], preview.get("axes") or [], rich_text=True)
     return preview.get("title", "")

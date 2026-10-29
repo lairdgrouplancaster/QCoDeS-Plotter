@@ -1610,7 +1610,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(len(cards), 2)
         for card, title in zip(
             cards,
-            ["<b>signal</b> vs <b>x</b>", "<b>image</b> vs <b>x</b> and <b>y</b>"],
+            ["<b>signal</b> vs<br><b>x</b>", "<b>image</b> vs<br><b>x</b><br><b>y</b>"],
             strict=False,
         ):
             labels = card.findChildren(qtw.QLabel)
