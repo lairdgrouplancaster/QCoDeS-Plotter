@@ -244,9 +244,21 @@ If Python or qPlot is removed or moved, a launch error explains how to recreate
 the launcher. After recreating a moved environment, run setup from its Python.
 For an editable development installation, keep the source checkout in place too.
 On macOS, an environment inside Documents, OneDrive, or another protected folder
-may require file-access permission for the generated app in **System Settings →
-Privacy & Security → Files and Folders**. If macOS refuses access, install the
-environment in an accessible local folder and recreate the launcher there.
+may require file-access permission for the generated app. If opening qPlot.app
+shows **qPlot could not start**, open **System Settings → Privacy & Security →
+Files and Folders**, expand **qPlot**, and turn on **OneDrive** (or the folder
+containing the installation). Dismiss the error and open qPlot.app again.
+Granting this permission needs no reinstallation or launcher recreation;
+Terminal and qPlot can have different permissions for the same folder.
+
+If the needed permission is unavailable, create a fresh installation in an
+accessible local folder outside OneDrive, Documents, and Desktop, then recreate
+the launcher from that environment. Do not move an existing virtual environment.
+Recreating a launcher pointing at the same denied environment does not fix
+access permissions. See [desktop startup troubleshooting](troubleshooting.md#qplotapp-could-not-start-on-macos).
+On macOS, errors occurring before Python starts are saved
+to a unique temporary `qplot-startup.*` file; the error dialog shows its path
+and the last part of the diagnostic.
 
 To remove the launcher and its opt-in Windows registration:
 

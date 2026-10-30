@@ -34,6 +34,36 @@ macOS are the supported desktop platforms. Linux x86_64 receives headless
 installation, GUI and reader validation; interactive Linux desktop support
 is not claimed.
 
+## qPlot.app Could Not Start on macOS
+
+If qPlot works from Terminal but its app reports **qPlot could not start**, macOS
+may be denying the app access to the Python environment. This can happen when
+the environment or an editable source checkout is inside OneDrive or another
+protected folder. Terminal's file-access permissions do not automatically
+apply to qPlot.app.
+
+1. Open **System Settings → Privacy & Security → Files and Folders**.
+2. Expand **qPlot**.
+3. Turn on **OneDrive**, or the listed folder containing the installation.
+4. Dismiss the startup error and open qPlot.app again.
+
+For a disabled permission, these steps fix access without reinstalling qPlot or
+recreating the launcher. Recreating a launcher that points to the same blocked
+environment will not fix the permission. See Apple's [file and folder access guide](https://support.apple.com/en-gb/guide/mac-help/mchld5a35146/mac).
+
+If qPlot or the needed permission is not listed, create a fresh Python
+environment in an accessible local folder outside OneDrive, Documents, and
+Desktop, install qPlot there, then recreate the launcher using that environment.
+Do not move the old virtual environment: its installed paths may stop working.
+
+Newly generated macOS launchers preserve failures that occur before Python can
+start in a unique temporary `qplot-startup.*` file. The error dialog shows the
+file path and the last part of the diagnostic. An `Operation not permitted` or
+`Permission denied` error reading `.venv-mac/pyvenv.cfg` points to denied access
+to the environment. An existing launcher may still show the older generic
+message. For failures after Python starts, also check the per-launch logs
+under `~/Library/Caches/qPlot/logs`.
+
 ## Creating a Virtual Environment in VS Code
 
 If you prefer VS Code to terminal setup:

@@ -28,10 +28,6 @@ def default_destination() -> Path:
     raise ValueError("Desktop launcher setup supports macOS and Windows only.")
 
 
-def _applescript_string(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r") + '"'
-
-
 def _mac_launcher(destination: Path, python: Path, associations: bool) -> Path:
     script = destination / "Contents/Resources/launch.sh"
     # AppleScript receives Finder Open Documents events, including on an already
@@ -57,17 +53,31 @@ end open
         source_path.write_text(source, encoding="utf-8")
         subprocess.run(["/usr/bin/osacompile", "-o", str(destination), str(source_path)], check=True)
     resources = script.parent
-    error = "Python could not start. The installation may be missing, moved, or blocked by macOS privacy settings. Remove the old launcher, then run python -m qplot.desktop setup from the installed environment."
+    error = "Python could not start. Check the diagnostic below. If the installation has moved or is missing, remove the launcher and run python -m qplot.desktop setup from the repaired environment."
+    access_error = "Access to the Python installation was denied. If it is inside OneDrive or another protected folder, check qPlot in System Settings > Privacy & Security > Files and Folders, or create a fresh installation in a local folder outside OneDrive, Documents, and Desktop. Recreating the same launcher does not fix denied access."
     script.write_text(
         "#!/bin/sh\n"
+        'startup_log=$(/usr/bin/mktemp -t qplot-startup) || exit 1\n'
+        'exec 2>"$startup_log"\n'
+        'show_startup_error() {\n'
+        '  detail=$(/usr/bin/tail -c 2000 "$startup_log")\n'
+        '  /usr/bin/osascript -e "on run argv" '
+        "-e 'display alert \"qPlot could not start\" message ((item 1 of argv) & return & return & (item 2 of argv) & return & return & \"Diagnostic file: \" & (item 3 of argv))' "
+        '-e "end run" "$1" "$detail" "$startup_log"\n'
+        '}\n'
         f"if [ ! -x {shlex.quote(str(python))} ]; then\n"
-        f"  /usr/bin/osascript -e {shlex.quote('display alert "qPlot could not start" message ' + _applescript_string(error))}\n"
+        f"  printf '%s\\n' {shlex.quote('Cannot access Python executable: ' + str(python))} >&2\n"
+        f"  show_startup_error {shlex.quote(error)}\n"
         "  exit 1\nfi\n"
         f'{shlex.quote(str(python))} -I "$(/usr/bin/dirname "$0")/bootstrap.py" "$@"\n'
         "status=$?\n"
         'if [ "$status" -ne 0 ] && [ "$status" -ne 79 ]; then\n'
-        f"  /usr/bin/osascript -e {shlex.quote('display alert "qPlot could not start" message ' + _applescript_string(error))}\n"
-        "fi\n", encoding="utf-8",
+        "  if /usr/bin/grep -Eq 'Operation not permitted|Permission denied' \"$startup_log\"; then\n"
+        f"    show_startup_error {shlex.quote(access_error)}\n"
+        "  else\n"
+        f"    show_startup_error {shlex.quote(error)}\n"
+        "  fi\n"
+        'fi\nexit "$status"\n', encoding="utf-8",
     )
     info = destination / "Contents/Info.plist"
     with info.open("rb") as stream:

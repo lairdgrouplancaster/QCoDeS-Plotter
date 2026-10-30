@@ -295,3 +295,33 @@ def test_removal_preserves_orphan_sidecars(tmp_path, monkeypatch, fake_tools, su
     with pytest.raises(ValueError, match="database sidecar"):
         desktop.remove(destination)
     assert sidecar.read_bytes() == b"coordination"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS startup shell tools")
+@pytest.mark.parametrize("diagnostic", ["PermissionError: Operation not permitted", "Python runtime is missing"])
+def test_mac_preserves_python_startup_errors(tmp_path, request, diagnostic):
+    run_process = subprocess.run
+    request.getfixturevalue("fake_tools")
+    destination = tmp_path / "qPlot.app"
+    desktop.setup(destination)
+    shell = destination / "Contents/Resources/launch.sh"
+    python = tmp_path / "failing Python Ω"
+    python.write_text("#!/bin/sh\nprintf '%s\\n' " + desktop.shlex.quote(diagnostic) + " >&2\nexit 13\n")
+    python.chmod(0o755)
+    alert = tmp_path / "alert"
+    recorder = tmp_path / "record alert"
+    recorder.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\" > " + desktop.shlex.quote(str(alert)) + "\n")
+    recorder.chmod(0o755)
+    shell.write_text(shell.read_text().replace(desktop.shlex.quote(sys.executable), desktop.shlex.quote(str(python)))
+                     .replace("/usr/bin/osascript", desktop.shlex.quote(str(recorder))))
+    result = run_process(["/bin/sh", str(shell)], env=dict(os.environ, TMPDIR=str(tmp_path)), timeout=10)
+    assert result.returncode == 13
+    message = alert.read_text()
+    assert diagnostic in message
+    log = Path(message.splitlines()[-1])
+    assert log.read_text().strip() == diagnostic
+    if "Operation not permitted" in diagnostic:
+        assert "Recreating the same launcher does not fix denied access" in message
+        assert "Files and Folders" in message
+    else:
+        assert "repaired environment" in message
