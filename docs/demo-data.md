@@ -18,9 +18,13 @@ For performance and scaling tests, use
 `File -> Generate Test Data -> Export CSV Collection...`. The ten installed
 instruction files form a cumulative series: every file contains all the runs
 from its predecessor, followed by three larger 2D runs. Each file starts with
-five 1D traces (current, conductance, resistance, transconductance, and charge
-sensor) with the same `V_SD` range and sampling, so trace addition, removal,
+five 1D traces (current, conductance, resistance, transconductance, and current
+again) with the same `V_SD` range and sampling, so trace addition, removal,
 reordering, and secondary axes can be tested even with the smallest database.
+Every file also includes a `mixed_dimensions` run containing 1D, 2D, 3D, and 4D
+quantities with shared setpoint axes. More than 90% of the samples remain in
+1D and 2D quantities. Higher-dimensional quantities show `3D`, `4D`, etc.
+placeholders; their context menus offer CSV export and statistics.
 The nominal database sizes and largest grids are:
 
 | File | Approximate database size | Largest 2D run |
@@ -72,13 +76,43 @@ before creating files because they can write outside the selected output.
 qPlot leaves these global settings unchanged and uses an empty private station
 so synthetic measurements do not read parameters from an acquisition station.
 
-Every nonblank CSV row creates one run, named `run_1`, `run_2`, and so on. A 1D
-row sweeps `V_SD`; a 2D row sweeps both `V_SD` and `V_G`. Each measured signal
-is the sum of two sinusoids with independently randomised amplitudes,
-frequencies, and phases. For 2D runs, each sinusoid also receives independent
-frequencies along the two sweep axes, producing varied plane-wave patterns.
-The measured parameter name, label, unit, sweep ranges, and point counts are set
-in the CSV. Existing CSV or database files are not replaced unless
+The CSV has these columns:
+
+```csv
+run,kind,name,label,unit,setpoints,start,stop,points
+mixed,axis,bias,Bias,V,,-0.1,0.1,101
+mixed,axis,gate,Gate,V,,-1,1,11
+mixed,axis,field,Magnetic field,T,,0,1,3
+mixed,measurement,current,Current,nA,bias,,,
+mixed,measurement,conductance,Conductance,uS,gate;bias,,,
+mixed,measurement,signal,Signal,a.u.,field;gate;bias,,,
+```
+
+Rows with the same `run` value belong to one QCoDeS run with that name. Runs
+and measured quantities retain their first-declaration order. An `axis` row
+declares a shared independent parameter, with finite, different endpoints and
+at least two points. Its `setpoints` cell must be blank. A `measurement` row
+lists its axes in `setpoints`, separated by semicolons, ordered from outermost
+(slowest) to innermost (fastest). Its `start`, `stop`, and `points` cells must
+be blank. Units may be blank; names and labels are required.
+
+Add as many axis rows and setpoint names as needed for higher dimensionality.
+Axis declarations may appear before or after their measurements. Names must
+be unique within a run, including across axes and measurements; each setpoint
+must refer to an axis declared in that run, and each declared axis must be used.
+Multiple quantities may share all or some axes, or use separate axes. A shared
+axis always has one definition. Each quantity records its own Cartesian grid
+once, with a sample count equal to the product of its axis point counts;
+lower-dimensional quantities are not repeated over extra axes of other
+quantities. QCoDeS stores unrelated quantities as NULL in those result rows.
+The total reported point count is the sum across measured quantities.
+
+Each signal is the sum of two sinusoids with independently randomised
+amplitudes, phases, and frequencies along every axis. Generation writes bounded
+chunks without constructing a full multidimensional grid in memory. The old
+CSV format is no longer accepted; export a new example or collection template.
+
+Existing CSV or database files are not replaced unless
 `--overwrite` is supplied. Collection export also refuses to replace existing
 collection files without `--overwrite`. Even with `--overwrite`, database
 generation refuses publication if the destination changed while generation was
@@ -99,6 +133,16 @@ a sidecar is detected before the atomic swap completes, qPlot restores the old
 main and retains an explicit
 `.qplot-publishing` safety guard until the owning SQLite application has
 resolved the sidecars.
+
+When the GUI replaces an online-only cloud file, it first downloads the existing
+destination through qPlot's cancellable, read-only cloud-prefetch helper. The
+status bar shows sync progress, using the same cloud timeout as database loading.
+The generator checks that the destination is readable before generating the new
+data, and repeats the safety checks immediately before publication. A download
+or read timeout is reported as an access failure, with the original error and
+recovery instructions. If the provider cannot supply the old file, make it
+available offline or select a new output filename. Error dialogs can be resized
+and their complete text copied with **Copy**.
 
 Run `qplot-generate-db --help` for the complete command reference.
 

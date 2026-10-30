@@ -19,6 +19,10 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from PyQt6 import QtCore, QtGui, sip
 
+from qplot.datahandling.dimensions import (
+    MAX_SUPPORTED_PLOT_DIMENSIONS,
+    unsupported_plot_message,
+)
 from qplot.datahandling.file_identity import (
     DatabaseInstance,
     database_instance,
@@ -1590,6 +1594,19 @@ class TrustedDerivedQtBridge(QtCore.QObject):
                     "image": image,
                 }
             )
+        # The renderer deliberately omits higher-dimensional images. Keep
+        # those quantities available as labelled export/statistics targets,
+        # including in mixed runs whose lower-dimensional images succeeded.
+        for parameter in parameters.values():
+            axes = list(parameter.depends_on)
+            if len(axes) > MAX_SUPPORTED_PLOT_DIMENSIONS:
+                previews.append({
+                    "parameter": parameter.name,
+                    "axes": axes,
+                    "dimension_count": len(axes),
+                    "title": unsupported_plot_message(parameter.name, axes),
+                    "unsupported": True,
+                })
         return previews, None
 
     def _unavailable_preview(self, guid: str, description: str) -> dict[str, object]:

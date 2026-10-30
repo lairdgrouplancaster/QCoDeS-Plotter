@@ -22,10 +22,10 @@ def test_generator_rejects_fifo_destination_before_opening(tmp_path, symlink):
     result = subprocess.run(
         [sys.executable, "-c", """
 import sys
-from qplot.testdata import RunSpecification, SpecificationError, generate_database
+from qplot.testdata import AxisSpecification, MeasurementSpecification, RunSpecification, SpecificationError, generate_database
 try:
     generate_database(
-        [RunSpecification(1, "current", "Current", "nA", -1., 1., 5)],
+        [RunSpecification((MeasurementSpecification("current", "Current", "nA", (AxisSpecification("V_SD", "Source-drain voltage", "V", -1., 1., 5),)),))],
         sys.argv[1], overwrite=True,
     )
 except SpecificationError:

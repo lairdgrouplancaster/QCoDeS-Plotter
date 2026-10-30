@@ -23,7 +23,12 @@ from qplot.datahandling.file_identity import (
 )
 from qplot.datahandling.readonly import DatabaseInstanceChangedError
 from qplot.datahandling.trusted_live import TrustedLiveReaderUnavailableError
-from qplot.testdata import RunSpecification, generate_database
+from qplot.testdata import (
+    AxisSpecification,
+    MeasurementSpecification,
+    RunSpecification,
+    generate_database,
+)
 from qplot.windows import _database_actions as database_actions
 
 _SQLITE_ARTIFACT_SUFFIXES = ("", "-wal", "-shm", "-journal")
@@ -63,13 +68,18 @@ def _build_qcodes_database(
 
     specifications = [
         RunSpecification(
-            dimensions=1,
-            measured_name=f"signal_{index}",
-            measured_label=f"Signal {index}",
-            measured_unit="V",
-            v_sd_start=0.0,
-            v_sd_stop=1.0,
-            v_sd_points=point_count,
+            (
+                MeasurementSpecification(
+                    f"signal_{index}",
+                    f"Signal {index}",
+                    "V",
+                    (
+                        AxisSpecification(
+                            "V_SD", "Source-drain voltage", "V", 0.0, 1.0, point_count
+                        ),
+                    ),
+                ),
+            )
         )
         for index, point_count in enumerate(point_counts, start=1)
     ]

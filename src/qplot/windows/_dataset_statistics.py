@@ -61,8 +61,12 @@ def dataset_statistics_text(columns, parameter_name, *, setpoint_names):
     # For a line, Y is the measured value; for a map, both are setpoints.
     # Match the default plot axes: the inner (second) setpoint is X,
     # and the outer (first) setpoint is Y.
-    range_names = axes[::-1] if len(axes) == 2 else (axes + [parameter_name])[:2]
-    for axis, name in zip(("X", "Y"), range_names, strict=False):
+    if len(axes) > 2:
+        ranges = [(name, name) for name in axes]
+    else:
+        range_names = axes[::-1] if len(axes) == 2 else (axes + [parameter_name])[:2]
+        ranges = list(zip(("X", "Y"), range_names, strict=False))
+    for axis, name in ranges:
         samples = values if name == parameter_name else _finite_statistics_samples(columns[name], name)
         if samples.size:
             lines.append(

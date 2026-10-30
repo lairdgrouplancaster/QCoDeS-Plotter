@@ -148,6 +148,7 @@ files = [
     "src/qplot/windows/main.py",
     "src/qplot/windows/_colorbar.py",
     "src/qplot/windows/_dataset_handle.py",
+    "src/qplot/windows/_error_dialog.py",
     "src/qplot/windows/_dragdrop.py",
     "src/qplot/windows/_help.py",
     "src/qplot/windows/_mixed_plots.py",

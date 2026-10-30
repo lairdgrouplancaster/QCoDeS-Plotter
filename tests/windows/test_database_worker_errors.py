@@ -18,7 +18,12 @@ from qplot.datahandling.trusted_live import (
 )
 from qplot.datahandling.trusted_live_supervisor import TrustedLiveReaderSupervisor
 from qplot.datahandling.trusted_presentation import TRUSTED_PRESENTATION_MAX_ERROR_BYTES
-from qplot.testdata import RunSpecification, generate_database
+from qplot.testdata import (
+    AxisSpecification,
+    MeasurementSpecification,
+    RunSpecification,
+    generate_database,
+)
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
 from tests._window_lifecycle import close_main_window
@@ -48,7 +53,25 @@ def _artifacts(path):
 
 
 def _create_database(path, name):
-    generate_database([RunSpecification(1, name, name, "V", 0.0, 1.0, 3)], path)
+    generate_database(
+        [
+            RunSpecification(
+                (
+                    MeasurementSpecification(
+                        name,
+                        name,
+                        "V",
+                        (
+                            AxisSpecification(
+                                "V_SD", "Source-drain voltage", "V", 0.0, 1.0, 3
+                            ),
+                        ),
+                    ),
+                )
+            )
+        ],
+        path,
+    )
     # Only the test-owned writer changes journal mode, before any qPlot read.
     with sqlite3.connect(path) as writer:
         assert writer.execute("PRAGMA journal_mode=DELETE").fetchone() == ("delete",)

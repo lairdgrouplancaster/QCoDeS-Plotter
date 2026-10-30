@@ -40,7 +40,12 @@ from qplot.datahandling.readonly import (
     sqlite_read_only_connection,
 )
 from qplot.datahandling.readSQL import get_runs_via_sql
-from qplot.testdata import RunSpecification, generate_database
+from qplot.testdata import (
+    AxisSpecification,
+    MeasurementSpecification,
+    RunSpecification,
+    generate_database,
+)
 from qplot.windows._dataset_handle import DatasetHandle
 
 _ROLLBACK_RUN_COUNT = 26
@@ -829,13 +834,18 @@ def _create_generated_wal_run(database_path):
     generate_database(
         [
             RunSpecification(
-                1,
-                "wal_signal",
-                "WAL signal",
-                "V",
-                -1.0,
-                1.0,
-                2,
+                (
+                    MeasurementSpecification(
+                        "wal_signal",
+                        "WAL signal",
+                        "V",
+                        (
+                            AxisSpecification(
+                                "V_SD", "Source-drain voltage", "V", -1.0, 1.0, 2
+                            ),
+                        ),
+                    ),
+                )
             )
         ],
         database_path,
@@ -1851,13 +1861,18 @@ def test_replaced_main_quarantines_unpaired_wal_without_source_changes(tmp_path)
         generate_database(
             [
                 RunSpecification(
-                    1,
-                    "replacement_signal",
-                    "Replacement signal",
-                    "V",
-                    -1.0,
-                    1.0,
-                    4,
+                    (
+                        MeasurementSpecification(
+                            "replacement_signal",
+                            "Replacement signal",
+                            "V",
+                            (
+                                AxisSpecification(
+                                    "V_SD", "Source-drain voltage", "V", -1.0, 1.0, 4
+                                ),
+                            ),
+                        ),
+                    )
                 )
             ],
             replacement_path,
@@ -1909,13 +1924,18 @@ def test_replaced_main_quarantines_unpaired_wal_without_source_changes(tmp_path)
         generate_database(
             [
                 RunSpecification(
-                    1,
-                    "second_replacement_signal",
-                    "Second replacement signal",
-                    "V",
-                    -1.0,
-                    1.0,
-                    5,
+                    (
+                        MeasurementSpecification(
+                            "second_replacement_signal",
+                            "Second replacement signal",
+                            "V",
+                            (
+                                AxisSpecification(
+                                    "V_SD", "Source-drain voltage", "V", -1.0, 1.0, 5
+                                ),
+                            ),
+                        ),
+                    )
                 )
             ],
             second_replacement_path,

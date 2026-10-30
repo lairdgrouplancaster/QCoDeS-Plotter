@@ -1,6 +1,8 @@
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.datahandling.dimensions import MAX_SUPPORTED_PLOT_DIMENSIONS
+
 from ._run_formatting import (
     one_dimensional_duplicate_point_count,
     preview_tooltip_text,
@@ -134,6 +136,8 @@ class RunPreviewCell(qtw.QWidget):
                 self.icon_size,
                 "measurementPreviewUnsupported",
                 )
+            label.exportRequested.connect(self._emit_export_requested)
+            label.statsRequested.connect(self._emit_stats_requested)
             self.content_layout.addWidget(label)
             return
 
@@ -195,13 +199,16 @@ class RunPreviewCell(qtw.QWidget):
     def _placeholder_label(self, index=0, generating=False):
         parameters = self._placeholder_parameters
         parameter = parameters[index] if index < len(parameters) else ""
-        label = DraggablePreviewImageLabel(self.guid, parameter, axes_pending=True)
-        label.dragFinished.connect(self._apply_pending_display)
+        dimensions = self._placeholder_dimensions
+        dimension = dimensions[index] if index < len(dimensions) else None
+        if dimension is not None and dimension > MAX_SUPPORTED_PLOT_DIMENSIONS:
+            label = PreviewImageLabel(parameter, plot_supported=False)
+        else:
+            label = DraggablePreviewImageLabel(self.guid, parameter, axes_pending=True)
+            label.dragFinished.connect(self._apply_pending_display)
         label.plotRequested.connect(self._emit_plot_requested)
         label.exportRequested.connect(self._emit_export_requested)
         label.statsRequested.connect(self._emit_stats_requested)
-        dimensions = self._placeholder_dimensions
-        dimension = dimensions[index] if index < len(dimensions) else None
         label.setText(f"{dimension}D" if dimension else "")
         label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         font = label.font()

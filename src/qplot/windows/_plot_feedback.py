@@ -7,6 +7,7 @@ from PyQt6.QtGui import QKeySequence
 from qplot.diagnostics import log_user_error
 
 from ._commands import CommandSpec, configure_action
+from ._error_dialog import ErrorDialog
 
 if TYPE_CHECKING:
     class _PlotWindowFeedbackBase(qtw.QMainWindow):
@@ -80,9 +81,7 @@ class PlotWindowFeedbackMixin(_PlotWindowFeedbackBase):
         if not self.visible:
             return
 
-        box = qtw.QMessageBox(qtw.QMessageBox.Icon.Warning, title, message, parent=self)
-        if details:
-            box.setDetailedText(details)
+        box = ErrorDialog(title, message, details, parent=self)
         box.exec()
 
 

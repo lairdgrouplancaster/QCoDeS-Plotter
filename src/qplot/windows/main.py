@@ -46,6 +46,7 @@ from ._config_persistence import (
 )
 from ._database_actions import DatabaseActionsMixin, TestDatabaseGenerationWorker
 from ._dataset_handle import DatasetHandle, DatasetKey
+from ._error_dialog import ErrorDialog
 from ._help import add_help_menu
 from ._plot_actions import PlotActionsMixin
 from ._preferences import (
@@ -1634,7 +1635,5 @@ class MainWindow(
         log_user_error(title, message, details, __name__)
         self.show_status(message, 10_000)
 
-        box = qtw.QMessageBox(qtw.QMessageBox.Icon.Warning, title, message, parent=self)
-        if details:
-            box.setDetailedText(details)
+        box = ErrorDialog(title, message, details, parent=self)
         box.exec()

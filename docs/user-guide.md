@@ -325,6 +325,8 @@ Common actions:
 * `Help -> Keyboard Shortcuts` shows the shortcut reference inside qPlot.
 * `Help -> Copy Diagnostic Log Path` copies the log file location for support
   or troubleshooting.
+* `Help -> Show Diagnostic Log in Finder` reveals the log on macOS. On Windows,
+  `Show Diagnostic Log in File Explorer` opens its folder.
 * `File -> Quit qPlot` closes the database and exits. Its shortcut is `Cmd+Q`
   on macOS and `Ctrl+Q` on Windows and Linux.
 * The refresh interval controls how often qPlot checks for new runs. Set it to
@@ -358,8 +360,10 @@ There are several ways to open plots:
 Parameters with one independent variable open as line plots, and parameters
 with two independent variables open as heatmaps. Measurements with three or
 more independent variables are not projected or averaged implicitly: qPlot
-shows an `nD` unsupported placeholder in the run table and leaves the data
-available for CSV export. Create an explicit 1D/2D slice before plotting it.
+shows a `3D`, `4D`, etc. placeholder in the run table and preview tab. Right-click
+the placeholder to export CSV or generate statistics, including ranges for all
+setpoint axes. Plotting and dragging these quantities are unavailable. Mixed
+runs can still plot their 1D and 2D quantities.
 
 Line plots require real-valued measurements and coordinates, including samples
 stored in QCoDeS array parameters. Complex values produce a `Plot Error` naming

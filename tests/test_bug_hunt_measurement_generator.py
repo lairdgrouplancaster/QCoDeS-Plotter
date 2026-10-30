@@ -6,7 +6,12 @@ import warnings
 import numpy as np
 import pytest
 
-from qplot.testdata import RunSpecification, generate_database
+from qplot.testdata import (
+    AxisSpecification,
+    MeasurementSpecification,
+    RunSpecification,
+    generate_database,
+)
 
 
 @pytest.mark.parametrize("surface", ["line", "slow", "fast"])
@@ -14,15 +19,19 @@ from qplot.testdata import RunSpecification, generate_database
 @pytest.mark.parametrize("bound", [1e308, float(np.finfo(float).max)])
 def test_generator_keeps_extreme_finite_sweep_coordinates(tmp_path, surface, reverse, bound):
     start, stop = (-bound, bound) if not reverse else (bound, -bound)
+    axes = [AxisSpecification(
+        "V_SD", "Source-drain voltage", "V",
+        start if surface != "fast" else 0.,
+        stop if surface != "fast" else 2., 3,
+    )]
+    if surface != "line":
+        axes.append(AxisSpecification(
+            "V_G", "Gate voltage", "V",
+            start if surface == "fast" else 0.,
+            stop if surface == "fast" else 2., 3,
+        ))
     specification = RunSpecification(
-        dimensions=1 if surface == "line" else 2,
-        measured_name="signal", measured_label="Signal", measured_unit="A",
-        v_sd_start=start if surface != "fast" else 0.,
-        v_sd_stop=stop if surface != "fast" else 2.,
-        v_sd_points=3,
-        v_g_start=(start if surface == "fast" else 0.) if surface != "line" else None,
-        v_g_stop=(stop if surface == "fast" else 2.) if surface != "line" else None,
-        v_g_points=3 if surface != "line" else None,
+        (MeasurementSpecification("signal", "Signal", "A", tuple(axes)),)
     )
     output = tmp_path / "finite.db"
     with warnings.catch_warnings(record=True) as observed:

@@ -1,4 +1,5 @@
 import os
+import stat
 import subprocess
 import sys
 import threading
@@ -12,12 +13,15 @@ from PyQt6.QtGui import QDesktopServices
 from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.datahandling.database import (
+    DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS,
     DatabaseDetailWorker,
     DatabaseExpensiveDetailWorker,
     DatabaseInfoWorker,
     DatabaseLoadWorker,
     DatabaseRefreshWorker,
     DatabaseSelectedRunWorker,
+    database_is_likely_cloud_placeholder,
+    prefetch_database_file_with_timeout,
 )
 from qplot.datahandling.database import (
     database_info_rows as database_info_rows,
@@ -283,6 +287,7 @@ def _write_export_bytes(filename, content):
 class TestDatabaseGenerationSignals(QtCore.QObject):
     """Signals emitted by background test-database generation."""
 
+    status = QtCore.pyqtSignal(str)
     finished = QtCore.pyqtSignal(str, object, object, bool)
 
 
@@ -305,13 +310,15 @@ class _TestDatabaseReplacementState:
 class TestDatabaseGenerationWorker(QtCore.QRunnable):
     """Generate a test database without blocking the GUI thread."""
 
-    def __init__(self, specifications, database_path, overwrite=False, *, read_services=()):
+    def __init__(self, specifications, database_path, overwrite=False, *,
+                 read_services=(), cloud_sync_timeout=DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS):
         super().__init__()
         self.signals = TestDatabaseGenerationSignals()
         self.specifications = list(specifications)
         self.database_path = str(database_path)
         self.overwrite = overwrite
         self._read_services = tuple(read_services)
+        self.cloud_sync_timeout = cloud_sync_timeout
         self._cancelled = threading.Event()
         self._publication_completed = threading.Event()
 
@@ -320,9 +327,10 @@ class TestDatabaseGenerationWorker(QtCore.QRunnable):
         self._cancelled.set()
 
     def run(self):
-        error = None
+        error: Exception | None = None
         try:
             self._wait_for_read_services()
+            self._prefetch_existing_output()
             generate_database(
                 self.specifications,
                 self.database_path,
@@ -346,6 +354,39 @@ class TestDatabaseGenerationWorker(QtCore.QRunnable):
         except RuntimeError as err:
             if "wrapped C/C++ object" not in str(err):
                 raise
+
+
+    def _prefetch_existing_output(self):
+        """Materialise an online-only replacement target using read-only I/O."""
+        if self._cancelled.is_set():
+            raise GenerationCancelled("Test-database generation was cancelled")
+        if not self.overwrite or not database_is_likely_cloud_placeholder(self.database_path):
+            return
+        path = Path(self.database_path)
+        before = path.lstat()
+        if not stat.S_ISREG(before.st_mode):
+            return  # The generator rejects special files without opening them.
+        try:
+            prefetch_database_file_with_timeout(
+                self.database_path,
+                timeout=self.cloud_sync_timeout,
+                status_callback=self.signals.status.emit,
+                cancelled_callback=self._cancelled.is_set,
+            )
+        except InterruptedError as error:
+            raise GenerationCancelled("Test-database generation was cancelled") from error
+        after = path.lstat()
+        # Hydration may change ctime and cloud flags, but must not silently
+        # redirect overwrite consent to another file or another data version.
+        fields = ("st_dev", "st_ino", "st_mode", "st_size", "st_mtime_ns")
+        if any(getattr(before, field) != getattr(after, field) for field in fields):
+            raise RuntimeError(
+                "The existing output database changed while downloading from cloud "
+                "storage. No replacement was generated. Retry or choose another output path."
+            )
+        self.signals.status.emit(
+            f"Generating test database {path.name}..."
+        )
 
 
     def _wait_for_read_services(self):
@@ -971,8 +1012,14 @@ class DatabaseActionsMixin:
             database_path,
             overwrite=overwrite,
             read_services=read_services,
+            cloud_sync_timeout=(
+                self.config.get("runtime_settings.cloud_sync_timeout")
+                if getattr(self, "config", None) is not None
+                else DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS
+            ),
         )
         self._test_database_generation_worker = worker
+        worker.signals.status.connect(self.test_database_generation_status)
         worker.signals.finished.connect(self.test_database_generation_finished)
         self.show_status(
             f"Generating test database {os.path.basename(database_path)}...",
@@ -980,6 +1027,12 @@ class DatabaseActionsMixin:
         )
         self.testDatabaseGenerationThreadPool.start(worker)
         return True
+
+
+    @QtCore.pyqtSlot(str)
+    def test_database_generation_status(self, message):
+        if getattr(self, "_test_database_generation_active", False):
+            self.show_status(message, 0)
 
 
     @QtCore.pyqtSlot(str, object, object, bool)

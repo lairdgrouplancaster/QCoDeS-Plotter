@@ -18,7 +18,12 @@ from qplot.datahandling.readonly import (
 from qplot.datahandling.trusted_presentation import (
     TRUSTED_PRESENTATION_MAX_ERROR_BYTES,
 )
-from qplot.testdata import RunSpecification, generate_database
+from qplot.testdata import (
+    AxisSpecification,
+    MeasurementSpecification,
+    RunSpecification,
+    generate_database,
+)
 from qplot.windows._widgets import preview as preview_module
 from qplot.windows._widgets.preview import (
     DraggablePreviewImageLabel,
@@ -44,13 +49,14 @@ class _RecordingThreadPool:
 
 def _preview_database(path: Path, seed: int):
     specification = RunSpecification(
-        dimensions=1,
-        measured_name="current",
-        measured_label="Current",
-        measured_unit="nA",
-        v_sd_start=-1.0,
-        v_sd_stop=1.0,
-        v_sd_points=5,
+        (
+            MeasurementSpecification(
+                "current",
+                "Current",
+                "nA",
+                (AxisSpecification("V_SD", "Source-drain voltage", "V", -1.0, 1.0, 5),),
+            ),
+        )
     )
     generate_database(
         [specification],

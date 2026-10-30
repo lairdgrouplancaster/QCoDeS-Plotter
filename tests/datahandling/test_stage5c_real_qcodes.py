@@ -31,7 +31,12 @@ from qplot.datahandling.trusted_live_queries import (
 )
 from qplot.datahandling.trusted_live_service import TrustedLiveReadService
 from qplot.datahandling.trusted_work_scheduler import RenderingOptions, TrustedWorkKind
-from qplot.testdata import RunSpecification, generate_database
+from qplot.testdata import (
+    AxisSpecification,
+    MeasurementSpecification,
+    RunSpecification,
+    generate_database,
+)
 from qplot.windows._trusted_derived_qt import TrustedDerivedQtBridge
 from qplot.windows._widgets.preview import PreviewImageLabel
 from qplot.windows._widgets.run_list_items import RunPreviewCell
@@ -1310,28 +1315,38 @@ def test_real_generated_unplanned_grids_get_exact_shapes_and_full_domain_sample(
     generate_database(
         (
             RunSpecification(
-                2,
-                "current",
-                "Current",
-                "nA",
-                -0.01,
-                0.01,
-                201,
-                -1.0,
-                1.0,
-                301,
+                (
+                    MeasurementSpecification(
+                        "current",
+                        "Current",
+                        "nA",
+                        (
+                            AxisSpecification(
+                                "V_SD", "Source-drain voltage", "V", -0.01, 0.01, 201
+                            ),
+                            AxisSpecification(
+                                "V_G", "Gate voltage", "V", -1.0, 1.0, 301
+                            ),
+                        ),
+                    ),
+                )
             ),
             RunSpecification(
-                2,
-                "signal",
-                "Signal",
-                "a.u.",
-                -0.02,
-                0.02,
-                301,
-                -2.0,
-                2.0,
-                451,
+                (
+                    MeasurementSpecification(
+                        "signal",
+                        "Signal",
+                        "a.u.",
+                        (
+                            AxisSpecification(
+                                "V_SD", "Source-drain voltage", "V", -0.02, 0.02, 301
+                            ),
+                            AxisSpecification(
+                                "V_G", "Gate voltage", "V", -2.0, 2.0, 451
+                            ),
+                        ),
+                    ),
+                )
             ),
         ),
         database_path,

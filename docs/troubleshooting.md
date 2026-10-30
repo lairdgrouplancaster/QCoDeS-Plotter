@@ -362,7 +362,9 @@ plot-opening failures, preview-generation failures, and background worker
 errors.
 
 Inside qPlot, use `Help -> Copy Diagnostic Log Path` to copy this path to the
-clipboard.
+clipboard. Use `Help -> Show Diagnostic Log in Finder` to reveal the file on
+macOS, or `Help -> Show Diagnostic Log in File Explorer` to open its folder on
+Windows. These commands are available in main and plot windows.
 
 ## Theme or Preference Changes Do Not Look Right
 

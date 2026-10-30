@@ -20,6 +20,8 @@ from qcodes.dataset.sqlite.database import connect
 from qcodes.parameters import ManualParameter
 
 from qplot.testdata import (
+    AxisSpecification,
+    MeasurementSpecification,
     RunSpecification,
     enable_generation_provenance_for_writer,
     generate_database,
@@ -48,7 +50,22 @@ def _bridge_complete(window, guid: str) -> bool:
 
 def _prepare_live_database(path: Path, name: str):
     generate_database(
-        [RunSpecification(1, f"{name}_seed", "Seed", "V", 0.0, 1.0, 3)],
+        [
+            RunSpecification(
+                (
+                    MeasurementSpecification(
+                        f"{name}_seed",
+                        "Seed",
+                        "V",
+                        (
+                            AxisSpecification(
+                                "V_SD", "Source-drain voltage", "V", 0.0, 1.0, 3
+                            ),
+                        ),
+                    ),
+                )
+            )
+        ],
         path,
     )
     initialise_or_create_database_at(str(path), journal_mode="WAL")

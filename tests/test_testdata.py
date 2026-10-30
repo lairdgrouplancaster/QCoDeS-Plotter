@@ -60,13 +60,18 @@ def write_specification(path, rows):
 
 def small_specification():
     return testdata_module.RunSpecification(
-        1,
-        "current",
-        "Current",
-        "nA",
-        -1.0,
-        1.0,
-        5,
+        (
+            testdata_module.MeasurementSpecification(
+                "current",
+                "Current",
+                "nA",
+                (
+                    testdata_module.AxisSpecification(
+                        "V_SD", "Source-drain voltage", "V", -1.0, 1.0, 5
+                    ),
+                ),
+            ),
+        )
     )
 
 
@@ -342,27 +347,12 @@ def test_example_csv_is_ready_to_generate(tmp_path):
     specifications = read_specifications(csv_path)
 
     assert csv_path.read_bytes().startswith(b"\xef\xbb\xbf")
-    dimensions = [
-        specification.dimensions for specification in specifications
-    ]
-    assert dimensions == [
-        1,
-        1,
-        1,
-        1,
-        1,
-        2,
-        2,
-    ]
-    assert [specification.point_count for specification in specifications] == [
-        501,
-        501,
-        501,
-        501,
-        501,
-        121 * 81,
-        121 * 81,
-    ]
+    assert len(specifications) == 3
+    measured = specifications[2].measurements
+    assert [m.dimensions for m in measured] == [1, 2, 3, 4]
+    assert [m.point_count for m in measured] == [21, 21 * 11, 3 * 11 * 21, 2 * 3 * 11 * 21]
+    quantities = [m for run in specifications for m in run.measurements]
+    assert sum(m.point_count for m in quantities if m.dimensions <= 2) > 0.8 * sum(m.point_count for m in quantities)
     with pytest.raises(SpecificationError, match="already exists"):
         write_example_csv(csv_path)
 
@@ -378,78 +368,23 @@ def test_example_cli_reports_written_path(tmp_path, capsys):
 
 def test_instruction_collection_is_cumulative_and_spans_10mb_to_30gb(tmp_path):
     output_paths = copy_instruction_collection(tmp_path)
-
     assert tuple(path.name for path in output_paths) == INSTRUCTION_FILE_NAMES
     specification_sets = [read_specifications(path) for path in output_paths]
-    assert [len(specifications) for specifications in specification_sets] == list(
-        range(10, 38, 3)
-    )
-
-    one_dimensional = [
-        specification
-        for specification in specification_sets[0]
-        if specification.dimensions == 1
-    ]
-    assert [specification.measured_name for specification in one_dimensional] == [
-        "current",
-        "conductance",
-        "resistance",
-        "transconductance",
-        "current",
-    ]
-    assert {
-        (
-            specification.v_sd_start,
-            specification.v_sd_stop,
-            specification.v_sd_points,
-        )
-        for specification in one_dimensional
-    } == {(-0.1, 0.1, 1001)}
-
-    two_dimensional = [
-        specification
-        for specification in specification_sets[0]
-        if specification.dimensions == 2
-    ]
-    assert two_dimensional[:2] == [
-        two_dimensional[0],
-        two_dimensional[0],
-    ]
-
-    for predecessor, successor in zip(
-        specification_sets[:-1],
-        specification_sets[1:],
-        strict=True,
-    ):
-        assert successor[: len(predecessor)] == predecessor
-
-    largest_runs = [
-        max(specifications, key=lambda specification: specification.point_count)
-        for specifications in specification_sets
-    ]
-    assert (largest_runs[0].v_sd_points, largest_runs[0].v_g_points) == (201, 301)
-    assert (largest_runs[-1].v_sd_points, largest_runs[-1].v_g_points) == (
-        11001,
-        17001,
-    )
-
-    # Calibrated on a generated QCoDeS database using the first collection file.
-    estimated_bytes_per_point = 35.132
-    estimated_sizes = [
-        sum(specification.point_count for specification in specifications)
-        * estimated_bytes_per_point
-        for specifications in specification_sets
-    ]
-    assert 8_000_000 <= estimated_sizes[0] <= 12_000_000
-    assert 27_000_000_000 <= estimated_sizes[-1] <= 33_000_000_000
-    assert all(
-        successor > predecessor
-        for predecessor, successor in zip(
-            estimated_sizes[:-1],
-            estimated_sizes[1:],
-            strict=True,
-        )
-    )
+    assert [len(specifications) for specifications in specification_sets] == list(range(11, 39, 3))
+    for specifications in specification_sets:
+        quantities = [m for run in specifications for m in run.measurements]
+        assert {m.dimensions for m in quantities} == {1, 2, 3, 4}
+        assert sum(m.point_count for m in quantities if m.dimensions <= 2) > 0.9 * sum(m.point_count for m in quantities)
+        mixed = next(run for run in specifications if run.name == "mixed_dimensions")
+        assert [m.dimensions for m in mixed.measurements] == [1, 2, 3, 4]
+    for predecessor, successor in zip(specification_sets[:-1], specification_sets[1:], strict=True):
+        assert successor[:len(predecessor)] == predecessor
+    # Scalar SQLite rows average about 35 bytes for separate 2D runs.
+    # The small shared mixed run has extra columns and costs about 0.5 MB.
+    targets = (10e6, 25e6, 50e6, 100e6, 250e6, 500e6, 1e9, 5e9, 10e9, 30e9)
+    for specifications, target in zip(specification_sets, targets, strict=True):
+        estimated_size = sum(run.point_count for run in specifications if run.name != "mixed_dimensions") * 35.132 + 500_000
+        assert 0.8 * target <= estimated_size <= 1.2 * target
 
 
 def test_instruction_collection_cli_exports_all_files(tmp_path, capsys):
@@ -472,39 +407,21 @@ def test_instruction_collection_cli_exports_all_files(tmp_path, capsys):
     )
 
 
-@pytest.mark.parametrize(
-    ("row", "message"),
-    [
-        (
-            ("3", "current", "Current", "nA", "-1", "1", "11", "", "", ""),
-            "dimensions must be 1 or 2",
-        ),
-        (
-            ("1", "V_SD", "Current", "nA", "-1", "1", "11", "", "", ""),
-            "measured_name cannot be V_SD or V_G",
-        ),
-        (
-            ("1", "id", "Current", "nA", "-1", "1", "11", "", "", ""),
-            "measured_name cannot be used as a QCoDeS result column",
-        ),
-        (
-            ("1", "select", "Current", "nA", "-1", "1", "11", "", "", ""),
-            "measured_name cannot be used as a QCoDeS result column",
-        ),
-        (
-            ("1", "current", "Current", "nA", "-1", "1", "11", "-2", "2", "5"),
-            "v_g_start, v_g_stop, and v_g_points must be blank for a 1D run",
-        ),
-        (
-            ("2", "current", "Current", "nA", "-1", "1", "11", "", "2", "5"),
-            "v_g_start is required",
-        ),
-    ],
-)
+@pytest.mark.parametrize(("row", "message"), [
+    (("run_1", "invalid", "x", "X", "", "", "0", "1", "3"), "kind must be axis or measurement"),
+    (("run_1", "axis", "id", "X", "", "", "0", "1", "3"), "name cannot be used as a QCoDeS result column"),
+    (("run_1", "axis", "select", "X", "", "", "0", "1", "3"), "name cannot be used as a QCoDeS result column"),
+    (("run_1", "axis", "x", "X", "", "other", "0", "1", "3"), "axis setpoints must be blank"),
+    (("run_1", "axis", "x", "X", "", "", "", "1", "3"), "start is required"),
+    (("run_1", "axis", "x", "X", "", "", "nan", "1", "3"), "start must be finite"),
+    (("run_1", "axis", "x", "X", "", "", "0", "1", "1"), "points must be at least 2"),
+    (("run_1", "measurement", "s", "S", "", "x", "0", "1", "3"), "measurement start, stop, and points must be blank"),
+    (("run_1", "measurement", "s", "S", "", "x;x", "", "", ""), "setpoints must be distinct"),
+    (("run_1", "measurement", "s", "S", "", "x", "", "", ""), "setpoint 'x' must name an axis"),
+])
 def test_invalid_rows_report_the_csv_row(tmp_path, row, message):
     csv_path = tmp_path / "invalid.csv"
     write_specification(csv_path, [row])
-
     with pytest.raises(SpecificationError, match=f"CSV row 2: {message}"):
         read_specifications(csv_path)
 
@@ -515,19 +432,11 @@ def test_generate_database_creates_named_two_sinusoid_runs(tmp_path):
     write_specification(
         csv_path,
         [
-            ("1", "current", "Current", "nA", "-2", "2", "5", "", "", ""),
-            (
-                "2",
-                "conductance",
-                "Conductance",
-                "uS",
-                "-0.1",
-                "0.1",
-                "3",
-                "-1",
-                "1",
-                "4",
-            ),
+            ('run_1', 'axis', 'V_SD', 'Source-drain voltage', 'V', '', '-2', '2', '5'),
+            ('run_1', 'measurement', 'current', 'Current', 'nA', 'V_SD', '', '', ''),
+            ('run_2', 'axis', 'V_SD', 'Source-drain voltage', 'V', '', '-0.1', '0.1', '3'),
+            ('run_2', 'axis', 'V_G', 'Gate voltage', 'V', '', '-1', '1', '4'),
+            ('run_2', 'measurement', 'conductance', 'Conductance', 'uS', 'V_SD;V_G', '', '', ''),
         ],
     )
 
@@ -638,19 +547,11 @@ def test_generate_database_writes_bounded_result_chunks(
     write_specification(
         csv_path,
         [
-            ("1", "current", "Current", "nA", "-1", "1", "5", "", "", ""),
-            (
-                "2",
-                "conductance",
-                "Conductance",
-                "uS",
-                "-0.1",
-                "0.1",
-                "2",
-                "-1",
-                "1",
-                "4",
-            ),
+            ('run_1', 'axis', 'V_SD', 'Source-drain voltage', 'V', '', '-1', '1', '5'),
+            ('run_1', 'measurement', 'current', 'Current', 'nA', 'V_SD', '', '', ''),
+            ('run_2', 'axis', 'V_SD', 'Source-drain voltage', 'V', '', '-0.1', '0.1', '2'),
+            ('run_2', 'axis', 'V_G', 'Gate voltage', 'V', '', '-1', '1', '4'),
+            ('run_2', 'measurement', 'conductance', 'Conductance', 'uS', 'V_SD;V_G', '', '', ''),
         ],
     )
     original_add_result = DataSaver.add_result
@@ -667,7 +568,7 @@ def test_generate_database_writes_bounded_result_chunks(
 
     generate_database_from_csv(csv_path, database_path)
 
-    assert result_sizes == [3, 2, 3, 1, 3, 1]
+    assert result_sizes == [3, 2, 3, 3, 2]
     output_lines = [line.strip() for line in capsys.readouterr().out.splitlines()]
     assert "Starting experimental run with id: 1." in output_lines
     assert "Starting experimental run with id: 2." in output_lines
@@ -698,7 +599,8 @@ def test_cancellation_during_batched_run_removes_temporary_database(
     database_path = tmp_path / "runs.db"
     write_specification(
         csv_path,
-        [("1", "current", "Current", "nA", "-1", "1", "10", "", "", "")],
+        [('run_1', 'axis', 'V_SD', 'Source-drain voltage', 'V', '', '-1', '1', '10'),
+            ('run_1', 'measurement', 'current', 'Current', 'nA', 'V_SD', '', '', '')],
     )
     cancellation_checks = 0
 
@@ -732,7 +634,8 @@ def test_generation_failure_reports_timestamped_stop_and_removes_temporary_datab
     database_path = tmp_path / "runs.db"
     write_specification(
         csv_path,
-        [("1", "current", "Current", "nA", "-1", "1", "5", "", "", "")],
+        [('run_1', 'axis', 'V_SD', 'Source-drain voltage', 'V', '', '-1', '1', '5'),
+            ('run_1', 'measurement', 'current', 'Current', 'nA', 'V_SD', '', '', '')],
     )
 
     def fail_run(*args, **kwargs):
@@ -759,7 +662,8 @@ def test_generation_rejects_silently_missing_result_rows(
     database_path = tmp_path / "runs.db"
     write_specification(
         csv_path,
-        [("1", "current", "Current", "nA", "-1", "1", "5", "", "", "")],
+        [('run_1', 'axis', 'V_SD', 'Source-drain voltage', 'V', '', '-1', '1', '5'),
+            ('run_1', 'measurement', 'current', 'Current', 'nA', 'V_SD', '', '', '')],
     )
 
     monkeypatch.setattr(DataSaver, "add_result", lambda *_args, **_kwargs: None)
@@ -776,7 +680,8 @@ def test_generate_database_requires_explicit_overwrite(tmp_path):
     database_path = tmp_path / "runs.db"
     write_specification(
         csv_path,
-        [("1", "current", "Current", "nA", "-1", "1", "5", "", "", "")],
+        [('run_1', 'axis', 'V_SD', 'Source-drain voltage', 'V', '', '-1', '1', '5'),
+            ('run_1', 'measurement', 'current', 'Current', 'nA', 'V_SD', '', '', '')],
     )
     generate_database_from_csv(csv_path, database_path)
 
@@ -797,7 +702,8 @@ def test_no_overwrite_publish_does_not_clobber_concurrently_created_file(
     database_path = tmp_path / "runs.db"
     write_specification(
         csv_path,
-        [("1", "current", "Current", "nA", "-1", "1", "5", "", "", "")],
+        [('run_1', 'axis', 'V_SD', 'Source-drain voltage', 'V', '', '-1', '1', '5'),
+            ('run_1', 'measurement', 'current', 'Current', 'nA', 'V_SD', '', '', '')],
     )
     original_write_run = testdata_module._write_run
 
@@ -1429,7 +1335,8 @@ def test_cli_reports_sidecar_rejection_without_changing_destination(
     database_path = tmp_path / "cli-active.db"
     write_specification(
         csv_path,
-        [("1", "current", "Current", "nA", "-1", "1", "5", "", "", "")],
+        [('run_1', 'axis', 'V_SD', 'Source-drain voltage', 'V', '', '-1', '1', '5'),
+            ('run_1', 'measurement', 'current', 'Current', 'nA', 'V_SD', '', '', '')],
     )
     testdata_module.generate_database([small_specification()], database_path)
     journal_path = Path(f"{database_path}-journal")
@@ -1673,13 +1580,18 @@ def test_overwrite_succeeds_for_quiescent_database(tmp_path):
         original_connection.close()
     assert artifact_bytes_and_mtimes(database_path).keys() == {""}
     replacement = testdata_module.RunSpecification(
-        1,
-        "replacement",
-        "Replacement",
-        "V",
-        -2.0,
-        2.0,
-        7,
+        (
+            testdata_module.MeasurementSpecification(
+                "replacement",
+                "Replacement",
+                "V",
+                (
+                    testdata_module.AxisSpecification(
+                        "V_SD", "Source-drain voltage", "V", -2.0, 2.0, 7
+                    ),
+                ),
+            ),
+        )
     )
 
     generated_path = testdata_module.generate_database(
@@ -2636,7 +2548,8 @@ def test_cli_generates_exact_reserved_output_path(tmp_path):
     database_path = output_directory / "out#%23 space 測定.db"
     write_specification(
         csv_path,
-        [("1", "current", "Current", "nA", "-1", "1", "5", "", "", "")],
+        [('run_1', 'axis', 'V_SD', 'Source-drain voltage', 'V', '', '-1', '1', '5'),
+            ('run_1', 'measurement', 'current', 'Current', 'nA', 'V_SD', '', '', '')],
     )
 
     assert main([str(csv_path), str(database_path)]) == 0

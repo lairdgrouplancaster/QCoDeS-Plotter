@@ -24,7 +24,7 @@ def unsupported_plot_message(parameter: object, axes: Iterable[object] | None) -
     axis_text = ", ".join(axis_names)
     return (
         f'{name} has {len(axis_names)} independent axes ({axis_text}). '
-        "qPlot supports 1D and 2D measurements only; displaying this data "
+        "qPlot can plot 1D and 2D measurements only; displaying this data "
         "would require an explicit slice or projection."
     )
 

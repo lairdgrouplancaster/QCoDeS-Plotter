@@ -38,6 +38,7 @@ PREVIEW_HEIGHT_PADDING = 48
 COLLAPSE_MINIMUM_RATIO = 0.25
 MAX_PREVIEW_ROWS = 50_000
 MAX_PREVIEW_GRID_CELLS = 250_000
+MAX_PREVIEW_DEPENDENCIES = 8_192
 PREVIEW_SAMPLES_PER_CELL = 4
 PREVIEW_ROWID_CHUNK = 900
 PREVIEW_FILL_EMPTY_MIN_COVERAGE = 0.75
@@ -1233,6 +1234,8 @@ class PreviewCard(qtw.QWidget):
                 preview_size,
                 "previewUnsupported",
                 )
+            label.exportRequested.connect(self.exportRequested)
+            label.statsRequested.connect(self.statsRequested)
             layout = qtw.QHBoxLayout()
             layout.setContentsMargins(0, 0, 0, 0)
             layout.addWidget(label)
@@ -1265,9 +1268,10 @@ class PreviewImageLabel(qtw.QLabel):
     exportRequested = QtCore.pyqtSignal(str)
     statsRequested = QtCore.pyqtSignal(str)
 
-    def __init__(self, parameter, *args):
+    def __init__(self, parameter, *args, plot_supported=True):
         super().__init__(*args)
         self.parameter = parameter
+        self.plot_supported = plot_supported
         self._selected = False
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.setProperty(PREVIEW_SELECTED_PROPERTY, False)
@@ -1280,8 +1284,9 @@ class PreviewImageLabel(qtw.QLabel):
         accessible_name = f"Plot preview: {title}" if title else "Plot preview"
         self.setAccessibleName(accessible_name)
         self.setAccessibleDescription(
-            "Press Enter or Space to plot. Press Menu or Shift+F10 for plot and "
-            "export actions."
+            "Press Enter or Space to plot. Press Menu or Shift+F10 for plot and export actions."
+            if self.plot_supported else
+            "Press Menu or Shift+F10 for CSV export and statistics. Plotting is unavailable."
             )
 
 
@@ -1344,7 +1349,7 @@ class PreviewImageLabel(qtw.QLabel):
 
 
     def mouseDoubleClickEvent(self, event):
-        if event.button() == QtCore.Qt.MouseButton.LeftButton and self.parameter:
+        if self.plot_supported and event.button() == QtCore.Qt.MouseButton.LeftButton and self.parameter:
             self.plotRequested.emit(self.parameter)
             event.accept()
             return
@@ -1354,7 +1359,7 @@ class PreviewImageLabel(qtw.QLabel):
 
     def keyPressEvent(self, event):
         key = event.key()
-        if self.parameter and key in (
+        if self.plot_supported and self.parameter and key in (
                 QtCore.Qt.Key.Key_Return,
                 QtCore.Qt.Key.Key_Enter,
                 QtCore.Qt.Key.Key_Space,
@@ -1392,6 +1397,7 @@ class PreviewImageLabel(qtw.QLabel):
         menu = qtw.QMenu(self)
 
         plot_action = QtGui.QAction("&Plot", menu)
+        plot_action.setEnabled(self.plot_supported)
         plot_action.triggered.connect(lambda: self.plotRequested.emit(self.parameter))
         menu.addAction(plot_action)
 
@@ -1668,6 +1674,11 @@ def generate_run_previews(
                 )
         cursor = conn.cursor()
         available_columns = _table_columns(cursor, table_name)
+        if not metadata.get("run_description"):
+            # Compact run metadata omits the full description. The union of
+            # a run's sweep axes cannot describe each quantity in a mixed
+            # run: resolve their exact QCoDeS layouts within this read view.
+            dependencies = _dependencies_from_result_layout(cursor, table_name)
         for parameter, axes in dependencies.items():
             _raise_if_preview_aborted(is_cancelled, deadline)
             if parameter not in available_columns:
@@ -1760,10 +1771,29 @@ def _unsupported_preview(parameter, axes):
         }
 
 
+def _dependencies_from_result_layout(cursor, table_name):
+    rows = cursor.execute(
+        "SELECT measured.parameter, axis.parameter "
+        "FROM dependencies AS dependency "
+        "JOIN layouts AS measured ON measured.layout_id = dependency.dependent "
+        "JOIN layouts AS axis ON axis.layout_id = dependency.independent "
+        "JOIN runs ON runs.run_id = measured.run_id "
+        "WHERE runs.result_table_name = ? "
+        "ORDER BY measured.layout_id, dependency.axis_num LIMIT ?",
+        (table_name, MAX_PREVIEW_DEPENDENCIES + 1),
+    ).fetchall()
+    if len(rows) > MAX_PREVIEW_DEPENDENCIES:
+        raise ValueError("The measurement dependencies exceed the preview limit.")
+    dependencies: dict[str, list[str]] = {}
+    for parameter, axis in rows:
+        dependencies.setdefault(parameter, []).append(axis)
+    return dependencies
+
+
 def unsupported_preview_label(preview, size, object_name):
     dimensions = int(preview.get("dimension_count") or len(preview.get("axes") or []))
-    text = f"{dimensions}D" if int(size) <= 32 else f"{dimensions}D\nunsupported"
-    label = qtw.QLabel(text)
+    label = PreviewImageLabel(preview.get("parameter", ""), plot_supported=False)
+    label.setText(f"{dimensions}D")
     label.setObjectName(object_name)
     label.setAccessibleName(f"{dimensions}D measurement unsupported")
     label.setFixedSize(int(size), int(size))

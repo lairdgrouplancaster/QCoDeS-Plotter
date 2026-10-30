@@ -35,6 +35,8 @@ from qplot.datahandling.readonly import (
     sqlite_read_only_connection,
 )
 from qplot.testdata import (
+    AxisSpecification,
+    MeasurementSpecification,
     RunSpecification,
     enable_generation_provenance_for_writer,
     generate_database,
@@ -204,13 +206,14 @@ def _install_unrelated_main_and_wal(work_directory, *, stem="selected"):
 
 def _generated_specification():
     return RunSpecification(
-        1,
-        "current",
-        "Current",
-        "nA",
-        -1.0,
-        1.0,
-        5,
+        (
+            MeasurementSpecification(
+                "current",
+                "Current",
+                "nA",
+                (AxisSpecification("V_SD", "Source-drain voltage", "V", -1.0, 1.0, 5),),
+            ),
+        )
     )
 
 

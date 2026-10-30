@@ -45,91 +45,61 @@ from qplot.datahandling.file_identity import (
 )
 
 CSV_COLUMNS = (
-    "dimensions",
-    "measured_name",
-    "measured_label",
-    "measured_unit",
-    "v_sd_start",
-    "v_sd_stop",
-    "v_sd_points",
-    "v_g_start",
-    "v_g_stop",
-    "v_g_points",
+    "run",
+    "kind",
+    "name",
+    "label",
+    "unit",
+    "setpoints",
+    "start",
+    "stop",
+    "points",
 )
 
+# Setpoints are ordered from the outermost to the innermost sweep.
 EXAMPLE_ROWS = (
-    ("1", "current", "Current", "nA", "-0.1", "0.1", "501", "", "", ""),
+    ("line", "axis", "V_SD", "Source-drain voltage", "V", "", "-0.1", "0.1", "501"),
+    ("line", "measurement", "current", "Current", "nA", "V_SD", "", "", ""),
+    ("map", "axis", "V_SD", "Source-drain voltage", "V", "", "-0.1", "0.1", "121"),
+    ("map", "axis", "V_G", "Gate voltage", "V", "", "-1", "1", "81"),
+    ("map", "measurement", "current", "Current", "nA", "V_SD;V_G", "", "", ""),
+    ("mixed", "axis", "V_SD", "Source-drain voltage", "V", "", "-0.1", "0.1", "21"),
+    ("mixed", "axis", "V_G", "Gate voltage", "V", "", "-1", "1", "11"),
+    ("mixed", "axis", "field", "Magnetic field", "T", "", "0", "1", "3"),
+    ("mixed", "axis", "temperature", "Temperature", "K", "", "0.1", "1", "2"),
+    ("mixed", "measurement", "current", "Current", "nA", "V_SD", "", "", ""),
     (
-        "1",
+        "mixed",
+        "measurement",
         "conductance",
         "Conductance",
         "uS",
-        "-0.1",
-        "0.1",
-        "501",
+        "V_SD;V_G",
         "",
         "",
         "",
     ),
     (
-        "1",
-        "resistance",
-        "Resistance",
-        "kOhm",
-        "-0.1",
-        "0.1",
-        "501",
+        "mixed",
+        "measurement",
+        "volume",
+        "Volume signal",
+        "a.u.",
+        "field;V_G;V_SD",
         "",
         "",
         "",
     ),
     (
-        "1",
-        "transconductance",
-        "Transconductance",
-        "uS/V",
-        "-0.1",
-        "0.1",
-        "501",
+        "mixed",
+        "measurement",
+        "hypervolume",
+        "4D signal",
+        "a.u.",
+        "temperature;field;V_G;V_SD",
         "",
         "",
         "",
-    ),
-    (
-        "1",
-        "current",
-        "Current",
-        "nA",
-        "-0.1",
-        "0.1",
-        "501",
-        "",
-        "",
-        "",
-    ),
-    (
-        "2",
-        "current",
-        "Current",
-        "nA",
-        "-0.01",
-        "0.01",
-        "121",
-        "-1",
-        "1",
-        "81",
-    ),
-    (
-        "2",
-        "current",
-        "Current",
-        "nA",
-        "-0.01",
-        "0.01",
-        "121",
-        "-1",
-        "1",
-        "81",
     ),
 )
 
@@ -197,27 +167,62 @@ def _result_column_name_is_usable(name):
 
 
 @dataclass(frozen=True)
-class RunSpecification:
-    """Validated settings for one generated QCoDeS run."""
+class AxisSpecification:
+    """One shared, independent QCoDeS setpoint parameter."""
 
-    dimensions: int
-    measured_name: str
-    measured_label: str
-    measured_unit: str
-    v_sd_start: float
-    v_sd_stop: float
-    v_sd_points: int
-    v_g_start: float | None = None
-    v_g_stop: float | None = None
-    v_g_points: int | None = None
+    name: str
+    label: str
+    unit: str
+    start: float
+    stop: float
+    points: int
+
+
+@dataclass(frozen=True)
+class MeasurementSpecification:
+    """A measured quantity and its ordered independent axes."""
+
+    name: str
+    label: str
+    unit: str
+    axes: tuple[AxisSpecification, ...]
+
+    @property
+    def dimensions(self):
+        return len(self.axes)
 
     @property
     def point_count(self):
-        """Return the number of measured points in the run."""
-        if self.dimensions == 1:
-            return self.v_sd_points
-        assert self.v_g_points is not None
-        return self.v_sd_points * self.v_g_points
+        return math.prod(axis.points for axis in self.axes)
+
+
+@dataclass(frozen=True)
+class RunSpecification:
+    """Measured quantities acquired together in one QCoDeS run."""
+
+    measurements: tuple[MeasurementSpecification, ...]
+    name: str = ""
+
+    @property
+    def axes(self):
+        return tuple(
+            {
+                axis.name: axis
+                for measured in self.measurements
+                for axis in measured.axes
+            }.values()
+        )
+
+    @property
+    def point_count(self):
+        """Number of stored measurement samples, including all quantities."""
+        return sum(measured.point_count for measured in self.measurements)
+
+    @property
+    def dimension_summary(self):
+        return "/".join(
+            f"{value}D" for value in sorted({m.dimensions for m in self.measurements})
+        )
 
 
 def _row_error(line_number, message):
@@ -253,75 +258,101 @@ def _point_count(row, column, line_number):
     return points
 
 
-def _parse_row(row, line_number):
-    dimensions_value = _required(row, "dimensions", line_number)
-    try:
-        dimensions = int(dimensions_value)
-    except ValueError as error:
-        raise _row_error(line_number, "dimensions must be 1 or 2") from error
-    if dimensions not in (1, 2):
-        raise _row_error(line_number, "dimensions must be 1 or 2")
-
-    measured_name = _required(row, "measured_name", line_number)
-    if not _PARAMETER_NAME_PATTERN.fullmatch(measured_name):
-        raise _row_error(
-            line_number,
-            "measured_name must start with a letter or underscore and contain "
-            "only letters, numbers, and underscores",
-        )
-    if measured_name.lower() in {"v_sd", "v_g"}:
-        raise _row_error(
-            line_number,
-            "measured_name cannot be V_SD or V_G because those names are swept",
-        )
-    if not _result_column_name_is_usable(measured_name):
-        raise _row_error(
-            line_number,
-            "measured_name cannot be used as a QCoDeS result column",
-        )
-
-    measured_label = _required(row, "measured_label", line_number)
-    measured_unit = (row.get("measured_unit") or "").strip()
-    v_sd_start = _finite_float(row, "v_sd_start", line_number)
-    v_sd_stop = _finite_float(row, "v_sd_stop", line_number)
-    if v_sd_start == v_sd_stop:
-        raise _row_error(line_number, "v_sd_start and v_sd_stop must differ")
-    v_sd_points = _point_count(row, "v_sd_points", line_number)
-
-    gate_values = tuple((row.get(column) or "").strip() for column in CSV_COLUMNS[7:])
-    if dimensions == 1:
-        if any(gate_values):
+def _parse_runs(rows):
+    """Resolve per-run declarations, allowing forward setpoint references."""
+    runs: dict[
+        str,
+        dict[
+            str,
+            tuple[
+                int,
+                AxisSpecification | tuple[str, str, str, tuple[str, ...]],
+            ],
+        ],
+    ] = {}
+    for line_number, row in rows:
+        run = _required(row, "run", line_number)
+        kind = _required(row, "kind", line_number)
+        if kind not in {"axis", "measurement"}:
+            raise _row_error(line_number, "kind must be axis or measurement")
+        name = _required(row, "name", line_number)
+        if not _PARAMETER_NAME_PATTERN.fullmatch(name):
             raise _row_error(
                 line_number,
-                "v_g_start, v_g_stop, and v_g_points must be blank for a 1D run",
+                "name must start with a letter or underscore and contain only letters, numbers, and underscores",
             )
-        return RunSpecification(
-            dimensions=dimensions,
-            measured_name=measured_name,
-            measured_label=measured_label,
-            measured_unit=measured_unit,
-            v_sd_start=v_sd_start,
-            v_sd_stop=v_sd_stop,
-            v_sd_points=v_sd_points,
-        )
+        if not _result_column_name_is_usable(name):
+            raise _row_error(
+                line_number, "name cannot be used as a QCoDeS result column"
+            )
+        declarations = runs.setdefault(run, {})
+        if name.lower() in {existing.lower() for existing in declarations}:
+            raise _row_error(
+                line_number, f"duplicate parameter name {name!r} in run {run!r}"
+            )
+        label = _required(row, "label", line_number)
+        unit = (row.get("unit") or "").strip()
+        value: AxisSpecification | tuple[str, str, str, tuple[str, ...]]
+        if kind == "axis":
+            if (row.get("setpoints") or "").strip():
+                raise _row_error(line_number, "axis setpoints must be blank")
+            start = _finite_float(row, "start", line_number)
+            stop = _finite_float(row, "stop", line_number)
+            if start == stop:
+                raise _row_error(line_number, "start and stop must differ")
+            value = AxisSpecification(
+                name, label, unit, start, stop, _point_count(row, "points", line_number)
+            )
+        else:
+            if any(
+                (row.get(column) or "").strip()
+                for column in ("start", "stop", "points")
+            ):
+                raise _row_error(
+                    line_number, "measurement start, stop, and points must be blank"
+                )
+            names = tuple(
+                part.strip()
+                for part in _required(row, "setpoints", line_number).split(";")
+            )
+            if not all(names) or len(set(names)) != len(names):
+                raise _row_error(
+                    line_number,
+                    "setpoints must be distinct axis names separated by semicolons",
+                )
+            value = (name, label, unit, names)
+        declarations[name] = (line_number, value)
 
-    v_g_start = _finite_float(row, "v_g_start", line_number)
-    v_g_stop = _finite_float(row, "v_g_stop", line_number)
-    if v_g_start == v_g_stop:
-        raise _row_error(line_number, "v_g_start and v_g_stop must differ")
-    v_g_points = _point_count(row, "v_g_points", line_number)
-    return RunSpecification(
-        dimensions=dimensions,
-        measured_name=measured_name,
-        measured_label=measured_label,
-        measured_unit=measured_unit,
-        v_sd_start=v_sd_start,
-        v_sd_stop=v_sd_stop,
-        v_sd_points=v_sd_points,
-        v_g_start=v_g_start,
-        v_g_stop=v_g_stop,
-        v_g_points=v_g_points,
-    )
+    specifications = []
+    for run, declarations in runs.items():
+        measurements = []
+        used_axes = set()
+        for line_number, value in declarations.values():
+            if isinstance(value, AxisSpecification):
+                continue
+            name, label, unit, names = value
+            axes = []
+            for axis_name in names:
+                declared = declarations.get(axis_name)
+                if declared is None or not isinstance(declared[1], AxisSpecification):
+                    raise _row_error(
+                        line_number,
+                        f"setpoint {axis_name!r} must name an axis in run {run!r}",
+                    )
+                axes.append(declared[1])
+                used_axes.add(axis_name)
+            measurements.append(
+                MeasurementSpecification(name, label, unit, tuple(axes))
+            )
+        if not measurements:
+            raise SpecificationError(f"Run {run!r} contains no measurements")
+        for name, (line_number, value) in declarations.items():
+            if isinstance(value, AxisSpecification) and name not in used_axes:
+                raise _row_error(
+                    line_number, f"axis {name!r} is not used by a measurement"
+                )
+        specifications.append(RunSpecification(tuple(measurements), name=run))
+    return specifications
 
 
 def read_specifications(csv_path):
@@ -355,17 +386,17 @@ def read_specifications(csv_path):
                 details.append(f"unexpected columns: {', '.join(extra)}")
             raise SpecificationError("Invalid CSV header (" + "; ".join(details) + ")")
 
-        specifications = []
+        rows = []
         for line_number, row in enumerate(reader, start=2):
             if None in row and any(str(value).strip() for value in row[None]):
                 raise _row_error(line_number, "contains more values than the header")
             if not any((row.get(column) or "").strip() for column in CSV_COLUMNS):
                 continue
-            specifications.append(_parse_row(row, line_number))
+            rows.append((line_number, row))
 
-    if not specifications:
+    if not rows:
         raise SpecificationError("CSV file contains no run specifications")
-    return specifications
+    return _parse_runs(rows)
 
 
 def _safe_instruction_destination(csv_path):
@@ -914,7 +945,7 @@ def _destination_entry_state(database_path):
     except FileNotFoundError:
         return None
     except OSError as error:
-        raise _unsafe_publication_error(database_path) from error
+        raise _destination_access_error(database_path, error, "inspect") from error
     return (
         status.st_dev,
         status.st_ino,
@@ -952,6 +983,28 @@ def _unsafe_publication_error(database_path, sidecars=()):
         "owning SQLite/QCoDeS application resolve any -wal, -shm, or -journal "
         f"files, then retry or choose another output path.{details} qPlot did "
         "not change the destination database or its SQLite sidecars."
+    )
+
+
+def _destination_access_error(database_path, error, operation):
+    """Distinguish filesystem failures from evidence of an active database."""
+    if isinstance(error, TimeoutError) or error.errno == errno.ETIMEDOUT:
+        reason = f"Timed out trying to {operation} the existing database."
+        recovery = (
+            "For a OneDrive or other cloud-synced file, make it available offline "
+            "in Finder or your file manager and wait for it to finish downloading, "
+            "then retry. You can also choose a new output filename."
+        )
+    else:
+        reason = f"Could not {operation} the existing database."
+        recovery = (
+            "Check that the file is accessible and that you have permission to "
+            "read it, then retry or choose a new output filename."
+        )
+    return SpecificationError(
+        f"Cannot publish {database_path}: {reason}\n\n{recovery}\n\n"
+        f"Operating system error: {error}\n\n"
+        "qPlot did not change the destination database or its SQLite sidecars."
     )
 
 
@@ -1007,125 +1060,94 @@ def _random_sinusoid_components(random_generator, dimensions):
     return tuple(components)
 
 
-def _sinusoid_sum_1d(normalized_values, components):
-    values = np.zeros_like(normalized_values, dtype=float)
-    for amplitude, frequencies, phase in components:
-        values += amplitude * np.sin(
-            2.0 * np.pi * frequencies[0] * normalized_values + phase
-        )
-    return values
-
-
-def _sinusoid_sum_2d_row(v_sd_normalized, v_g_normalized, components):
-    values = np.zeros_like(v_g_normalized, dtype=float)
-    for amplitude, frequencies, phase in components:
-        values += amplitude * np.sin(
-            2.0
-            * np.pi
-            * (
-                frequencies[0] * v_sd_normalized
-                + frequencies[1] * v_g_normalized
-            )
-            + phase
-        )
-    return values
-
-
-def _finite_sweep(start, stop, count):
-    """Keep finite sweep endpoints when their difference exceeds float64."""
-    if math.isfinite(stop - start):
-        return np.linspace(start, stop, count)
-    # An overflowing span requires large opposite-sign endpoints. Halving
-    # these is exact and bounds linspace's subtraction and multiplication;
-    # restoring their binary scale keeps every coordinate finite.
-    values = np.linspace(start / 2., stop / 2., count) * 2.
-    values[0], values[-1] = start, stop
-    return values
+def _axis_coordinates(axis, indices):
+    """Interpolate a bounded chunk, including extreme finite endpoints."""
+    if axis.points == 1:
+        # Programmatic fixtures also use single-point sweeps. The CSV format
+        # requires at least two points, but linspace's singleton convention
+        # must remain usable by those fixtures.
+        return np.full(indices.shape, axis.start), np.zeros(indices.shape)
+    normalized = indices / (axis.points - 1)
+    if math.isfinite(axis.stop - axis.start):
+        coordinates = axis.start + (axis.stop - axis.start) * normalized
+    else:
+        coordinates = (
+            axis.start / 2.0 + (axis.stop / 2.0 - axis.start / 2.0) * normalized
+        ) * 2.0
+    coordinates[indices == 0] = axis.start
+    coordinates[indices == axis.points - 1] = axis.stop
+    return coordinates, normalized
 
 
 def _write_run(
-        experiment,
-        run_number,
-        specification,
-        random_generator,
-        cancelled_callback=None,
-        ):
+    experiment,
+    run_number,
+    specification,
+    random_generator,
+    cancelled_callback=None,
+):
     _raise_if_cancelled(cancelled_callback)
-    v_sd = ManualParameter("V_SD", label="Source-drain voltage", unit="V")
-    measured = ManualParameter(
-        specification.measured_name,
-        label=specification.measured_label,
-        unit=specification.measured_unit,
-    )
-    # An omitted station makes QCoDeS snapshot Station.default and read any
-    # invalid instrument/parameter caches. Synthetic runs must not invoke an
-    # acquisition station's callbacks or replace that process-wide default.
+    # Never invoke callbacks or snapshot instruments from Station.default.
+    run_name = specification.name or f"run_{run_number}"
     measurement = Measurement(
-        exp=experiment, name=f"run_{run_number}", station=Station(default=False),
+        exp=experiment,
+        name=run_name,
+        station=Station(default=False),
     )
-    measurement.register_parameter(v_sd)
+    axes = {
+        axis.name: ManualParameter(axis.name, label=axis.label, unit=axis.unit)
+        for axis in specification.axes
+    }
+    for parameter in axes.values():
+        measurement.register_parameter(parameter)
+    parameters = []
+    for measured in specification.measurements:
+        parameter = ManualParameter(
+            measured.name, label=measured.label, unit=measured.unit
+        )
+        measurement.register_parameter(
+            parameter, setpoints=tuple(axes[axis.name] for axis in measured.axes)
+        )
+        parameters.append(parameter)
 
-    v_sd_values = _finite_sweep(
-        specification.v_sd_start,
-        specification.v_sd_stop,
-        specification.v_sd_points,
-    )
-    v_sd_normalized = np.linspace(0.0, 1.0, specification.v_sd_points)
-    components = _random_sinusoid_components(
-        random_generator,
-        specification.dimensions,
-    )
-
-    if specification.dimensions == 1:
-        measurement.register_parameter(measured, setpoints=(v_sd,))
-        measured_values = _sinusoid_sum_1d(v_sd_normalized, components)
-        with measurement.run() as datasaver:
-            for result_slice in _result_chunks(specification.v_sd_points):
-                _raise_if_cancelled(cancelled_callback)
-                datasaver.add_result(
-                    (v_sd, v_sd_values[result_slice]),
-                    (measured, measured_values[result_slice]),
-                )
-        points_written = int(datasaver.points_written)
-        if points_written != specification.point_count:
-            raise RuntimeError(
-                f"run_{run_number} persisted {points_written} of "
-                f"{specification.point_count} expected result rows"
+    with measurement.run(in_memory_cache=False) as datasaver:
+        for measured, parameter in zip(
+            specification.measurements, parameters, strict=True
+        ):
+            components = _random_sinusoid_components(
+                random_generator, measured.dimensions
             )
-        return points_written
-
-    assert specification.v_g_start is not None
-    assert specification.v_g_stop is not None
-    assert specification.v_g_points is not None
-    v_g = ManualParameter("V_G", label="Gate voltage", unit="V")
-    measurement.register_parameter(v_g)
-    measurement.register_parameter(measured, setpoints=(v_sd, v_g))
-    v_g_values = _finite_sweep(
-        specification.v_g_start,
-        specification.v_g_stop,
-        specification.v_g_points,
-    )
-    v_g_normalized = np.linspace(0.0, 1.0, specification.v_g_points)
-
-    with measurement.run() as datasaver:
-        for v_sd_index, v_sd_value in enumerate(v_sd_values):
-            measured_values = _sinusoid_sum_2d_row(
-                v_sd_normalized[v_sd_index],
-                v_g_normalized,
-                components,
-            )
-            for result_slice in _result_chunks(specification.v_g_points):
+            # Scalar storage through QCoDeS leaves unrelated quantities NULL.
+            # Each quantity is sampled on its own grid; shared setpoints keep
+            # their exact definitions without repeating lower-dimensional data.
+            for result_slice in _result_chunks(measured.point_count):
                 _raise_if_cancelled(cancelled_callback)
-                result_count = result_slice.stop - result_slice.start
-                datasaver.add_result(
-                    (v_sd, np.full(result_count, float(v_sd_value))),
-                    (v_g, v_g_values[result_slice]),
-                    (measured, measured_values[result_slice]),
+                remaining = np.arange(
+                    result_slice.start, result_slice.stop, dtype=np.int64
                 )
+                coordinates = []
+                normalized = []
+                for axis in reversed(measured.axes):
+                    indices = remaining % axis.points
+                    remaining = remaining // axis.points
+                    values, fractions = _axis_coordinates(axis, indices)
+                    coordinates.append((axes[axis.name], values))
+                    normalized.append(fractions)
+                normalized.reverse()
+                values = np.zeros(result_slice.stop - result_slice.start)
+                for amplitude, frequencies, phase in components:
+                    argument = sum(
+                        frequency * fractions
+                        for frequency, fractions in zip(
+                            frequencies, normalized, strict=True
+                        )
+                    )
+                    values += amplitude * np.sin(2.0 * np.pi * argument + phase)
+                datasaver.add_result(*reversed(coordinates), (parameter, values))
     points_written = int(datasaver.points_written)
     if points_written != specification.point_count:
         raise RuntimeError(
-            f"run_{run_number} persisted {points_written} of "
+            f"{run_name} persisted {points_written} of "
             f"{specification.point_count} expected result rows"
         )
     return points_written
@@ -1142,7 +1164,7 @@ def _require_rollback_journal_database(database_path):
         with database_path.open("rb") as handle:
             header = handle.read(20)
     except OSError as error:
-        raise _unsafe_publication_error(database_path) from error
+        raise _destination_access_error(database_path, error, "read") from error
     if (
             not header.startswith(_SQLITE_HEADER)
             or header[18:20] != _SQLITE_ROLLBACK_JOURNAL_VERSIONS
@@ -1599,6 +1621,12 @@ def generate_database(
         )
     _require_safe_destination_sidecars(database_path)
 
+    if expected_destination_state is not None:
+        # Cloud placeholders can have readable directory metadata but time out
+        # when opened. Check before spending time or disk space on generation;
+        # publication still repeats this check and locks/revalidates the inode.
+        _require_rollback_journal_database(database_path)
+
     database_path.parent.mkdir(parents=True, exist_ok=True)
     random_generator = rng if rng is not None else np.random.default_rng()
     total_runs = len(specifications)
@@ -1630,9 +1658,10 @@ def generate_database(
                 )
                 for run_number, specification in enumerate(specifications, start=1):
                     run_started = perf_counter()
+                    run_name = specification.name or f"run_{run_number}"
                     _timestamped_message(
-                        f"Run started: run_{run_number} ({run_number}/{total_runs}, "
-                        f"{specification.dimensions}D, "
+                        f"Run started: {run_name} ({run_number}/{total_runs}, "
+                        f"{specification.dimension_summary}, "
                         f"{specification.point_count} points)."
                     )
                     try:
@@ -1645,24 +1674,24 @@ def generate_database(
                         )
                         if points_written != specification.point_count:
                             raise RuntimeError(
-                                f"run_{run_number} persisted {points_written} of "
+                                f"{run_name} persisted {points_written} of "
                                 f"{specification.point_count} expected result rows"
                             )
                     except GenerationCancelled:
                         _timestamped_message(
-                            f"Run stopped (cancelled): run_{run_number} "
+                            f"Run stopped (cancelled): {run_name} "
                             f"after {perf_counter() - run_started:.2f} s."
                         )
                         raise
                     except Exception as error:
                         _timestamped_message(
-                            f"Run stopped (failed): run_{run_number} after "
+                            f"Run stopped (failed): {run_name} after "
                             f"{perf_counter() - run_started:.2f} s "
                             f"({type(error).__name__}: {error})."
                         )
                         raise
                     _timestamped_message(
-                        f"Run stopped (completed): run_{run_number} in "
+                        f"Run stopped (completed): {run_name} in "
                         f"{perf_counter() - run_started:.2f} s."
                     )
                 # The marker identifies the provenance format; the unique token

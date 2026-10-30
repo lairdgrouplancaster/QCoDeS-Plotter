@@ -45,7 +45,9 @@ from qplot.datahandling.readonly import (
 from qplot.datahandling.trusted_live import TrustedLiveReaderUnavailableError
 from qplot.testdata import (
     CSV_COLUMNS,
+    AxisSpecification,
     GenerationCancelled,
+    MeasurementSpecification,
     RunSpecification,
     enable_generation_provenance_for_writer,
     generate_database,
@@ -356,13 +358,18 @@ def build_line_database_with_replayed_stale_wal(db_path):
     generate_database(
         [
             RunSpecification(
-                1,
-                "signal",
-                "Signal",
-                "nA",
-                0.0,
-                0.0,
-                1,
+                (
+                    MeasurementSpecification(
+                        "signal",
+                        "Signal",
+                        "nA",
+                        (
+                            AxisSpecification(
+                                "V_SD", "Source-drain voltage", "V", 0.0, 0.0, 1
+                            ),
+                        ),
+                    ),
+                )
             )
         ],
         db_path,
@@ -407,13 +414,18 @@ def prepare_generated_database_for_live_writes(db_path):
     generate_database(
         [
             RunSpecification(
-                1,
-                "lineage_seed",
-                "Lineage seed",
-                "V",
-                0.0,
-                0.0,
-                1,
+                (
+                    MeasurementSpecification(
+                        "lineage_seed",
+                        "Lineage seed",
+                        "V",
+                        (
+                            AxisSpecification(
+                                "V_SD", "Source-drain voltage", "V", 0.0, 0.0, 1
+                            ),
+                        ),
+                    ),
+                )
             )
         ],
         db_path,
@@ -493,20 +505,10 @@ def write_small_generation_specification(csv_path, *, point_count=5):
     with Path(csv_path).open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(CSV_COLUMNS)
-        writer.writerow(
-            (
-                "1",
-                "replacement",
-                "Replacement",
-                "V",
-                "-1",
-                "1",
-                str(point_count),
-                "",
-                "",
-                "",
-            )
-        )
+        writer.writerows([
+            ("run_1", "axis", "V_SD", "Source-drain voltage", "V", "", "-1", "1", str(point_count)),
+            ("run_1", "measurement", "replacement", "Replacement", "V", "V_SD", "", "", ""),
+        ])
 
 
 def table_contents(table):
@@ -2184,13 +2186,18 @@ def test_atomic_replacement_of_live_wal_uses_new_main_without_source_writes(
         generate_database(
             [
                 RunSpecification(
-                    1,
-                    "replacement_signal",
-                    "Replacement signal",
-                    "V",
-                    -1.0,
-                    1.0,
-                    4,
+                    (
+                        MeasurementSpecification(
+                            "replacement_signal",
+                            "Replacement signal",
+                            "V",
+                            (
+                                AxisSpecification(
+                                    "V_SD", "Source-drain voltage", "V", -1.0, 1.0, 4
+                                ),
+                            ),
+                        ),
+                    )
                 )
             ],
             replacement_path,
@@ -2304,13 +2311,18 @@ def test_existing_live_plot_refresh_quarantines_replaced_wal_before_worker_read(
         generate_database(
             [
                 RunSpecification(
-                    1,
-                    "replacement_signal",
-                    "Replacement signal",
-                    "V",
-                    -1.0,
-                    1.0,
-                    4,
+                    (
+                        MeasurementSpecification(
+                            "replacement_signal",
+                            "Replacement signal",
+                            "V",
+                            (
+                                AxisSpecification(
+                                    "V_SD", "Source-drain voltage", "V", -1.0, 1.0, 4
+                                ),
+                            ),
+                        ),
+                    )
                 )
             ],
             replacement_path,
@@ -3590,22 +3602,32 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
     generate_database(
         [
             RunSpecification(
-                1,
-                "first_signal",
-                "First signal",
-                "nA",
-                0.0,
-                1.0,
-                2,
+                (
+                    MeasurementSpecification(
+                        "first_signal",
+                        "First signal",
+                        "nA",
+                        (
+                            AxisSpecification(
+                                "V_SD", "Source-drain voltage", "V", 0.0, 1.0, 2
+                            ),
+                        ),
+                    ),
+                )
             ),
             RunSpecification(
-                1,
-                "second_signal",
-                "Second signal",
-                "nA",
-                0.0,
-                2.0,
-                3,
+                (
+                    MeasurementSpecification(
+                        "second_signal",
+                        "Second signal",
+                        "nA",
+                        (
+                            AxisSpecification(
+                                "V_SD", "Source-drain voltage", "V", 0.0, 2.0, 3
+                            ),
+                        ),
+                    ),
+                )
             ),
         ],
         database_path,
@@ -3826,22 +3848,24 @@ def test_loaded_path_test_database_generation_uses_replacement_reload(
     output_directory.mkdir()
     database_path = output_directory / "generated#%3f 測定.db"
     initial_specification = RunSpecification(
-        1,
-        "current",
-        "Current",
-        "nA",
-        -1.0,
-        1.0,
-        3,
+        (
+            MeasurementSpecification(
+                "current",
+                "Current",
+                "nA",
+                (AxisSpecification("V_SD", "Source-drain voltage", "V", -1.0, 1.0, 3),),
+            ),
+        )
     )
     replacement_specification = RunSpecification(
-        1,
-        "current",
-        "Current",
-        "nA",
-        -1.0,
-        1.0,
-        4,
+        (
+            MeasurementSpecification(
+                "current",
+                "Current",
+                "nA",
+                (AxisSpecification("V_SD", "Source-drain voltage", "V", -1.0, 1.0, 4),),
+            ),
+        )
     )
     generate_database([initial_specification], database_path)
 

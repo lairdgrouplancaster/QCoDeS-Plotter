@@ -1,29 +1,88 @@
-dimensions,measured_name,measured_label,measured_unit,v_sd_start,v_sd_stop,v_sd_points,v_g_start,v_g_stop,v_g_points
-1,current,Current,nA,-0.1,0.1,1001,,,
-1,conductance,Conductance,uS,-0.1,0.1,1001,,,
-1,resistance,Resistance,kOhm,-0.1,0.1,1001,,,
-1,transconductance,Transconductance,uS/V,-0.1,0.1,1001,,,
-1,current,Current,nA,-0.1,0.1,1001,,,
-2,current,Current,nA,-0.01,0.01,201,-1,1,301
-2,current,Current,nA,-0.01,0.01,201,-1,1,301
-2,resistance,Resistance,kOhm,-0.05,0.05,201,-5,5,301
-2,charge_sensor,Charge sensor,a.u.,-0.02,0.02,201,-2,2,301
-2,signal,Signal,a.u.,-0.2,0.2,201,-10,10,301
-2,current,Current,nA,-0.02,0.02,301,-2,2,451
-2,conductance,Conductance,uS,-0.2,0.2,301,-6,6,451
-2,signal,Signal,a.u.,-0.4,0.4,301,-20,20,451
-2,current,Current,nA,-0.03,0.03,401,-3,3,601
-2,conductance,Conductance,uS,-0.3,0.3,401,-9,9,601
-2,signal,Signal,a.u.,-0.6,0.6,401,-30,30,601
-2,current,Current,nA,-0.04,0.04,551,-4,4,851
-2,conductance,Conductance,uS,-0.4,0.4,551,-12,12,851
-2,signal,Signal,a.u.,-0.8,0.8,551,-40,40,851
-2,current,Current,nA,-0.05,0.05,1001,-5,5,1501
-2,conductance,Conductance,uS,-0.5,0.5,1001,-15,15,1501
-2,signal,Signal,a.u.,-1.0,1.0,1001,-50,50,1501
-2,current,Current,nA,-0.06,0.06,1251,-6,6,1901
-2,conductance,Conductance,uS,-0.6,0.6,1251,-18,18,1901
-2,signal,Signal,a.u.,-1.2,1.2,1251,-60,60,1901
-2,current,Current,nA,-0.07,0.07,1801,-7,7,2701
-2,conductance,Conductance,uS,-0.7,0.7,1801,-21,21,2701
-2,signal,Signal,a.u.,-1.4,1.4,1801,-70,70,2701
+run,kind,name,label,unit,setpoints,start,stop,points
+run_1,axis,V_SD,Source-drain voltage,V,,-0.1,0.1,1001
+run_1,measurement,current,Current,nA,V_SD,,,
+run_2,axis,V_SD,Source-drain voltage,V,,-0.1,0.1,1001
+run_2,measurement,conductance,Conductance,uS,V_SD,,,
+run_3,axis,V_SD,Source-drain voltage,V,,-0.1,0.1,1001
+run_3,measurement,resistance,Resistance,kOhm,V_SD,,,
+run_4,axis,V_SD,Source-drain voltage,V,,-0.1,0.1,1001
+run_4,measurement,transconductance,Transconductance,uS/V,V_SD,,,
+run_5,axis,V_SD,Source-drain voltage,V,,-0.1,0.1,1001
+run_5,measurement,current,Current,nA,V_SD,,,
+mixed_dimensions,axis,V_SD,Source-drain voltage,V,,-0.1,0.1,101
+mixed_dimensions,axis,V_G,Gate voltage,V,,-1,1,11
+mixed_dimensions,axis,field,Magnetic field,T,,0,1,3
+mixed_dimensions,axis,temperature,Temperature,K,,0.1,1,2
+mixed_dimensions,measurement,current,Current,nA,V_SD,,,
+mixed_dimensions,measurement,conductance,Conductance,uS,V_G;V_SD,,,
+mixed_dimensions,measurement,volume,Volume signal,a.u.,field;V_G;V_SD,,,
+mixed_dimensions,measurement,hypervolume,4D signal,a.u.,temperature;field;V_G;V_SD,,,
+run_6,axis,V_SD,Source-drain voltage,V,,-0.01,0.01,201
+run_6,axis,V_G,Gate voltage,V,,-1,1,301
+run_6,measurement,current,Current,nA,V_SD;V_G,,,
+run_7,axis,V_SD,Source-drain voltage,V,,-0.01,0.01,201
+run_7,axis,V_G,Gate voltage,V,,-1,1,301
+run_7,measurement,current,Current,nA,V_SD;V_G,,,
+run_8,axis,V_SD,Source-drain voltage,V,,-0.05,0.05,201
+run_8,axis,V_G,Gate voltage,V,,-5,5,301
+run_8,measurement,resistance,Resistance,kOhm,V_SD;V_G,,,
+run_9,axis,V_SD,Source-drain voltage,V,,-0.02,0.02,201
+run_9,axis,V_G,Gate voltage,V,,-2,2,301
+run_9,measurement,charge_sensor,Charge sensor,a.u.,V_SD;V_G,,,
+run_10,axis,V_SD,Source-drain voltage,V,,-0.2,0.2,201
+run_10,axis,V_G,Gate voltage,V,,-10,10,301
+run_10,measurement,signal,Signal,a.u.,V_SD;V_G,,,
+run_11,axis,V_SD,Source-drain voltage,V,,-0.02,0.02,301
+run_11,axis,V_G,Gate voltage,V,,-2,2,451
+run_11,measurement,current,Current,nA,V_SD;V_G,,,
+run_12,axis,V_SD,Source-drain voltage,V,,-0.2,0.2,301
+run_12,axis,V_G,Gate voltage,V,,-6,6,451
+run_12,measurement,conductance,Conductance,uS,V_SD;V_G,,,
+run_13,axis,V_SD,Source-drain voltage,V,,-0.4,0.4,301
+run_13,axis,V_G,Gate voltage,V,,-20,20,451
+run_13,measurement,signal,Signal,a.u.,V_SD;V_G,,,
+run_14,axis,V_SD,Source-drain voltage,V,,-0.03,0.03,401
+run_14,axis,V_G,Gate voltage,V,,-3,3,601
+run_14,measurement,current,Current,nA,V_SD;V_G,,,
+run_15,axis,V_SD,Source-drain voltage,V,,-0.3,0.3,401
+run_15,axis,V_G,Gate voltage,V,,-9,9,601
+run_15,measurement,conductance,Conductance,uS,V_SD;V_G,,,
+run_16,axis,V_SD,Source-drain voltage,V,,-0.6,0.6,401
+run_16,axis,V_G,Gate voltage,V,,-30,30,601
+run_16,measurement,signal,Signal,a.u.,V_SD;V_G,,,
+run_17,axis,V_SD,Source-drain voltage,V,,-0.04,0.04,551
+run_17,axis,V_G,Gate voltage,V,,-4,4,851
+run_17,measurement,current,Current,nA,V_SD;V_G,,,
+run_18,axis,V_SD,Source-drain voltage,V,,-0.4,0.4,551
+run_18,axis,V_G,Gate voltage,V,,-12,12,851
+run_18,measurement,conductance,Conductance,uS,V_SD;V_G,,,
+run_19,axis,V_SD,Source-drain voltage,V,,-0.8,0.8,551
+run_19,axis,V_G,Gate voltage,V,,-40,40,851
+run_19,measurement,signal,Signal,a.u.,V_SD;V_G,,,
+run_20,axis,V_SD,Source-drain voltage,V,,-0.05,0.05,1001
+run_20,axis,V_G,Gate voltage,V,,-5,5,1501
+run_20,measurement,current,Current,nA,V_SD;V_G,,,
+run_21,axis,V_SD,Source-drain voltage,V,,-0.5,0.5,1001
+run_21,axis,V_G,Gate voltage,V,,-15,15,1501
+run_21,measurement,conductance,Conductance,uS,V_SD;V_G,,,
+run_22,axis,V_SD,Source-drain voltage,V,,-1.0,1.0,1001
+run_22,axis,V_G,Gate voltage,V,,-50,50,1501
+run_22,measurement,signal,Signal,a.u.,V_SD;V_G,,,
+run_23,axis,V_SD,Source-drain voltage,V,,-0.06,0.06,1251
+run_23,axis,V_G,Gate voltage,V,,-6,6,1901
+run_23,measurement,current,Current,nA,V_SD;V_G,,,
+run_24,axis,V_SD,Source-drain voltage,V,,-0.6,0.6,1251
+run_24,axis,V_G,Gate voltage,V,,-18,18,1901
+run_24,measurement,conductance,Conductance,uS,V_SD;V_G,,,
+run_25,axis,V_SD,Source-drain voltage,V,,-1.2,1.2,1251
+run_25,axis,V_G,Gate voltage,V,,-60,60,1901
+run_25,measurement,signal,Signal,a.u.,V_SD;V_G,,,
+run_26,axis,V_SD,Source-drain voltage,V,,-0.07,0.07,1801
+run_26,axis,V_G,Gate voltage,V,,-7,7,2701
+run_26,measurement,current,Current,nA,V_SD;V_G,,,
+run_27,axis,V_SD,Source-drain voltage,V,,-0.7,0.7,1801
+run_27,axis,V_G,Gate voltage,V,,-21,21,2701
+run_27,measurement,conductance,Conductance,uS,V_SD;V_G,,,
+run_28,axis,V_SD,Source-drain voltage,V,,-1.4,1.4,1801
+run_28,axis,V_G,Gate voltage,V,,-70,70,2701
+run_28,measurement,signal,Signal,a.u.,V_SD;V_G,,,

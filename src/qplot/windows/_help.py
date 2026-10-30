@@ -1,3 +1,4 @@
+import sys
 from html import escape
 from typing import Any, cast
 
@@ -68,6 +69,17 @@ def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
     copy_log_path_action.setStatusTip("Copy the qPlot diagnostic log file path")
     copy_log_path_action.triggered.connect(lambda: copy_diagnostic_log_path(window))
     help_menu.addAction(copy_log_path_action)
+
+    file_manager = (
+        "Finder" if sys.platform == "darwin"
+        else "File Explorer" if sys.platform == "win32"
+        else "File Manager"
+    )
+    show_log_action = QtGui.QAction(f"&Show Diagnostic Log in {file_manager}", window)
+    show_log_action.setObjectName("showDiagnosticLogAction")
+    show_log_action.setStatusTip("Show the qPlot diagnostic log in your file manager")
+    show_log_action.triggered.connect(lambda: show_diagnostic_log(window))
+    help_menu.addAction(show_log_action)
 
     help_menu.addSeparator()
     about_action = QtGui.QAction("&About qPlot", window)
@@ -147,6 +159,26 @@ def copy_diagnostic_log_path(parent: Any | None = None) -> str:
     if parent is not None and hasattr(parent, "show_status"):
         parent.show_status(f"Copied diagnostic log path: {path}", 5000)
     return path
+
+
+def show_diagnostic_log(parent: Any | None = None) -> bool:
+    """Reveal the log in Finder, or open its folder in the file manager."""
+    # Database actions also depend on shared Help menus through plot widgets.
+    # Import after window construction to avoid a module initialization cycle.
+    from ._database_actions import reveal_file_in_file_manager
+
+    path = str(default_log_file())
+    opened = reveal_file_in_file_manager(path)
+    if opened:
+        if parent is not None and hasattr(parent, "show_status"):
+            parent.show_status(f"Showing diagnostic log: {path}", 5000)
+    elif parent is not None and hasattr(parent, "show_error"):
+        parent.show_error(
+            "Show Diagnostic Log Failed",
+            "Could not open the diagnostic log location in the file manager.",
+            path,
+        )
+    return opened
 
 
 def _show_help_dialog(

@@ -12,7 +12,22 @@ from qplot import testdata
 def measurement_files(tmp_path):
     database = tmp_path / "measurement.db"
     testdata.generate_database(
-        [testdata.RunSpecification(1, "current", "Current", "A", 0., 1., 2)],
+        [
+            testdata.RunSpecification(
+                (
+                    testdata.MeasurementSpecification(
+                        "current",
+                        "Current",
+                        "A",
+                        (
+                            testdata.AxisSpecification(
+                                "V_SD", "Source-drain voltage", "V", 0.0, 1.0, 2
+                            ),
+                        ),
+                    ),
+                )
+            )
+        ],
         database,
     )
     artifacts = {

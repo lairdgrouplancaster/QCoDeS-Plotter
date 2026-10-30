@@ -52,7 +52,10 @@ def write_small_specification(path):
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(CSV_COLUMNS)
-        writer.writerow(("1", "current", "Current", "nA", "-1", "1", "5", "", "", ""))
+        writer.writerows([
+            ("run_1", "axis", "V_SD", "Source-drain voltage", "V", "", "-1", "1", "5"),
+            ("run_1", "measurement", "current", "Current", "nA", "V_SD", "", "", ""),
+        ])
 
 
 def test_create_example_csv_opens_its_folder(tmp_path):
@@ -311,13 +314,18 @@ def test_generation_releases_current_database_before_replacing_it(tmp_path):
     testdata_module.generate_database(
         [
             testdata_module.RunSpecification(
-                1,
-                "old_current",
-                "Old current",
-                "nA",
-                -1.0,
-                1.0,
-                3,
+                (
+                    testdata_module.MeasurementSpecification(
+                        "old_current",
+                        "Old current",
+                        "nA",
+                        (
+                            testdata_module.AxisSpecification(
+                                "V_SD", "Source-drain voltage", "V", -1.0, 1.0, 3
+                            ),
+                        ),
+                    ),
+                )
             )
         ],
         database_path,

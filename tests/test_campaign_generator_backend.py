@@ -10,7 +10,14 @@ from qcodes.parameters import Parameter
 from qcodes.station import Station
 
 from qplot.datahandling.readonly import load_by_id_read_only
-from qplot.testdata import RunSpecification, SpecificationError, generate_database, main
+from qplot.testdata import (
+    AxisSpecification,
+    MeasurementSpecification,
+    RunSpecification,
+    SpecificationError,
+    generate_database,
+    main,
+)
 
 
 @pytest.fixture
@@ -21,7 +28,16 @@ def isolated_acquisition_defaults(monkeypatch):
 
 
 def _specification():
-    return RunSpecification(1, "current", "Current", "A", 0.0, 1.0, 3)
+    return RunSpecification(
+        (
+            MeasurementSpecification(
+                "current",
+                "Current",
+                "A",
+                (AxisSpecification("V_SD", "Source-drain voltage", "V", 0.0, 1.0, 3),),
+            ),
+        )
+    )
 
 
 def _tree_state(root):
@@ -104,9 +120,9 @@ def test_generator_cli_reports_external_storage_configuration(
 ):
     source = tmp_path / "instructions.csv"
     source.write_text(
-        "dimensions,measured_name,measured_label,measured_unit,v_sd_start,"
-        "v_sd_stop,v_sd_points,v_g_start,v_g_stop,v_g_points\n"
-        "1,current,Current,A,0,1,3,,,\n",
+        "run,kind,name,label,unit,setpoints,start,stop,points\n"
+        "run_1,axis,V_SD,Source-drain voltage,V,,0,1,3\n"
+        "run_1,measurement,current,Current,A,V_SD,,,\n",
     )
     setting = _configure_external_storage(kind, tmp_path, monkeypatch)
     before = _tree_state(tmp_path)

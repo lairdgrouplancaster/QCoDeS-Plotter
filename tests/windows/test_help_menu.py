@@ -37,6 +37,7 @@ class HelpMenuTestCase(unittest.TestCase):
                 actions["copyDiagnosticLogPathAction"].text(),
                 "Copy &Diagnostic Log Path",
                 )
+            self.assertIn("Show Diagnostic Log", actions["showDiagnosticLogAction"].text())
             self.assertEqual(actions["aboutQplotAction"].text(), "&About qPlot")
             self.assertEqual(
                 actions["aboutQplotAction"].menuRole(),
@@ -134,6 +135,39 @@ class HelpMenuTestCase(unittest.TestCase):
             self.assertEqual(qtw.QApplication.clipboard().text(), path)
             self.assertIn("qplot.log", path)
             self.assertEqual(window.status_messages[-1][1], 5000)
+        finally:
+            window.deleteLater()
+
+    def test_show_diagnostic_log_action_reveals_log_and_reports_failure(self):
+        from unittest.mock import Mock, patch
+
+        window = qtw.QMainWindow()
+        window.show_status = Mock()
+        window.show_error = Mock()
+        try:
+            menu = add_help_menu(window)
+            action = next(a for a in menu.actions() if a.objectName() == "showDiagnosticLogAction")
+            for opened in (True, False):
+                with self.subTest(opened=opened), patch(
+                    "qplot.windows._database_actions.reveal_file_in_file_manager",
+                    return_value=opened,
+                ) as reveal:
+                    window.show_status.reset_mock()
+                    window.show_error.reset_mock()
+                    action.trigger()
+                    path = reveal.call_args.args[0]
+                    self.assertTrue(path.endswith("qplot.log"))
+                    reveal.assert_called_once_with(path)
+                    if opened:
+                        window.show_status.assert_called_once()
+                        window.show_error.assert_not_called()
+                    else:
+                        window.show_status.assert_not_called()
+                        window.show_error.assert_called_once_with(
+                            "Show Diagnostic Log Failed",
+                            "Could not open the diagnostic log location in the file manager.",
+                            path,
+                        )
         finally:
             window.deleteLater()
 
