@@ -324,9 +324,9 @@ COMMANDS: dict[str, CommandSpec] = {
     "plot.snap_to_trace": CommandSpec(
         "plot.snap_to_trace",
         "Snap to &Trace",
-        "Snap the 1D coordinate readout to the nearest trace point",
+        "Toggle snapping the coordinate readout to the nearest line-trace point (including overlays)",
         "S",
-        help_section="1D Plot and Cut Windows",
+        help_section="All Plot Windows (1D, 2D, and Cuts)",
     ),
     "heatmap.autoscale_color": CommandSpec(
         "heatmap.autoscale_color",
@@ -385,7 +385,6 @@ SHORTCUT_HELP_SECTIONS = (
     "Main Window — Run Details Focused",
     "Main Window — Measurement Preview Focused",
     "All Plot Windows (1D, 2D, and Cuts)",
-    "1D Plot and Cut Windows",
     "Cut Windows",
     "2D Heatmap Windows",
     "Context Menus",
@@ -537,12 +536,12 @@ def shortcut_help_html() -> str:
             continue
 
         parts.append(f"<h3>{escape(section)}</h3>")
-        parts.append('<table cellspacing="4" cellpadding="3">')
+        parts.append('<table width="100%" cellspacing="4" cellpadding="3">')
         for shortcut, description in rows:
             parts.append(
                 "  <tr>"
-                f"<td><b>{escape(shortcut)}</b></td>"
-                f"<td>{escape(description)}</td>"
+                f'<td width="30%" valign="top"><b>{escape(shortcut)}</b></td>'
+                f'<td width="70%" valign="top">{escape(description)}</td>'
                 "</tr>"
             )
         parts.append("</table>")

@@ -179,7 +179,7 @@ class HelpMenuTestCase(unittest.TestCase):
             self.assertIn("Main Window — Run Details Focused", text)
             self.assertIn("Main Window — Measurement Preview Focused", text)
             self.assertIn("All Plot Windows (1D, 2D, and Cuts)", text)
-            self.assertIn("1D Plot and Cut Windows", text)
+            self.assertIn(command_spec("plot.snap_to_trace").status_tip, text)
             self.assertIn("2D Heatmap Windows", text)
             self.assertIn("Escape", text)
             self.assertIn("Return / Enter / Space", text)

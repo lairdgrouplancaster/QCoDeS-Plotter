@@ -121,7 +121,7 @@ class CommandRegistryTestCase(unittest.TestCase):
         for command_id, section in (
             ("database.load", "Main Window"),
             ("copy.selection", "Main Window — Run Details Focused"),
-            ("plot.snap_to_trace", "1D Plot and Cut Windows"),
+            ("plot.snap_to_trace", "All Plot Windows (1D, 2D, and Cuts)"),
             ("toolbar.axis_control", "Cut Windows"),
             ("heatmap.horizontal_cut", "2D Heatmap Windows"),
         ):
