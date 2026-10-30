@@ -327,6 +327,9 @@ Common actions:
   database.
 * `File -> Close Database` closes its plot windows, cancels background database
   work, and releases the current database.
+* `File -> Generate Test Data -> Open Bundled CSV Folder` opens the installed
+  examples in Finder or File Explorer. Use `Export CSV Collection...` to make
+  editable copies elsewhere.
 * `File -> Generate Test Data -> Create Example CSV...` writes a spreadsheet
   template, reveals it in Finder on macOS, or opens its containing folder in
   the platform file manager.
@@ -335,7 +338,8 @@ Common actions:
   10 MB to 30 GB, then opens their folder.
 * `File -> Generate Test Data -> Generate Database from CSV...` creates a
   QCoDeS test database from an edited specification without blocking the qPlot
-  interface.
+  interface. The CSV dialogs remember the last folder used for CSV selection,
+  example creation, or collection export across application launches.
 * `Options -> Preferences...` edits common theme, plot mouse mode, default
   load location, preview, refresh, confirmation, and runtime settings. On
   macOS this appears as `qPlot -> Preferences...`.

@@ -1349,6 +1349,11 @@ class PreviewImageLabel(qtw.QLabel):
 
 
     def mouseDoubleClickEvent(self, event):
+        if not self.plot_supported and event.button() == QtCore.Qt.MouseButton.LeftButton:
+            # Ignoring this event lets the containing run table open every
+            # measurement in the run instead of leaving this thumbnail inert.
+            event.accept()
+            return
         if self.plot_supported and event.button() == QtCore.Qt.MouseButton.LeftButton and self.parameter:
             self.plotRequested.emit(self.parameter)
             event.accept()
@@ -1799,7 +1804,7 @@ def unsupported_preview_label(preview, size, object_name):
     label.setFixedSize(int(size), int(size))
     label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
     label.setWordWrap(True)
-    label.setToolTip(preview.get("title", "Unsupported measurement dimensionality"))
+    label.setToolTip(preview_tooltip_text(preview) or "Unsupported measurement dimensionality")
     label.setFrameShape(qtw.QFrame.Shape.Box)
     label.setFrameShadow(qtw.QFrame.Shadow.Plain)
     return label

@@ -4,6 +4,7 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 from time import monotonic, perf_counter
 
@@ -798,10 +799,54 @@ class DatabaseActionsMixin:
 
 
     @QtCore.pyqtSlot()
+    def open_bundled_test_database_csv_folder(self):
+        """Open the installed CSV templates for inspection in the file manager."""
+        try:
+            directory = os.fspath(resources.files("qplot").joinpath("resources", "testdata"))
+            if not os.path.isdir(directory):
+                raise FileNotFoundError(directory)
+            if not QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(directory)):
+                raise OSError("The file manager could not open the bundled CSV folder.")
+        except Exception as error:
+            log_exception("Opening bundled test-data CSV folder failed", error, __name__)
+            self.show_error(
+                "Open Bundled CSV Folder Failed",
+                "Could not open the bundled CSV folder. Use Export CSV Collection "
+                "to copy the examples to a folder of your choice.",
+                str(error),
+            )
+            return False
+        self.show_status(f"Opened bundled CSV folder: {directory}", 5000)
+        return True
+
+
+    def test_database_csv_directory(self):
+        """Use the last CSV folder, falling back when it is no longer available."""
+        config = getattr(self, "config", None)
+        if config is not None:
+            directory = config.get("file.last_testdata_csv_directory")
+            if directory and os.path.isdir(directory):
+                return directory
+        return self.database_open_directory()
+
+
+    def _remember_test_database_csv_directory(self, directory):
+        config = getattr(self, "config", None)
+        if config is None:
+            return
+        directory = os.path.abspath(directory)
+        if config.get("file.last_testdata_csv_directory") != directory:
+            persist_config_value(
+                self, config, "file.last_testdata_csv_directory", directory,
+                "the last test-data CSV folder",
+            )
+
+
+    @QtCore.pyqtSlot()
     def create_test_database_csv(self):
         """Create an example test-data CSV and open its folder."""
         suggested_path = os.path.join(
-            self.database_open_directory(),
+            self.test_database_csv_directory(),
             "qplot-test-runs.csv",
         )
         try:
@@ -831,6 +876,7 @@ class DatabaseActionsMixin:
             return False
 
         csv_path = destination.filename
+        self._remember_test_database_csv_directory(os.path.dirname(csv_path))
         opened = reveal_file_in_file_manager(csv_path)
         if not opened:
             self.show_error(
@@ -850,7 +896,7 @@ class DatabaseActionsMixin:
         directory = qtw.QFileDialog.getExistingDirectory(
             self,
             "Export Test Database CSV Collection",
-            self.database_open_directory(),
+            self.test_database_csv_directory(),
         )
         if not directory:
             self.show_status("CSV collection export cancelled.", 3000)
@@ -889,6 +935,7 @@ class DatabaseActionsMixin:
             )
             return False
 
+        self._remember_test_database_csv_directory(directory)
         opened = reveal_file_in_file_manager(output_paths[0])
         if not opened:
             self.show_error(
@@ -932,13 +979,14 @@ class DatabaseActionsMixin:
         csv_path = qtw.QFileDialog.getOpenFileName(
             self,
             "Select Test Database CSV",
-            self.database_open_directory(),
+            self.test_database_csv_directory(),
             "CSV Files (*.csv)",
         )[0]
         if not csv_path:
             self.show_status("Test database generation cancelled.", 3000)
             return False
 
+        self._remember_test_database_csv_directory(os.path.dirname(os.path.abspath(csv_path)))
         try:
             specifications = read_specifications(csv_path)
         except Exception as err:

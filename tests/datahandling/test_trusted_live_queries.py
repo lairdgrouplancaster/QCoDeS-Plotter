@@ -529,6 +529,23 @@ class _FakeExecutor:
                     projected.append("sample one")
                 elif alias == "run_description":
                     value = run[alias]
+                    if (
+                        "json_extract" in sql
+                        and 2048 < len(value.encode("utf-8")) <= 16 * 1024
+                    ):
+                        try:
+                            description = json.loads(value)
+                        except ValueError:
+                            value = ""
+                        else:
+                            interdependencies = (
+                                description.get("interdependencies_", {})
+                                if isinstance(description, dict) else {}
+                            )
+                            value = json.dumps({"interdependencies_": {
+                                "dependencies": interdependencies.get("dependencies")
+                                if isinstance(interdependencies, dict) else None,
+                            }}, separators=(",", ":"))
                     projected.append(value if len(value.encode("utf-8")) <= 2048 else None)
                 else:
                     projected.append(run[alias])
@@ -917,6 +934,46 @@ def test_placeholder_description_is_optional_bounded_and_not_retained(tmp_path):
     assert not records[1].as_dict()["preview_dimensions"]
     assert records[2].as_dict()["preview_dimensions"] == [1]
     assert all("run_description" not in record.as_dict() for record in records)
+
+
+def test_basic_mixed_dimensions_do_not_wait_for_full_parameter_descriptions(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1,))
+    dependencies = {
+        "line": ["x"], "map": ["y", "x"],
+        "volume": ["z", "y", "x"], "hypervolume": ["t", "z", "y", "x"],
+    }
+    executor.runs[1]["run_description"] = json.dumps({
+        "interdependencies_": {
+            "dependencies": dependencies,
+            "parameters": {"x": {"label": "Long label " * 300}},
+        },
+    })
+    assert 2048 < len(executor.runs[1]["run_description"].encode()) < 16 * 1024
+    header = adapter.bootstrap()
+    metadata = _load_basic_pages(adapter, 0, header.run_id_watermark)[0].as_dict()
+    assert metadata["measure_parameters"] == list(dependencies)
+    assert metadata["preview_dimensions"] == [1, 2, 3, 4]
+    assert "run_description" not in metadata
+    assert "run_description" not in adapter._runs[1]
+
+
+@pytest.mark.parametrize("large_part", ["source", "dependencies"])
+def test_compact_placeholder_projection_stays_bounded(tmp_path, large_part):
+    adapter, executor = _adapter(tmp_path, (1,))
+    description = {
+        "interdependencies_": {"dependencies": {"signal": ["x"]}},
+    }
+    if large_part == "source":
+        description["padding"] = "x" * (16 * 1024)
+    else:
+        description["interdependencies_"]["dependencies"] = {
+            "signal": [f"long_axis_{index:04d}" for index in range(150)],
+        }
+    executor.runs[1]["run_description"] = json.dumps(description)
+    header = adapter.bootstrap()
+    metadata = _load_basic_pages(adapter, 0, header.run_id_watermark)[0].as_dict()
+    assert not metadata["preview_dimensions"]
+    assert "run_description" not in metadata
 
 
 def test_refresh_reconciles_same_version_when_data_version_respawns_helper(tmp_path):

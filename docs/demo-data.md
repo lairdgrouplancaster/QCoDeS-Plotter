@@ -6,6 +6,14 @@ the repository root.
 
 ## Generate a Test Database
 
+Use `File -> Generate Test Data -> Open Bundled CSV Folder` to inspect the CSVs
+installed with qPlot in Finder or File Explorer. Use `Export CSV Collection...`
+to copy them to an editable location; installation files may be replaced during
+upgrades. CSV selection, example creation, and collection export remember their
+last folder across launches. If that folder is unavailable, their dialogs fall
+back to the current database-open directory. This history is separate from the
+default database folder and requires no preference control.
+
 In qPlot, use `File -> Generate Test Data -> Create Example CSV...` to choose
 where to save a ready-to-use specification. qPlot creates the file, reveals it
 in Finder on macOS, or opens its containing folder in the platform file manager.

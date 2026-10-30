@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+import pytest
 from PyQt6 import QtCore, QtGui, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 
@@ -16,6 +17,7 @@ from qplot.windows._widgets.preview import (
     preview_placeholder_dimensions,
 )
 from qplot.windows._widgets.run_list_items import RunPreviewCell
+from qplot.windows._widgets.treeWidgets import RunList
 
 
 def _white_preview(parameter, *, axes=("x",)):
@@ -35,6 +37,51 @@ def _preview_widgets(cell):
         for index in range(cell.content_layout.count())
         if cell.content_layout.itemAt(index).widget() is not None
     ]
+
+
+@pytest.mark.parametrize("dimension", [3, 4])
+@pytest.mark.parametrize("populated", [False, True], ids=["pending", "populated"])
+def test_high_dimension_double_click_does_not_reach_run_table(dimension, populated):
+    run_list = RunList()
+    run_list.setRuns({1: {
+        "guid": "mixed-run",
+        "measure_parameters": ["line", "volume"],
+        "sweep_parameters": [f"axis{i}" for i in range(dimension)],
+        "preview_dimensions": [1, dimension],
+        "is_completed": True,
+    }})
+    run_requests, preview_requests = [], []
+    run_list.plot.connect(lambda *args: run_requests.append(args))
+    run_list.previewPlotRequested.connect(lambda *args: preview_requests.append(args))
+    cell = run_list.preview_cells["mixed-run"]
+    if populated:
+        cell.show_previews([
+            _white_preview("line"),
+            {"parameter": "volume", "axes": [f"axis{i}" for i in range(dimension)], "unsupported": True},
+        ])
+    run_list.resize(600, 180)
+    run_list.show()
+    qtw.QApplication.processEvents()
+    try:
+        line, volume = _preview_widgets(cell)
+        QtTest.QTest.mouseClick(volume, QtCore.Qt.MouseButton.LeftButton)
+        QtTest.QTest.mouseDClick(volume, QtCore.Qt.MouseButton.LeftButton)
+        assert run_requests == []
+        assert preview_requests == []
+
+        QtTest.QTest.mouseClick(line, QtCore.Qt.MouseButton.LeftButton)
+        QtTest.QTest.mouseDClick(line, QtCore.Qt.MouseButton.LeftButton)
+        assert run_requests == []
+        assert preview_requests == [("mixed-run", "line")]
+
+        row = run_list.visualItemRect(run_list.topLevelItem(0))
+        position = QtCore.QPoint(10, row.center().y())
+        QtTest.QTest.mouseClick(run_list.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=position)
+        QtTest.QTest.mouseDClick(run_list.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=position)
+        assert len(run_requests) == 1
+    finally:
+        run_list.close()
+        run_list.deleteLater()
 
 
 def test_placeholder_selection_and_actions_work_before_thumbnail_arrives():

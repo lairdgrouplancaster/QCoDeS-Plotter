@@ -296,8 +296,10 @@ def test_refresh_reconciles_real_idle_helper_respawn_at_same_data_version(
 
 
 @pytest.mark.parametrize("stage4_wal_writer", [0, 10], indirect=True)
+@pytest.mark.parametrize("description_padding", [4 * 1024, 34 * 1024], ids=["compact", "deferred"])
 def test_basic_page_stays_under_real_wire_budget_with_large_descriptions(
     stage4_wal_writer: _QcodesWalWriter,
+    description_padding: int,
 ) -> None:
     writer = stage4_wal_writer
     connection = apsw.Connection(str(writer.database_path))
@@ -313,7 +315,10 @@ def test_basic_page_stays_under_real_wire_budget_with_large_descriptions(
             )
         )
         description = json.dumps(
-            {"interdependencies_": {}, "wire_padding": "x" * (34 * 1024)},
+            {
+                "interdependencies_": {"dependencies": {"signal": ["x", "y"]}},
+                "wire_padding": "x" * description_padding,
+            },
             separators=(",", ":"),
         )
         quoted_columns = ", ".join(
@@ -361,6 +366,10 @@ def test_basic_page_stays_under_real_wire_budget_with_large_descriptions(
         assert len(page.runs) == TRUSTED_RUN_PAGE_SIZE
         assert all("run_description" not in record.as_dict() for record in page.runs)
         assert all(record.as_dict()["name"] for record in page.runs)
+        assert all(
+            record.as_dict()["preview_dimensions"] == ([2] if description_padding == 4 * 1024 else [])
+            for record in page.runs
+        )
         _assert_protected_artifacts_unchanged(
             before,
             _stable_source_state(writer.database_path),

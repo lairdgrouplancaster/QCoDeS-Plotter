@@ -116,9 +116,11 @@ _BASIC_RUN_COLUMNS = (
     "result_table_name",
 )
 _DEFERRED_BASIC_RUN_COLUMNS = ("parameters", "run_description")
-# Small descriptions can supply placeholder labels in the initial bounded page.
-# Larger descriptions remain deferred; no result-table sampling is needed here.
+# Placeholder metadata keeps the same small reply budget for every run. For
+# moderately larger descriptions, project just the dependencies inside SQLite
+# so mixed-dimensional runs need not wait for their full metadata observation.
 _TRUSTED_PLACEHOLDER_DESCRIPTION_MAX_BYTES = 2048
+_TRUSTED_PLACEHOLDER_DESCRIPTION_SOURCE_MAX_BYTES = 16 * 1024
 _OPTIONAL_BASIC_RUN_COLUMNS = ("measurement_exception",)
 _OBSERVED_SHAPE_FIELDS = (
     "point_shape",
@@ -3035,10 +3037,22 @@ class TrustedMetadataQueryAdapter:
             run_expressions.append(f"{source} AS {quoted}")
         run_select = ", ".join(run_expressions)
         if "run_description" in run_columns:
+            compact_description = (
+                "json_object('interdependencies_', json_object('dependencies', "
+                "json_extract(runs.\"run_description\", "
+                "'$.interdependencies_.dependencies')))"
+            )
             run_select += (
                 ', CASE WHEN octet_length(runs."run_description") <= '
                 f"{_TRUSTED_PLACEHOLDER_DESCRIPTION_MAX_BYTES} "
-                'THEN runs."run_description" ELSE NULL END AS "run_description"'
+                'THEN runs."run_description" '
+                'WHEN octet_length(runs."run_description") <= '
+                f"{_TRUSTED_PLACEHOLDER_DESCRIPTION_SOURCE_MAX_BYTES} "
+                'THEN CASE WHEN json_valid(runs."run_description") '
+                f"THEN CASE WHEN octet_length({compact_description}) <= "
+                f"{_TRUSTED_PLACEHOLDER_DESCRIPTION_MAX_BYTES} "
+                f"THEN {compact_description} END END "
+                'ELSE NULL END AS "run_description"'
             )
         experiment_expressions = []
         for source_name, alias in (

@@ -625,6 +625,10 @@ class MainWindow(
         fileMenu.addSeparator()
 
         test_data_menu = cast(qtw.QMenu, fileMenu.addMenu("Generate &Test Data"))
+        bundled_csv_action = create_action("testdata.open_bundled_folder", self)
+        bundled_csv_action.triggered.connect(self.open_bundled_test_database_csv_folder)
+        test_data_menu.addAction(bundled_csv_action)
+        test_data_menu.addSeparator()
         create_csv_action = create_action("testdata.create_csv", self)
         create_csv_action.triggered.connect(self.create_test_database_csv)
         test_data_menu.addAction(create_csv_action)

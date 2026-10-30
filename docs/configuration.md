@@ -96,6 +96,7 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `GUI.run_table_column_widths` | integer array | `[]` | empty or exactly 12 items, each at least 32 | Saved run-table column widths in display order; an empty array uses responsive widths. |
 | `GUI.run_table_visible_columns` | string array | `["run_id", "measurements", "setpoints", "started", "status", "duration", "size"]` | unique run-table column IDs | Columns shown in the run table, in the table's fixed display order. |
 | `file.default_load_path` | string | `""` | any string | Default folder for selecting database files. |
+| `file.last_testdata_csv_directory` | string | `""` | any string | Automatically remembered folder for test-data CSV selection and export. |
 | `file.recent_file_paths` | string array | `[]` | at most 10 unique strings | Recent database files shown by the application, newest first. |
 | `user_preference.theme` | string | `"light"` | `light`, `dark`, or `pyqt` | Active application theme. |
 | `user_preference.bar_colour` | string | `"viridis"` | any string | Default 2D colour map name. |

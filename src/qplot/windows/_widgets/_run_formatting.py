@@ -1,6 +1,8 @@
 import html
 from datetime import datetime
 
+from qplot.datahandling.dimensions import MAX_SUPPORTED_PLOT_DIMENSIONS
+
 
 def preview_title(parameter, axes, *, rich_text=False):
     """Describe a measurement and its setpoints in reading order."""
@@ -22,7 +24,10 @@ def preview_title(parameter, axes, *, rich_text=False):
 
 def preview_tooltip_text(preview):
     """Show bold parameter names on separate lines in image tooltips."""
-    if "axes" in preview and not preview.get("unsupported"):
+    if "axes" in preview and (
+            not preview.get("unsupported")
+            or len(preview.get("axes") or []) > MAX_SUPPORTED_PLOT_DIMENSIONS
+            ):
         return preview_title(preview["parameter"], preview.get("axes") or [], rich_text=True)
     return preview.get("title", "")
 

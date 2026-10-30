@@ -91,6 +91,10 @@
                     "type": "string",
                     "default": ""
                 },
+                "last_testdata_csv_directory": {
+                    "type": "string",
+                    "default": ""
+                },
                 "recent_file_paths": {
                     "type": "array",
                     "items": { "type": "string" },
@@ -99,7 +103,7 @@
                     "default": []
                 }
             },
-            "required": ["default_load_path", "recent_file_paths"],
+            "required": ["default_load_path", "last_testdata_csv_directory", "recent_file_paths"],
             "additionalProperties": false
         },
         

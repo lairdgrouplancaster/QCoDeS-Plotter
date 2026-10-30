@@ -114,6 +114,43 @@ def _artifact_state(path):
     return state
 
 
+def test_initial_mixed_run_shows_all_dimension_placeholders_without_result_reads(mixed_database):
+    from qplot.datahandling.trusted_live_queries import TrustedMetadataQueryAdapter
+    from tests.datahandling.test_stage5c_real_qcodes import _ReadOnlySqliteExecutor
+
+    path, specs = mixed_database
+    description = _metadata(path)["run_description"]
+    assert 2048 < len(description.encode("utf-8")) <= 16 * 1024
+    before = _artifact_state(path)
+    executor = _ReadOnlySqliteExecutor(path)
+    run_list = None
+    try:
+        adapter = TrustedMetadataQueryAdapter(executor, path)
+        bootstrap = adapter.bootstrap()
+        initial = adapter.basic_run_page(0, bootstrap.run_id_watermark)
+        metadata = initial.runs[0].as_dict()
+        assert metadata["measure_parameters"] == [m.name for m in specs[0].measurements]
+        assert metadata["preview_dimensions"] == [1, 2, 3, 4, 1]
+        assert "run_description" not in metadata
+        assert all('FROM "results-' not in query.sql for query in executor.queries)
+
+        from qplot.datahandling.database import _bounded_run_publication
+        from qplot.windows._widgets.treeWidgets import RunList
+
+        run_list = RunList()
+        run_list.setRuns({1: _bounded_run_publication(metadata)})
+        cell = run_list.preview_cells[metadata["guid"]]
+        labels = [cell.content_layout.itemAt(i).widget() for i in range(5)]
+        assert [label.text() for label in labels] == ["1D", "2D", "3D", "4D", "1D"]
+        assert all(label.objectName() == "measurementPreviewPlaceholder" for label in labels)
+        assert all(not label.plot_supported for label in labels[2:4])
+    finally:
+        executor.close()
+        if run_list is not None:
+            run_list.deleteLater()
+    assert _artifact_state(path) == before
+
+
 def test_mixed_run_preserves_qcodes_axes_grids_and_independent_sample_counts(
     mixed_database,
 ):

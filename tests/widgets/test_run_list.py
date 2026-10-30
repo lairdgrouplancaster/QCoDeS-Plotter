@@ -1938,7 +1938,10 @@ class RunListTooltipTestCase(unittest.TestCase):
                 unsupported[0].accessibleName(),
                 "3D measurement unsupported",
             )
-            self.assertIn("3 independent axes", unsupported[0].toolTip())
+            self.assertEqual(
+                unsupported[0].toolTip(),
+                "<b>signal</b> vs<br><b>x</b><br><b>y</b><br><b>z</b>",
+            )
         finally:
             treeWidgets.isfile = old_isfile
 

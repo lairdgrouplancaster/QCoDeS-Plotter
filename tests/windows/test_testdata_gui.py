@@ -1,6 +1,7 @@
 import csv
 import sqlite3
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -792,3 +793,100 @@ def test_new_gui_output_does_not_clobber_publication_race(tmp_path):
         )
     finally:
         harness.deleteLater()
+
+
+@pytest.fixture
+def csv_folder_harness(tmp_path, monkeypatch):
+    from qplot.configuration.config import config
+
+    settings = tmp_path / "settings"
+    monkeypatch.setattr(config, "default_path", str(settings))
+    monkeypatch.setattr(config, "default_file", str(settings / "config.json"))
+    harness = GuiHarness(tmp_path)
+    harness.config = config()
+    try:
+        yield harness
+    finally:
+        harness.deleteLater()
+
+
+@pytest.mark.parametrize("opened", [True, False])
+def test_open_bundled_csv_folder_uses_installed_resource_directory(csv_folder_harness, opened):
+    harness = csv_folder_harness
+    expected = database_actions_module.resources.files("qplot").joinpath("resources", "testdata")
+    with patch.object(database_actions_module.QDesktopServices, "openUrl", return_value=opened) as open_url:
+        assert harness.open_bundled_test_database_csv_folder() is opened
+    assert Path(open_url.call_args.args[0].toLocalFile()) == expected
+    assert all((expected / name).is_file() for name in INSTRUCTION_FILE_NAMES)
+    assert harness.config.get("file.last_testdata_csv_directory") == ""
+    if opened:
+        assert "Opened bundled CSV folder" in harness.status_messages[-1][0]
+        assert harness.errors == []
+    else:
+        assert harness.errors[-1][0] == "Open Bundled CSV Folder Failed"
+        assert "Export CSV Collection" in harness.errors[-1][1]
+
+
+@pytest.mark.parametrize("action", ["select", "example", "collection"])
+def test_csv_actions_remember_folder_across_sessions(csv_folder_harness, tmp_path, action):
+    from qplot.configuration.config import config
+
+    harness = csv_folder_harness
+    selected = tmp_path / "chosen CSV folder"
+    selected.mkdir()
+    csv_path = selected / "example.csv"
+    if action == "select":
+        write_small_specification(csv_path)
+        with (
+            patch.object(qtw.QFileDialog, "getOpenFileName", return_value=(str(csv_path), "CSV Files (*.csv)")) as choose,
+            patch.object(qtw.QFileDialog, "getSaveFileName", return_value=("", "")),
+        ):
+            assert not harness.generate_test_database_from_csv()
+        assert choose.call_args.args[2] == str(tmp_path)
+    elif action == "example":
+        with (
+            patch.object(qtw.QFileDialog, "getSaveFileName", return_value=(str(csv_path), "CSV Files (*.csv)")),
+            patch.object(database_actions_module, "reveal_file_in_file_manager", return_value=True),
+        ):
+            assert harness.create_test_database_csv()
+    else:
+        with (
+            patch.object(qtw.QFileDialog, "getExistingDirectory", return_value=str(selected)),
+            patch.object(database_actions_module, "reveal_file_in_file_manager", return_value=True),
+        ):
+            assert harness.export_test_database_csv_collection()
+    assert harness.config.get("file.last_testdata_csv_directory") == str(selected)
+    # A new window/configuration must use the persisted directory for all CSV dialogs.
+    harness.config = config()
+    with patch.object(qtw.QFileDialog, "getOpenFileName", return_value=("", "")) as choose:
+        assert not harness.generate_test_database_from_csv()
+    assert choose.call_args.args[2] == str(selected)
+    with patch.object(qtw.QFileDialog, "getSaveFileName", return_value=("", "")) as choose:
+        assert not harness.create_test_database_csv()
+    assert Path(choose.call_args.args[2]).parent == selected
+    with patch.object(qtw.QFileDialog, "getExistingDirectory", return_value="") as choose:
+        assert not harness.export_test_database_csv_collection()
+    assert choose.call_args.args[2] == str(selected)
+    assert harness.errors == []
+
+
+def test_unavailable_csv_folder_falls_back_without_changing_database_folder(csv_folder_harness, tmp_path):
+    harness = csv_folder_harness
+    harness.config.update("file.last_testdata_csv_directory", str(tmp_path / "removed"))
+    assert harness.test_database_csv_directory() == str(tmp_path)
+    assert harness.database_open_directory() == str(tmp_path)
+    assert harness.config.get("file.default_load_path") == ""
+
+
+def test_csv_picker_cancellation_does_not_replace_remembered_folder(csv_folder_harness, tmp_path):
+    harness = csv_folder_harness
+    selected = tmp_path / "remembered"
+    selected.mkdir()
+    harness.config.update("file.last_testdata_csv_directory", str(selected))
+    with patch.object(harness.config, "update") as update:
+        with patch.object(qtw.QFileDialog, "getOpenFileName", return_value=("", "")):
+            assert not harness.generate_test_database_from_csv()
+        with patch.object(qtw.QFileDialog, "getExistingDirectory", return_value=""):
+            assert not harness.export_test_database_csv_collection()
+        update.assert_not_called()
+    assert harness.config.get("file.last_testdata_csv_directory") == str(selected)

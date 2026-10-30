@@ -201,6 +201,12 @@ COMMANDS: dict[str, CommandSpec] = {
         "Ctrl+Shift+D",
         help_section="Main Window",
     ),
+    "testdata.open_bundled_folder": CommandSpec(
+        "testdata.open_bundled_folder",
+        "Open &Bundled CSV Folder",
+        "Open the installed folder containing the bundled test-data CSV specifications",
+        object_name="openBundledTestdataFolderAction",
+    ),
     "testdata.create_csv": CommandSpec(
         "testdata.create_csv",
         "Create Example &CSV...",
