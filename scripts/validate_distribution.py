@@ -2485,6 +2485,79 @@ def exercise_stage5c_mixed_size_wal_priority(temporary):
     def record_error(_window, title, message, details=None):
         errors.append((title, message, details))
 
+    def timeout_diagnostics():
+        # Read Python state only: failure reporting must not pump Qt, reap work,
+        # acquire worker locks, or call methods on a possibly deleted QObject.
+        state = {}
+        try:
+            attributes = vars(window) if window is not None else {}
+            state["shutdown"] = {}
+            for name in (
+                "_shutdown_ready", "_shutdown_started",
+                "_shutdown_deadline_exhausted", "_shutdown_cleanup_escalated",
+            ):
+                value = attributes.get(name)
+                state["shutdown"][name] = (
+                    value if value is None or type(value) is bool
+                    else f"<{type(value).__name__}>"
+                )
+            messages = attributes.get("_shutdown_last_diagnostics", ())
+            messages = messages[:8] if type(messages) in (tuple, list) else ()
+            state["last_diagnostics"] = [
+                message[:256] if isinstance(message, str) else type(message).__name__
+                for message in messages
+            ]
+            state["retired_services"] = len(
+                attributes.get("_retired_trusted_read_services", ())
+            )
+            bridge = attributes.get("_trusted_derived_bridge")
+            bridge_attributes = vars(bridge) if bridge is not None else {}
+            state["bridge"] = {
+                name: len(bridge_attributes.get(name, ()))
+                for name in (
+                    "_retiring", "_snapshot_slots", "_snapshot_live_futures",
+                )
+            }
+        except Exception as error:
+            state["state_error"] = type(error).__name__
+
+        frames = {}
+        frame = None
+        try:
+            frames = sys._current_frames()
+            thread_ids = [threading.get_ident()]
+            for thread_id in frames:
+                if thread_id not in thread_ids:
+                    thread_ids.append(thread_id)
+                if len(thread_ids) >= 8:
+                    break
+            stacks = {}
+            for thread_id in thread_ids:
+                frame = frames.get(thread_id)
+                stack = []
+                for _ in range(8):
+                    if frame is None:
+                        break
+                    stack.append((
+                        Path(frame.f_code.co_filename).name[:80],
+                        frame.f_code.co_name[:64],
+                        frame.f_lineno,
+                    ))
+                    frame = frame.f_back
+                stacks[str(thread_id)] = stack
+            state["thread_stacks"] = stacks
+        except Exception as error:
+            state["stack_error"] = type(error).__name__
+        finally:
+            # Do not retain the inspected frames through this diagnostic frame.
+            frame = None
+            frames = None
+        try:
+            rendered = json.dumps(state, ensure_ascii=True, separators=(",", ":"))
+        except Exception as error:
+            return f"diagnostic_error={type(error).__name__}"
+        return rendered if len(rendered) <= 12_000 else rendered[:11_980] + "...[truncated]"
+
     def process_until(predicate, timeout=90.0):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -2494,7 +2567,8 @@ def exercise_stage5c_mixed_size_wal_priority(temporary):
             time.sleep(0.005)
         raise AssertionError(
             "installed mixed-size Stage 5C WAL condition did not settle: "
-            f"errors={errors!r}, metadata_order={metadata_order!r}"
+            f"errors={errors!r}, metadata_order={metadata_order!r}; "
+            f"shutdown={timeout_diagnostics()}"
         )
 
     def checkpoint_until_idle(mode, timeout=5.0):

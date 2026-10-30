@@ -379,6 +379,9 @@ def test_apply_observes_worker_completion_before_pool_submission_returns(
     sweep_plot, monkeypatch, reject_derivative,
 ):
     plot = sweep_plot
+    # This regression observes one manual Apply while processing Qt events.
+    # Set the accepted interval to zero so error completion cannot rearm polling.
+    plot.spinBox.setValue(0)
     operation_option(plot, "dy/dx").input.setChecked(reject_derivative)
     start_worker = plot.threadPool.start
     completed_before_return = []

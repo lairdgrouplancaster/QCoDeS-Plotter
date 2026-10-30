@@ -98,6 +98,68 @@ def _numeric_object_samples(values, cancelled_callback=None):
     )
 
 
+def _uniform_coordinate_spacing(coordinates, spacing, cancelled_callback):
+    """Check exact intervals before dropping the central sample's coefficient."""
+    if not np.all(spacing == spacing[0]):
+        return False
+    if spacing.size < 2:
+        return True
+    integer_coordinates = _integer_samples(coordinates, cancelled_callback)
+    exact_reference = sample_fraction(coordinates[1]) - sample_fraction(coordinates[0])
+    exact_remainder = (exact_reference - sample_fraction(spacing[0])
+                       if np.isfinite(spacing[0]) else None)
+    for start in range(0, spacing.size, 65536):
+        _check_cancelled(cancelled_callback)
+        left = coordinates[start:start + 65536]
+        right = coordinates[start + 1:start + 65537]
+        left = left[:right.size]
+        floating = coordinates.dtype.kind == "f"
+        if coordinates.dtype.kind == "O" and not integer_coordinates:
+            # Ordinary mixed integer/float records also admit the vectorized
+            # correction when every coordinate is exactly representable.
+            # Stay strictly below 2**53: NumPy integer object comparisons
+            # could otherwise coerce an adjacent large integer to float.
+            chunk = coordinates[start:start + right.size + 1]
+            try:
+                with np.errstate(over="ignore", invalid="ignore"):
+                    numeric = chunk.astype(float)
+                floating = (np.all(np.abs(numeric) < 2**53)
+                            and np.all(chunk == numeric.astype(object)))
+            except (OverflowError, TypeError, ValueError):
+                floating = False
+            if floating:
+                left, right = numeric[:-1], numeric[1:]
+        if floating:
+            # Error-free subtraction recovers the discarded low part of
+            # right-left. Equal rounded differences alone can hide unequal
+            # intervals, such as [-1, 2**-54, 1]. The uniform stencil would
+            # then incorrectly bridge a missing central measurement.
+            rounded = spacing[start:start + right.size]
+            with np.errstate(over="ignore", invalid="ignore"):
+                recovered_left = right - rounded
+                remainder = ((right - (rounded + recovered_left))
+                             + (recovered_left - left))
+            if np.all(np.isfinite(remainder)):
+                if (sample_fraction(remainder[0]) != exact_remainder
+                        or not np.all(remainder == remainder[0])):
+                    return False
+                continue
+        # Integer/object intervals retain their exact values. This fallback
+        # also covers a floating subtraction whose correction overflows.
+        if integer_coordinates:
+            differences = right.astype(object) - left.astype(object)
+            if not np.all(differences == exact_reference.numerator):
+                return False
+        else:
+            for index, (before, after) in enumerate(zip(left, right, strict=True)):
+                if index % 1024 == 0:
+                    _check_cancelled(cancelled_callback)
+                if sample_fraction(after) - sample_fraction(before) != exact_reference:
+                    return False
+    _check_cancelled(cancelled_callback)
+    return True
+
+
 def _gradient_with_integer_samples(
         data, coordinates, spacing, axis, integer_data, *, cancelled_callback=None):
     """Use gradient's first-order edges and three-point interior stencil."""
@@ -156,7 +218,7 @@ def _gradient_with_integer_samples(
                           - _sample_fraction(samples[row][left]))
             slopes[position] = _fraction_as_float(difference / distance)
 
-    if np.all(spacing == spacing[0]):
+    if _uniform_coordinate_spacing(coordinates, spacing, cancelled_callback):
         dx = spacing[0]
         if integer_data:
             # The uniform central stencil uses only its two outer samples.
