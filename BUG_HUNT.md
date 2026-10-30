@@ -579,14 +579,136 @@ unchanged and their earlier stopping instructions apply to those campaigns.
   Coordinator verification of the applied script passes **70 tests / two
   Windows-only skips** in 10.85 s; script Ruff passes. Log:
   `/private/tmp/qplot-campaign-final-diagnostics-tests.log`.
-- The Linux source/installed job on `b8bf7bbb` remains active after more than
-  75 minutes. The provider cannot return its live log (404 BlobNotFound), so
-  the inner phase is unknown. Its job has no explicit overall timeout, and
+- The superseded Linux source-package job on `b8bf7bbb` was cancelled after
+  **102 minutes**. Its live log returned 404 BlobNotFound, but the recovered
+  cancellation log establishes the failing phase: **extracted-sdist tests**,
+  before installed-wheel smoke. At 23:47:28 UTC, a native segmentation fault
+  occurs in `RunList.clear()` / `QTreeWidget.clear()` while the cut-cursor
+  fixture closes its database. Pytest replaces the crashed worker, records a
+  failure and progresses to 99% at 23:57:55, then produces no summary before
+  cancellation at 01:12:32. This is neither a passing test suite nor evidence
+  of an installed-wheel failure. The crash cause and subsequent stalled phase
+  remain unclassified; focused lifecycle controls are in progress, with no
+  speculative runtime change. The job has no explicit overall timeout, and
   the validator's subprocess wrapper has no outer phase limit; pytest's 90 s
-  timeout applies per test only. This is a recorded limitation, not a proven
-  hang cause. Observation gaps are retained in the CI audit. No unseen interval
-  is claimed as continuously monitored and no unobserved pass is inferred.
-  `/private/tmp/qplot-final-ci-audit/b8bf7bbb-linux-duration.json`.
+  limit applies per test only. A narrowly scoped CI duration bound is approved
+  as containment, not a repair of the crash. Observation gaps remain
+  explicit; no unseen interval is claimed as continuously monitored.
+  [Cancelled job](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40973325453/job/123795950696),
+  `/private/tmp/qplot-final-ci-b8bf7bbb-linux-cancelled.log` (SHA256
+  `c13c64e4523b53485e74955c3741135ea27588338f1320bb8ac19da1fdcef731`),
+  `qplot-final-ci-audit/b8bf7bbb-linux-cancelled-phase.json` and
+  `qplot-final-ci-audit/b8bf7bbb-linux-duration.json`.
+- Independent review approves a **single-line CI containment change**:
+  `jobs.package.timeout-minutes: 60`. The earlier identical-source Linux
+  package job passed in 20 min 46 s, leaving substantial headroom relative to
+  that observation, without claiming it bounds every valid execution. All
+  commands, matrix entries, assertions and existing per-test limits remain
+  unchanged. The Required checks gate still requires package success, so a
+  timeout cannot be presented as a pass. This bounds the hosted job only;
+  local validator behavior is unchanged. It is neither an application repair
+  nor an additional test-defect finding. Candidate YAML SHA256:
+  `615c881bf351d1f07bb37f75696bc54e9c0ecd25a1380151f8cda8d0395eaa22`.
+  `/private/tmp/qplot-linux-package-timeout.json` and
+  `qplot-linux-package-timeout-independent-review.json`; review SHA256
+  `7b9259c1e498f36a80d794a673d3f0566025aefd181d530e4cf52550af659355`.
+  Coordinator verification of the applied workflow passes all **six existing
+  artifact-policy tests** in 0.52 s; no additional constant-mirroring test is
+  added for the one-line bound.
+- Focused Linux-crash follow-up does **not reproduce the native fault**:
+  the unchanged cut-cursor module passes 23 cases on the ordinary venv and
+  23 on Qt 6.12/QCoDeS 0.62; four ownership controls complete 160 clear cycles.
+  One selected earlier-test/module sequence passes 24 cases, observing 70
+  completed clears and all 24 trees destroyed on the GUI thread, with no
+  retained tree between tests. The hosted quiet log does not identify the
+  exact parameter or worker-local predecessor sequence; the selected local
+  sequence is a control, not a replay of that unknown sequence. No additional
+  GC variant or speculative runtime repair is made. The Linux crash remains
+  an explicit uncertainty. `/private/tmp/qplot-tree-clear-investigation-receipt.json`,
+  SHA256 `5c703a446235076e38cac03ff2a030b65bdaa0320cc290031d641d08bbe23677`.
+- Hosted revision **`016a3e8922e7b02b0dfb42b1f778c4f485dabdc8`** passes the
+  earlier macOS Intel 3.14 installation failure, but Windows 3.14 partition
+  2 again loses numeric-editor focus during live refresh. This time the
+  inherited upstream test fails its stronger `editor.hasFocus()` assertion
+  after observing a completed publication; the raw-text and zero-commit
+  assertions are not reached. Result: **3,060 passed / 165 skipped / one
+  failure / 40 passing subtests**, 810.28 s. Pretyping exposure/activation
+  synchronization therefore did not eliminate the original focus-loss class.
+  The event origin remains unknown; assertions are intact and focused
+  diagnosis continues without a blind retry.
+  [Windows failure](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40984417834/job/123832598674),
+  `/private/tmp/qplot-final-ci-audit/016a3e89-windows-314-shard2-failure.json`
+  (SHA256 `879a0b1c0e2f56228965cec37e4f42b0cc7ece25eec101fdd0f681932757f639`).
+- The same revision's **macOS 3.14 partition 2** fails the same
+  post-publication focus assertion for dots size: **3,149 passed / 73 skipped /
+  one failure / 40 passing subtests**, 779.84 s. The issue is therefore not
+  confined to Windows. Neither failed log records the focus destination or
+  Qt focus reason. A bounded observer is being rebased onto the inherited
+  upstream test to obtain that evidence, preserving the activation waits,
+  publication wait, assertions and their order. No application repair or new
+  test correction is inferred from these two failures.
+  [macOS failure](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40984417834/job/123832598806),
+  `/private/tmp/qplot-final-ci-audit/016a3e89-macos-314-shard2-failure.json`
+  (SHA256 `6329d0e975daf251324e1bbcfd0a131f155c9b029ab93211bb01623febc3c9d3`).
+- The rebased **diagnostic-only observer** is independently approved and
+  applied. It retains the upstream activation/publication waits, all **22
+  assertions**, and all seven original functions' operations/order after
+  removing observation. It records bounded focus/window/key/signal events,
+  safe object identities, active/focused windows, selected control updates,
+  publication entry/return and phase checkpoints. Reports appear only after
+  failure and contain at most 12,000 JSON characters. A bounded raw-frame
+  walk replaces the draft traceback extractor to avoid source-file reads.
+  It does not pump/consume events, retry inputs, change focus or extend waits.
+  Cleanup restores methods, instance dictionaries, filters and connections;
+  diagnostic/reporting/cleanup failures preserve the original test exception.
+  **35 author checks** pass: 22 original workflows, six actual-publication/
+  injected-focus controls and seven observer contracts. **22 independent
+  contracts** pass across Qt 6.11 and 6.12, including a source-read trap,
+  frame-local retirement, deleted owners and oversized reports. Injected
+  focus loss proves the diagnostic captures the destination/reason and the
+  resulting numeric commit; it does not identify the hosted trigger.
+  Observer overhead and pre-dispatch event snapshots remain limitations.
+  This is not an application fix or a fourth test-only correction.
+  Approved test SHA256:
+  `f9e4d58a2592f1e8b820d33640025bb41d800e53a9574d39a7ec613bf71e1e93`.
+  `/private/tmp/qplot-upstream-numeric-diagnostics-author-receipt.json` and
+  `qplot-upstream-numeric-diagnostics-independent-review.json`; review SHA256
+  `8bb36b1445601472e11dca0d501b515978ad5bee8f28a09444db7d9d005f669c`.
+  Coordinator verification of the applied test passes **22 cases in 44.93 s**;
+  whole-tree Ruff and whitespace checks pass. Log:
+  `/private/tmp/qplot-upstream-numeric-diagnostics-applied.log`.
+- Refreshed diagnostic source freeze contains **455 files**, with only the
+  approved keyboard observer and workflow duration bound changed from
+  `016a3e89`. All **132 wheel member contents** remain identical; the sole
+  changed sdist member is the existing keyboard-test module. All 126 runtime
+  files, native code, version and metadata remain unchanged. Strict Twine
+  passes both artifacts; no redundant installed/GUI run or native build is
+  claimed. The workflow-only archive bridge is superseded for this new sdist.
+  `/private/tmp/qplot-r47-49-focus-diagnostic-source.json` (SHA256
+  `6c7379dae7fda098394b763598cf16b085e2de0cc9702a429a152ab632fd9436`),
+  `qplot-r47-49-focus-diagnostic-build-receipt.json` and
+  `qplot-r47-49-focus-diagnostic-dist`.
+  Independent audit approves all 455 committed-base/source relationships,
+  both applied hashes, 131 RECORD entries and all archive members:
+  `/private/tmp/qplot-focus-diagnostic-artifact-independent-audit.json`, SHA256
+  `5dcb6083988f52b002a8591fe19980e28a9433d26a84eadc456bbe608eb0dc98`.
+- The complete hosted result for `016a3e89` is **38 successful checks and
+  three failures out of 41**, with no cancelled, skipped or neutral checks.
+  The two failures are the Windows/macOS 3.14 post-publication focus cases;
+  their failures correctly fail the Required checks gate. Coverage, every
+  other full partition, all compiler-free installations and Linux source/
+  installed-package validation pass. This is a **failed overall CI run**,
+  not final acceptance. The Linux pass does not explain or repair its earlier
+  native crash, and the installed Intel pass does not explain its earlier
+  shutdown timeout. The next pushed revision adds reviewed evidence capture
+  and a job duration bound, without claiming either transient symptom fixed.
+  [Complete 016a CI](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/40984417834).
+  Linux's complete passing job takes **36 min 18 s**, including **6,382 passed /
+  58 skipped** extracted-sdist tests (2,038.45 s), then installed-wheel smoke,
+  WAL/checkpoint/normal Qt shutdown and metadata checks. This newer observation
+  still fits the proposed 60 min bound; neither observed duration guarantees
+  a maximum runtime. `/private/tmp/qplot-final-ci-016a3e89-linux-passed.log`,
+  SHA256 `134c81e9f972f948f1c0a6b12ad05bb93ab24787435a3d0a05ffb1484e4bab81`.
 - Latest source/archive freeze contains **455 files**, with only the approved
   differentiation-test precondition and failure diagnostic changed since
   `b8bf7bbb`. All **132 wheel member contents**, including metadata and RECORD,
@@ -667,13 +789,15 @@ unchanged and their earlier stopping instructions apply to those campaigns.
   test-correction commit `55db3fa` contain the original reviewed implementation;
   the latest test correction and diagnostic are described separately above.
 - Both application fixes and all three test-only corrections are approved;
-  the latest applied regression module and validation-script checks pass. At this
-  checkpoint, publish the reviewed test correction and failure diagnostics,
-  inspect the superseded Linux job's completed log when available, and validate
-  the exact new pushed head. If the installed-retirement timeout recurs, use its
-  new state/stack evidence to establish a focused cause before any runtime edit.
-  Earlier local failures and the installed timeout remain explicit; no retry
-  success or unproved original cause is inferred. Discovery remains closed.
+  applied regression modules and validation-script checks pass. At this
+  checkpoint, publish the reviewed focus observer, CI duration bound and
+  recovered-failure evidence, then validate the exact new pushed head.
+  If focus loss or installed retirement recurs, use the new event/state/stack
+  evidence to establish a focused cause before any runtime edit. The Linux
+  native crash, earlier local failures and original installed timeout remain
+  explicit uncertainties; focused passes do not prove their original causes
+  or repair them. Finish only confirmed repairs and integration follow-up;
+  discovery remains closed, with no round 50.
   [Draft PR #94](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/94)
   records the final SHA, complete local-suite outcome, required check results
   and links, avoiding a recursive log edit solely to embed its own commit hash
