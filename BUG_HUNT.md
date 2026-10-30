@@ -12,8 +12,8 @@ unchanged and their earlier stopping instructions apply to those campaigns.
 
 - Initial working tree was clean on `codex/python312-minimum` at
   `082a7f3378c89a479b30da0cfbf94ee1f6b8bf55`; that branch is preserved.
-- Fresh `git fetch origin` and the connected GitHub app agree that current
-  main is **`e65c30c02786fd279e978e5c2fc3649142b5a601`** (merged PR #92).
+- At campaign start, fresh `git fetch origin` and the connected GitHub app
+  agreed that main was **`e65c30c02786fd279e978e5c2fc3649142b5a601`** (merged PR #92).
   New branch: `codex/qplot-bug-hunt-2026-10-29`, based on that exact revision.
   Current main already declares application version 1.7.0; do not change it.
 - Before application changes, the exact-main check-run response verifies
@@ -32,8 +32,10 @@ unchanged and their earlier stopping instructions apply to those campaigns.
   and clean. Discovery has stopped at both the three-round cap and two
   consecutive complete clean rounds.
   [Draft PR #94](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/94)
-  is open; final local integration passes and exact-final-head hosted CI
-  remains the publication acceptance step. No round 50,
+  is open. The initial full local integration passed, but later current-main
+  full runs and hosted checks exposed the follow-up failures recorded below.
+  Focused corrections and reviews pass; exact-final-head hosted acceptance
+  remains outstanding. No round 50,
   merge or release is authorized.
 
 | Round | Confirmed application bugs repaired | Test-only corrections | Outcome |
@@ -41,7 +43,7 @@ unchanged and their earlier stopping instructions apply to those campaigns.
 | 47 | 2 | 0 | C47-001 (low), C47-002 (medium); independently approved |
 | 48 | 0 | 0 | Complete and clean |
 | 49 | 0 | 0 | Complete and clean; investigation stopped |
-| Integration | 0 | 2 | Producer connection cleanup and heatmap test-double correction independently approved |
+| Integration | 0 | 3 | Producer cleanup, heatmap test-double correction and manual-Apply test precondition independently approved |
 
 ### Round 47 — coordinator coverage complete
 
@@ -510,6 +512,93 @@ unchanged and their earlier stopping instructions apply to those campaigns.
   `/private/tmp/qplot-r47-49-local-checkout-receipt.json`,
   `qplot-r47-49-local-checkout-full.log` and
   `qplot-r47-49-local-checkout-full-receipt.json`.
+- That isolated full run **completed with failures**, not a pass: **6,307
+  passed, 136 skipped, 119 passing subtests, two failures and two errors**,
+  1,230.31 s reported by pytest (3,554.91 s measured wall time across a tool/
+  clock observation gap). All 455 files match before/after, committed `4ff0bb5`
+  and documentation head `b8bf7bbb300e6ebe1394c3f062dfde782293d4bf`.
+  Marquee replacement and heatmap-promotion setup encountered the same
+  12 s load/retirement pattern; a later preferences test read light rather
+  than dark from the current main window. All three exact nodes then pass
+  unchanged, as do **47 affected-module neighbors**. A retained-main control
+  reproduces the exact preferences assertion: production lookup chooses the
+  old main, and Apply changes that old main's configuration. Injected stale
+  windows retire; no original lookup was recorded. Moving source outside
+  OneDrive therefore **does not establish an I/O cause or a passing full suite**.
+  `/private/tmp/qplot-local-clone-failure-diagnosis.json`, SHA256
+  `6faf3bb20c0b388808c431c0e8873b4d5ac273391c1be069115a6510c7aadc9a`.
+- Hosted `b8bf7bbb` passes the formerly failing Windows 3.14 full partition,
+  but two different checks fail: macOS Intel 3.14 installed smoke times out in
+  **final shutdown** after all mixed-size WAL priority, exact-value, append,
+  refresh and checkpoint assertions have passed; macOS 3.12 full partition 2
+  observes two workers in a regression intended to inspect one manual Apply.
+  That shard reports **3,149 passed / 73 skipped / one failure**, 40 passing
+  subtests, 1,087.92 s. Installed smoke keeps its original 45 s wait and then
+  its separate 45 s cleanup wait; the original message omitted which shutdown
+  condition remained pending. An exact-workload Qt 6.12/QCoDeS 0.62 local replay
+  passes in 7.888 s, final retirement 0.0566 s; Python 3.12 ARM/NumPy 2.5.3
+  differs from the failed Intel 3.14/NumPy 2.5.4 environment. This does not
+  justify a slow-runner explanation or an application repair.
+  `/private/tmp/qplot-b8-stage5c-shutdown-diagnosis.json`,
+  `qplot-final-ci-b8bf7bbb-macos-intel-314-failure.log` and
+  `qplot-final-ci-b8bf7bbb-macos-312-shard2-failure.log`.
+- The second-worker failure is a confirmed **third test-only correction**.
+  The fast-completion regression intends to inspect one manual Apply, but its
+  fixture merely stops the timer while leaving the configured interval at 1 s.
+  An invalid derivative legitimately rearms automatic refresh; a reentrant Qt
+  wait can then submit a second automatic worker. A real 1,100 ms Qt hold
+  reproduces exactly two submissions (explicit `force=True`, then timer-driven
+  `force=False`) and fails the unchanged `submitted == [worker]` assertion.
+  The minimal correction sets the accepted refresh interval to zero **only
+  inside that two-case regression**, preserving all 43 original assertions,
+  operation order and time limits. The whole module passes **39 cases**;
+  four natural-timer and four queued-timeout controls pass. Independent
+  2,250 ms-per-completion controls also pass for success/error and permit a
+  second explicit Apply, with unchanged plot arrays and protected-file checks.
+  The independent unpatched negative control fails the same assertion.
+  No application behavior changes and no wider timer/fixture policy changes.
+  Approved test hash: `0e38fc3710f92e191af52b42ef625e072b8395be4d6c1f4876ff44149516aca9`.
+  `/private/tmp/qplot-differentiation-manual-pause-author-receipt.json` and
+  `qplot-differentiation-manual-pause-independent-review.json`; review SHA256
+  `9a7d78712fdfb760f8ed0a3789824451a7d46256faec25fdd605c5d0c604ae93`.
+  Coordinator verification of the applied module passes **39 tests in 95.85 s**;
+  whole-tree Ruff and whitespace checks pass. Log:
+  `/private/tmp/qplot-campaign-final-manual-apply-tests.log`.
+- A separately reviewed **diagnostic-only** addition to the existing installed
+  smoke timeout captures Python shutdown flags, existing retirement diagnostics,
+  bridge counts and at most eight raw thread stacks of eight frames, bounded to
+  12 KB. It runs only after the original wait fails. All workloads, successful
+  paths, assertions and deadlines remain unchanged. It avoids Qt methods,
+  event pumping, source-file reads and worker locks; failed inspection preserves
+  the original AssertionError and prior evidence. Eleven author and eleven
+  independent contracts pass, including deleted-QObject handling and actual
+  generated-module imports. This is not a repair or additional finding.
+  Approved script hash: `afbd643e696b16a9edab91ac55d75366674089fb20aaf86c4469ad479cc21dbb`.
+  `/private/tmp/qplot-b8-timeout-diagnostics-completion.json`, SHA256
+  `3d8fca155f5d039add5c54628a7ddb112d50335899c6c10414683b9a257e0e7c`.
+  Coordinator verification of the applied script passes **70 tests / two
+  Windows-only skips** in 10.85 s; script Ruff passes. Log:
+  `/private/tmp/qplot-campaign-final-diagnostics-tests.log`.
+- The Linux source/installed job on `b8bf7bbb` remains active after more than
+  75 minutes. The provider cannot return its live log (404 BlobNotFound), so
+  the inner phase is unknown. Its job has no explicit overall timeout, and
+  the validator's subprocess wrapper has no outer phase limit; pytest's 90 s
+  timeout applies per test only. This is a recorded limitation, not a proven
+  hang cause. Observation gaps are retained in the CI audit. No unseen interval
+  is claimed as continuously monitored and no unobserved pass is inferred.
+  `/private/tmp/qplot-final-ci-audit/b8bf7bbb-linux-duration.json`.
+- Latest source/archive freeze contains **455 files**, with only the approved
+  differentiation-test precondition and failure diagnostic changed since
+  `b8bf7bbb`. All **132 wheel member contents**, including metadata and RECORD,
+  are byte-identical to the wheel that passed ten installed checks; all 126
+  application runtime files and native source remain unchanged. The refreshed
+  sdist has 440 regular files / 437 source byte matches / 274 test modules,
+  including both updated files. Strict Twine passes both archives. No redundant
+  installed/GUI run or native rebuild is claimed. Freeze and audit:
+  `/private/tmp/qplot-r47-49-reviewed-final-source.json` (SHA256
+  `80b93568133ee0a6d7422f80e506f3796c8c6a9a3db0aa1f4ea28b46b1040301`),
+  `qplot-r47-49-reviewed-final-artifacts.json` (SHA256
+  `6be0bf55940e5bbb371cf0374ae84f9fdac317d2ca143e2161b86461d6af9b0b`).
 - **Historical Windows CI follow-up:** pushed documentation head
   `6ab5b2790896d664c0f25c4274336f71b917c4bf` passed the complete local suite,
   but its Windows Python 3.14 shard 1/2 reports **3,091 passed, 127 skipped,
@@ -571,14 +660,20 @@ unchanged and their earlier stopping instructions apply to those campaigns.
   Coordinator verification of the applied module: **22 passed in 26.44 s**;
   whole-tree Ruff and whitespace checks pass. Log:
   `/private/tmp/qplot-numeric-diagnostics-repository.log`.
-- Investigation stops at round 49. Both application fixes and both test-only
-  integration corrections are independently approved; final local validation,
-  startup, artifact and evidence checks pass. Application commit `1459397`
-  and test-correction commit `55db3fa` contain the reviewed implementation.
-- Current-main integration review, focused checks, rebuilt artifacts and installed
-  checks pass. At this checkpoint, finish the already-running complete local
-  suite and verify hosted CI for the exact final pushed revision. The Windows failure
-  cause is not retrospectively attributed without event evidence.
+- Investigation stops at round 49. Both application fixes and all three test-only
+  integration corrections are independently approved; focused regressions,
+  startup, artifact and evidence checks pass. Full-run failures and outstanding
+  acceptance are recorded explicitly above. Application commit `1459397` and
+  test-correction commit `55db3fa` contain the original reviewed implementation;
+  the latest test correction and diagnostic are described separately above.
+- Both application fixes and all three test-only corrections are approved;
+  the latest applied regression module and validation-script checks pass. At this
+  checkpoint, publish the reviewed test correction and failure diagnostics,
+  inspect the superseded Linux job's completed log when available, and validate
+  the exact new pushed head. If the installed-retirement timeout recurs, use its
+  new state/stack evidence to establish a focused cause before any runtime edit.
+  Earlier local failures and the installed timeout remain explicit; no retry
+  success or unproved original cause is inferred. Discovery remains closed.
   [Draft PR #94](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/94)
   records the final SHA, complete local-suite outcome, required check results
   and links, avoiding a recursive log edit solely to embed its own commit hash
