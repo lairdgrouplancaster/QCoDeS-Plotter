@@ -20,6 +20,31 @@ The authoritative package version is `project.version` in `pyproject.toml`.
 At runtime, `qplot.__version__` reads the installed `qplotter` metadata through
 `importlib.metadata`.
 
+## Desktop launcher setup
+
+`python -m qplot.desktop setup` is shipped in the ordinary pure-Python
+application wheel and sdist. It creates a per-user macOS AppleScript applet or
+Windows Script Host launcher plus Start-menu shortcut, pointing to the Python
+interpreter used at setup. macOS uses the built-in `osacompile` and `codesign`
+tools; Windows uses Windows Script Host and PowerShell's WScript.Shell COM
+interface. No extra package, compiler, standalone Python bundle, or separate
+release artifact is required. File registration is opt-in and never sets a
+default handler. Windows uses the documented [OpenWithProgIds registration](https://learn.microsoft.com/en-us/windows/win32/shell/how-to-include-an-application-on-the-open-with-dialog-box).
+See the [user guide](user-guide.md#opening-databases-from-the-file-manager).
+
+Launcher payloads import only the standard library before configuring the
+per-user Matplotlib cache and logs. They validate the recorded installation
+and call `qplot.__main__.run`, retaining the existing shutdown supervisor and
+reader protections. Launches use the recorded interpreter with `-I` to exclude
+the working directory and `PYTHONPATH` from import discovery. Recreate launchers
+after moving an installation. Generated applets are ad-hoc signed locally;
+these are user-created launchers, not notarized standalone distributions.
+
+`tests/test_desktop.py` covers generated artifacts, exact argument forwarding,
+isolated startup outside the checkout, setup/removal guards, and native macOS
+compilation/signature checks. The existing platform test matrix discovers these
+tests from the same application artifacts as the rest of the suite.
+
 ## Ordinary installation
 
 After a stable split release is published, install inside a supported Python

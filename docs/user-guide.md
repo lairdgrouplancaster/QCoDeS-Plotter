@@ -204,66 +204,78 @@ or uncommitted data. Finish the transaction or refresh after the writer pauses.
 
 ### Opening Databases from the File Manager
 
-qPlot can be added to a file manager's `Open With` menu by pointing the file
-manager at a small launcher that runs qPlot with the selected database path.
-Because `.db` is a generic SQLite extension used by many applications, prefer
-adding qPlot to `Open With` before making it the default app for every `.db`
-file.
+After installing qPlot, create a desktop launcher once from the same Python
+virtual environment used for installation:
 
-#### macOS
-
-1. Open Automator.
-2. Create a new `Application`.
-3. Add the `Run Shell Script` action.
-4. Set `Pass input` to `as arguments`.
-5. Use this script, replacing `PYTHON` with the Python executable from the
-   qPlot virtual environment:
-
-```bash
-PYTHON="/path/to/QCoDeS-Plotter/.venv-mac/bin/python"
-
-for database in "$@"; do
-  "$PYTHON" -m qplot "$database" &
-done
+```console
+python -m qplot.desktop setup
 ```
 
-6. Save the Automator application as `qPlot.app`.
-7. In Finder, right-click a QCoDeS `.db` file and choose
-   `Open With -> Other...`.
-8. Select `qPlot.app`. To make qPlot the default for `.db` files, tick
-   `Always Open With` before opening.
+No administrator rights are needed. On macOS this creates
+`~/Applications/qPlot.app`; on Windows it creates a **qPlot** shortcut in your
+Start menu. Double-click the app or shortcut to start qPlot. You can pin it to
+the Dock or Start, or copy the Windows shortcut to your desktop. Everyday
+launches need no terminal, environment activation, repository working directory,
+or manual `MPLCONFIGDIR` setting.
 
-For a development checkout using the repository virtual environment, `PYTHON`
-will usually look like:
+To also offer qPlot for **Open With** on `.db` files, opt in during setup:
 
-```bash
-PYTHON="/Users/you/path/to/QCoDeS-Plotter/.venv-mac/bin/python"
+```console
+python -m qplot.desktop setup --file-associations
 ```
 
-#### Windows
+If you already created a launcher, remove it first using the command below,
+then run setup again with this option. File associations are per user and do
+not make qPlot the default: `.db` is also used by other applications.
 
-For a development checkout using the repository virtual environment, create a
-launcher file such as `qplot-open-db.cmd`:
+On macOS, right-click a QCoDeS database in Finder and choose
+**Open With → Other…**, then select `~/Applications/qPlot.app`. On Windows,
+right-click it in Explorer and choose **Open with → Choose another app →
+qPlot QCoDeS viewer** (you may need **More apps**). The exact picker wording
+varies by Windows version. Choose to open just this file unless you deliberately
+want to change the default for all `.db` files. Selecting multiple files on
+macOS opens a separate supervised qPlot instance for each. Paths containing
+spaces and Unicode are supported.
 
-```batch
-@echo off
-set "PYTHON=C:\path\to\QCoDeS-Plotter\.venv\Scripts\pythonw.exe"
-start "" "%PYTHON%" -m qplot "%~1"
+Setup records the Python environment that ran the command; it does not copy
+Python or bundle qPlot. Keep that environment installed at its original path.
+Upgrading qPlot in the same environment normally needs no launcher changes.
+If Python or qPlot is removed or moved, a launch error explains how to recreate
+the launcher. After recreating a moved environment, run setup from its Python.
+For an editable development installation, keep the source checkout in place too.
+On macOS, an environment inside Documents, OneDrive, or another protected folder
+may require file-access permission for the generated app in **System Settings →
+Privacy & Security → Files and Folders**. If macOS refuses access, install the
+environment in an accessible local folder and recreate the launcher there.
+
+To remove the launcher and its opt-in Windows registration:
+
+```console
+python -m qplot.desktop remove
 ```
 
-Then right-click a QCoDeS `.db` file and choose
-`Open with -> Choose another app`. If Windows does not show the launcher in
-the app picker, set a per-user `.db` association from Command Prompt after
-replacing the Python path:
+Removal leaves Python, qPlot, settings, caches, logs, and databases alone. It
+refuses to delete a launcher folder containing a database or its sidecars.
+Delete any copied shortcuts and unpin Dock/Start items yourself. If Python is
+already gone, delete the macOS app in Finder or the Windows launcher folder
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs\qPlot` in Explorer.
+To clean a remaining Windows Open With entry, recreate an installed environment
+and launcher at that same location with `--file-associations`, then run `remove`.
+Any default file choice you made yourself can be changed in the OS settings.
 
-```batch
-reg add HKCU\Software\Classes\qplot.db\shell\open\command /ve /d "\"C:\path\to\QCoDeS-Plotter\.venv\Scripts\pythonw.exe\" -m qplot \"%1\"" /f
-reg add HKCU\Software\Classes\.db /ve /d qplot.db /f
-```
+Use `--destination "/your/path/qPlot.app"` on macOS or
+`--destination "C:\your\path\qPlot"` on Windows to choose a different location;
+pass the same option for removal. Existing destinations are never overwritten.
+The macOS app can subsequently be moved; recreate a Windows launcher after
+moving its folder. A copied Windows shortcut still refers to the original folder.
 
-This makes double-clicking `.db` files open them with qPlot for the current
-Windows user. Use it only if that is the default behavior you want for `.db`
-files on that account.
+Desktop launches set Matplotlib's cache to `~/Library/Caches/qPlot/matplotlib`
+on macOS or `%LOCALAPPDATA%\qPlot\matplotlib` on Windows, overriding an inherited
+`MPLCONFIGDIR`. Launch diagnostics are stored in the adjacent `logs` folder,
+with a separate `launch-*.log` per invocation. Old logs may be deleted when qPlot
+is closed. The same supervised entry point and protected database readers are
+used as for command-line launches; setup and removal never open databases.
+Linux desktop setup is not currently supported.
 
 On first launch, qPlot shows a small empty-database prompt with direct load and
 quick-start actions. It disappears once a database is loaded or a load is in

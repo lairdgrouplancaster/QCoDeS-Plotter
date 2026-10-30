@@ -203,7 +203,20 @@ python -c "import qplot; print(qplot.__file__)"
 
 ## Run
 
-Start the app from an activated virtual environment:
+For everyday desktop use on macOS or Windows, run this once from the installed
+virtual environment:
+
+```console
+python -m qplot.desktop setup
+```
+
+Then double-click **qPlot.app** in `~/Applications` (macOS) or **qPlot** in the
+Start menu (Windows). Add `--file-associations` during setup to opt into
+**Open With → qPlot** for `.db` files without changing their default app.
+See [desktop setup and removal](docs/user-guide.md#opening-databases-from-the-file-manager).
+Desktop launches require no activated terminal or manual cache configuration.
+
+To start the app from an activated virtual environment instead:
 
 ```console
 qplot

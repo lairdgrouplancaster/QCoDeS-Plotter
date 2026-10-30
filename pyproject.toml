@@ -102,6 +102,8 @@ follow_imports = "silent"
 files = [
     "src/qplot/__init__.py",
     "src/qplot/__main__.py",
+    "src/qplot/desktop.py",
+    "src/qplot/_desktop_bootstrap.py",
     "src/qplot/_shutdown_supervisor.py",
     "src/qplot/_windows_shutdown_job.py",
     "src/qplot/_metadata.py",
