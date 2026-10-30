@@ -4,6 +4,8 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._commands import (
+    COMMANDS,
+    SHORTCUT_HELP_SECTIONS,
     command_spec,
     create_action,
     plot_measurement_command_spec,
@@ -109,3 +111,21 @@ class CommandRegistryTestCase(unittest.TestCase):
         self.assertIn(command_spec("plot.print").status_tip, html)
         self.assertIn(command_spec("heatmap.horizontal_cut").status_tip, html)
         self.assertIn("Ctrl+1 to Ctrl+9", html)
+
+    def test_every_shortcut_has_help_in_its_window_section(self):
+        html = shortcut_help_html()
+        for spec in COMMANDS.values():
+            if spec.resolved_shortcuts() or spec.help_shortcut:
+                self.assertIn(spec.help_section, SHORTCUT_HELP_SECTIONS, spec.command_id)
+
+        for command_id, section in (
+            ("database.load", "Main Window"),
+            ("copy.selection", "Main Window — Run Details Focused"),
+            ("plot.snap_to_trace", "1D Plot and Cut Windows"),
+            ("toolbar.axis_control", "Cut Windows"),
+            ("heatmap.horizontal_cut", "2D Heatmap Windows"),
+        ):
+            spec = command_spec(command_id)
+            self.assertEqual(spec.help_section, section)
+            section_html = html.split(f"<h3>{section}</h3>")[1].split("</table>")[0]
+            self.assertIn(spec.help_row()[0], section_html)

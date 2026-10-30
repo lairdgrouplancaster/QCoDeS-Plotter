@@ -7,7 +7,6 @@ from qplot.windows._help import (
     add_help_menu,
     copy_diagnostic_log_path,
     show_about,
-    show_keyboard_shortcuts,
     show_quick_start,
 )
 
@@ -161,7 +160,12 @@ class HelpMenuTestCase(unittest.TestCase):
         dialog = None
 
         try:
-            dialog = show_keyboard_shortcuts(window)
+            menu = add_help_menu(window)
+            next(
+                action for action in menu.actions()
+                if action.objectName() == "keyboardShortcutsHelpAction"
+            ).trigger()
+            dialog = window._help_dialogs[-1]
             browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
             text = browser.toPlainText()
 
@@ -171,6 +175,14 @@ class HelpMenuTestCase(unittest.TestCase):
             self.assertIn(command_spec("plot.print").status_tip, text)
             self.assertIn(command_spec("plot.print").help_shortcut, text)
             self.assertIn("H", text)
+            self.assertIn("Main and All Plot Windows", text)
+            self.assertIn("Main Window — Run Details Focused", text)
+            self.assertIn("Main Window — Measurement Preview Focused", text)
+            self.assertIn("All Plot Windows (1D, 2D, and Cuts)", text)
+            self.assertIn("1D Plot and Cut Windows", text)
+            self.assertIn("2D Heatmap Windows", text)
+            self.assertIn("Escape", text)
+            self.assertIn("Return / Enter / Space", text)
             self.assertIn(dialog, window._help_dialogs)
         finally:
             if dialog is not None:

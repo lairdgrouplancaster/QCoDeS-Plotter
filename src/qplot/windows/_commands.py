@@ -92,14 +92,14 @@ COMMANDS: dict[str, CommandSpec] = {
         "Show the basic qPlot workflow",
         "F1",
         object_name="quickStartHelpAction",
-        help_section="General",
+        help_section="Main and All Plot Windows",
     ),
     "database.load": CommandSpec(
         "database.load",
         "&Load Database...",
         "Load a QCoDeS database",
         "Ctrl+L",
-        help_section="General",
+        help_section="Main Window",
     ),
     "database.close": CommandSpec(
         "database.close",
@@ -112,14 +112,14 @@ COMMANDS: dict[str, CommandSpec] = {
         "&Refresh",
         "Refresh the current window",
         "R",
-        help_section="General",
+        help_section="Main and All Plot Windows",
     ),
     "window.close": CommandSpec(
         "window.close",
         "&Close Window",
         "Close the current qPlot window",
         _standard_shortcuts(QKeySequence.StandardKey.Close, ["Ctrl+W"]),
-        help_section="General",
+        help_section="Main and All Plot Windows",
         help_shortcut="Ctrl+W / Cmd+W",
     ),
     "app.quit": CommandSpec(
@@ -128,7 +128,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Close the database and quit qPlot",
         _standard_shortcuts(QKeySequence.StandardKey.Quit, ["Ctrl+Q"]),
         QtCore.Qt.ShortcutContext.ApplicationShortcut,
-        help_section="General",
+        help_section="Main and All Plot Windows",
         help_shortcut="Ctrl+Q / Cmd+Q",
     ),
     "preferences.open": CommandSpec(
@@ -136,14 +136,14 @@ COMMANDS: dict[str, CommandSpec] = {
         "&Preferences...",
         "Open qPlot preferences",
         "Ctrl+,",
-        help_section="General",
+        help_section="Main and All Plot Windows",
     ),
     "window.minimize": CommandSpec(
         "window.minimize",
         "&Minimize",
         "Minimize this window",
         _platform_shortcuts(mac=["Ctrl+M"], windows=["Alt+Space, N"]),
-        help_section="General",
+        help_section="Main and All Plot Windows",
         help_shortcut="Ctrl+M / Alt+Space, N",
     ),
     "window.maximize_restore": CommandSpec(
@@ -151,7 +151,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Ma&ximize / Restore",
         "Maximize or restore this window",
         _platform_shortcuts(windows=["Alt+Space, X", "Alt+Space, R"]),
-        help_section="General",
+        help_section="Main and All Plot Windows",
         help_shortcut="Alt+Space, X / Alt+Space, R",
         help_text="Maximize or restore the current window on Windows",
     ),
@@ -166,7 +166,7 @@ COMMANDS: dict[str, CommandSpec] = {
                 windows=["F11", "Alt+Enter"],
             ),
         ),
-        help_section="General",
+        help_section="Main and All Plot Windows",
         help_shortcut="Ctrl+Cmd+F / F11",
     ),
     "copy.selection": CommandSpec(
@@ -175,7 +175,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Copy selected cells or rows in the run details pane",
         _standard_shortcuts(QKeySequence.StandardKey.Copy, ["Ctrl+C"]),
         QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
-        help_section="General",
+        help_section="Main Window — Run Details Focused",
         help_shortcut="Ctrl+C / Cmd+C",
     ),
     "copy.cell": CommandSpec(
@@ -184,7 +184,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Copy the current cell or value in the run details pane",
         "Ctrl+Shift+C",
         QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
-        help_section="General",
+        help_section="Main Window — Run Details Focused",
         help_shortcut="Ctrl+Shift+C / Cmd+Shift+C",
     ),
     "context.show": CommandSpec(
@@ -192,14 +192,14 @@ COMMANDS: dict[str, CommandSpec] = {
         "Show Context Menu",
         "Open the focused widget's context menu",
         "Shift+F10",
-        help_section="General",
+        help_section="Context Menus",
     ),
     "database.open_folder": CommandSpec(
         "database.open_folder",
         "Open Database &Folder",
         "Open the current database folder",
         "Ctrl+Shift+D",
-        help_section="General",
+        help_section="Main Window",
     ),
     "testdata.create_csv": CommandSpec(
         "testdata.create_csv",
@@ -224,27 +224,27 @@ COMMANDS: dict[str, CommandSpec] = {
         "Main Window &Front/Back",
         "Bring the main window to front, or behind the graph windows",
         "Ctrl+Shift+M",
-        help_section="General",
+        help_section="Main and All Plot Windows",
     ),
     "run.plot_entered": CommandSpec(
         "run.plot_entered",
         "Plot Entered Run and Measurement",
         "Plot the requested run and measurement",
         "Ctrl+Return",
-        help_section="General",
+        help_section="Main Window",
     ),
     "run.plot_selected_all": CommandSpec(
         "run.plot_selected_all",
         "Plot All Measurements in Selected Run",
         "Plot all measurements in the selected run",
         "Ctrl+Shift+Return",
-        help_section="General",
+        help_section="Main Window",
     ),
     "run.plot_selected_measurements": CommandSpec(
         "run.plot_selected_measurements",
         "Plot Measurements 1 to 9 in Selected Run",
         "Plot measurements 1 to 9 in the selected run",
-        help_section="General",
+        help_section="Main Window",
         help_shortcut="Ctrl+1 to Ctrl+9",
     ),
     "plots.close_all": CommandSpec(
@@ -252,14 +252,14 @@ COMMANDS: dict[str, CommandSpec] = {
         "Close All &Plot Windows",
         "Close all plot windows",
         "Ctrl+Shift+W",
-        help_section="General",
+        help_section="Main and All Plot Windows",
     ),
     "plot.autoscale": CommandSpec(
         "plot.autoscale",
         "Autoscale",
         "Return all plot axes to autoscale mode",
         "Ctrl+0",
-        help_section="Plot Windows",
+        help_section="All Plot Windows (1D, 2D, and Cuts)",
     ),
     "plot.copy_image": CommandSpec(
         "plot.copy_image",
@@ -267,7 +267,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Copy the plot image using the selected copy format or resolution",
         _standard_shortcuts(QKeySequence.StandardKey.Copy, ["Ctrl+C"]),
         object_name="copyPlotImageAction",
-        help_section="Plot Windows",
+        help_section="All Plot Windows (1D, 2D, and Cuts)",
         help_shortcut="Ctrl+C / Cmd+C",
     ),
     "plot.print": CommandSpec(
@@ -276,7 +276,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Print the visible plot area",
         _standard_shortcuts(QKeySequence.StandardKey.Print, ["Ctrl+P"]),
         object_name="printPlotAction",
-        help_section="Plot Windows",
+        help_section="All Plot Windows (1D, 2D, and Cuts)",
         help_shortcut="Ctrl+P / Cmd+P",
     ),
     "plot.export": CommandSpec(
@@ -285,7 +285,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Open the plot export dialog",
         "Ctrl+E",
         object_name="exportPlotAction",
-        help_section="Plot Windows",
+        help_section="All Plot Windows (1D, 2D, and Cuts)",
         help_text="Export the plot",
     ),
     "plot.toggle_operations": CommandSpec(
@@ -298,70 +298,97 @@ COMMANDS: dict[str, CommandSpec] = {
         "Refresh and status",
         "Show or hide the refresh and status toolbar",
         "Ctrl+Alt+R",
-        help_section="Plot Windows",
+        help_section="All Plot Windows (1D, 2D, and Cuts)",
     ),
     "toolbar.coordinates": CommandSpec(
         "toolbar.coordinates",
         "Coordinates",
         "Show or hide the coordinates toolbar",
         "Ctrl+Alt+C",
-        help_section="Plot Windows",
+        help_section="All Plot Windows (1D, 2D, and Cuts)",
     ),
     "toolbar.axis_control": CommandSpec(
         "toolbar.axis_control",
         "Cut controls",
         "Show or hide the cut controls panel",
         "Ctrl+Alt+A",
-        help_section="Plot Windows",
+        help_section="Cut Windows",
     ),
     "toolbar.operations": CommandSpec(
         "toolbar.operations",
         "Data operations",
         "Show or hide the data operations panel",
         "Ctrl+Alt+O",
-        help_section="Plot Windows",
+        help_section="All Plot Windows (1D, 2D, and Cuts)",
     ),
     "plot.snap_to_trace": CommandSpec(
         "plot.snap_to_trace",
         "Snap to &Trace",
         "Snap the 1D coordinate readout to the nearest trace point",
         "S",
-        help_section="Plot Windows",
+        help_section="1D Plot and Cut Windows",
     ),
     "heatmap.autoscale_color": CommandSpec(
         "heatmap.autoscale_color",
         "Autoscale Color",
         "Autoscale the colour range",
         "C",
-        help_section="Heatmaps",
+        help_section="2D Heatmap Windows",
     ),
     "heatmap.horizontal_cut": CommandSpec(
         "heatmap.horizontal_cut",
         "Horizontal Cut",
         "Open a horizontal cut",
         "H",
-        help_section="Heatmaps",
+        help_section="2D Heatmap Windows",
     ),
     "heatmap.vertical_cut": CommandSpec(
         "heatmap.vertical_cut",
         "Vertical Cut",
         "Open a vertical cut",
         "V",
-        help_section="Heatmaps",
+        help_section="2D Heatmap Windows",
+    ),
+    "plot.clear_selection": CommandSpec(
+        "plot.clear_selection",
+        "Clear Rectangular Selection",
+        "Clear the rectangular plot selection, if present",
+        help_section="All Plot Windows (1D, 2D, and Cuts)",
+        help_shortcut="Escape",
+    ),
+    "preview.open": CommandSpec(
+        "preview.open",
+        "Open Preview",
+        "Open the focused measurement preview as a plot",
+        help_section="Main Window — Measurement Preview Focused",
+        help_shortcut="Return / Enter / Space",
+    ),
+    "preview.context": CommandSpec(
+        "preview.context",
+        "Preview Context Menu",
+        "Open the focused measurement preview's context menu",
+        help_section="Main Window — Measurement Preview Focused",
+        help_shortcut="Shift+F10 / Menu key",
     ),
     "heatmap.move_cut": CommandSpec(
         "heatmap.move_cut",
         "Move Selected Cut",
-        "Move the selected cut cursor by one pixel",
-        help_section="Heatmaps",
+        "Move the selected cut cursor by one pixel (a cut must be open)",
+        help_section="2D Heatmap Windows",
         help_shortcut="Arrow keys",
     ),
 }
 
 SHORTCUT_HELP_SECTIONS = (
-    "General",
-    "Plot Windows",
-    "Heatmaps",
+    "Main and All Plot Windows",
+    "Main Window",
+    "Main Window — Run Details Focused",
+    "Main Window — Measurement Preview Focused",
+    "All Plot Windows (1D, 2D, and Cuts)",
+    "1D Plot and Cut Windows",
+    "Cut Windows",
+    "2D Heatmap Windows",
+    "Context Menus",
 )
 
 
@@ -488,7 +515,16 @@ def shortcut_help_html() -> str:
     Builds the keyboard shortcut help HTML from registered command metadata.
 
     """
-    parts = ["<h2>Keyboard Shortcuts</h2>"]
+    parts = [
+        "<h2>Keyboard Shortcuts</h2>",
+        "<p>Use these shortcuts in the active window shown by each heading. "
+        "Cut windows are the 1D plots opened from a 2D heatmap. "
+        "Shortcuts for focused widgets require keyboard focus in that widget.</p>",
+        "<p>Keys use the current platform's notation. On macOS, Qt displays "
+        "the Command key as ⌘ and the Control key as ⌃. "
+        "Text fields and other controls may handle typing, copying, or arrow "
+        "keys themselves. Quit also works while a dialog is open.</p>",
+    ]
     for section in SHORTCUT_HELP_SECTIONS:
         rows: list[tuple[str, str]] = []
         for spec in COMMANDS.values():
@@ -511,6 +547,13 @@ def shortcut_help_html() -> str:
             )
         parts.append("</table>")
 
+    parts.append(
+        "<p><b>Context menus:</b> Shift+F10 opens the run-list context menu "
+        "in the main window or the plot context menu in a plot window. "
+        "With a menu open, press an entry's underlined letter or number "
+        "to activate it. Standard Qt controls also support their usual "
+        "text editing and keyboard navigation keys.</p>"
+    )
     return "\n".join(parts)
 
 

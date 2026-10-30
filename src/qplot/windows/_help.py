@@ -39,9 +39,6 @@ status bar at the bottom of the window before assuming a load has failed.</p>
 """
 
 
-KEYBOARD_SHORTCUTS_HTML = shortcut_help_html()
-
-
 def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
     """
     Adds qPlot's shared Help menu to a main or plot window.
@@ -60,7 +57,7 @@ def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
 
     shortcuts_action = QtGui.QAction("&Keyboard Shortcuts", window)
     shortcuts_action.setObjectName("keyboardShortcutsHelpAction")
-    shortcuts_action.setStatusTip("Show qPlot keyboard shortcuts")
+    shortcuts_action.setStatusTip("Show all qPlot keyboard shortcuts and where they work")
     shortcuts_action.triggered.connect(lambda: show_keyboard_shortcuts(window))
     help_menu.addAction(shortcuts_action)
 
@@ -133,7 +130,7 @@ def show_keyboard_shortcuts(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     return _show_help_dialog(
         parent,
         "qPlot Keyboard Shortcuts",
-        KEYBOARD_SHORTCUTS_HTML,
+        shortcut_help_html(),
         "qplotKeyboardShortcutsDialog",
         )
 
