@@ -79,9 +79,10 @@ from .run_list_items import (
 )
 
 MAX_RUN_PREVIEW_WIDGETS = 500
-# Four thumbnails, including cell margins and spacing before the trailing stretch.
+# Four thumbnails, cell margins, spacing before the trailing stretch, and the
+# theme's QTreeView::item horizontal padding (6 px on each side).
 DEFAULT_MEASUREMENTS_COLUMN_WIDTH = (
-    4 * (MEASUREMENT_PREVIEW_SIZE + MEASUREMENT_PREVIEW_SPACING) + 4
+    4 * (MEASUREMENT_PREVIEW_SIZE + MEASUREMENT_PREVIEW_SPACING) + 4 + 12
 )
 RUN_LIST_EVENT_YIELD_ROWS = 250
 RUN_TABLE_COLUMN_WIDTHS_KEY = "GUI.run_table_column_widths"
