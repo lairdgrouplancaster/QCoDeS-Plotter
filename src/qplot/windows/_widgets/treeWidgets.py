@@ -72,12 +72,17 @@ from .preview import (
 )
 from .run_list_items import (
     MEASUREMENT_PREVIEW_SIZE,
+    MEASUREMENT_PREVIEW_SPACING,
     EqualsAlignedDelegate,
     RunPreviewCell,
     SortableTreeWidgetItem,
 )
 
 MAX_RUN_PREVIEW_WIDGETS = 500
+# Four thumbnails, including cell margins and spacing before the trailing stretch.
+DEFAULT_MEASUREMENTS_COLUMN_WIDTH = (
+    4 * (MEASUREMENT_PREVIEW_SIZE + MEASUREMENT_PREVIEW_SPACING) + 4
+)
 RUN_LIST_EVENT_YIELD_ROWS = 250
 RUN_TABLE_COLUMN_WIDTHS_KEY = "GUI.run_table_column_widths"
 RUN_TABLE_VISIBLE_COLUMNS_KEY = "GUI.run_table_visible_columns"
@@ -155,7 +160,7 @@ class RunList(qtw.QTreeWidget):
     )
     column_widths = {
         "ID": 44,
-        "Measurements": 96,
+        "Measurements": DEFAULT_MEASUREMENTS_COLUMN_WIDTH,
         "Experiment": 120,
         "Sample": 112,
         "Name": 150,
@@ -184,7 +189,7 @@ class RunList(qtw.QTreeWidget):
     }
     readable_column_widths = {
         "ID": 37,
-        "Measurements": 92,
+        "Measurements": DEFAULT_MEASUREMENTS_COLUMN_WIDTH,
         "Experiment": 96,
         "Sample": 88,
         "Name": 112,
