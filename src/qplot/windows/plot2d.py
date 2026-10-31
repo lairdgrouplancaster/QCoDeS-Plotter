@@ -273,8 +273,8 @@ class plot2d(
         super().closeEvent(event)
       
 
-    def initRefresh(self, refresh: Any) -> None:
-        super().initRefresh(refresh)
+    def initRefresh(self, refrate: float) -> None:
+        super().initRefresh(refrate)
         
         self.relevel_refresh = qtw.QCheckBox("Autoscale colors on refresh")
         self.relevel_refresh.setToolTip("Autoscale the heatmap colour range on each refresh")

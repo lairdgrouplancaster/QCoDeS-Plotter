@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.qcodes_cache import cache_parameter_is_synchronized
@@ -27,6 +27,19 @@ from qplot.windows._plot_status import PlotStatusWidget
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import plot2d
+
+
+def test_heatmap_refresh_controls_accept_base_class_keyword():
+    window = plot2d.__new__(plot2d)
+    qtw.QMainWindow.__init__(window)
+    window.monitor = QtCore.QTimer(window)
+    try:
+        window.initRefresh(refrate=1.5)
+        assert window.spinBox.value() == 1.5
+        assert window.relevel_refresh.text() == "Autoscale colors on refresh"
+        assert window.toolbarRef.widgetForAction(window.plotStatusAction) is window.plot_status
+    finally:
+        sip.delete(window)
 
 
 def test_control_layout_preserves_pending_data_range_instead_of_empty_view():

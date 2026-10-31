@@ -71,7 +71,7 @@ def _prepare_traces(host, dialog, lines, field, multiple):
     if field == "marker_enable":
         second.dots_enabled = True
     for key, line in zip(keys, lines, strict=True):
-        host._apply_trace_style(key, line)
+        host._apply_trace_style(label=key, line=line)
     dialog.refresh_rows()
     if multiple:
         _select_line(host, dialog, lines[0])
