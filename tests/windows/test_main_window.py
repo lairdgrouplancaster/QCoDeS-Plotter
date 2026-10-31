@@ -1713,6 +1713,9 @@ class OptionsMenuTestCase(unittest.TestCase):
         def refreshMain(self):
             pass
 
+        def open_bundled_test_database_csv_folder(self):
+            pass
+
         def create_test_database_csv(self):
             pass
 
@@ -1786,11 +1789,13 @@ class OptionsMenuTestCase(unittest.TestCase):
             actions = {
                 action.objectName(): action.text().replace("&", "")
                 for action in test_data_menu.actions()
+                if not action.isSeparator()
             }
 
             self.assertEqual(
                 actions,
                 {
+                    "openBundledTestdataFolderAction": "Open Bundled CSV Folder",
                     "createTestDatabaseCsvAction": "Create Example CSV...",
                     "exportTestDatabaseCsvCollectionAction": "Export CSV Collection...",
                     "generateTestDatabaseAction": "Generate Database from CSV...",

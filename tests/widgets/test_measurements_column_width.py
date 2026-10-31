@@ -30,7 +30,7 @@ def test_default_column_fits_four_thumbnails_at_normal_spacing(theme, width):
         margins = layout.contentsMargins()
         assert thumbnails[0].x() >= margins.left()
         assert thumbnails[-1].geometry().right() < cell.width() - margins.right()
-        for left, right in zip(thumbnails, thumbnails[1:]):
+        for left, right in zip(thumbnails, thumbnails[1:], strict=False):
             assert right.x() - left.geometry().right() - 1 == MEASUREMENT_PREVIEW_SPACING
     finally:
         run_list.close()
