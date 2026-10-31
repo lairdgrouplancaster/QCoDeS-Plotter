@@ -27,6 +27,9 @@ def fake_tools(monkeypatch):
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(desktop.subprocess, "run", run)
+    monkeypatch.setattr(desktop, "_windows_shortcut", lambda destination: calls.append(
+        (["IShellLinkW", str(destination)], {}),
+    ))
     return calls
 
 
@@ -82,10 +85,8 @@ def test_windows_shortcut_and_unicode(tmp_path, monkeypatch, fake_tools):
     assert "WScript.Arguments" in script
     assert "shell.Run(command, 0, True)" in script
     assert "cmd.exe" not in script
-    command, options = fake_tools[0]
-    assert command[0] == "powershell.exe"
-    assert "CreateShortcut" in command[-1]
-    assert options["env"]["QPLOT_LAUNCHER_DIR"] == str(destination)
+    command, _options = fake_tools[0]
+    assert command == ["IShellLinkW", str(destination)]
     assert desktop._windows_command(destination).endswith(' "%1"')
 
 
@@ -112,7 +113,10 @@ def test_bootstrap_outside_repository(tmp_path):
     environment = tmp_path / "Python Ω space"
     venv.EnvBuilder(with_pip=False).create(environment)
     python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    site = subprocess.check_output([str(python), "-I", "-c", "import site; print(site.getsitepackages()[0])"], text=True).strip()
+    site = subprocess.check_output(
+        [str(python), "-I", "-c", "import sys, sysconfig; sys.stdout.reconfigure(encoding='utf-8'); print(sysconfig.get_path('purelib'))"],
+        text=True, encoding="utf-8",
+    ).strip()
     package = Path(site) / "qplot"
     package.mkdir()
     (package / "__init__.py").write_text("")
@@ -230,7 +234,18 @@ def test_native_windows_shortcut_and_arguments(tmp_path):
         subprocess.run(["wscript.exe", "//nologo", str(destination / "launch.vbs"), *args],
                        cwd=tmp_path, check=True, timeout=20)
         assert json.loads(output.read_text()) == args
-    assert (destination / "qPlot.lnk").is_file()
+    shortcut = destination / "qPlot.lnk"
+    assert shortcut.is_file()
+    # Also execute the shortcut itself: its saved arguments must preserve the
+    # Unicode launcher path, not just the directly invoked VBS script above.
+    import time
+
+    output.unlink()
+    os.startfile(shortcut)
+    deadline = time.monotonic() + 10
+    while not output.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert json.loads(output.read_text()) == []
     desktop.remove(destination)
 
 

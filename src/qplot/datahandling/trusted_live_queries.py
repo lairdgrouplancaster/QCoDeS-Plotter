@@ -2153,6 +2153,7 @@ class TrustedMetadataQueryAdapter:
         if not has_array_records and len(dependency_sets) == len(measure_parameters):
             nd_observations, nd_steps = self._advance_nd_counts(
                 run_id, table_name, dependency_sets, result_columns, result_watermark,
+                shared_page=independent_page,
             )
             observations.extend(nd_observations)
         else:
@@ -3586,6 +3587,8 @@ class TrustedMetadataQueryAdapter:
         dependency_sets: tuple[tuple[tuple[str, ...], str | None], ...],
         result_columns: tuple[str, ...],
         result_watermark: int,
+        *,
+        shared_page: TrustedQueryResult | None = None,
     ) -> tuple[
         list[tuple[tuple[str, ...], int, tuple[int, ...] | None]], dict[str, int],
     ]:
@@ -3633,15 +3636,17 @@ class TrustedMetadataQueryAdapter:
                 "id", *(f"qplot_axis_{i}" for i in range(len(names))),
                 *(f"qplot_present_{i}" for i in range(len(dependents))),
             )
-            page = self._executor.query(
-                f"SELECT {self._regular_probe_projection(names, dependents)} "
-                f"FROM {quote_sqlite_identifier(table_name)} "
-                'WHERE "id" > ? AND "id" <= ? ORDER BY "id" LIMIT ?',
-                (previous.after_row_id, result_watermark, min(
-                    _TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS,
-                    TRUSTED_DERIVED_MAX_SAMPLE_CELLS // len(expected_columns),
-                )),
-            )
+            page = shared_page
+            if page is None:
+                page = self._executor.query(
+                    f"SELECT {self._regular_probe_projection(names, dependents)} "
+                    f"FROM {quote_sqlite_identifier(table_name)} "
+                    'WHERE "id" > ? AND "id" <= ? ORDER BY "id" LIMIT ?',
+                    (previous.after_row_id, result_watermark, min(
+                        _TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS,
+                        TRUSTED_DERIVED_MAX_SAMPLE_CELLS // len(expected_columns),
+                    )),
+                )
             if page.columns != expected_columns or not page.rows:
                 raise TrustedMetadataQueryError("An nD count page has an invalid schema.")
             states = list(previous.states)
@@ -3789,6 +3794,15 @@ class TrustedMetadataQueryAdapter:
                 for name in dependencies
             )
         )
+        # The nD count verifier consumes this same page. Project the union
+        # of its axes too, so mixed runs still read only one physical prefix
+        # page per request rather than duplicating the scan for counts.
+        if any(len(names) > 2 for names, _dependent in dependency_sets):
+            all_axes = tuple(dict.fromkeys(
+                name for names, _dependent in dependency_sets for name in names
+            ))
+            if len(set((*all_axes, *owner_names))) <= TRUSTED_DERIVED_MAX_SOURCE_COLUMNS:
+                axis_names = all_axes
         # Ownership comes from the stored value's presence, not its numeric
         # projection. QCoDeS can store NaN as non-numeric text: it still owns
         # its row even though it cannot supply a finite measured sample.

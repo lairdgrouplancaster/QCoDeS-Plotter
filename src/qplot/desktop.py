@@ -125,18 +125,74 @@ End If
 '''
     # Windows Script Host requires a BOM for Unicode source text.
     (destination / "launch.vbs").write_text(script, encoding="utf-16")
-    # Pass paths as environment data, not interpolated PowerShell code.
-    environment = dict(os.environ, QPLOT_LAUNCHER_DIR=str(destination))
-    subprocess.run([
-        "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-        "$s = New-Object -ComObject WScript.Shell; "
-        "$d = $env:QPLOT_LAUNCHER_DIR; "
-        "$l = $s.CreateShortcut((Join-Path $d 'qPlot.lnk')); "
-        "$l.TargetPath = Join-Path $env:SystemRoot 'System32\\wscript.exe'; "
-        "$l.Arguments = '//nologo ' + [char]34 + (Join-Path $d 'launch.vbs') + [char]34; "
-        "$l.WorkingDirectory = $env:USERPROFILE; $l.Description = 'qPlot QCoDeS viewer'; $l.Save()",
-    ], env=environment, check=True)
+    _windows_shortcut(destination)
     return destination
+
+
+def _windows_shortcut(destination: Path) -> None:
+    """Use the Unicode shell-link interfaces, independent of the ANSI code page.
+
+    https://learn.microsoft.com/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishelllinkw
+    https://learn.microsoft.com/windows/win32/api/objidl/nf-objidl-ipersistfile-save
+    """
+    import ctypes
+    import uuid
+
+    # These ctypes APIs exist only on Windows; analysis also runs on Linux.
+    ole = ctypes.WinDLL("ole32")  # type: ignore[attr-defined]
+    hresult = ctypes.c_long
+    pointer = ctypes.c_void_p
+    ole.CoInitializeEx.argtypes = [pointer, ctypes.c_uint32]
+    ole.CoInitializeEx.restype = hresult
+    ole.CoCreateInstance.argtypes = [pointer, pointer, ctypes.c_uint32, pointer,
+                                    ctypes.POINTER(pointer)]
+    ole.CoCreateInstance.restype = hresult
+    ole.CoUninitialize.argtypes = []
+    ole.CoUninitialize.restype = None
+
+    def guid(value):
+        return ctypes.create_string_buffer(uuid.UUID(value).bytes_le)
+
+    def check(result):
+        if result < 0:
+            raise OSError(f"Windows shortcut creation failed (HRESULT 0x{result & 0xffffffff:08x})")
+
+    def method(interface, slot, result_type, *arguments):
+        vtable = ctypes.cast(interface, ctypes.POINTER(ctypes.POINTER(pointer))).contents
+        return ctypes.WINFUNCTYPE(result_type, pointer, *arguments)(vtable[slot])  # type: ignore[attr-defined]
+
+    initialized = ole.CoInitializeEx(None, 2)  # COINIT_APARTMENTTHREADED
+    if initialized != -2147417850:  # RPC_E_CHANGED_MODE: use the caller's apartment.
+        check(initialized)
+    link, persist = pointer(), pointer()
+    try:
+        check(ole.CoCreateInstance(
+            guid("00021401-0000-0000-c000-000000000046"), None, 1,
+            guid("000214f9-0000-0000-c000-000000000046"), ctypes.byref(link),
+        ))
+        # IShellLinkW slots: SetPath, SetArguments, SetWorkingDirectory,
+        # SetDescription. Every string crosses COM as UTF-16, never ANSI.
+        for slot, value in (
+            (20, str(Path(os.environ["SystemRoot"]) / "System32/wscript.exe")),
+            (11, subprocess.list2cmdline(["//nologo", str(destination / "launch.vbs")])),
+            (9, os.environ["USERPROFILE"]),
+            (7, "qPlot QCoDeS viewer"),
+        ):
+            check(method(link, slot, hresult, ctypes.c_wchar_p)(link, value))
+        check(method(link, 0, hresult, pointer, ctypes.POINTER(pointer))(
+            link, guid("0000010b-0000-0000-c000-000000000046"), ctypes.byref(persist),
+        ))
+        shortcut = destination / "qPlot.lnk"
+        ensure_safe_auxiliary_path(shortcut)
+        check(method(persist, 6, hresult, ctypes.c_wchar_p, ctypes.c_int)(
+            persist, str(shortcut), 1,
+        ))
+    finally:
+        for interface in (persist, link):
+            if interface:
+                method(interface, 2, ctypes.c_ulong)(interface)  # IUnknown::Release
+        if initialized in (0, 1):
+            ole.CoUninitialize()
 
 
 def _windows_command(destination: Path) -> str:

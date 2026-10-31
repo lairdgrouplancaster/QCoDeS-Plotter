@@ -147,9 +147,14 @@ def test_nd_count_progress_is_scheduled_until_complete(tmp_path, monkeypatch):
         namespace = queries.TrustedSourceRevisionNamespace.create()
         cursors = []
         for _ in range(30):
+            start = len(executor.queries)
             observation = adapter.derived_source_observation(
                 1, database_instance=database_instance(path), namespace=namespace,
             )
+            pages = [sql for sql in executor.queries[start:]
+                     if sql.startswith('SELECT "id", CASE WHEN')
+                     and sql.endswith('ORDER BY "id" LIMIT ?')]
+            assert len(pages) == 1  # Count and preview proofs share one scan.
             if not observation.progressive_layout_pending:
                 break
             cursors.append(observation.progressive_layout_cursor)
