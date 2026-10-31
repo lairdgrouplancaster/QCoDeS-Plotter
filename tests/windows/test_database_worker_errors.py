@@ -26,6 +26,7 @@ from qplot.testdata import (
 )
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
+from qplot.windows._error_dialog import ErrorDialog
 from tests._window_lifecycle import close_main_window
 
 pytestmark = pytest.mark.timeout(90)
@@ -88,29 +89,30 @@ def error_window(tmp_path, monkeypatch):
     diagnostics.configure_logging(log_file=tmp_path / "qplot.log", force=True)
     errors = []
     uncaught = []
-    requested_titles = {}
-    original_box_init = QtWidgets.QMessageBox.__init__
+    requested_errors = {}
+    original_dialog_init = ErrorDialog.__init__
 
-    def record_box_init(box, *args, **kwargs):
-        original_box_init(box, *args, **kwargs)
-        if len(args) >= 3:
-            requested_titles[box] = args[1]
+    def record_dialog_init(dialog, title, message, details=None, parent=None):
+        original_dialog_init(dialog, title, message, details, parent)
+        requested_errors[dialog] = (title, message, details)
 
-    monkeypatch.setattr(QtWidgets.QMessageBox, "__init__", record_box_init)
+    monkeypatch.setattr(ErrorDialog, "__init__", record_dialog_init)
 
-    def dismiss_error(box):
-        # Exercise the real show_error and QMessageBox construction; dismiss
-        # only its modal event loop so this test cannot block on user input.
-        # Qt ignores message-box window titles on macOS. Assert the title
-        # supplied to its real constructor, together with the rendered body.
-        title = requested_titles[box]
-        if sys.platform != "darwin":
-            assert box.windowTitle() == title
-        assert box.icon() == QtWidgets.QMessageBox.Icon.Warning
-        errors.append((title, box.text(), box.detailedText()))
-        return QtWidgets.QMessageBox.StandardButton.Ok
+    def dismiss_error(dialog):
+        # Exercise real error-dialog construction, replacing only its modal
+        # event loop so database failures cannot wait for user input in tests.
+        title, message, details = requested_errors[dialog]
+        assert dialog.windowTitle() == title
+        assert any(
+            label.text() == message
+            for label in dialog.findChildren(QtWidgets.QLabel)
+        )
+        text = dialog.findChild(QtWidgets.QPlainTextEdit, "errorDetails")
+        assert (text.toPlainText() if text is not None else None) == details
+        errors.append((title, message, details or ""))
+        return QtWidgets.QDialog.DialogCode.Accepted
 
-    monkeypatch.setattr(QtWidgets.QMessageBox, "exec", dismiss_error)
+    monkeypatch.setattr(ErrorDialog, "exec", dismiss_error)
     monkeypatch.setattr(sys, "excepthook", lambda *args: uncaught.append(args))
     window = main_window.MainWindow()
     window.startupDatabaseTimer.stop()

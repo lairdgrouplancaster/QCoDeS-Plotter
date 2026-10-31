@@ -45,6 +45,8 @@ class _Config:
             "runtime_settings.max_heatmap_grid_side": 800,
             "runtime_settings.del_grace_period": 1.0,
             "runtime_settings.cloud_sync_timeout": 1.0,
+            "updates.check_on_launch": False,
+            "updates.include_prereleases": False,
         }
         self.schema = {"properties": {}}
         for key, value in self.values.items():
