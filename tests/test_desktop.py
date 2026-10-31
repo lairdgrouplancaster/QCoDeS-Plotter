@@ -106,8 +106,8 @@ def test_bootstrap_outside_repository(tmp_path):
     resources.mkdir()
     shutil.copyfile(_desktop_bootstrap.__file__, resources / "bootstrap.py")
     # A tiny installed-package stand-in records the production entry-point call.
-    # -I ignores PYTHONPATH, so add this fixture's install through sitecustomize
-    # in a temporary venv instead of relying on the repository working directory.
+    # -I ignores PYTHONPATH, so put the fixture in a temporary venv's package
+    # directory instead of relying on the repository working directory.
     import venv
 
     environment = tmp_path / "Python Ω space"
@@ -144,9 +144,10 @@ def test_bootstrap_outside_repository(tmp_path):
     driver.write_text(
         "from pathlib import Path\nimport sys\n"
         f"scope = {{'__name__': 'payload', '__file__': {str(resources / 'bootstrap.py')!r}}}\n"
-        "exec(compile(Path(scope['__file__']).read_text(), scope['__file__'], 'exec'), scope)\n"
-        f"scope['show_error'] = lambda text: Path({str(error_file)!r}).write_text(text)\n"
-        "raise SystemExit(scope['main']())\n"
+        "exec(compile(Path(scope['__file__']).read_text(encoding='utf-8'), scope['__file__'], 'exec'), scope)\n"
+        f"scope['show_error'] = lambda text: Path({str(error_file)!r}).write_text(text, encoding='utf-8')\n"
+        "raise SystemExit(scope['main']())\n",
+        encoding="utf-8",
     )
     import sqlite3
 
@@ -157,13 +158,13 @@ def test_bootstrap_outside_repository(tmp_path):
     failure_env = dict(os.environ, HOME=str(tmp_path), LOCALAPPDATA=str(tmp_path))
     failure = subprocess.run([str(python), "-I", str(driver)], cwd=tmp_path, env=failure_env, timeout=15)
     assert failure.returncode == 79
-    assert "SQLite database" in error_file.read_text()
+    assert "SQLite database" in error_file.read_text(encoding="utf-8")
     assert database.read_bytes() == before
     database.unlink()  # Explicit synthetic fixture cleanup.
     shutil.rmtree(package)
     failure = subprocess.run([str(python), "-I", str(driver)], cwd=tmp_path, env=failure_env, timeout=15)
     assert failure.returncode == 79
-    assert "No module named 'qplot'" in error_file.read_text()
+    assert "No module named 'qplot'" in error_file.read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="native macOS applet tools")
