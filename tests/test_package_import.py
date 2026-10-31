@@ -46,6 +46,34 @@ def test_import_qplot_does_not_import_window_modules():
     assert result.stdout.splitlines() == ["False", "True"]
 
 
+def test_gui_import_defers_pandas_and_colormap_discovery():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys\n"
+                "import qplot.windows\n"
+                "from qplot.windows._colorbar import "
+                "_build_colorbar_colormap_catalog, _colorbar_colormaps\n"
+                "assert 'pandas' not in sys.modules\n"
+                "assert 'matplotlib' not in sys.modules\n"
+                "assert _build_colorbar_colormap_catalog.cache_info().currsize == 0\n"
+                "names = _colorbar_colormaps()\n"
+                "assert 'viridis' in names and 'Greys' in names\n"
+                "assert _colorbar_colormaps() is names\n"
+                "assert _build_colorbar_colormap_catalog.cache_info().misses == 1\n"
+            ),
+        ],
+        capture_output=True,
+        check=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0
+
+
 def test_database_probe_keeps_heavy_dependencies_lazy(tmp_path):
     database_path = tmp_path / "probe.db"
     sqlite3.connect(database_path).close()

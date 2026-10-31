@@ -7,7 +7,6 @@ from PyQt6 import QtCore
 
 from ._colorbar import (
     _CET_COLORBAR_SUBTYPES,
-    _COLORBAR_COLORMAPS,
     _DEFAULT_HIDDEN_COLORBAR_NAMES,
     _DEFAULT_HIDDEN_COLORBAR_PREFIXES,
     _DEFAULT_HIDDEN_COLORBAR_SUFFIXES,
@@ -15,6 +14,7 @@ from ._colorbar import (
     _cet_colorbar_colormap_subtype,
     _colorbar_colormap_for_name,
     _colorbar_colormap_group,
+    _colorbar_colormaps,
     _colorbar_subtype_config_key,
     _config_value,
     _matplotlib_colorbar_colormap_subtype,
@@ -1063,7 +1063,7 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         ))
 
         available = []
-        for name in _COLORBAR_COLORMAPS:
+        for name in _colorbar_colormaps():
             if name in _DEFAULT_HIDDEN_COLORBAR_NAMES:
                 continue
             if name.startswith(_DEFAULT_HIDDEN_COLORBAR_PREFIXES):

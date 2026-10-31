@@ -17,6 +17,7 @@ from qplot.windows import _plot_axis_scaling as axis_scaling_module
 from qplot.windows._colorbar import (
     _CET_COLORBAR_SUBTYPES,
     _MATPLOTLIB_COLORBAR_SUBTYPES,
+    _colorbar_colormaps,
     _colorbar_subtype_config_key,
 )
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey, TraceKey
@@ -25,7 +26,7 @@ from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._plot_status import PlotStatusWidget
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots.subplot2d import sweeper
-from qplot.windows.plot2d import _COLORBAR_COLORMAPS, plot2d
+from qplot.windows.plot2d import plot2d
 
 
 def test_control_layout_preserves_pending_data_range_instead_of_empty_view():
@@ -3083,7 +3084,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         applied = window.setColorbarColorMap("none")
 
         self.assertFalse(applied)
-        self.assertNotIn("none", _COLORBAR_COLORMAPS)
+        self.assertNotIn("none", _colorbar_colormaps())
         self.assertEqual(window.status_messages, [("Unknown color map.", 5000)])
 
     def test_colorbar_colormap_config_filters_names_prefixes_and_groups(self):

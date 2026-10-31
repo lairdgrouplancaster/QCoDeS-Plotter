@@ -13,7 +13,6 @@ from qplot.tools.heatmap_geometry import (
     canonicalize_heatmap_data,
 )
 
-from . import _colorbar
 from ._commands import command_spec, create_action
 from ._display_precision import (
     DISPLAY_PRECISION_MESSAGE,
@@ -27,7 +26,6 @@ from ._plot2d_sweeps import Plot2DSweepMixin
 from ._plot_axis_scaling import _install_flush_axis_draw_specs
 from ._plotWin import plotWidget
 
-_COLORBAR_COLORMAPS = _colorbar._COLORBAR_COLORMAPS
 _HEATMAP_VIEW_RELOAD_DEBOUNCE_MS = 450
 _HEATMAP_VIEW_RELOAD_MIN_FRACTION = 0.95
 

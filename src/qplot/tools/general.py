@@ -3,7 +3,6 @@ from fractions import Fraction
 from typing import Any
 
 import numpy as np
-import pandas as pd
 from numpy.typing import ArrayLike
 from qcodes import dataset
 
@@ -36,6 +35,8 @@ def data2matrix(indep1 : ArrayLike,
         The data frame containing all 3 inputted arrays as a dataframe.
 
     """
+    import pandas as pd
+
     values = np.asarray(depvar)
     extended_float = values.dtype.kind == "f" and values.dtype.itemsize > 8
     if values.dtype.kind in "iuO" or extended_float:

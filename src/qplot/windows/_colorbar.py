@@ -1,3 +1,5 @@
+from functools import cache
+
 import numpy as np
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
@@ -228,6 +230,7 @@ def _colorbar_subtype_config_key(group, subtype):
     return f"user_preference.bar_colour_include_{group}_{subtype}"
 
 
+@cache
 def _build_colorbar_colormap_catalog():
     """
     Build the colorbar map list and remember which pyqtgraph source owns each.
@@ -262,7 +265,9 @@ def _build_colorbar_colormap_catalog():
     return tuple(colormaps), sources
 
 
-_COLORBAR_COLORMAPS, _COLORBAR_COLORMAP_SOURCES = _build_colorbar_colormap_catalog()
+def _colorbar_colormaps():
+    """Discover and cache the catalogue only when a heatmap needs it."""
+    return _build_colorbar_colormap_catalog()[0]
 
 
 def _colorbar_colormap_group(name):
@@ -270,7 +275,7 @@ def _colorbar_colormap_group(name):
     Return the broad group used for color-map filtering.
 
     """
-    source = _COLORBAR_COLORMAP_SOURCES.get(name)
+    source = _build_colorbar_colormap_catalog()[1].get(name)
     if source == "custom":
         return "custom"
     if name.startswith("CET-"):
@@ -340,7 +345,7 @@ def _colorbar_colormap_for_name(name):
     Return a color map object, custom map, or special pyqtgraph map name.
 
     """
-    source = _COLORBAR_COLORMAP_SOURCES.get(name)
+    source = _build_colorbar_colormap_catalog()[1].get(name)
     if source == "custom":
         colors = _CUSTOM_COLORBAR_COLORMAPS.get(name)
         if colors is not None:

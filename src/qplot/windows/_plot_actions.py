@@ -3,7 +3,6 @@ from functools import wraps
 from inspect import signature
 
 import numpy as np
-import pandas as pd
 from PyQt6 import QtCore
 
 from qplot.datahandling.dimensions import (
@@ -2567,6 +2566,8 @@ class PlotActionsMixin:
         Builds a flat CSV-friendly dataframe for the selected measurement data.
 
         """
+        import pandas as pd
+
         frames = []
         prefix_columns = len(params) > 1
         for param in params:
