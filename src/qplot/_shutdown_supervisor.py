@@ -555,15 +555,16 @@ class _ApiLauncherCancellationSender:
                 self._remember_error(error)
         while True:
             try:
-                self._completed.set()
-                break
-            except BaseException as error:
-                self._remember_error(error)
-        while True:
-            try:
                 with self._worker_condition:
                     self._worker_state = _CancellationWorkerState.COMPLETE
                     self._worker_condition.notify_all()
+                break
+            except BaseException as error:
+                self._remember_error(error)
+        # Completion waiters must observe the committed lifecycle state.
+        while True:
+            try:
+                self._completed.set()
                 return
             except BaseException as error:
                 self._remember_error(error)
