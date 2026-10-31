@@ -294,7 +294,11 @@ quick-start actions. It disappears once a database is loaded or a load is in
 progress.
 
 The run table gives a compact view of each run, including measurements,
-setpoints, start time, completion state, duration, and estimated size. The
+setpoints, start time, completion state, duration, and estimated size.
+Regular scalar measurements with three or more dimensions also report
+setpoint counts. For runs containing different measurement grids, the table
+shows the largest measurement's count. The info pane also shows per-axis
+counts under **Sweep parameters** in the **Steps** column. The
 details pane fills the selected run's overview, parameters, bounded setpoint
 summary, snapshot fields, and raw metadata progressively. During a trusted live
 session its preview area receives the bounded derived preview after that
