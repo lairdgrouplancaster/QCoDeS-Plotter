@@ -6,6 +6,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -152,7 +153,7 @@ def test_bootstrap_outside_repository(tmp_path):
     import sqlite3
 
     database = Path(cache) / "fontlist.json"
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute("CREATE TABLE measurement (value)")
     before = database.read_bytes()
     failure_env = dict(os.environ, HOME=str(tmp_path), LOCALAPPDATA=str(tmp_path))
@@ -292,7 +293,7 @@ def test_removal_refuses_database_inside_launcher(tmp_path, monkeypatch, fake_to
     destination = tmp_path / "qPlot.app"
     desktop.setup(destination)
     database = destination / "measurement.db"
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute("CREATE TABLE measurement (value)")
     before = database.read_bytes()
     with pytest.raises(OSError, match="SQLite database"):

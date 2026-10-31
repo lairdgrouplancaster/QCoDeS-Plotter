@@ -1045,3 +1045,31 @@ def test_qt_subprocess_exits_at_one_deadline_with_exact_diagnostics(
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "exit=0" in completed.stdout
     assert "escalations=1" in completed.stdout
+
+
+def test_shutdown_reaps_reader_that_closes_during_liveness_probe():
+    """Closing between the first reap and liveness must not strand the reader."""
+    class ClosingReader:
+        ready = False
+
+        def wait_closed(self, timeout):
+            assert timeout == 0
+            return self.ready
+
+        def liveness(self):
+            self.ready = True
+            return SimpleNamespace(
+                dispatcher_alive=False, control_alive=False, helper_alive=False,
+                helper_pid=None, receiver_alive=False, open_supervisor_endpoints=0,
+                unreaped_incarnations=0, resource_cleanup_pending=False,
+                outstanding_requests=0, closing=False, closed=True,
+            )
+
+    reader = ClosingReader()
+    window = SimpleNamespace(_retired_trusted_read_services={reader})
+    window._reap_retired_trusted_read_services = lambda: (
+        main_window.MainWindow._reap_retired_trusted_read_services(window)
+    )
+    assert not main_window.MainWindow._shutdown_background_work_active(window)
+    assert not window._retired_trusted_read_services
+    assert window._shutdown_last_diagnostics == ()

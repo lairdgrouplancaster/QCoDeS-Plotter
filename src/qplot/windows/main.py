@@ -1174,6 +1174,18 @@ class MainWindow(
                     "trusted derived bridge liveness raised "
                     f"{type(error).__name__}: {error}"
                 )
+        if not active and callable(reap_services):
+            # A broker can finish after the initial reap but before its
+            # liveness snapshot. Reap that newly closed reader before the
+            # shutdown path stops the reaper timer and accepts the close.
+            try:
+                reap_services()
+            except BaseException as error:
+                active = True
+                diagnostics.append(
+                    "final retired-service reap raised "
+                    f"{type(error).__name__}: {error}"
+                )
         self._shutdown_liveness_diagnostics = tuple(diagnostics)
         MainWindow._publish_shutdown_diagnostics(self)
         return active

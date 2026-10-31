@@ -284,7 +284,12 @@ class RunPreviewCell(qtw.QWidget):
                 continue
             widget = item.widget()
             if widget is not None:
-                widget.setParent(None)
+                # A queued show can outlive removal from the layout. Retire
+                # the label under the containing view, outside this cell's
+                # active children, so it cannot become a native window and
+                # steal focus while waiting for deferred deletion.
+                widget.setParent(self.parentWidget())
+                widget.hide()
                 widget.deleteLater()
         return selected_parameter
 
