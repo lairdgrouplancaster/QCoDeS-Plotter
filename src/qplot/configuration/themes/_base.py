@@ -113,7 +113,7 @@ _STYLESHEET_TEMPLATE = Template(
         padding-right: 7px;
         background-color: $menu_hover_bg;
     }
-    QLabel#plotStatusMessage {
+    QLabel#plotStatusMessage, QLabel#mainStatusMessage {
         color: $status_text;
     }
     QStatusBar {
