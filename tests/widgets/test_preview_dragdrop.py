@@ -206,9 +206,12 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
         main_messages = []
         plot_messages = []
 
-        class StatusBar:
-            def showMessage(self, message, timeout):
-                main_messages.append((message, timeout))
+        class StatusLabel:
+            def setText(self, message):
+                main_messages.append(message)
+
+            def setToolTip(self, tooltip):
+                pass
 
         target = type(
             "Target",
@@ -224,13 +227,13 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
             (),
             {
                 "_preview_drop_feedback_window": target,
-                "statusBar": lambda _self: StatusBar(),
+                "status_label": StatusLabel(),
             },
         )()
 
         main_window.MainWindow.show_status(harness, "Drop rejected", 5000)
 
-        self.assertEqual(main_messages, [("Drop rejected", 5000)])
+        self.assertEqual(main_messages, ["Drop rejected"])
         self.assertEqual(plot_messages, [("Drop rejected", 5000)])
 
     def test_add_trace_to_plot_uses_existing_add_path(self):

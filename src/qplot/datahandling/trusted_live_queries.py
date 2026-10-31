@@ -636,6 +636,35 @@ class _IndependentRunLayouts:
 
 
 @dataclass(frozen=True, slots=True)
+class _NDCountAxis:
+    """Constant-size fingerprint of one monotonic axis cycle."""
+
+    count: int = 0
+    last: int | float | None = None
+    direction: int = 0
+    fingerprint: int = 0
+    reference: tuple[int, int] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _NDDependentCount:
+    dependencies: tuple[str, ...]
+    dependent: str
+    axes: tuple[_NDCountAxis, ...]
+    count: int = 0
+    previous: tuple[int | float, ...] = ()
+    viable: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class _NDRunCounts:
+    signature: tuple[tuple[tuple[str, ...], str], ...]
+    result_watermark: int
+    states: tuple[_NDDependentCount, ...]
+    after_row_id: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class TrustedSelectedRunDetail:
     """Plain selected-run view data; never a fake QCoDeS DataSet."""
 
@@ -1555,6 +1584,7 @@ class TrustedMetadataQueryAdapter:
         self._regular_layout_progress: dict[int, _ProgressiveRegularLayout] = {}
         self._verified_regular_layouts: dict[int, _ProgressiveRegularLayout] = {}
         self._independent_layouts: dict[int, _IndependentRunLayouts] = {}
+        self._nd_counts: dict[int, _NDRunCounts] = {}
         self._last_run_id = 0
         self._data_version: int | None = None
         self._data_version_incarnation: int | None = None
@@ -1596,6 +1626,7 @@ class TrustedMetadataQueryAdapter:
         self._regular_layout_progress.clear()
         self._verified_regular_layouts.clear()
         self._independent_layouts.clear()
+        self._nd_counts.clear()
         self._last_run_id = 0
         self._pending_watermark = watermark
         self._data_version = baseline
@@ -1790,6 +1821,7 @@ class TrustedMetadataQueryAdapter:
             self._regular_layout_progress.pop(record.run_id, None)
             self._verified_regular_layouts.pop(record.run_id, None)
             self._independent_layouts.pop(record.run_id, None)
+            self._nd_counts.pop(record.run_id, None)
             self._unavailable_run_fields.pop(record.run_id, None)
             return record
 
@@ -2118,10 +2150,23 @@ class TrustedMetadataQueryAdapter:
                 )
             )
 
+        if not has_array_records and len(dependency_sets) == len(measure_parameters):
+            nd_observations, nd_steps = self._advance_nd_counts(
+                run_id, table_name, dependency_sets, result_columns, result_watermark,
+                shared_page=independent_page,
+            )
+            observations.extend(nd_observations)
+        else:
+            self._nd_counts.pop(run_id, None)
+            nd_observations = []
+            nd_steps = {}
+
         summary_names = tuple(
             name for name in sweep_parameters if name in result_columns
         )[:_TRUSTED_SETPOINT_SUMMARY_MAX_PARAMETERS]
         planned_steps = self._planned_setpoint_steps(metadata, summary_names)
+        if not run_description.get("shapes"):
+            planned_steps.update(nd_steps)
         if regular_observation is not None:
             planned_steps.update(
                 dict(
@@ -2197,6 +2242,18 @@ class TrustedMetadataQueryAdapter:
                 and all(shape == shapes[0] for shape in shapes)
             ):
                 setpoint_shape = shapes[0]
+            elif nd_observations:
+                # The run count represents its largest measurement. Retain
+                # that measurement's proven shape for the same breakdown as
+                # ordinary grids, without multiplying the union of all axes.
+                largest_shapes = [
+                    shape for _names, count, shape in nd_observations
+                    if count == read_setpoint_count
+                ]
+                if largest_shapes and all(
+                    shape == largest_shapes[0] for shape in largest_shapes
+                ):
+                    setpoint_shape = largest_shapes[0]
             setpoint_count = read_setpoint_count
 
         storage_bytes = self._estimated_result_storage_bytes(
@@ -2681,6 +2738,13 @@ class TrustedMetadataQueryAdapter:
         if independent_pending:
             assert independent is not None
             progressive_layout_cursor = independent.after_row_id
+        nd_counts = self._nd_counts.get(run_id)
+        nd_pending = (
+            nd_counts is not None and nd_counts.after_row_id < nd_counts.result_watermark
+        )
+        if nd_pending:
+            assert nd_counts is not None
+            progressive_layout_cursor = nd_counts.after_row_id
 
         return TrustedDerivedSourceObservation(
             format_version=1,
@@ -2703,7 +2767,9 @@ class TrustedMetadataQueryAdapter:
             unsupported_reason=unsupported_reason,
             run_fields=_freeze_fields(bounded_run),
             validated_2d_layouts=validated_layouts,
-            progressive_layout_pending=progress is not None or independent_pending,
+            progressive_layout_pending=(
+                progress is not None or independent_pending or nd_pending
+            ),
             progressive_layout_cursor=progressive_layout_cursor,
         )
 
@@ -3474,6 +3540,173 @@ class TrustedMetadataQueryAdapter:
         return tuple(planned)
 
     @staticmethod
+    def _consume_nd_count(
+        state: _NDDependentCount,
+        values: tuple[int | float, ...],
+    ) -> _NDDependentCount:
+        # Dependencies are ordered outermost first by QCoDeS. Verify each
+        # repeated inner-axis cycle, retaining fingerprints rather than rows
+        # or sets whose size would grow with the acquired data.
+        changed = next(
+            (i for i, (a, b) in enumerate(zip(state.previous, values, strict=True))
+             if a != b),
+            None,
+        ) if state.previous else 0
+        if changed is None:
+            return replace(state, viable=False)
+        axes = list(state.axes)
+        for index in range(changed, len(axes)):
+            axis = axes[index]
+            value = values[index]
+            if index > changed and state.previous:
+                signature = (axis.count, axis.fingerprint)
+                if axis.reference is not None and signature != axis.reference:
+                    return replace(state, viable=False)
+                axis = _NDCountAxis(reference=axis.reference or signature)
+            direction = 0 if axis.last is None else (1 if value > axis.last else -1)
+            if axis.last is not None and (
+                value == axis.last or (axis.direction and direction != axis.direction)
+            ):
+                return replace(state, viable=False)
+            axes[index] = replace(
+                axis,
+                count=axis.count + 1,
+                last=value,
+                direction=axis.direction or direction,
+                fingerprint=(
+                    axis.fingerprint * _TRUSTED_VECTOR_FINGERPRINT_BASE
+                    + _numeric_fingerprint_token(value)
+                ) & _TRUSTED_VECTOR_FINGERPRINT_MASK,
+            )
+        return replace(state, axes=tuple(axes), previous=values, count=state.count + 1)
+
+    def _advance_nd_counts(
+        self,
+        run_id: int,
+        table_name: str,
+        dependency_sets: tuple[tuple[tuple[str, ...], str | None], ...],
+        result_columns: tuple[str, ...],
+        result_watermark: int,
+        *,
+        shared_page: TrustedQueryResult | None = None,
+    ) -> tuple[
+        list[tuple[tuple[str, ...], int, tuple[int, ...] | None]], dict[str, int],
+    ]:
+        """Prove nD scalar grid counts with one bounded primary-key page.
+
+        Mixed runs include every dependent's own grid. No multidimensional
+        plot proof is created, and no measurement values are read or retained.
+        Unsupported orderings remain unknown rather than using physical row
+        counts as logical setpoint counts.
+        """
+        signature = tuple(
+            (names, dependent) for names, dependent in dependency_sets
+            if dependent is not None
+        )
+        columns = tuple(dict.fromkeys(
+            name for names, dependent in signature for name in (*names, dependent)
+        ))
+        if (
+            not any(len(names) > 2 for names, _dependent in signature)
+            or len(signature) != len(dependency_sets)
+            or len(signature) > TRUSTED_DERIVED_MAX_DEPENDENTS
+            or len(columns) > TRUSTED_DERIVED_MAX_SOURCE_COLUMNS
+            or any(name not in result_columns for name in columns)
+            or result_watermark <= 0
+        ):
+            self._nd_counts.pop(run_id, None)
+            return [], {}
+        previous = self._nd_counts.get(run_id)
+        if (
+            previous is None or previous.signature != signature
+            or previous.result_watermark > result_watermark
+        ):
+            previous = _NDRunCounts(
+                signature, result_watermark,
+                tuple(_NDDependentCount(names, dependent, tuple(
+                    _NDCountAxis() for _name in names
+                )) for names, dependent in signature),
+            )
+        if previous.after_row_id < result_watermark:
+            names = tuple(dict.fromkeys(
+                name for dependencies, _dependent in signature for name in dependencies
+            ))
+            dependents = tuple(dependent for _names, dependent in signature)
+            expected_columns = (
+                "id", *(f"qplot_axis_{i}" for i in range(len(names))),
+                *(f"qplot_present_{i}" for i in range(len(dependents))),
+            )
+            page = shared_page
+            if page is None:
+                page = self._executor.query(
+                    f"SELECT {self._regular_probe_projection(names, dependents)} "
+                    f"FROM {quote_sqlite_identifier(table_name)} "
+                    'WHERE "id" > ? AND "id" <= ? ORDER BY "id" LIMIT ?',
+                    (previous.after_row_id, result_watermark, min(
+                        _TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS,
+                        TRUSTED_DERIVED_MAX_SAMPLE_CELLS // len(expected_columns),
+                    )),
+                )
+            if page.columns != expected_columns or not page.rows:
+                raise TrustedMetadataQueryError("An nD count page has an invalid schema.")
+            states = list(previous.states)
+            positions = {name: i + 1 for i, name in enumerate(names)}
+            cursor = previous.after_row_id
+            for row in page.rows:
+                if (
+                    len(row) != len(expected_columns) or type(row[0]) is not int
+                    or row[0] != cursor + 1
+                    or any(type(value) is not int or value not in (0, 1)
+                           for value in row[1 + len(names):])
+                ):
+                    raise TrustedMetadataQueryError("An nD count page has invalid rows.")
+                cursor = row[0]
+                for index, state in enumerate(states):
+                    if not state.viable or not row[1 + len(names) + index]:
+                        continue
+                    values = tuple(row[positions[name]] for name in state.dependencies)
+                    if any(type(value) not in (int, float) or not math.isfinite(value)
+                           for value in values):
+                        states[index] = replace(state, viable=False)
+                    else:
+                        states[index] = self._consume_nd_count(
+                            state, cast(tuple[int | float, ...], values),
+                        )
+            # Commit only after the complete page was accepted. A failed or
+            # cancelled query leaves the previous immutable cursor untouched.
+            previous = _NDRunCounts(signature, result_watermark, tuple(states), cursor)
+            self._nd_counts[run_id] = previous
+        if previous.after_row_id != result_watermark:
+            return [], {}
+        observations: list[tuple[tuple[str, ...], int, tuple[int, ...] | None]] = []
+        steps: dict[str, int] = {}
+        conflicts: set[str] = set()
+        incomplete_shape = False
+        for state in previous.states:
+            if not state.viable or not state.count:
+                return [], {}
+            shape = tuple(axis.count for axis in state.axes)
+            if math.prod(shape) != state.count or any(
+                axis.reference is not None
+                and axis.reference != (axis.count, axis.fingerprint)
+                for axis in state.axes
+            ):
+                # A partial final slab still has unique ordered coordinates,
+                # so its acquired count is proven without a complete shape.
+                observations.append((state.dependencies, state.count, None))
+                incomplete_shape = True
+                continue
+            observations.append((state.dependencies, state.count, shape))
+            for name, size in zip(state.dependencies, shape, strict=True):
+                if name in steps and steps[name] != size:
+                    conflicts.add(name)
+                steps[name] = size
+        return observations, (
+            {} if incomplete_shape else {name: size for name, size in steps.items()
+                                         if name not in conflicts}
+        )
+
+    @staticmethod
     def _independent_layout_signature(
         dependency_sets: tuple[tuple[tuple[str, ...], str | None], ...],
         run_description: dict[str, Any],
@@ -3561,6 +3794,15 @@ class TrustedMetadataQueryAdapter:
                 for name in dependencies
             )
         )
+        # The nD count verifier consumes this same page. Project the union
+        # of its axes too, so mixed runs still read only one physical prefix
+        # page per request rather than duplicating the scan for counts.
+        if any(len(names) > 2 for names, _dependent in dependency_sets):
+            all_axes = tuple(dict.fromkeys(
+                name for names, _dependent in dependency_sets for name in names
+            ))
+            if len(set((*all_axes, *owner_names))) <= TRUSTED_DERIVED_MAX_SOURCE_COLUMNS:
+                axis_names = all_axes
         # Ownership comes from the stored value's presence, not its numeric
         # projection. QCoDeS can store NaN as non-numeric text: it still owns
         # its row even though it cannot supply a finite measured sample.

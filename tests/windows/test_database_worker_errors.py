@@ -393,7 +393,11 @@ def test_refresh_and_detail_workers_present_sanitized_errors(
 
         if snapshot:
             statuses = []
-            window.statusBar().messageChanged.connect(statuses.append)
+            original_show_status = window.show_status
+            def record_status(message, timeout=5000):
+                statuses.append(message)
+                original_show_status(message, timeout)
+            monkeypatch.setattr(window, "show_status", record_status)
             window._start_database_detail_load(str(path), runs)
             cheap = window._database_detail_worker._test_finished_spy
             expensive = window._database_expensive_detail_worker._test_finished_spy

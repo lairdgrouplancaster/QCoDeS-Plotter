@@ -420,3 +420,27 @@ def test_preview_pending_squares_follow_selection_and_disappear_on_result():
     tab.publish_trusted_previews("two", [])
     assert placeholders() == []
     tab.deleteLater()
+
+
+def test_replaced_thumbnails_remain_hidden_children_until_deleted(qapplication):
+    """Queued thumbnail events must never turn old labels into focusable windows."""
+    owner = qtw.QWidget()
+    cell = RunPreviewCell("refreshing-run", 1, parent=owner)
+    try:
+        owner.show()
+        cell.show()
+        qapplication.processEvents()
+        old = _preview_widgets(cell)[0]
+        cell.show_previews([_white_preview("signal")])
+        assert old.parentWidget() is owner
+        assert not old.isWindow()
+        assert not old.isVisible()
+        rendered = _preview_widgets(cell)[0]
+        cell.show_placeholders()
+        assert rendered.parentWidget() is owner
+        assert not rendered.isWindow()
+        assert not rendered.isVisible()
+    finally:
+        owner.close()
+        owner.deleteLater()
+        qapplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)

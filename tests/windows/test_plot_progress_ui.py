@@ -23,6 +23,29 @@ def worker(progress):
     return SimpleNamespace(progress=progress, is_cancelled=lambda: False)
 
 
+def test_main_status_persists_at_lower_right_with_update_tooltip(qapplication):
+    window = MainWindow()
+    window.startupDatabaseTimer.stop()
+    try:
+        window.show()
+        message = 'Database loaded.'
+        window.show_status(message, timeout=1)
+        tooltip = window.status_label.toolTip()
+        QtTest.QTest.qWait(20)
+        assert window.status_label.text() == message
+        assert tooltip.startswith(message + '\nLast updated: ')
+        assert window.status_label.isVisible()
+        assert window.status_label.alignment() & QtCore.Qt.AlignmentFlag.AlignRight
+        assert window.status_label.parentWidget() is window.statusBar()
+        QtWidgets.QApplication.sendEvent(window, QtGui.QStatusTipEvent('Menu hint'))
+        assert window.status_label.isVisible()
+        assert window.status_label.toolTip() == tooltip
+        window.show_status('Ready again.', timeout=1)
+        assert window.status_label.toolTip().startswith('Ready again.\nLast updated: ')
+    finally:
+        close_main_window(window)
+
+
 def test_toolbar_status_reserves_visible_right_padding(qapplication):
     status = PlotStatusWidget()
     status.resize(600, 40)
@@ -38,6 +61,32 @@ def test_toolbar_status_reserves_visible_right_padding(qapplication):
             assert status.width() - (displayed.x() + displayed.width()) == 16
     finally:
         status.close()
+
+
+@pytest.mark.parametrize('main_window', [False, True])
+def test_open_status_tooltip_refreshes_with_message(qapplication, main_window):
+    window = MainWindow() if main_window else PlotStatusWidget()
+    if main_window:
+        window.startupDatabaseTimer.stop()
+    show_message = window.show_status if main_window else window.show_message
+    try:
+        window.show()
+        show_message('First status')
+        label = window.status_label
+        position = label.rect().center()
+        QtWidgets.QApplication.sendEvent(label, QtGui.QHelpEvent(
+            QtCore.QEvent.Type.ToolTip, position, label.mapToGlobal(position)
+        ))
+        assert QtWidgets.QToolTip.text() == label.toolTip()
+        show_message('Updated status')
+        assert QtWidgets.QToolTip.text() == label.toolTip()
+        assert 'Updated status' in QtWidgets.QToolTip.text()
+    finally:
+        QtWidgets.QToolTip.hideText()
+        if main_window:
+            close_main_window(window)
+        else:
+            window.close()
 
 
 def test_stage_progress_unknown_work_and_stale_completion(qapplication, monkeypatch):

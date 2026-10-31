@@ -1,4 +1,5 @@
 import json
+import time
 
 import pytest
 from PyQt6 import QtCore, QtNetwork, QtTest, sip
@@ -225,7 +226,9 @@ def test_timeout_does_not_block_event_loop_and_shutdown_ignores_late_results(upd
     ticks = []
     QtCore.QTimer.singleShot(0, lambda: ticks.append(True))
     checker._timer.start(5)
-    QtTest.QTest.qWait(30)
+    deadline = time.monotonic() + 2
+    while "timed out" not in text(dialog) and time.monotonic() < deadline:
+        QtTest.QTest.qWait(10)
     assert ticks == [True]
     assert "timed out" in text(dialog)
     assert checker._reply is None

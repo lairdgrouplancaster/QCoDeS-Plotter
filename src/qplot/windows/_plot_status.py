@@ -7,6 +7,29 @@ from PyQt6 import QtWidgets as qtw
 
 
 class _StatusLabel(qtw.QLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._tooltip_position = None
+
+    def event(self, event):
+        if event.type() == QtCore.QEvent.Type.ToolTip:
+            self._tooltip_position = event.globalPos()
+            qtw.QToolTip.showText(
+                self._tooltip_position, self.toolTip(), self, self.rect()
+            )
+            event.accept()
+            return True
+        if event.type() == QtCore.QEvent.Type.ToolTipChange:
+            # Qt caches the text of an open tooltip. Updating the property
+            # alone leaves the old status visible until the next hover.
+            if self._tooltip_position is not None and qtw.QToolTip.isVisible():
+                qtw.QToolTip.showText(
+                    self._tooltip_position, self.toolTip(), self, self.rect()
+                )
+        elif event.type() in (QtCore.QEvent.Type.Leave, QtCore.QEvent.Type.Hide):
+            self._tooltip_position = None
+        return super().event(event)
+
     def minimumSizeHint(self):
         return QtCore.QSize(0, super().minimumSizeHint().height())
 

@@ -6,6 +6,7 @@ import plistlib
 import shutil
 import subprocess
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,9 @@ def fake_tools(monkeypatch):
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(desktop.subprocess, "run", run)
+    monkeypatch.setattr(desktop, "_windows_shortcut", lambda destination: calls.append(
+        (["IShellLinkW", str(destination)], {}),
+    ))
     return calls
 
 
@@ -82,10 +86,8 @@ def test_windows_shortcut_and_unicode(tmp_path, monkeypatch, fake_tools):
     assert "WScript.Arguments" in script
     assert "shell.Run(command, 0, True)" in script
     assert "cmd.exe" not in script
-    command, options = fake_tools[0]
-    assert command[0] == "powershell.exe"
-    assert "CreateShortcut" in command[-1]
-    assert options["env"]["QPLOT_LAUNCHER_DIR"] == str(destination)
+    command, _options = fake_tools[0]
+    assert command == ["IShellLinkW", str(destination)]
     assert desktop._windows_command(destination).endswith(' "%1"')
 
 
@@ -105,14 +107,17 @@ def test_bootstrap_outside_repository(tmp_path):
     resources.mkdir()
     shutil.copyfile(_desktop_bootstrap.__file__, resources / "bootstrap.py")
     # A tiny installed-package stand-in records the production entry-point call.
-    # -I ignores PYTHONPATH, so add this fixture's install through sitecustomize
-    # in a temporary venv instead of relying on the repository working directory.
+    # -I ignores PYTHONPATH, so put the fixture in a temporary venv's package
+    # directory instead of relying on the repository working directory.
     import venv
 
     environment = tmp_path / "Python Ω space"
     venv.EnvBuilder(with_pip=False).create(environment)
     python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    site = subprocess.check_output([str(python), "-I", "-c", "import site; print(site.getsitepackages()[0])"], text=True).strip()
+    site = subprocess.check_output(
+        [str(python), "-I", "-c", "import sys, sysconfig; sys.stdout.reconfigure(encoding='utf-8'); print(sysconfig.get_path('purelib'))"],
+        text=True, encoding="utf-8",
+    ).strip()
     package = Path(site) / "qplot"
     package.mkdir()
     (package / "__init__.py").write_text("")
@@ -140,26 +145,27 @@ def test_bootstrap_outside_repository(tmp_path):
     driver.write_text(
         "from pathlib import Path\nimport sys\n"
         f"scope = {{'__name__': 'payload', '__file__': {str(resources / 'bootstrap.py')!r}}}\n"
-        "exec(compile(Path(scope['__file__']).read_text(), scope['__file__'], 'exec'), scope)\n"
-        f"scope['show_error'] = lambda text: Path({str(error_file)!r}).write_text(text)\n"
-        "raise SystemExit(scope['main']())\n"
+        "exec(compile(Path(scope['__file__']).read_text(encoding='utf-8'), scope['__file__'], 'exec'), scope)\n"
+        f"scope['show_error'] = lambda text: Path({str(error_file)!r}).write_text(text, encoding='utf-8')\n"
+        "raise SystemExit(scope['main']())\n",
+        encoding="utf-8",
     )
     import sqlite3
 
     database = Path(cache) / "fontlist.json"
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute("CREATE TABLE measurement (value)")
     before = database.read_bytes()
     failure_env = dict(os.environ, HOME=str(tmp_path), LOCALAPPDATA=str(tmp_path))
     failure = subprocess.run([str(python), "-I", str(driver)], cwd=tmp_path, env=failure_env, timeout=15)
     assert failure.returncode == 79
-    assert "SQLite database" in error_file.read_text()
+    assert "SQLite database" in error_file.read_text(encoding="utf-8")
     assert database.read_bytes() == before
     database.unlink()  # Explicit synthetic fixture cleanup.
     shutil.rmtree(package)
     failure = subprocess.run([str(python), "-I", str(driver)], cwd=tmp_path, env=failure_env, timeout=15)
     assert failure.returncode == 79
-    assert "No module named 'qplot'" in error_file.read_text()
+    assert "No module named 'qplot'" in error_file.read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="native macOS applet tools")
@@ -230,7 +236,18 @@ def test_native_windows_shortcut_and_arguments(tmp_path):
         subprocess.run(["wscript.exe", "//nologo", str(destination / "launch.vbs"), *args],
                        cwd=tmp_path, check=True, timeout=20)
         assert json.loads(output.read_text()) == args
-    assert (destination / "qPlot.lnk").is_file()
+    shortcut = destination / "qPlot.lnk"
+    assert shortcut.is_file()
+    # Also execute the shortcut itself: its saved arguments must preserve the
+    # Unicode launcher path, not just the directly invoked VBS script above.
+    import time
+
+    output.unlink()
+    os.startfile(shortcut)
+    deadline = time.monotonic() + 10
+    while not output.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert json.loads(output.read_text()) == []
     desktop.remove(destination)
 
 
@@ -276,7 +293,7 @@ def test_removal_refuses_database_inside_launcher(tmp_path, monkeypatch, fake_to
     destination = tmp_path / "qPlot.app"
     desktop.setup(destination)
     database = destination / "measurement.db"
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection, connection:
         connection.execute("CREATE TABLE measurement (value)")
     before = database.read_bytes()
     with pytest.raises(OSError, match="SQLite database"):
