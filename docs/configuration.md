@@ -130,6 +130,17 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `runtime_settings.max_heatmap_grid_side` | integer | `800` | `1 <= value <= 2000000000` | Maximum bins on either axis of a downsampled heatmap display grid. |
 | `runtime_settings.del_grace_period` | number | `10` | `0 <= value <= 300` | Seconds to retain an unused plot dataset connection for quick reopening. |
 | `runtime_settings.cloud_sync_timeout` | number | `120` | `1 <= value <= 3600` | Seconds to wait for cloud storage to hydrate a database before failing. |
+| `updates.check_on_launch` | boolean | `false` | `true` or `false` | Check PyPI in the background after launch, at most once every 24 hours. |
+| `updates.include_prereleases` | boolean | `false` | `true` or `false` | Include beta, release-candidate, and development releases in update checks. |
+| `updates.last_check` | number | `0` | `0 <= value <= 253402300799` | Unix timestamp of the last attempted update check; maintained automatically. |
+
+`Preferences -> Updates` controls launch checks and pre-release notifications.
+Launch checks are disabled by default, time out after five seconds, and remain
+quiet when offline or when no newer matching release is found. The timestamp
+also records failed attempts so repeated launches do not repeatedly contact PyPI.
+`Help -> Check for Updates…` always allows a manual check, even within the daily
+interval. Checks offer release notes and upgrade instructions; installation is
+performed separately after closing qPlot.
 
 The 12 stored run-table widths follow the table's display order: ID,
 Experiment, Sample, Measurements, Setpoints, Name, Started, Completed, Status,

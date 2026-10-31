@@ -351,6 +351,16 @@ Common actions:
   defaults.
 * `Help -> Quick Start` shows the core workflow inside qPlot.
 * `Help -> Keyboard Shortcuts` shows the shortcut reference inside qPlot.
+* `Help -> Check for Updates…` checks PyPI for a newer qPlot release and shows
+  release notes and upgrade instructions. Stable releases are selected by
+  default; withdrawn releases and incompatible application wheels are ignored.
+  `Preferences -> Updates` can enable checks on launch (off by default) and
+  include pre-release versions. Launch checks run in the background, at most
+  once every 24 hours, and notify you only when a newer release is available.
+  Both checks have a five-second timeout. For source checkouts, update the
+  checkout using your usual Git workflow; for installed releases, the dialog
+  provides a command targeting the Python environment running qPlot. Use
+  `Copy upgrade command` to copy it exactly, then close qPlot before running it.
 * `Help -> Copy Diagnostic Log Path` copies the log file location for support
   or troubleshooting.
 * `Help -> Show Diagnostic Log in Finder` reveals the log on macOS. On Windows,

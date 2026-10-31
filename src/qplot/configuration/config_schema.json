@@ -318,6 +318,27 @@
             "additionalProperties": false
         },
         
+        "updates": {
+            "type": "object",
+            "properties": {
+                "check_on_launch": {
+                    "type": "boolean",
+                    "default": false
+                },
+                "include_prereleases": {
+                    "type": "boolean",
+                    "default": false
+                },
+                "last_check": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 253402300799,
+                    "default": 0
+                }
+            },
+            "required": ["check_on_launch", "include_prereleases", "last_check"],
+            "additionalProperties": false
+        },
         "runtime_settings": {
             "type": "object",
             "properties": {
@@ -362,6 +383,6 @@
              "additionalProperties": false 
         }
     },
-    "required": ["GUI", "file", "user_preference", "runtime_settings"],
+    "required": ["GUI", "file", "user_preference", "runtime_settings", "updates"],
     "additionalProperties": false
 }

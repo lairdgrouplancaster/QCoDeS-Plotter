@@ -51,6 +51,8 @@ class FakeConfig:
             "runtime_settings.max_heatmap_grid_side": 800,
             "runtime_settings.del_grace_period": 10.0,
             "runtime_settings.cloud_sync_timeout": 120.0,
+            "updates.check_on_launch": False,
+            "updates.include_prereleases": False,
             }
         self.values = dict(self.defaults)
         self.updates = []

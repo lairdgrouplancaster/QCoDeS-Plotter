@@ -82,6 +82,12 @@ def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
     help_menu.addAction(show_log_action)
 
     help_menu.addSeparator()
+    update_action = QtGui.QAction("Check for &Updates…", window)
+    update_action.setObjectName("checkForUpdatesAction")
+    update_action.setStatusTip("Check PyPI for a newer qPlot release")
+    update_action.triggered.connect(lambda: check_for_updates(window))
+    help_menu.addAction(update_action)
+
     about_action = QtGui.QAction("&About qPlot", window)
     about_action.setObjectName("aboutQplotAction")
     # Keep this window-owned action in Help. Cocoa's AboutRole rewrites its
@@ -93,6 +99,12 @@ def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
     help_menu.addAction(about_action)
 
     return help_menu
+
+
+def check_for_updates(window):
+    from ._updates import check_for_updates as check
+
+    return check(window)
 
 
 def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:

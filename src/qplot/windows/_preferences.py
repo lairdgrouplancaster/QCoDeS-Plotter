@@ -10,6 +10,7 @@ from PyQt6 import (
 )
 
 from qplot.configuration.fonts import FONT_SIZE_KEY
+from qplot.updates import CHECK_ON_LAUNCH_KEY, INCLUDE_PRERELEASES_KEY
 
 from ._commands import create_action
 from ._config_persistence import persist_config_values
@@ -75,6 +76,8 @@ PREFERENCE_KEYS = (
     "runtime_settings.max_heatmap_grid_side",
     "runtime_settings.del_grace_period",
     "runtime_settings.cloud_sync_timeout",
+    CHECK_ON_LAUNCH_KEY,
+    INCLUDE_PRERELEASES_KEY,
     )
 
 
@@ -124,6 +127,7 @@ class PreferencesDialog(qtw.QDialog):
         tabs.addTab(self._files_tab(), "Files")
         tabs.addTab(self._confirmations_tab(), "Confirmations")
         tabs.addTab(self._runtime_tab(), "Runtime")
+        tabs.addTab(self._updates_tab(), "Updates")
         layout.addWidget(tabs)
 
         self.buttonBox = qtw.QDialogButtonBox(
@@ -481,6 +485,28 @@ class PreferencesDialog(qtw.QDialog):
 
         return tab
 
+    def _updates_tab(self):
+        tab = qtw.QWidget(self)
+        layout = qtw.QVBoxLayout(tab)
+        self.checkUpdatesOnLaunchCheck = qtw.QCheckBox(
+            "Check for updates on launch (at most once a day)", tab,
+        )
+        self.checkUpdatesOnLaunchCheck.setObjectName("checkUpdatesOnLaunchPreferenceCheck")
+        self.checkUpdatesOnLaunchCheck.setAccessibleName("Check for updates on launch")
+        layout.addWidget(self.checkUpdatesOnLaunchCheck)
+        self.includePrereleasesCheck = qtw.QCheckBox("Include pre-release versions", tab)
+        self.includePrereleasesCheck.setObjectName("includePrereleasesPreferenceCheck")
+        layout.addWidget(self.includePrereleasesCheck)
+        hint = qtw.QLabel(
+            "Launch checks run in the background and notify you only about newer releases. "
+            "You can check at any time from Help → Check for Updates. "
+            "Updates are listed on PyPI; an Internet connection is required.", tab,
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addStretch(1)
+        return tab
+
     def _add_row(self, form, label_text, widget, buddy=None):
         label = qtw.QLabel(label_text, self)
         label.setBuddy(buddy or widget)
@@ -525,6 +551,8 @@ class PreferencesDialog(qtw.QDialog):
             self.maxHeatmapGridSideSpin,
             self.delGracePeriodSpin,
             self.cloudSyncTimeoutSpin,
+            self.checkUpdatesOnLaunchCheck,
+            self.includePrereleasesCheck,
             )
 
     def set_preference_values(self, values):
@@ -594,6 +622,8 @@ class PreferencesDialog(qtw.QDialog):
             self.cloudSyncTimeoutSpin.setValue(
                 float(values["runtime_settings.cloud_sync_timeout"])
                 )
+            self.checkUpdatesOnLaunchCheck.setChecked(values[CHECK_ON_LAUNCH_KEY])
+            self.includePrereleasesCheck.setChecked(values[INCLUDE_PRERELEASES_KEY])
         finally:
             for widget, signals_were_blocked in zip(
                     widgets,
@@ -640,6 +670,8 @@ class PreferencesDialog(qtw.QDialog):
                 ),
             "runtime_settings.del_grace_period": self.delGracePeriodSpin.value(),
             "runtime_settings.cloud_sync_timeout": self.cloudSyncTimeoutSpin.value(),
+            CHECK_ON_LAUNCH_KEY: self.checkUpdatesOnLaunchCheck.isChecked(),
+            INCLUDE_PRERELEASES_KEY: self.includePrereleasesCheck.isChecked(),
             }
         return {
             key: values[key]

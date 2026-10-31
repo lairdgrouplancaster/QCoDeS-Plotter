@@ -570,7 +570,8 @@ class MainWindow(
             max(configured_width, MAIN_WINDOW_READABLE_WIDTH),
             configured_height,
             )
-        self.setWindowTitle(f"qPlot - {version_info()['version']}")
+        self._version_info = version_info()
+        self.setWindowTitle(f"qPlot - {self._version_info['version']}")
         startup_elapsed = perf_counter() - startup_start
         self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
         
@@ -587,6 +588,9 @@ class MainWindow(
         if startup_warning:
             self.show_status(startup_warning, 10_000)
         self.startupDatabaseTimer.start(0)
+        from ._updates import configure_launch_check
+
+        configure_launch_check(self, self._version_info)
 
 
     def initMenu(self):

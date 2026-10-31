@@ -67,6 +67,33 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertEqual(config().get("GUI.run_table_column_widths"), widths)
 
+    def test_update_preferences_and_check_timestamp_are_validated_and_saved(self):
+        cfg = config()
+        self.assertFalse(cfg.get("updates.check_on_launch"))
+        self.assertFalse(cfg.get("updates.include_prereleases"))
+        cfg.update_many({"updates.check_on_launch": True,
+                         "updates.include_prereleases": True,
+                         "updates.last_check": 1_700_000_000.25})
+        reloaded = config()
+        self.assertTrue(reloaded.get("updates.check_on_launch"))
+        self.assertTrue(reloaded.get("updates.include_prereleases"))
+        self.assertEqual(reloaded.get("updates.last_check"), 1_700_000_000.25)
+        for key, value in (("updates.check_on_launch", 1),
+                           ("updates.include_prereleases", "true"),
+                           ("updates.last_check", -1),
+                           ("updates.last_check", float("inf"))):
+            with self.subTest(key=key, value=value), self.assertRaises(ValidationError):
+                cfg.update(key, value)
+
+    def test_settings_without_update_section_reset_to_current_defaults(self):
+        cfg = config()
+        cfg.update("user_preference.theme", "dark")
+        previous = deepcopy(cfg.config)
+        del previous["updates"]
+        Path(cfg.default_file).write_text(json.dumps(previous), encoding="utf-8")
+        current = config()
+        self.assertEqual(current.config, current.build_default_config())
+
     def test_run_table_column_widths_accept_only_empty_or_twelve_values(self):
         cfg = config()
 
