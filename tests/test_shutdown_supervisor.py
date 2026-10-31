@@ -2251,6 +2251,45 @@ def test_public_run_preserves_control_flow_until_tree_and_launcher_are_gone(
     }
 
 
+@pytest.mark.parametrize(
+    "worker_state",
+    [
+        supervisor._CancellationWorkerState.RUNNING,
+        supervisor._CancellationWorkerState.EOF_FALLBACK,
+    ],
+)
+def test_cancellation_completion_publishes_final_worker_state(
+    worker_state: supervisor._CancellationWorkerState,
+) -> None:
+    caller_channel, launcher_channel = socket.socketpair()
+    release_worker = threading.Event()
+
+    class PausedCompletion(threading.Event):
+        def set(self) -> None:
+            super().set()
+            assert release_worker.wait(2.0)
+
+    sender = supervisor._ApiLauncherCancellationSender(
+        caller_channel,
+        b"",
+        _completed=PausedCompletion(),
+        _worker_state=worker_state,
+    )
+    worker = threading.Thread(target=sender._finish, daemon=True)
+    worker.start()
+    try:
+        assert sender.completed.wait(2.0)
+        # Hold the sender at event publication so this cannot pass merely
+        # because the scheduler lets it finish before the waiter resumes.
+        assert sender._worker_state is supervisor._CancellationWorkerState.COMPLETE
+    finally:
+        release_worker.set()
+        worker.join(timeout=2.0)
+        caller_channel.close()
+        launcher_channel.close()
+    assert not worker.is_alive()
+
+
 @pytest.mark.parametrize("start_failure", [False, True])
 def test_cancellation_sender_commits_one_worker_or_one_eof_fallback(
     monkeypatch: pytest.MonkeyPatch,
