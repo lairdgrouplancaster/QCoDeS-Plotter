@@ -33,6 +33,22 @@ def _qcodes_snapshot(value: float) -> str:
     return json.dumps({"station": station.snapshot(update=False)}, cls=NumpyJSONEncoder)
 
 
+def test_only_nonempty_snapshot_containers_are_expandable():
+    view = normalize_trusted_snapshot(
+        '{"empty_object": {  }, "empty_array": [ \n ], '
+        '"object": {"value": 1}, "array": [1], "scalar": 1}'
+    )
+    nodes = {node.key: node for node in view.nodes}
+    for key, value in (("empty_object", "{}"), ("empty_array", "[]")):
+        assert nodes[key].container_handle is None
+        assert nodes[key].value == value
+        assert "Expand" not in nodes[key].tooltip
+    assert nodes["object"].container_handle is not None
+    assert nodes["array"].container_handle is not None
+    assert nodes["scalar"].container_handle is None
+    _assert_bounded(view)
+
+
 def _rendered_bytes(view) -> int:
     return sum(
         len(node.key.encode("utf-8")) + len(node.value.encode("utf-8"))

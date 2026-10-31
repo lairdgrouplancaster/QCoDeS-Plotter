@@ -112,7 +112,6 @@ class WrappedValueDelegate(qtw.QStyledItemDelegate):
         text_rect = style.subElementRect(
             qtw.QStyle.SubElement.SE_ItemViewItemText, opt, widget
         )
-        text_rect.adjust(0, 2, 0, -2)
         painter.save()
         painter.setFont(opt.font)
         role = (
@@ -125,6 +124,8 @@ class WrappedValueDelegate(qtw.QStyledItemDelegate):
         painter.restore()
 
     def sizeHint(self, option, index):
+        if index.column() == 0:
+            return super().sizeHint(option, index)
         opt = qtw.QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
 
@@ -226,7 +227,10 @@ class infoTree(qtw.QTreeWidget):
         self.setTextElideMode(QtCore.Qt.TextElideMode.ElideNone)
         self.setUniformRowHeights(False)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setItemDelegateForColumn(1, WrappedValueDelegate(self))
+        # Keys and values share text geometry so their first lines align.
+        delegate = WrappedValueDelegate(self)
+        self.setItemDelegateForColumn(0, delegate)
+        self.setItemDelegateForColumn(1, delegate)
         header = self.header()
         if header is not None:
             header.setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.ResizeToContents)
@@ -253,6 +257,40 @@ class infoTree(qtw.QTreeWidget):
                 self.copy_selection_action,
             ]
         )
+
+    def drawBranches(self, painter: QtGui.QPainter, rect: QtCore.QRect,
+                     index: QtCore.QModelIndex) -> None:
+        """Keep disclosure arrows visible even when the theme hides native branches."""
+        item = self.itemFromIndex(index)
+        if item is None:
+            return
+        policy = item.childIndicatorPolicy()
+        if policy == qtw.QTreeWidgetItem.ChildIndicatorPolicy.DontShowIndicator:
+            return
+        if not item.childCount() and policy != (
+            qtw.QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator
+        ):
+            return
+
+        center = QtCore.QPointF(
+            rect.right() - self.indentation() / 2 + 1, rect.center().y() + 0.5
+        )
+        if item.isExpanded():
+            points = [(-4, -2), (4, -2), (0, 3)]
+        else:
+            points = [(-2, -4), (-2, 4), (3, 0)]
+        role = (
+            QtGui.QPalette.ColorRole.HighlightedText
+            if item.isSelected() else QtGui.QPalette.ColorRole.Text
+        )
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.setBrush(self.palette().color(role))
+        painter.drawPolygon(QtGui.QPolygonF([
+            center + QtCore.QPointF(x, y) for x, y in points
+        ]))
+        painter.restore()
 
     @property
     def snapshotSessionToken(self) -> str:

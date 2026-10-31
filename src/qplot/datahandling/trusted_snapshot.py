@@ -824,12 +824,14 @@ class TrustedSnapshotSource:
             else None
         )
         if self._text[value_start] in "{[":
-            value = ""
-            value_utf8_bytes = 0
+            first_child = _lazy_space(self._text, value_start + 1)
+            empty = self._text[first_child] in "}]"
+            value = ("{}" if self._text[value_start] == "{" else "[]") if empty else ""
+            value_utf8_bytes = len(value.encode("utf-8"))
             source_value_bytes = len(self._text[value_start:value_end].encode("utf-8"))
             value_shortened = False
             full_value = None
-            container = self._container(
+            container = None if empty else self._container(
                 value_start,
                 value_end,
                 depth=child_depth,
