@@ -1,6 +1,7 @@
 import logging
 import os
 import sys
+from copy import copy
 from io import BufferedWriter
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -16,6 +17,36 @@ DEFAULT_BACKUP_COUNT = 3
 
 _ORIGINAL_EXCEPTHOOK = None
 _EXCEPTHOOK_INSTALLED = False
+
+
+def _exception_diagnostic(exc_type, traceback):
+    """Describe an exception without its values, source text, notes, or chain."""
+    if exc_type is None:
+        return "No active exception"
+    lines = [f"{exc_type.__name__}: exception details omitted from persistent log"]
+    if traceback is not None:
+        lines.append("Traceback (most recent call last):")
+        while traceback is not None:
+            code = traceback.tb_frame.f_code
+            lines.append(
+                f'  File "{code.co_filename}", line {traceback.tb_lineno}, '
+                f"in {code.co_name}",
+            )
+            traceback = traceback.tb_next
+    return "\n".join(lines)
+
+
+class _PrivateExceptionFormatter(logging.Formatter):
+    def format(self, record):
+        # Another handler may already have cached an unfiltered traceback.
+        # Keep our policy independent without changing that handler's record.
+        private_record = copy(record)
+        private_record.exc_text = None
+        return super().format(private_record)
+
+    def formatException(self, exc_info):
+        # Direct logger.exception() calls must follow the same privacy policy.
+        return _exception_diagnostic(exc_info[0], exc_info[2])
 
 
 class _DatabaseSafeRotatingFileHandler(RotatingFileHandler):
@@ -124,7 +155,7 @@ def configure_logging(
     elif _has_handler_for(logger, target):
         return logger
 
-    formatter = logging.Formatter(LOG_FORMAT)
+    formatter = _PrivateExceptionFormatter(LOG_FORMAT)
     handler: logging.Handler
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -157,8 +188,8 @@ def install_excepthook(call_original=True):
 
     def hook(exc_type, exc_value, traceback):
         get_logger().critical(
-            "Uncaught exception",
-            exc_info=(exc_type, exc_value, traceback),
+            "Uncaught exception: %s",
+            _exception_diagnostic(exc_type, traceback),
             )
         if call_original and _ORIGINAL_EXCEPTHOOK is not None:
             _ORIGINAL_EXCEPTHOOK(exc_type, exc_value, traceback)
@@ -179,24 +210,23 @@ def log_event(message, *args, level=logging.INFO, logger_name=None):
 
 def log_exception(context, error=None, logger_name=None):
     """
-    Logs an exception or sanitized worker error text.
+    Logs operation context, exception type, and stack locations only.
 
-    Only actual exceptions supply traceback details. Worker text is already
-    bounded and detached from its originating exception before Qt transport.
+    Exception messages, chains, notes, source lines, and worker text can contain
+    sensitive data. Bounded worker text is safe for Qt transport, but is not
+    necessarily safe to persist.
 
     """
     configure_logging()
     logger = get_logger(logger_name)
     if error is None:
-        logger.exception(context)
+        exc_type, _, traceback = sys.exc_info()
+        diagnostic = _exception_diagnostic(exc_type, traceback)
+    elif isinstance(error, BaseException):
+        diagnostic = _exception_diagnostic(type(error), error.__traceback__)
     else:
-        logger.error(
-            "%s: %s",
-            context,
-            error,
-            exc_info=(type(error), error, error.__traceback__)
-            if isinstance(error, BaseException) else None,
-            )
+        diagnostic = "Worker error text omitted from persistent log"
+    logger.error("%s: %s", context, diagnostic)
 
 
 def log_user_error(title, message, details=None, logger_name=None):
