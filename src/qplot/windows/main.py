@@ -584,7 +584,8 @@ class MainWindow(
         self.status_label.setSizePolicy(
             qtw.QSizePolicy.Policy.Ignored, qtw.QSizePolicy.Policy.Preferred
         )
-        self.statusBar().addPermanentWidget(self.status_label, 1)
+        status_bar = cast(qtw.QStatusBar, self.statusBar())
+        status_bar.addPermanentWidget(self.status_label, 1)
         startup_elapsed = perf_counter() - startup_start
         self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
         

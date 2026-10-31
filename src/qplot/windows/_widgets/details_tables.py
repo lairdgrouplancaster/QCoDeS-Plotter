@@ -258,9 +258,11 @@ class infoTree(qtw.QTreeWidget):
             ]
         )
 
-    def drawBranches(self, painter: QtGui.QPainter, rect: QtCore.QRect,
+    def drawBranches(self, painter: QtGui.QPainter | None, rect: QtCore.QRect,
                      index: QtCore.QModelIndex) -> None:
         """Keep disclosure arrows visible even when the theme hides native branches."""
+        if painter is None:
+            return
         item = self.itemFromIndex(index)
         if item is None:
             return
