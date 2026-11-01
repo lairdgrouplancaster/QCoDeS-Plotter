@@ -195,8 +195,61 @@ def _provisional_runs(observations: dict[int, TrustedDerivedSourceObservation]):
     )
 
 
+@pytest.mark.parametrize("timeout", [0.0, 0.05])
+@pytest.mark.parametrize("poll_completion", [False, True])
+def test_wait_closed_bounds_worker_completion_callback(
+    tmp_path: Path,
+    timeout: float,
+    poll_completion: bool,
+) -> None:
+    instance = _instance()
+    observations = {1: _observation(1, instance)}
+    release_work = threading.Event()
+    callback_entered = threading.Event()
+    release_callback = threading.Event()
+
+    def wakeup() -> None:
+        if callback_entered.is_set():
+            return
+        callback_entered.set()
+        release_callback.wait(5.0)
+
+    coordinator = TrustedWorkCoordinator(
+        instance,
+        _runs(observations),
+        _Service(instance, observations, release=release_work),
+        cache=TrustedDerivedDiskCache(tmp_path / "disabled", enabled=False),
+        wakeup=wakeup,
+    )
+    # Release a broken implementation eventually, so the regression itself
+    # never leaves an executor blocked at interpreter exit.
+    failsafe = threading.Timer(1.0, release_callback.set)
+    try:
+        coordinator.start()
+        release_work.set()
+        _wait_for(callback_entered)
+        assert coordinator._active is not None
+        assert coordinator._active.future.done()
+        if poll_completion:
+            coordinator.poll()
+        failsafe.start()
+        started = time.monotonic()
+        assert not coordinator.wait_closed(timeout)
+        assert time.monotonic() - started < 0.25
+        assert not coordinator._executor_joined
+    finally:
+        release_work.set()
+        release_callback.set()
+        failsafe.cancel()
+        coordinator.close(timeout=2.0)
+    assert coordinator._executor_joined
+    assert all(not thread.is_alive() for thread in coordinator._executor._threads)
+
+
 class _ImmediateExecutor:
     """Complete a claim synchronously while preserving owner poll boundaries."""
+
+    _threads: tuple[threading.Thread, ...] = ()
 
     def __init__(self, **_kwargs: Any) -> None:
         self.closed = False
@@ -2187,6 +2240,8 @@ def test_immediate_progressive_worker_yields_one_owner_turn_before_restart(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _ImmediateExecutor:
+        _threads: tuple[threading.Thread, ...] = ()
+
         def __init__(self, **_kwargs: Any) -> None:
             self.closed = False
 
@@ -2310,6 +2365,8 @@ def test_progressive_metadata_pages_are_tier_fair_and_owner_preemptible(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _ImmediateExecutor:
+        _threads: tuple[threading.Thread, ...] = ()
+
         def __init__(self, **_kwargs: Any) -> None:
             pass
 
