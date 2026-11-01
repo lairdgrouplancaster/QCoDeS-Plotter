@@ -24,9 +24,6 @@ from qplot.datahandling.database import (
     database_is_likely_cloud_placeholder,
     prefetch_database_file_with_timeout,
 )
-from qplot.datahandling.database import (
-    database_info_rows as database_info_rows,
-)
 from qplot.datahandling.file_identity import (
     DatabaseInstance,
     database_instance,

@@ -16,25 +16,13 @@ from PyQt6 import (
 from qplot import config
 from qplot._metadata import version_info
 from qplot.datahandling.database import (
-    DatabaseDetailWorker as DatabaseDetailWorker,
-)
-from qplot.datahandling.database import (
-    DatabaseExpensiveDetailWorker as DatabaseExpensiveDetailWorker,
-)
-from qplot.datahandling.database import (
-    DatabaseLoadWorker as DatabaseLoadWorker,
-)
-from qplot.datahandling.database import (
-    DatabaseRefreshWorker as DatabaseRefreshWorker,
-)
-from qplot.datahandling.database import (
-    DatabaseSelectedRunWorker as DatabaseSelectedRunWorker,
-)
-from qplot.datahandling.database import (
-    database_info_report as database_info_report,
-)
-from qplot.datahandling.database import (
-    database_path_from_mime_data as database_path_from_mime_data,
+    DatabaseDetailWorker,
+    DatabaseExpensiveDetailWorker,
+    DatabaseLoadWorker,
+    DatabaseRefreshWorker,
+    DatabaseSelectedRunWorker,
+    database_info_report,
+    database_path_from_mime_data,
 )
 from qplot.diagnostics import get_logger, log_bounded_shutdown, log_user_error
 
@@ -66,6 +54,20 @@ from ._window_controls import (
     ask_confirmation_with_dont_ask_again,
     close_all_warning_enabled,
 )
+
+# Public window types and the worker/report aliases exposed by this module.
+__all__ = [
+    "MainWindow",
+    "DatabasePathLineEdit",
+    "DatabaseDetailWorker",
+    "DatabaseExpensiveDetailWorker",
+    "DatabaseLoadWorker",
+    "DatabaseRefreshWorker",
+    "DatabaseSelectedRunWorker",
+    "TestDatabaseGenerationWorker",
+    "database_info_report",
+    "database_path_from_mime_data",
+]
 
 MAIN_WINDOW_READABLE_WIDTH = 780
 _APPLICATION_SHUTDOWN_TIMEOUT_SECONDS = 15.0

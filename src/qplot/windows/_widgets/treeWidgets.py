@@ -31,16 +31,11 @@ from .._commands import (
     plot_measurement_command_spec,
 )
 from .._config_persistence import persist_config_value
-from ._run_formatting import (  # noqa: F401
+from ._run_formatting import (
     complete_cell_sort_value,
     format_complete_cell,
     format_duration_dhms,
-    format_parameter_list,
-    format_parameter_list_html,
     format_point_count,
-    format_progress,
-    format_progress_percent,
-    format_run_duration,
     format_run_state,
     format_run_status,
     format_storage_size,
@@ -61,7 +56,7 @@ from .details_tables import (
     SnapshotTreePageRequest,
     SnapshotTreeValueRequest,
     TrustedFullValueDialog,
-    WrappedValueDelegate,  # noqa: F401 - re-exported for compatibility
+    WrappedValueDelegate,
     format_value,
     infoTree,
     snapshot_parameters,
@@ -77,6 +72,30 @@ from .run_list_items import (
     RunPreviewCell,
     SortableTreeWidgetItem,
 )
+
+# The widget module also exposes the shared formatting helpers and delegate.
+__all__ = [
+    "RunList",
+    "moreInfo",
+    "WrappedValueDelegate",
+    "complete_cell_sort_value",
+    "format_complete_cell",
+    "format_duration_dhms",
+    "format_point_count",
+    "format_run_state",
+    "format_run_status",
+    "format_storage_size",
+    "format_time_taken_seconds",
+    "format_timestamp",
+    "measured_parameter_count",
+    "point_count_sort_value",
+    "progress_percent_value",
+    "run_failed",
+    "run_is_complete",
+    "run_tooltip_plain_text",
+    "run_tooltip_text",
+    "time_taken_seconds",
+]
 
 MAX_RUN_PREVIEW_WIDGETS = 500
 # Four thumbnails, cell margins, spacing before the trailing stretch, and the
