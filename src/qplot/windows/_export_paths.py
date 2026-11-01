@@ -418,6 +418,8 @@ def collect_protected_database_files(
             try:
                 database_paths.add(os.path.abspath(os.fspath(candidate)))
             except (TypeError, ValueError):
+                # Non-path candidates supply no database filename; destination
+                # validation is performed separately.
                 pass
 
     def add_source(candidate: object) -> None:
@@ -431,6 +433,8 @@ def collect_protected_database_files(
             try:
                 add_identity(getattr(candidate, attribute, None))
             except RuntimeError:
+                # A deleted source wrapper cannot supply this identity; continue
+                # inspecting the other identity sources.
                 pass
         for attribute in (
             "sidecar_identities",
@@ -440,6 +444,8 @@ def collect_protected_database_files(
             try:
                 add_identities(getattr(candidate, attribute, None))
             except RuntimeError:
+                # A deleted source wrapper cannot supply these identities; continue
+                # inspecting the other identity sources.
                 pass
         for attribute in (
             "database_path",
@@ -451,12 +457,16 @@ def collect_protected_database_files(
             try:
                 add_path(getattr(candidate, attribute, None))
             except RuntimeError:
+                # A deleted source wrapper cannot supply this path; continue inspecting
+                # its remaining independent sources.
                 pass
         try:
             cache = getattr(candidate, "cache", None)
             cached_dataset = getattr(cache, "_dataset", None)
             add_path(getattr(cached_dataset, "path_to_db", None))
         except RuntimeError:
+            # A deleted dataset cache cannot supply metadata; continue inspecting the
+            # other database sources.
             pass
 
     application = qtw.QApplication.instance()
@@ -474,6 +484,8 @@ def collect_protected_database_files(
                 if widget.isVisible():
                     owners.append(widget)
             except RuntimeError:
+                # An already deleted Qt window cannot contribute another live database
+                # owner.
                 pass
 
     seen_owners: set[int] = set()
@@ -526,6 +538,8 @@ def _collect_owner_database_sources(
         try:
             add_source(getattr(owner, attribute, None))
         except RuntimeError:
+            # Deleted Qt owners cannot supply more paths; continue collecting the
+            # remaining independent source attributes.
             pass
 
     for holder_name in ("_dataset_holder", "dataset_holder"):
@@ -537,6 +551,8 @@ def _collect_owner_database_sources(
                     add_source(dataset_key)
                     add_source(dataset_handle)
         except (RuntimeError, TypeError):
+            # An unavailable/deleted holder cannot supply metadata; continue collecting
+            # the remaining database sources.
             pass
 
     try:
@@ -567,6 +583,8 @@ def _collect_owner_database_sources(
             for source in tuple(sources):
                 add_source(source)
         except RuntimeError:
+            # Deleted Qt owners cannot supply more paths; continue collecting the other
+            # live database owners.
             pass
 
     try:
@@ -575,6 +593,8 @@ def _collect_owner_database_sources(
         if callable(displayed_path):
             add_source(displayed_path())
     except RuntimeError:
+        # A deleted path widget cannot supply metadata; the export destination guard
+        # still checks database identity/content.
         pass
 
 
@@ -1151,6 +1171,7 @@ def _unlink_owned_stage(
         else:
             os.unlink(stage_name, dir_fd=parent_fd)
     except FileNotFoundError:
+        # The owned export stage is already absent; no further unlink is needed.
         pass
     except OSError:
         # Leaving an untrusted or unverifiable private entry is safer than
@@ -1164,4 +1185,6 @@ def _sync_parent_directory(parent_fd: int | None) -> None:
     try:
         os.fsync(parent_fd)
     except OSError:
+        # Some filesystems reject directory fsync; the guarded atomic export publication
+        # has already completed.
         pass

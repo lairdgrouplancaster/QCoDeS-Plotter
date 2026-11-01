@@ -395,7 +395,7 @@ def decode_frame(
         decoded = json.loads(
             frame.decode("utf-8", errors="strict"),
             object_pairs_hook=_reject_duplicate_keys,
-            parse_constant=lambda value: _raise_invalid_constant(value),
+            parse_constant=_raise_invalid_constant,
             parse_float=_parse_finite_json_float,
         )
     except TrustedLiveProtocolValidationError:

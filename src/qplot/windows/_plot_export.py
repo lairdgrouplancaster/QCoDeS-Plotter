@@ -181,6 +181,8 @@ if (
                 if self.selectBox.scene() is self.scene:
                     self.scene.removeItem(self.selectBox)
             except RuntimeError:
+                # The Qt wrapper may already be deleted; continue disposing the
+                # remaining renderer resources.
                 pass
             self.currentExporter = None
             self.deleteLater()
@@ -660,6 +662,8 @@ class PlotExportMixin(_PlotExportBase):
         try:
             dialog.close()
         except RuntimeError:
+            # An already deleted dialog cannot be closed again; continue removing its
+            # selection overlay.
             pass
         select_box = getattr(dialog, "selectBox", None)
         if select_box is not None:
@@ -667,6 +671,8 @@ class PlotExportMixin(_PlotExportBase):
                 if select_box.scene() is scene:
                     scene.removeItem(select_box)
             except RuntimeError:
+                # The Qt wrapper may already be deleted; continue disposing the
+                # remaining export-dialog resources.
                 pass
         delete_later = getattr(dialog, "deleteLater", None)
         if callable(delete_later):
@@ -1216,6 +1222,8 @@ class PlotExportMixin(_PlotExportBase):
         try:
             mime_data.setText(svg_bytes.decode("utf-8"))
         except UnicodeDecodeError:
+            # The SVG binary MIME payload remains valid even when no UTF-8 plain-text
+            # fallback can be supplied.
             pass
         clipboard.setMimeData(mime_data)
         self.show_status("Plot SVG copied to clipboard.", 3000)

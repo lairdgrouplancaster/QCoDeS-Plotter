@@ -101,6 +101,8 @@ def _notify_test(test_notify: Connection | None, value: bytes) -> None:
     try:
         test_notify.send_bytes(value)
     except (BrokenPipeError, EOFError, OSError):
+        # Test notifications are optional instrumentation and must not alter the
+        # database operation outcome.
         pass
 
 
@@ -231,6 +233,8 @@ def _control_loop(control_receive: Connection, state: _ChildControlState) -> Non
         try:
             control_receive.close()
         except OSError:
+            # Closing the control channel must not bypass the already armed orphan-exit
+            # fallback.
             pass
     if hard_exit_code is not None:
         _hard_exit_unless_main_finishes(state, hard_exit_code)
@@ -401,6 +405,8 @@ def trusted_live_helper_main(
                 try:
                     connection.close()
                 except OSError:
+                    # This child is returning from failed startup; continue closing the
+                    # remaining endpoints.
                     pass
         return
     try:
@@ -431,6 +437,8 @@ def trusted_live_helper_main(
                 try:
                     connection.close()
                 except OSError:
+                    # This child is returning from rejected startup; continue closing
+                    # the remaining endpoints.
                     pass
         return
     session = startup_request.session
@@ -797,6 +805,8 @@ def trusted_live_helper_main(
                     last_generation,
                 )
             except BaseException:
+                # The parent may already be gone; terminal error delivery is best effort
+                # before child teardown.
                 pass
     finally:
         if reader is not None:
@@ -805,6 +815,8 @@ def trusted_live_helper_main(
                     state.reader = None
                 reader.close()
             except BaseException:
+                # Native cleanup failure is contained in this disposable child; process
+                # exit releases its remaining OS resources.
                 pass
         state.stop_event.set()
         state.main_done.set()
@@ -813,5 +825,7 @@ def trusted_live_helper_main(
                 try:
                     connection.close()
                 except OSError:
+                    # This child is exiting; close failures must not skip the remaining
+                    # pipe cleanup.
                     pass
         control_thread.join(timeout=min(0.25, state.orphan_grace_seconds))

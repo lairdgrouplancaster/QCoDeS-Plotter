@@ -302,6 +302,7 @@ class config:
         try:
             file_mode = stat.S_IMODE(os.stat(path).st_mode)
         except FileNotFoundError:
+            # A new settings file has no existing permission mode to preserve.
             pass
 
         file_descriptor, temporary_path = tempfile.mkstemp(
@@ -325,6 +326,7 @@ class config:
             try:
                 os.unlink(temporary_path)
             except FileNotFoundError:
+                # The unpublished temporary settings file is already absent.
                 pass
             raise
 
@@ -342,6 +344,8 @@ class config:
         try:
             os.fsync(descriptor)
         except OSError:
+            # Some filesystems reject directory fsync; the settings file has already
+            # been atomically published.
             pass
         finally:
             os.close(descriptor)
@@ -536,6 +540,8 @@ class config:
             try:
                 os.unlink(backup_file)
             except FileNotFoundError:
+                # The failed backup file is already absent; preserve the original backup
+                # error.
                 pass
             raise
         return backup_file

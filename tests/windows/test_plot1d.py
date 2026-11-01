@@ -733,7 +733,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             "x": qtw.QLabel(),
             "y": qtw.QLabel(),
             }
-        window.format_cursor_number = lambda value: str(value)
+        window.format_cursor_number = str
 
         try:
             scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.2, 9.0))
@@ -797,7 +797,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             "x": qtw.QLabel(),
             "y": qtw.QLabel(),
             }
-        window.format_cursor_number = lambda value: str(value)
+        window.format_cursor_number = str
         window._show_snap_report = lambda *_args: None
         window._show_snap_marker = lambda *_args: None
 

@@ -959,9 +959,11 @@ class OpenPlotDatasetOwnershipTestCase(unittest.TestCase):
             self.status_messages = []
             self.preview_requests = []
 
+            preview_requests = self.preview_requests
+
             class Preview:
-                def request_guids(_self, guids):
-                    self.preview_requests.append(list(guids))
+                def request_guids(self, guids):
+                    preview_requests.append(list(guids))
 
             self.infoBox = type("InfoBox", (), {"preview": Preview()})()
 
@@ -2517,7 +2519,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 qtw.QMessageBox.StandardButton.No
             )
             harness = Harness()
-            harness.restore_default_settings()
+            self.assertFalse(harness.restore_default_settings())
         finally:
             qtw.QMessageBox.question = old_question
 

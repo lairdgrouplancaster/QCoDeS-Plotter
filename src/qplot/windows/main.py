@@ -84,11 +84,15 @@ def _flush_shutdown_diagnostics():
             if stream is not None:
                 os.fsync(stream.fileno())
         except BaseException:
+            # Diagnostic flushing must not prevent the armed process-shutdown fallback
+            # from completing.
             pass
     for stream in (sys.stderr, sys.stdout):
         try:
             stream.flush()
         except BaseException:
+            # Unavailable diagnostic streams must not prevent the armed process-shutdown
+            # fallback from completing.
             pass
 
 
@@ -1491,7 +1495,7 @@ class MainWindow(
             )
         if reply != qtw.QMessageBox.StandardButton.Yes:
             self.show_status("Settings reset cancelled.", 3000)
-            return
+            return False
 
         if not persist_config_action(
                 self,

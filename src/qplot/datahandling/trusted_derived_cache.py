@@ -95,6 +95,8 @@ def _rollback_index_best_effort(connection: object) -> None:
     try:
         cast(sqlite3.Connection, connection).rollback()
     except (sqlite3.Error, OSError):
+        # Preserve the triggering cache-publication error while attempting an index
+        # rollback.
         pass
 
 
@@ -102,6 +104,8 @@ def _close_index_best_effort(connection: object) -> None:
     try:
         cast(sqlite3.Connection, connection).close()
     except (sqlite3.Error, OSError):
+        # This optional cache is being disabled; preserve the triggering error while
+        # attempting to close its index.
         pass
 
 
@@ -849,6 +853,8 @@ class TrustedDerivedDiskCache:
                         operation="failed-publication",
                     )
                 except (OSError, ValueError, _CacheEpochChanged):
+                    # The artifact or cache epoch may have changed; do not delete an
+                    # artifact whose ownership cannot be proved.
                     pass
             if temporary is not None and temporary_proof is not None:
                 try:
@@ -864,6 +870,8 @@ class TrustedDerivedDiskCache:
                         ),
                     )
                 except (OSError, ValueError, _CacheEpochChanged):
+                    # Cleanup must not unlink a replacement artifact or cross a cache
+                    # invalidation epoch.
                     pass
             with self._state_changed:
                 if disable_after_cleanup:

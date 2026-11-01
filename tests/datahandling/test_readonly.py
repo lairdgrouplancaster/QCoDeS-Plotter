@@ -1077,7 +1077,8 @@ def test_database_dataset_owns_connection_until_dataset_handle_closes(
         assert record.snapshot_directory.is_dir()
 
         handle = DatasetHandle(dataset)
-        assert handle.close()
+        closed = handle.close()
+        assert closed
         assert record.close_count == 1
         _assert_connection_closed(record.connection)
         assert not record.snapshot_directory.exists()

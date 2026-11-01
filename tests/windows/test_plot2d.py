@@ -2081,7 +2081,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             "y": qtw.QLabel(),
             "z": qtw.QLabel(),
             }
-        window.format_cursor_number = lambda value: str(value)
+        window.format_cursor_number = str
         shown_indices = []
         window.show_hover_pixel_outline = lambda i, j: shown_indices.append((i, j))
         window.hide_hover_pixel_outline = lambda: shown_indices.append(None)
@@ -2118,7 +2118,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             "y": qtw.QLabel(),
             "z": qtw.QLabel(),
             }
-        window.format_cursor_number = lambda value: str(value)
+        window.format_cursor_number = str
         window.show_hover_pixel_outline = lambda _i, _j: None
         window.hide_hover_pixel_outline = lambda: None
         scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.0, 12.0))
@@ -2157,7 +2157,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             "y": qtw.QLabel(),
             "z": qtw.QLabel(),
             }
-        window.format_cursor_number = lambda value: str(value)
+        window.format_cursor_number = str
         hidden = []
         window.show_hover_pixel_outline = lambda _i, _j: None
         window.hide_hover_pixel_outline = lambda: hidden.append(True)
@@ -2295,7 +2295,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             "y": qtw.QLabel(),
             "z": qtw.QLabel(),
             }
-        window.format_cursor_number = lambda value: str(value)
+        window.format_cursor_number = str
         window.show_hover_pixel_outline = lambda _i, _j: None
         window.hide_hover_pixel_outline = lambda: None
         scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.2, 1.4))

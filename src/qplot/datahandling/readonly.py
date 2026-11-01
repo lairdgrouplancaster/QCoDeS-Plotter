@@ -288,6 +288,8 @@ def _qcodes_read_only_atomic_connection(
             try:
                 connection.close()
             except sqlite3.Error:
+                # Preserve the connection setup failure while attempting to close the
+                # physically read-only connection.
                 pass
         raise
 
@@ -355,6 +357,8 @@ def _posix_sqlite_shared_lock_bytes(
                     os.SEEK_SET,
                 )
             except OSError:
+                # Closing the owning descriptor releases any remaining POSIX lock after
+                # this explicit unlock attempt.
                 pass
         if pending_locked:
             try:
@@ -366,6 +370,8 @@ def _posix_sqlite_shared_lock_bytes(
                     os.SEEK_SET,
                 )
             except OSError:
+                # Closing the owning descriptor releases any remaining POSIX lock after
+                # this explicit unlock attempt.
                 pass
         database_file.close()
 
@@ -659,6 +665,8 @@ def _clone_file_if_supported(source, destination):
         try:
             destination_path.unlink()
         except FileNotFoundError:
+            # The unsuccessful clone is already absent, so no owned destination remains
+            # to unlink.
             pass
     return False
 
@@ -845,6 +853,8 @@ def configure_read_only_sqlite_connection(conn):
         try:
             conn.execute(pragma)
         except Exception:
+            # These optional tuning pragmas may be unsupported; physical read-only
+            # access is enforced independently.
             pass
     return conn
 
@@ -855,11 +865,15 @@ def _cleanup_failed_connection_open(conn, snapshot):
         try:
             conn.close()
         except Exception:
+            # Preserve the failed-open error while attempting to close the partially
+            # configured connection.
             pass
     if snapshot is not None:
         try:
             snapshot.cleanup()
         except Exception:
+            # Preserve the failed-open error while attempting to remove the private
+            # snapshot.
             pass
 
 
@@ -2260,11 +2274,15 @@ def _require_matching_generated_wal_provenance(
             try:
                 snapshot_connection.close()
             except sqlite3.Error:
+                # Preserve the provenance-validation failure while attempting to close
+                # its private snapshot connection.
                 pass
         if main_connection is not None:
             try:
                 main_connection.close()
             except sqlite3.Error:
+                # Preserve the provenance-validation failure while attempting to close
+                # its physically read-only main connection.
                 pass
 
 
@@ -2319,6 +2337,8 @@ def _recover_private_rollback_journal(
             try:
                 connection.close()
             except sqlite3.Error:
+                # Preserve the recovery failure while attempting to close the private
+                # recovery connection.
                 pass
 
 

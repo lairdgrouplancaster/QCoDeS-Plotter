@@ -667,10 +667,11 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
 
         return rect.normalized()
 
-    def _colorbar_drag_visual_rects(self, region, mode):
+    def _colorbar_drag_visual_rects(self, region, mode) -> tuple[QtCore.QRectF, ...]:
         """
         Return shaded rectangles for colorbar range-slide or outside-scale zones.
 
+        This is a collection of zero, one, or two rectangles, not a fixed record.
         """
         rect = self._colorbar_full_region_rect(region)
         if rect is None:
@@ -844,6 +845,8 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             try:
                 position = item.mapToParent(position)
             except (AttributeError, RuntimeError):
+                # If parent-coordinate mapping is unavailable, continue with the
+                # existing local-position fallback.
                 pass
 
         if getattr(bar, "horizontal", False):

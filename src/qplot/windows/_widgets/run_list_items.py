@@ -469,6 +469,8 @@ class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
     """
     QTreeWidgetItem with an overridden comparator that sorts numerical values
     as numbers instead of sorting them alphabetically.
+
+    Qt sorting calls __lt__; these items do not define a general rich ordering.
     """
     def __init__(self, strings):
         super().__init__(strings)

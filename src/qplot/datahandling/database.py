@@ -762,6 +762,8 @@ class _InterruptibleSqlWorker:
             try:
                 connection.interrupt()
             except Exception:
+                # The SQL connection may have closed concurrently; cancellation remains
+                # recorded on the worker.
                 pass
 
 
@@ -2318,10 +2320,11 @@ def _format_bytes(value):
     value = int(value)
     units = ("B", "KB", "MB", "GB", "TB")
     size = float(value)
-    for unit in units:
-        if size < 1024 or unit == units[-1]:
+    for unit in units[:-1]:
+        if size < 1024:
             return f"{size:.1f} {unit}" if unit != "B" else f"{value} B"
         size /= 1024
+    return f"{size:.1f} {units[-1]}"
 
 
 def _timestamp_value(value):

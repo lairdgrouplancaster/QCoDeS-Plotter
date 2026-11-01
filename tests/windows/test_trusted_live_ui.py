@@ -894,7 +894,9 @@ class _SelectionHarness(database_actions.DatabaseActionsMixin):
         self.ds = None
         self._selected_dataset_key = None
 
-    def _prioritize_database_detail_runs(self, run_ids) -> None:
+    def _prioritize_database_detail_runs(self, run_ids=None) -> None:
+        if run_ids is None:
+            run_ids = self.RunList.all_run_metadata()
         self.prioritized.append(list(run_ids))
 
     def _prioritize_preview_runs(self, run_ids) -> None:
@@ -2248,8 +2250,8 @@ def test_trusted_detail_callback_rechecks_after_row_publication(
             self.RunList.visible = dict(runs)
             replacement_wal.replace(wal_path)
 
-        def _reload_replaced_database(self, path: str) -> None:
-            self.reloads.append(path)
+        def _reload_replaced_database(self, database_path: str) -> None:
+            self.reloads.append(database_path)
 
     harness = Harness()
     runs = {7: {"guid": "guid-7", "result_count": 12}}
@@ -2294,8 +2296,8 @@ def test_trusted_refresh_callback_rechecks_after_final_view_publication(tmp_path
             }
             replacement_wal.replace(wal_path)
 
-        def _reload_replaced_database(self, path: str) -> None:
-            self.reloads.append(path)
+        def _reload_replaced_database(self, database_path: str) -> None:
+            self.reloads.append(database_path)
 
     harness = Harness()
     new_runs = {8: {"guid": "guid-8"}}

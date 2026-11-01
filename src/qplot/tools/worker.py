@@ -318,6 +318,8 @@ class loader(QtCore.QRunnable):
             try:
                 connection.interrupt()
             except Exception:
+                # The connection may have closed concurrently; the worker cancellation
+                # flag remains set.
                 pass
 
 
@@ -1482,7 +1484,6 @@ class loader(QtCore.QRunnable):
         y_exact = y_bins >= y_count
         query_parameters: list[float | int] = []
         if x_exact:
-            x_centres = np.array([], dtype=float)
             x_group_sql = x_column
         else:
             x_centres, x_lower_edge, x_width, x_scale = self._spatial_axis_bins(
@@ -1495,7 +1496,6 @@ class loader(QtCore.QRunnable):
             query_parameters.extend((x_scale, x_lower_edge, x_width, x_bins - 1))
 
         if y_exact:
-            y_centres = np.array([], dtype=float)
             y_group_sql = y_column
         else:
             y_centres, y_lower_edge, y_width, y_scale = self._spatial_axis_bins(

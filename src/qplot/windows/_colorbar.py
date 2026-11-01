@@ -149,6 +149,7 @@ class _ColorbarColormapTableItem(qtw.QTableWidgetItem):
     """
     Table item that sorts by an explicit, case-insensitive key.
 
+    Qt sorting calls __lt__; these items do not define a general rich ordering.
     """
 
     def __lt__(self, other):
