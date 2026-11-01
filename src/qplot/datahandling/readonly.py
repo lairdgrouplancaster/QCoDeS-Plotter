@@ -399,73 +399,74 @@ def _windows_sqlite_shared_lock_bytes(
             f"Could not open {database_path} for a read-only lock check: {error}"
         ) from error
 
-    kernel32 = ctypes.WinDLL(  # type: ignore[attr-defined]
-        "kernel32",
-        use_last_error=True,
-    )
-    lock_file_ex = kernel32.LockFileEx
-    lock_file_ex.argtypes = (
-        wintypes.HANDLE,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        ctypes.POINTER(_Overlapped),
-    )
-    lock_file_ex.restype = wintypes.BOOL
-    unlock_file_ex = kernel32.UnlockFileEx
-    unlock_file_ex.argtypes = (
-        wintypes.HANDLE,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        wintypes.DWORD,
-        ctypes.POINTER(_Overlapped),
-    )
-    unlock_file_ex.restype = wintypes.BOOL
-    windows_handle = wintypes.HANDLE(
-        msvcrt.get_osfhandle(  # type: ignore[attr-defined]
-            database_file.fileno()
+    # Close the read-only handle even if API setup or unlocking fails.
+    with database_file:
+        kernel32 = ctypes.WinDLL(  # type: ignore[attr-defined]
+            "kernel32",
+            use_last_error=True,
         )
-    )
-    locked_ranges = []
-
-    def lock_shared_range(offset, length):
-        overlapped = _Overlapped()
-        overlapped.Offset = offset & 0xFFFFFFFF
-        overlapped.OffsetHigh = (offset >> 32) & 0xFFFFFFFF
-        if not lock_file_ex(
-                windows_handle,
-                0x00000001,
-                0,
-                length & 0xFFFFFFFF,
-                (length >> 32) & 0xFFFFFFFF,
-                ctypes.byref(overlapped),
-                ):
-            error_code = ctypes.get_last_error()  # type: ignore[attr-defined]
-            if error_code in (32, 33, 997):
-                raise sqlite3.OperationalError("database is locked")
-            raise ReadOnlyDatabaseAccessError(
-                "Could not prove that SQLite shared-lock bytes are available "
-                f"for {database_path}: Windows error {error_code}."
+        lock_file_ex = kernel32.LockFileEx
+        lock_file_ex.argtypes = (
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(_Overlapped),
+        )
+        lock_file_ex.restype = wintypes.BOOL
+        unlock_file_ex = kernel32.UnlockFileEx
+        unlock_file_ex.argtypes = (
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(_Overlapped),
+        )
+        unlock_file_ex.restype = wintypes.BOOL
+        windows_handle = wintypes.HANDLE(
+            msvcrt.get_osfhandle(  # type: ignore[attr-defined]
+                database_file.fileno()
             )
-        locked_ranges.append((overlapped, length))
+        )
+        locked_ranges = []
 
-    try:
-        lock_shared_range(_SQLITE_PENDING_BYTE, 1)
-        _raise_if_read_interrupted(cancelled_callback, deadline)
-        lock_shared_range(_SQLITE_SHARED_FIRST, _SQLITE_SHARED_SIZE)
-        _raise_if_read_interrupted(cancelled_callback, deadline)
-        yield database_file
-    finally:
-        for overlapped, length in reversed(locked_ranges):
-            unlock_file_ex(
-                windows_handle,
-                0,
-                length & 0xFFFFFFFF,
-                (length >> 32) & 0xFFFFFFFF,
-                ctypes.byref(overlapped),
-            )
-        database_file.close()
+        def lock_shared_range(offset, length):
+            overlapped = _Overlapped()
+            overlapped.Offset = offset & 0xFFFFFFFF
+            overlapped.OffsetHigh = (offset >> 32) & 0xFFFFFFFF
+            if not lock_file_ex(
+                    windows_handle,
+                    0x00000001,
+                    0,
+                    length & 0xFFFFFFFF,
+                    (length >> 32) & 0xFFFFFFFF,
+                    ctypes.byref(overlapped),
+                    ):
+                error_code = ctypes.get_last_error()  # type: ignore[attr-defined]
+                if error_code in (32, 33, 997):
+                    raise sqlite3.OperationalError("database is locked")
+                raise ReadOnlyDatabaseAccessError(
+                    "Could not prove that SQLite shared-lock bytes are available "
+                    f"for {database_path}: Windows error {error_code}."
+                )
+            locked_ranges.append((overlapped, length))
+
+        try:
+            lock_shared_range(_SQLITE_PENDING_BYTE, 1)
+            _raise_if_read_interrupted(cancelled_callback, deadline)
+            lock_shared_range(_SQLITE_SHARED_FIRST, _SQLITE_SHARED_SIZE)
+            _raise_if_read_interrupted(cancelled_callback, deadline)
+            yield database_file
+        finally:
+            for overlapped, length in reversed(locked_ranges):
+                unlock_file_ex(
+                    windows_handle,
+                    0,
+                    length & 0xFFFFFFFF,
+                    (length >> 32) & 0xFFFFFFFF,
+                    ctypes.byref(overlapped),
+                )
 
 
 @contextmanager

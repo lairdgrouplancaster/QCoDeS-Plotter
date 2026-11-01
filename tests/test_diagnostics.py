@@ -1,6 +1,7 @@
 import logging
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 
 from qplot import diagnostics
@@ -41,9 +42,97 @@ class DiagnosticsTestCase(unittest.TestCase):
             diagnostics.log_exception("Refresh failed", error)
 
         text = log_file.read_text(encoding="utf-8")
-        self.assertIn("Refresh failed: broken measurement", text)
+        self.assertIn("Refresh failed: RuntimeError", text)
         self.assertIn("Traceback", text)
-        self.assertIn("RuntimeError: broken measurement", text)
+        self.assertIn("test_log_exception_writes_traceback", text)
+        self.assertNotIn("broken measurement", text)
+
+    def test_exception_logging_omits_sensitive_values_on_every_entry_point(self):
+        log_file = self.temp_path / "qplot.log"
+        logger = diagnostics.configure_logging(log_file=log_file, force=True)
+        hook = diagnostics.install_excepthook(call_original=False)
+
+        for entry in ("explicit", "implicit", "direct", "hook"):
+            with self.subTest(entry=entry):
+                try:
+                    try:
+                        raise ValueError("CAUSE_SECRET")
+                    except ValueError as cause:
+                        raise RuntimeError("MESSAGE_SECRET") from cause
+                except RuntimeError as error:
+                    error.add_note("NOTE_SECRET")
+                    private_local = "LOCAL_SECRET"
+                    if entry == "explicit":
+                        diagnostics.log_exception("Refresh failed", error)
+                    elif entry == "implicit":
+                        diagnostics.log_exception("Refresh failed")
+                    elif entry == "direct":
+                        logger.exception("Refresh failed")
+                    else:
+                        hook(type(error), error, error.__traceback__)
+                    self.assertEqual(private_local, "LOCAL_SECRET")
+
+        text = log_file.read_text(encoding="utf-8")
+        self.assertEqual(text.count("RuntimeError:"), 4)
+        self.assertEqual(text.count("Traceback (most recent call last):"), 4)
+        self.assertIn("test_exception_logging_omits_sensitive_values", text)
+        for secret in ("CAUSE_SECRET", "MESSAGE_SECRET", "NOTE_SECRET", "LOCAL_SECRET"):
+            self.assertNotIn(secret, text)
+        # Default traceback formatting would also print the raise source line.
+        self.assertNotIn("raise RuntimeError", text)
+
+    def test_exception_logging_does_not_render_exception_or_worker_objects(self):
+        class PrivateError(Exception):
+            def __str__(self):
+                raise AssertionError("must not render exception")
+
+        class PrivateWorkerText(str):
+            def __str__(self):
+                raise AssertionError("must not render worker text")
+
+        log_file = self.temp_path / "qplot.log"
+        diagnostics.configure_logging(log_file=log_file, force=True)
+        diagnostics.log_exception("Refresh failed", PrivateError())
+        diagnostics.log_exception("Worker failed", PrivateWorkerText("WORKER_SECRET"))
+        diagnostics.log_exception("No exception")
+        text = log_file.read_text(encoding="utf-8")
+        self.assertIn("Refresh failed: PrivateError", text)
+        self.assertIn("Worker error text omitted", text)
+        self.assertIn("No active exception", text)
+        self.assertNotIn("WORKER_SECRET", text)
+
+    def test_exception_group_does_not_render_nested_values(self):
+        log_file = self.temp_path / "qplot.log"
+        diagnostics.configure_logging(log_file=log_file, force=True)
+        try:
+            raise ExceptionGroup("GROUP_SECRET", [ValueError("NESTED_SECRET")])
+        except ExceptionGroup as error:
+            diagnostics.log_exception("Grouped failure", error)
+        text = log_file.read_text(encoding="utf-8")
+        self.assertIn("Grouped failure: ExceptionGroup", text)
+        self.assertIn("Traceback", text)
+        self.assertNotIn("GROUP_SECRET", text)
+        self.assertNotIn("NESTED_SECRET", text)
+
+    def test_persistent_log_ignores_traceback_cached_by_another_handler(self):
+        log_file = self.temp_path / "qplot.log"
+        logger = diagnostics.configure_logging(log_file=log_file, force=True)
+        stream = StringIO()
+        other_handler = logging.StreamHandler(stream)
+        other_handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.handlers.insert(0, other_handler)
+        try:
+            try:
+                raise ValueError("CACHED_SECRET")
+            except ValueError:
+                logger.exception("Operation failed")
+        finally:
+            logger.removeHandler(other_handler)
+            other_handler.close()
+        self.assertIn("CACHED_SECRET", stream.getvalue())
+        text = log_file.read_text(encoding="utf-8")
+        self.assertIn("ValueError: exception details omitted", text)
+        self.assertNotIn("CACHED_SECRET", text)
 
     def test_user_visible_error_omits_sensitive_details_from_log(self):
         log_file = self.temp_path / "qplot.log"
@@ -86,7 +175,11 @@ class DiagnosticsTestCase(unittest.TestCase):
                     diagnostics.log_exception("Worker failed", payload)
 
         text = log_file.read_text(encoding="utf-8")
-        self.assertEqual(text.count("Worker failed: database is locked"), 3)
+        self.assertEqual(text.count("Worker failed:"), 3)
+        self.assertIn("Worker error text omitted", text)
+        self.assertIn("DatabaseInstanceChangedError", text)
+        self.assertIn("UnverifiableDatabaseWalError", text)
+        self.assertNotIn("database is locked", text)
         self.assertNotIn("Traceback", text)
         self.assertNotIn("private context", text)
         self.assertNotIn("unrelated active exception", text)
@@ -115,7 +208,8 @@ class DiagnosticsTestCase(unittest.TestCase):
 
         text = log_file.read_text(encoding="utf-8")
         self.assertIn("Uncaught exception", text)
-        self.assertIn("ValueError: uncaught value", text)
+        self.assertIn("ValueError: exception details omitted", text)
+        self.assertNotIn("uncaught value", text)
 
     def test_failed_log_file_setup_is_non_fatal(self):
         logger = diagnostics.configure_logging(

@@ -1,4 +1,11 @@
+from typing import TYPE_CHECKING
+
 from ._metadata import package_version
+
+if TYPE_CHECKING:
+    # Declare the public API for static tools without loading GUI dependencies.
+    from . import datahandling, tools, windows
+    from .configuration.config import config
 
 __version__ = package_version()
 

@@ -76,6 +76,8 @@ else:
 
 
 class Plot1DTraceMixin(_Plot1DTraceBase):
+    """Trace controls and secondary-axis handling for 1D plot windows."""
+
     @dataclass
     class _TraceStyle:
         line_enabled: bool = True
@@ -94,8 +96,6 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         visible: bool = True
         opacity: float = 1.0
         order: int = 0
-
-    """Trace controls and secondary-axis handling for 1D plot windows."""
 
     _trace_styles: dict[Any, _TraceStyle]
     _trace_controls: dict[Any, Any]

@@ -338,8 +338,8 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
         else:
             self._sync_mixed_axis_labels()
 
-    def _apply_trace_style(self, key, line):
-        super()._apply_trace_style(key, line)
+    def _apply_trace_style(self, label, line):
+        super()._apply_trace_style(label, line)
         self._sync_plot_item_order()
 
     def _ensure_trace_axis_viewboxes(self, *, top=False, right=False):
