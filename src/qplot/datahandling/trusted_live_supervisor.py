@@ -853,12 +853,11 @@ class TrustedLiveReaderSupervisor:
                 command_receive, reply_send, control_receive, test_notify_send,
             ),
         )
+        # Own the process before start(): failure can follow child creation.
+        self._helper = helper
         try:
             process.start()
         except BaseException as error:
-            # start() can fail after creating the child. Install ownership before
-            # cleanup so a failed or interrupted reap remains visible to callers.
-            self._helper = helper
             for connection in (
                 command_receive,
                 reply_send,
@@ -889,11 +888,11 @@ class TrustedLiveReaderSupervisor:
             test_notify_send,
         ):
             _close_connection(child_endpoint)
-        self._helper = helper
         try:
             try:
-                helper.reply_receiver.start()
+                # Even an interrupted start may have launched the receiver.
                 helper.reply_receiver_started = True
+                helper.reply_receiver.start()
             except BaseException as error:
                 raise TrustedLiveHelperStartupError(
                     "The trusted helper reply receiver could not be started."
@@ -1178,11 +1177,12 @@ class TrustedLiveReaderSupervisor:
         terminate_timeout: float | None = None,
         kill_timeout: float | None = None,
     ) -> bool:
-        helper, self._helper = self._helper, None
+        helper = self._helper
         if helper is None:
             return False
         # Publish the retired owner before cleanup can raise or be interrupted.
         self._unreaped_helper = helper
+        self._helper = None
         forced, reaped = self._stop_incarnation(
             helper,
             force=force,
