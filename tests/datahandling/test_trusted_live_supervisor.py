@@ -1448,7 +1448,9 @@ def test_interrupted_process_start_releases_the_exact_process(
                 original_start()
             raise failure("interrupted process start")
 
-        monkeypatch.setattr(process, "start", interrupted_start)
+        # This override removes itself before spawn pickles the Process. Do not
+        # register a second deletion with monkeypatch's later fixture teardown.
+        process.start = interrupted_start
         processes.append(process)
         return process
 
