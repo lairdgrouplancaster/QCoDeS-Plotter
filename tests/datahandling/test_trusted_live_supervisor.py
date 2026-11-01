@@ -1426,6 +1426,180 @@ def test_wrong_session_control_frame_is_fatal_but_next_job_can_recover(
     _assert_helper_stopped(supervisor, replacement_pid)
 
 
+@pytest.mark.parametrize("started", [False, True])
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+def test_interrupted_process_start_releases_the_exact_process(
+    wal_writer: _ApswWalWriter,
+    monkeypatch: pytest.MonkeyPatch,
+    started: bool,
+    failure: type[BaseException],
+) -> None:
+    supervisor = TrustedLiveReaderSupervisor(wal_writer.database_path)
+    original_factory = supervisor._context.Process
+    processes = []
+
+    def make_process(*args: Any, **kwargs: Any) -> Any:
+        process = original_factory(*args, **kwargs)
+        original_start = process.start
+
+        def interrupted_start() -> None:
+            del process.start
+            if started:
+                original_start()
+            raise failure("interrupted process start")
+
+        # This override removes itself before spawn pickles the Process. Do not
+        # register a second deletion with monkeypatch's later fixture teardown.
+        process.start = interrupted_start
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(supervisor._context, "Process", make_process)
+    try:
+        with pytest.raises(TrustedLiveHelperStartupError) as raised:
+            supervisor.query("SELECT 1")
+        assert isinstance(raised.value.__cause__, failure)
+        assert not supervisor.resource_liveness().resources_owned
+        with pytest.raises(ValueError, match="closed"):
+            processes[0].is_alive()
+    finally:
+        supervisor.close()
+        for process in processes:
+            try:
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=5)
+                process.close()
+            except ValueError:
+                # A successful supervisor cleanup has already closed this handle.
+                pass
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+def test_interrupted_retirement_keeps_helper_owned(
+    wal_writer: _ApswWalWriter,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: type[BaseException],
+) -> None:
+    supervisor = TrustedLiveReaderSupervisor.open(wal_writer.database_path)
+    original_stop = supervisor._stop_incarnation
+    helper = supervisor._helper
+    assert helper is not None
+
+    def interrupted_stop(*args: Any, **kwargs: Any) -> Any:
+        raise failure("interrupted retirement")
+
+    try:
+        monkeypatch.setattr(supervisor, "_stop_incarnation", interrupted_stop)
+        with supervisor._lock, pytest.raises(failure):
+            supervisor._discard_helper_locked(force=True)
+        assert supervisor.resource_liveness().resources_owned
+        assert supervisor._unreaped_helper is helper
+    finally:
+        monkeypatch.setattr(supervisor, "_stop_incarnation", original_stop)
+        # Also restore ownership on the unfixed implementation so this regression
+        # cannot leak its real helper when the assertion above fails.
+        if supervisor._helper is None and supervisor._unreaped_helper is None:
+            supervisor._unreaped_helper = helper
+        try:
+            supervisor.close()
+        except TrustedLiveHelperForcedTerminationError:
+            # This test intentionally retires a live helper without shutdown IPC.
+            pass
+
+
+def test_failed_start_retains_an_unclosed_process_handle(
+    wal_writer: _ApswWalWriter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervisor = TrustedLiveReaderSupervisor(wal_writer.database_path)
+    original_factory = supervisor._context.Process
+    allow_close = False
+
+    def make_process(*args: Any, **kwargs: Any) -> Any:
+        process = original_factory(*args, **kwargs)
+        original_close = process.close
+
+        def fail_start() -> None:
+            raise RuntimeError("injected startup failure")
+
+        def close() -> None:
+            if not allow_close:
+                raise OSError("injected handle close failure")
+            original_close()
+
+        monkeypatch.setattr(process, "start", fail_start)
+        monkeypatch.setattr(process, "close", close)
+        return process
+
+    monkeypatch.setattr(supervisor._context, "Process", make_process)
+    try:
+        with pytest.raises(TrustedLiveHelperStartupError):
+            supervisor.query("SELECT 1")
+        assert supervisor.resource_liveness().unreaped_incarnation
+        assert supervisor._atexit_registered
+    finally:
+        allow_close = True
+        supervisor.close()
+        assert not supervisor.reap_closed_resources().resources_owned
+
+
+@pytest.mark.parametrize("pipe_index, endpoint_index", [(0, 0), (1, 1), (2, 0)])
+def test_failed_startup_endpoint_close_remains_owned(
+    wal_writer: _ApswWalWriter,
+    monkeypatch: pytest.MonkeyPatch,
+    pipe_index: int,
+    endpoint_index: int,
+) -> None:
+    context = multiprocessing.get_context("spawn")
+    original_pipe = context.Pipe
+    pending = []
+    pipe_count = 0
+    allow_close = False
+
+    def make_pipe(*args: Any, **kwargs: Any) -> Any:
+        nonlocal pipe_count
+        pair = original_pipe(*args, **kwargs)
+        if pipe_count == pipe_index:
+            endpoint = pair[endpoint_index]
+            original_close = endpoint.close
+
+            def close() -> None:
+                if not allow_close:
+                    raise OSError("injected startup endpoint close failure")
+                original_close()
+
+            pending.append(endpoint)
+            monkeypatch.setattr(endpoint, "close", close)
+        pipe_count += 1
+        return pair
+
+    monkeypatch.setattr(context, "Pipe", make_pipe)
+    supervisor = TrustedLiveReaderSupervisor.open(wal_writer.database_path)
+    try:
+        assert supervisor.query("SELECT 1").rows == ((1,),)
+        with pytest.raises(TrustedLiveHelperForcedTerminationError):
+            supervisor.close()
+        liveness = supervisor.resource_liveness()
+        assert liveness.resources_owned
+        assert liveness.open_endpoints == 1
+        allow_close = True
+        # Closing the last writer wakes the reply receiver asynchronously.
+        # Reaping is deliberately zero-wait, so allow that thread to finish
+        # before requiring all ownership to have been released.
+        deadline = time.monotonic() + 5.0
+        while (liveness := supervisor.reap_closed_resources()).resources_owned:
+            assert time.monotonic() < deadline, liveness
+            time.sleep(0.01)
+        assert pending[0].closed
+    finally:
+        allow_close = True
+        supervisor.close()
+        supervisor.reap_closed_resources()
+        for endpoint in pending:
+            endpoint.close()
+
+
 def test_startup_and_normal_close_are_bounded(
     wal_writer: _ApswWalWriter,
 ) -> None:

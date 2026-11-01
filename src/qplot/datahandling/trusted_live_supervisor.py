@@ -251,6 +251,9 @@ class _HelperIncarnation:
     reply_receiver_done: threading.Event
     reply_receiver: threading.Thread
     reply_receiver_started: bool = False
+    # Parent copies of the child's endpoints normally close immediately after
+    # spawn. Retain them too if that close fails, until a later reap succeeds.
+    startup_endpoints: tuple[Connection | None, ...] = ()
 
 
 def _publish_reply_item(
@@ -380,6 +383,7 @@ def _open_helper_endpoints(helper: _HelperIncarnation) -> int:
         helper.reply_connection,
         helper.control_send,
         helper.test_notify_receive,
+        *helper.startup_endpoints,
     ):
         if connection is None:
             continue
@@ -845,25 +849,29 @@ class TrustedLiveReaderSupervisor:
             reply_receiver_stop,
             reply_receiver_done,
             reply_receiver,
+            startup_endpoints=(
+                command_receive, reply_send, control_receive, test_notify_send,
+            ),
         )
+        # Own the process before start(): failure can follow child creation.
+        self._helper = helper
         try:
             process.start()
         except BaseException as error:
             for connection in (
                 command_receive,
-                command_send,
-                reply_receive,
                 reply_send,
                 control_receive,
-                control_send,
-                test_notify_receive,
                 test_notify_send,
             ):
                 _close_connection(connection)
             try:
-                process.close()
-            except (OSError, ValueError):
-                pass
+                self._discard_helper_locked(force=True)
+            except BaseException as cleanup_error:
+                error.add_note(
+                    "Helper startup cleanup remains pending: "
+                    f"{type(cleanup_error).__name__}"
+                )
             raise TrustedLiveHelperStartupError(
                 "The trusted live-reader helper could not be spawned."
             ) from error
@@ -880,11 +888,11 @@ class TrustedLiveReaderSupervisor:
             test_notify_send,
         ):
             _close_connection(child_endpoint)
-        self._helper = helper
         try:
             try:
-                helper.reply_receiver.start()
+                # Even an interrupted start may have launched the receiver.
                 helper.reply_receiver_started = True
+                helper.reply_receiver.start()
             except BaseException as error:
                 raise TrustedLiveHelperStartupError(
                     "The trusted helper reply receiver could not be started."
@@ -1077,6 +1085,7 @@ class TrustedLiveReaderSupervisor:
                 helper.command_send,
                 helper.control_send,
                 helper.test_notify_receive,
+                *helper.startup_endpoints,
             ):
                 _close_connection(connection)
             helper.reply_receiver_stop.set()
@@ -1112,6 +1121,7 @@ class TrustedLiveReaderSupervisor:
             helper.reply_connection,
             helper.control_send,
             helper.test_notify_receive,
+            *helper.startup_endpoints,
         ):
             _close_connection(connection)
         if helper.reply_receiver_started:
@@ -1167,17 +1177,20 @@ class TrustedLiveReaderSupervisor:
         terminate_timeout: float | None = None,
         kill_timeout: float | None = None,
     ) -> bool:
-        helper, self._helper = self._helper, None
+        helper = self._helper
         if helper is None:
             return False
+        # Publish the retired owner before cleanup can raise or be interrupted.
+        self._unreaped_helper = helper
+        self._helper = None
         forced, reaped = self._stop_incarnation(
             helper,
             force=force,
             terminate_timeout=terminate_timeout,
             kill_timeout=kill_timeout,
         )
-        if not reaped:
-            self._unreaped_helper = helper
+        if reaped:
+            self._unreaped_helper = None
         return forced
 
     def _validate_job_locked(self, job: TrustedLiveJob[_T]) -> None:
