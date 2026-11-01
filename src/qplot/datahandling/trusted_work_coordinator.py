@@ -767,7 +767,10 @@ class TrustedWorkCoordinator:
             try:
                 active.future.result(timeout=max(0.0, deadline - time.monotonic()))
             except FutureTimeout:
-                return False
+                # FutureTimeout aliases TimeoutError, which a finished worker
+                # may itself raise. Only an unfinished future is still pending.
+                if not active.future.done():
+                    return False
             except BaseException:
                 pass
             self._active = None

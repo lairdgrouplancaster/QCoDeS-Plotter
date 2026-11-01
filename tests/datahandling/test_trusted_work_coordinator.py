@@ -246,6 +246,37 @@ def test_wait_closed_bounds_worker_completion_callback(
     assert all(not thread.is_alive() for thread in coordinator._executor._threads)
 
 
+@pytest.mark.parametrize("error_type", [TimeoutError, RuntimeError])
+def test_failed_worker_does_not_leave_shutdown_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    error_type: type[Exception],
+) -> None:
+    instance = _instance()
+    observations = {1: _observation(1, instance)}
+    ready = threading.Event()
+    coordinator = TrustedWorkCoordinator(
+        instance,
+        _runs(observations),
+        _Service(instance, observations),
+        cache=TrustedDerivedDiskCache(tmp_path / "disabled", enabled=False),
+        wakeup=ready.set,
+    )
+
+    def fail(*_args: Any) -> None:
+        raise error_type("injected worker failure")
+
+    monkeypatch.setattr(coordinator, "_execute", fail)
+    try:
+        coordinator.start()
+        _wait_for(ready)
+        assert coordinator.wait_closed(1.0)
+        assert coordinator._executor_joined
+    finally:
+        coordinator.close_async()
+        coordinator._executor.shutdown(wait=True, cancel_futures=True)
+
+
 class _ImmediateExecutor:
     """Complete a claim synchronously while preserving owner poll boundaries."""
 
