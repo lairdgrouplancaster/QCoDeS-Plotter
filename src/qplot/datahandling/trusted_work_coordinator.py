@@ -767,7 +767,10 @@ class TrustedWorkCoordinator:
             try:
                 active.future.result(timeout=max(0.0, deadline - time.monotonic()))
             except FutureTimeout:
-                return False
+                # FutureTimeout aliases TimeoutError, which a finished worker
+                # may itself raise. Only an unfinished future is still pending.
+                if not active.future.done():
+                    return False
             except BaseException:
                 pass
             self._active = None
@@ -781,7 +784,15 @@ class TrustedWorkCoordinator:
         ):
             return False
         if not self._executor_joined:
-            self._executor.shutdown(wait=True, cancel_futures=True)
+            # A Future becomes done before its completion callbacks return.
+            # close_async() has already stopped submissions and sent the pool's
+            # shutdown sentinel, so its owned thread set is now stable. Join
+            # those same CPython executor threads under our remaining deadline
+            # instead of shutdown(wait=True)'s unbounded joins.
+            for thread in tuple(self._executor._threads):
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
+                if thread.is_alive():
+                    return False
             self._executor_joined = True
         return True
 
