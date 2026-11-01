@@ -1542,6 +1542,56 @@ def test_failed_start_retains_an_unclosed_process_handle(
         assert not supervisor.reap_closed_resources().resources_owned
 
 
+@pytest.mark.parametrize("pipe_index, endpoint_index", [(0, 0), (1, 1), (2, 0)])
+def test_failed_startup_endpoint_close_remains_owned(
+    wal_writer: _ApswWalWriter,
+    monkeypatch: pytest.MonkeyPatch,
+    pipe_index: int,
+    endpoint_index: int,
+) -> None:
+    context = multiprocessing.get_context("spawn")
+    original_pipe = context.Pipe
+    pending = []
+    pipe_count = 0
+    allow_close = False
+
+    def make_pipe(*args: Any, **kwargs: Any) -> Any:
+        nonlocal pipe_count
+        pair = original_pipe(*args, **kwargs)
+        if pipe_count == pipe_index:
+            endpoint = pair[endpoint_index]
+            original_close = endpoint.close
+
+            def close() -> None:
+                if not allow_close:
+                    raise OSError("injected startup endpoint close failure")
+                original_close()
+
+            pending.append(endpoint)
+            monkeypatch.setattr(endpoint, "close", close)
+        pipe_count += 1
+        return pair
+
+    monkeypatch.setattr(context, "Pipe", make_pipe)
+    supervisor = TrustedLiveReaderSupervisor.open(wal_writer.database_path)
+    try:
+        assert supervisor.query("SELECT 1").rows == ((1,),)
+        with pytest.raises(TrustedLiveHelperForcedTerminationError):
+            supervisor.close()
+        liveness = supervisor.resource_liveness()
+        assert liveness.resources_owned
+        assert liveness.open_endpoints == 1
+        allow_close = True
+        assert not supervisor.reap_closed_resources().resources_owned
+        assert pending[0].closed
+    finally:
+        allow_close = True
+        supervisor.close()
+        supervisor.reap_closed_resources()
+        for endpoint in pending:
+            endpoint.close()
+
+
 def test_startup_and_normal_close_are_bounded(
     wal_writer: _ApswWalWriter,
 ) -> None:

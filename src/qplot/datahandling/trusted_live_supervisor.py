@@ -251,6 +251,9 @@ class _HelperIncarnation:
     reply_receiver_done: threading.Event
     reply_receiver: threading.Thread
     reply_receiver_started: bool = False
+    # Parent copies of the child's endpoints normally close immediately after
+    # spawn. Retain them too if that close fails, until a later reap succeeds.
+    startup_endpoints: tuple[Connection | None, ...] = ()
 
 
 def _publish_reply_item(
@@ -380,6 +383,7 @@ def _open_helper_endpoints(helper: _HelperIncarnation) -> int:
         helper.reply_connection,
         helper.control_send,
         helper.test_notify_receive,
+        *helper.startup_endpoints,
     ):
         if connection is None:
             continue
@@ -845,6 +849,9 @@ class TrustedLiveReaderSupervisor:
             reply_receiver_stop,
             reply_receiver_done,
             reply_receiver,
+            startup_endpoints=(
+                command_receive, reply_send, control_receive, test_notify_send,
+            ),
         )
         try:
             process.start()
@@ -1079,6 +1086,7 @@ class TrustedLiveReaderSupervisor:
                 helper.command_send,
                 helper.control_send,
                 helper.test_notify_receive,
+                *helper.startup_endpoints,
             ):
                 _close_connection(connection)
             helper.reply_receiver_stop.set()
@@ -1114,6 +1122,7 @@ class TrustedLiveReaderSupervisor:
             helper.reply_connection,
             helper.control_send,
             helper.test_notify_receive,
+            *helper.startup_endpoints,
         ):
             _close_connection(connection)
         if helper.reply_receiver_started:
