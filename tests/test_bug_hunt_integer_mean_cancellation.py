@@ -3,6 +3,7 @@
 import builtins
 from decimal import Decimal
 from fractions import Fraction
+from math import isnan
 
 import numpy as np
 import pytest
@@ -56,7 +57,7 @@ def test_chunked_exact_mean_preserves_results_and_holes(axis, objects):
         values[-1] = np.nan
     grid = values[None, :] if axis == "x" else values[:, None]
     finite = [Fraction(value.item() if isinstance(value, np.generic) else value)
-              for value in values if value == value]
+              for value in values if not isnan(value)]
     mean = sum(finite) / len(finite)
     expected = [float(value - mean) for value in finite]
     result = plot_tools.subtract_mean(axis, {"z": grid})["z"].ravel()

@@ -1,4 +1,4 @@
-from math import ceil, floor, isclose, isfinite, log10, ulp
+from math import ceil, floor, isclose, isfinite, isnan, log10, ulp
 from os import path
 from types import MethodType
 from typing import TYPE_CHECKING, cast
@@ -1471,7 +1471,7 @@ class plotWidget(
 
         """
         if not isfinite(num):
-            if num != num:
+            if isnan(num):
                 return "nan"
             return "-inf" if num < 0 else "inf"
 

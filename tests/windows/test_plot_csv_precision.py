@@ -2,6 +2,8 @@
 
 import csv
 from contextlib import closing
+from decimal import Decimal
+from fractions import Fraction
 
 import numpy as np
 import pytest
@@ -38,6 +40,26 @@ _CASES = {
         -1e12 + np.arange(5) * np.spacing(1e12),
     ),
 }
+
+
+@pytest.mark.parametrize("value", [
+    pytest.param(2**4096, id="huge-integer"),
+    pytest.param(Fraction(2**4096, 3), id="huge-fraction"),
+    pytest.param(Decimal("1e1000"), id="huge-decimal"),
+])
+@pytest.mark.parametrize("missing", [
+    pytest.param(float("nan"), id="float-nan"),
+    pytest.param(Decimal("NaN"), id="decimal-nan"),
+    pytest.param(np.longdouble("nan"), id="extended-nan"),
+])
+def test_shared_csv_coordinates_match_exact_values_and_nan_holes(value, missing):
+    reference = np.array([value, missing], dtype=object)
+    candidate = np.array([value, float("nan")], dtype=object)
+    assert plot_export_module._csv_shared_coordinates_match(reference, candidate)
+    candidate[0] = value * 2 if isinstance(value, Decimal) else value + 1
+    assert not plot_export_module._csv_shared_coordinates_match(reference, candidate)
+    candidate[:] = [value, 0]
+    assert not plot_export_module._csv_shared_coordinates_match(reference, candidate)
 
 
 def _create_measurements(database_path, datasets):
