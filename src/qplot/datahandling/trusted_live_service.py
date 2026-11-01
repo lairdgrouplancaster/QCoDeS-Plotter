@@ -1010,22 +1010,16 @@ class TrustedLiveReadService:
                 with self._condition:
                     operation = self._next_operation_locked()
                     if operation is None:
-                        should_stop = self._closing
-                        if not should_stop:
-                            self._condition.wait(timeout=0.1)
-                            continue
-                    else:
-                        should_stop = False
-                        operation.status = "active"
-                        self._active_operation = operation
-                        # Fairness may select an operation directly rather than
-                        # popping its live heap entry.  Keep the physical heap
-                        # exactly bounded to the remaining queued operations.
-                        self._compact_heap_locked()
-                if operation is None:
-                    if should_stop:
-                        break
-                    continue
+                        if self._closing:
+                            break
+                        self._condition.wait(timeout=0.1)
+                        continue
+                    operation.status = "active"
+                    self._active_operation = operation
+                    # Fairness may select an operation directly rather than
+                    # popping its live heap entry. Keep the physical heap
+                    # exactly bounded to the remaining queued operations.
+                    self._compact_heap_locked()
 
                 result: object = _NO_RESULT
                 error: BaseException | None = None
