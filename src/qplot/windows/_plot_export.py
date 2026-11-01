@@ -1,6 +1,7 @@
 import csv
 import os
 import weakref
+from decimal import Decimal
 from itertools import zip_longest
 from os import path
 from typing import TYPE_CHECKING, Any, Literal
@@ -68,6 +69,15 @@ def _csv_numeric_text(value: Any) -> str:
     return str(value)
 
 
+def _csv_coordinate_is_nan(value: Any) -> bool:
+    """Recognize NaN without narrowing exact integers or extended floats."""
+    if isinstance(value, Decimal):
+        return value.is_nan()
+    if isinstance(value, (float, complex, np.inexact)):
+        return bool(np.isnan(value))
+    return False
+
+
 def _csv_shared_coordinates_match(reference: Any, candidate: Any) -> bool:
     """Check an exact coordinate prefix without NumPy mixed-type coercion."""
     reference = np.asarray(reference)
@@ -79,7 +89,7 @@ def _csv_shared_coordinates_match(reference: Any, candidate: Any) -> bool:
             left = left.item()
         if isinstance(right, np.generic):
             right = right.item()
-        if left != right and not (left != left and right != right):
+        if left != right and not (_csv_coordinate_is_nan(left) and _csv_coordinate_is_nan(right)):
             return False
     return True
 

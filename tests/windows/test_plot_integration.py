@@ -3243,12 +3243,12 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
         assert window.testDatabaseGenerationThreadPool.activeThreadCount() == 1
         assert_same_path_generation_consumers_released(window)
 
-        def database_info_must_not_run(_database_path):
+        def database_info_must_not_run(*_args, **_kwargs):
             raise AssertionError("database information bypassed generation gate")
 
         monkeypatch.setattr(
             database_actions_module,
-            "database_info_rows",
+            "DatabaseInfoWorker",
             database_info_must_not_run,
         )
         window.refreshMain()

@@ -6,6 +6,7 @@ import base64
 import binascii
 import hashlib
 import json
+import math
 import ntpath
 import os
 import re
@@ -272,7 +273,7 @@ def _restore_value(
     if tag == "float" and len(value) == 2 and isinstance(value[1], str):
         _valid_text(value[1], maximum=128)
         restored = float.fromhex(value[1])
-        if not (restored == restored and abs(restored) != float("inf")):
+        if not math.isfinite(restored):
             raise ValueError("A cache float is not finite.")
         return restored
     if tag == "str" and len(value) == 2 and isinstance(value[1], str):
