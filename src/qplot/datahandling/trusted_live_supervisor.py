@@ -372,6 +372,25 @@ def _close_connection(connection: Connection | None) -> None:
         pass
 
 
+def _open_helper_endpoints(helper: _HelperIncarnation) -> int:
+    """Count endpoints whose release has not been confirmed."""
+    count = 0
+    for connection in (
+        helper.command_send,
+        helper.reply_connection,
+        helper.control_send,
+        helper.test_notify_receive,
+    ):
+        if connection is None:
+            continue
+        try:
+            is_open = not connection.closed
+        except (AttributeError, OSError, ValueError):
+            is_open = True
+        count += int(is_open)
+    return count
+
+
 def _bounded_send_bytes(
     connection: Connection,
     frame: bytes,
@@ -705,19 +724,7 @@ class TrustedLiveReaderSupervisor:
                     receiver_alive = receiver_alive or helper.reply_receiver.is_alive()
                 except (AssertionError, RuntimeError):
                     receiver_alive = True
-            for connection in (
-                helper.command_send,
-                helper.reply_connection,
-                helper.control_send,
-                helper.test_notify_receive,
-            ):
-                if connection is None:
-                    continue
-                try:
-                    is_open = not connection.closed
-                except (AttributeError, OSError, ValueError):
-                    is_open = True
-                open_endpoints += int(is_open)
+            open_endpoints += _open_helper_endpoints(helper)
         active_job = self._active_job
         return TrustedLiveSupervisorLiveness(
             helper_pid=helper_pid,
@@ -1084,15 +1091,15 @@ class TrustedLiveReaderSupervisor:
         receiver_alive = (
             helper.reply_receiver_started and helper.reply_receiver.is_alive()
         )
-        if process_alive() or receiver_alive:
-            # Keep the Process handle quarantined.  A later spawn may proceed
-            # only after both its process and sole receiver are reaped.
+        if process_alive() or receiver_alive or _open_helper_endpoints(helper):
+            # Keep ownership until the process, receiver, and every endpoint
+            # have been released. Failed closes remain eligible for later reap.
             return True, False
         bounded_join(0)
         try:
             helper.process.close()
         except (OSError, ValueError):
-            pass
+            return True, False
         return forced, True
 
     def _reap_quarantined_helper_locked(self) -> None:
@@ -1100,7 +1107,13 @@ class TrustedLiveReaderSupervisor:
         if helper is None:
             return
         helper.reply_receiver_stop.set()
-        _close_connection(helper.reply_connection)
+        for connection in (
+            helper.command_send,
+            helper.reply_connection,
+            helper.control_send,
+            helper.test_notify_receive,
+        ):
+            _close_connection(connection)
         if helper.reply_receiver_started:
             try:
                 helper.reply_receiver.join(timeout=0)
@@ -1114,15 +1127,18 @@ class TrustedLiveReaderSupervisor:
         receiver_alive = (
             helper.reply_receiver_started and helper.reply_receiver.is_alive()
         )
-        if alive or receiver_alive:
+        if alive or receiver_alive or _open_helper_endpoints(helper):
             raise TrustedLiveHelperForcedTerminationError(
-                "A previously killed trusted helper or its reply receiver has "
-                "not been reaped; a replacement process will not be started."
+                "A retired trusted helper, reply receiver, or pipe endpoint has "
+                "not been released; a replacement process will not be started."
             )
         try:
             helper.process.close()
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as error:
+            raise TrustedLiveHelperForcedTerminationError(
+                "The retired trusted helper's process handle could not be "
+                "closed; a replacement process will not be started."
+            ) from error
         self._unreaped_helper = None
 
     def _force_quarantined_helper_locked(

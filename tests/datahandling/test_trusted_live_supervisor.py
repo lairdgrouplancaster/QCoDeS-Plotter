@@ -1530,6 +1530,115 @@ def test_closed_resource_liveness_retains_receiver_and_endpoint_until_reaped(
     assert not supervisor._atexit_registered
 
 
+@pytest.mark.parametrize("failed_resource", ["command_send", "reply_connection", "control_send", "process"])
+def test_close_failure_retains_resources_until_a_later_reap(
+    wal_writer: _ApswWalWriter,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_resource: str,
+) -> None:
+    supervisor = TrustedLiveReaderSupervisor.open(wal_writer.database_path)
+    assert supervisor.query("SELECT 1").rows == ((1,),)
+    helper = supervisor._helper
+    assert helper is not None
+    protected = _protected_artifact_contents(wal_writer.database_path)
+    allow_endpoint_close = False
+    allow_process_close = failed_resource != "process"
+    original_process_close = helper.process.close
+
+    def process_close() -> None:
+        if not allow_process_close:
+            raise OSError("injected process handle close failure")
+        original_process_close()
+
+    if failed_resource != "process":
+        endpoint = getattr(helper, failed_resource)
+        original_endpoint_close = endpoint.close
+
+        def endpoint_close() -> None:
+            if not allow_endpoint_close:
+                raise OSError("injected pipe close failure")
+            original_endpoint_close()
+
+        monkeypatch.setattr(endpoint, "close", endpoint_close)
+    monkeypatch.setattr(helper.process, "close", process_close)
+    try:
+        with pytest.raises(TrustedLiveHelperForcedTerminationError):
+            supervisor.close()
+        pending = supervisor.resource_liveness()
+        assert pending.closed
+        assert pending.unreaped_incarnation
+        assert pending.resources_owned
+        if failed_resource != "process":
+            assert pending.open_endpoints >= 1
+        assert supervisor._atexit_registered
+        assert supervisor.reap_closed_resources().resources_owned
+
+        # Once endpoints close, a failing Process.close() must still retain
+        # ownership rather than losing the final process/sentinel handles.
+        allow_process_close = False
+        allow_endpoint_close = True
+        pending = supervisor.reap_closed_resources()
+        assert pending.open_endpoints == 0
+        assert pending.resources_owned
+        assert supervisor._atexit_registered
+
+        allow_process_close = True
+        reaped = supervisor.reap_closed_resources()
+        assert not reaped.resources_owned
+        assert not supervisor._atexit_registered
+        with pytest.raises(ValueError):
+            helper.process.is_alive()
+        assert _protected_artifact_contents(wal_writer.database_path) == protected
+        assert wal_writer.request("checkpoint", mode="TRUNCATE") == (0, 0, 0)
+    finally:
+        allow_endpoint_close = allow_process_close = True
+        try:
+            supervisor.close()
+        except TrustedLiveHelperForcedTerminationError:
+            pass
+        supervisor.reap_closed_resources()
+        for connection in (helper.command_send, helper.reply_connection, helper.control_send):
+            connection.close()
+        original_process_close()
+
+
+def test_failed_process_handle_close_blocks_a_replacement_helper(
+    wal_writer: _ApswWalWriter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervisor = TrustedLiveReaderSupervisor.open(wal_writer.database_path)
+    helper = supervisor._helper
+    assert helper is not None
+    incarnation = supervisor.incarnation
+    allow_close = False
+    original_close = helper.process.close
+
+    def close() -> None:
+        if not allow_close:
+            raise OSError("injected process handle close failure")
+        original_close()
+
+    monkeypatch.setattr(helper.process, "close", close)
+    try:
+        helper.process.terminate()
+        helper.process.join(timeout=5.0)
+        assert not helper.process.is_alive()
+        with pytest.raises(TrustedLiveHelperForcedTerminationError):
+            supervisor.query("SELECT 2")
+        assert supervisor.resource_liveness().unreaped_incarnation
+        assert supervisor.incarnation == incarnation
+
+        allow_close = True
+        assert supervisor.query("SELECT 3").rows == ((3,),)
+        assert supervisor.incarnation != incarnation
+        assert not supervisor.resource_liveness().unreaped_incarnation
+    finally:
+        allow_close = True
+        supervisor.close()
+        supervisor.reap_closed_resources()
+        original_close()
+
+
 def test_resource_observation_does_not_wait_for_supervisor_lock(
     tmp_path: Path,
 ) -> None:
