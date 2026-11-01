@@ -1190,16 +1190,14 @@ class DatabaseActionsMixin:
                 else:
                     DatabaseActionsMixin._sync_database_generation_controls(self)
                 return
-            if current_matches:
-                if state_matches:
-                    self._reload_replaced_database(
-                        database_path,
-                        generation_recovery=True,
-                    )
-                else:
-                    self._reload_replaced_database(database_path)
+            # The guards above returned for every unrelated current database.
+            if state_matches:
+                self._reload_replaced_database(
+                    database_path,
+                    generation_recovery=True,
+                )
             else:
-                DatabaseActionsMixin._sync_database_generation_controls(self)
+                self._reload_replaced_database(database_path)
             return
 
         if guarded:

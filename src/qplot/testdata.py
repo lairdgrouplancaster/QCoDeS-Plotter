@@ -1455,13 +1455,8 @@ def _replace_database_file(
             else:
                 backup_path = None
                 replacement_installed = False
-                try:
-                    guard_must_remain = (
-                        guard_must_remain
-                        or bool(_destination_sidecars(database_path))
-                    )
-                except SpecificationError:
-                    guard_must_remain = True
+                # Retain the guard set before restoration: a successful restore
+                # cannot rule out a transient sidecar belonging to the new main.
         if backup_path is not None and not replacement_installed:
             try:
                 backup_path.unlink()
