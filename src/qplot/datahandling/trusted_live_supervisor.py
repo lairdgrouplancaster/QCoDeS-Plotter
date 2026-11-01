@@ -849,21 +849,23 @@ class TrustedLiveReaderSupervisor:
         try:
             process.start()
         except BaseException as error:
+            # start() can fail after creating the child. Install ownership before
+            # cleanup so a failed or interrupted reap remains visible to callers.
+            self._helper = helper
             for connection in (
                 command_receive,
-                command_send,
-                reply_receive,
                 reply_send,
                 control_receive,
-                control_send,
-                test_notify_receive,
                 test_notify_send,
             ):
                 _close_connection(connection)
             try:
-                process.close()
-            except (OSError, ValueError):
-                pass
+                self._discard_helper_locked(force=True)
+            except BaseException as cleanup_error:
+                error.add_note(
+                    "Helper startup cleanup remains pending: "
+                    f"{type(cleanup_error).__name__}"
+                )
             raise TrustedLiveHelperStartupError(
                 "The trusted live-reader helper could not be spawned."
             ) from error
@@ -1170,14 +1172,16 @@ class TrustedLiveReaderSupervisor:
         helper, self._helper = self._helper, None
         if helper is None:
             return False
+        # Publish the retired owner before cleanup can raise or be interrupted.
+        self._unreaped_helper = helper
         forced, reaped = self._stop_incarnation(
             helper,
             force=force,
             terminate_timeout=terminate_timeout,
             kill_timeout=kill_timeout,
         )
-        if not reaped:
-            self._unreaped_helper = helper
+        if reaped:
+            self._unreaped_helper = None
         return forced
 
     def _validate_job_locked(self, job: TrustedLiveJob[_T]) -> None:
