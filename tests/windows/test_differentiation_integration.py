@@ -168,6 +168,10 @@ def operation_option(plot, name):
 
 
 def apply_operations(plot):
+    # This helper is also imported by other integration fixtures. Disable live
+    # polling here so every caller observes only its explicit Apply submission.
+    plot.spinBox.setValue(0)
+    plot.monitor.stop()
     previous = plot.worker
     finished, errors = [], []
     submitted = []
