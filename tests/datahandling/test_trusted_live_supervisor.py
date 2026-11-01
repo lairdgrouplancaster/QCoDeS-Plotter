@@ -1584,7 +1584,13 @@ def test_failed_startup_endpoint_close_remains_owned(
         assert liveness.resources_owned
         assert liveness.open_endpoints == 1
         allow_close = True
-        assert not supervisor.reap_closed_resources().resources_owned
+        # Closing the last writer wakes the reply receiver asynchronously.
+        # Reaping is deliberately zero-wait, so allow that thread to finish
+        # before requiring all ownership to have been released.
+        deadline = time.monotonic() + 5.0
+        while (liveness := supervisor.reap_closed_resources()).resources_owned:
+            assert time.monotonic() < deadline, liveness
+            time.sleep(0.01)
         assert pending[0].closed
     finally:
         allow_close = True
