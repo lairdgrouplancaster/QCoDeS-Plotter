@@ -354,6 +354,8 @@ class HeatmapLayer:
             try:
                 self._source_update_signal.disconnect(self._source_trace_updated)
             except (TypeError, RuntimeError):
+                # An already disconnected or deleted source needs no further update
+                # disconnection.
                 pass
             self._source_update_signal = None
         self._disconnect_pending_end_wait()
@@ -377,6 +379,8 @@ class HeatmapLayer:
             try:
                 self.parent.plot.removeItem(item)
             except (AttributeError, RuntimeError, ValueError):
+                # An already removed or deleted renderer must not prevent cleanup of the
+                # remaining renderers.
                 pass
         self._renderers_added = False
 
@@ -392,6 +396,8 @@ class HeatmapLayer:
             try:
                 plot.removeItem(self.image)
             except (AttributeError, RuntimeError, ValueError):
+                # Preserve the original renderer-add failure while rolling back the
+                # partial insertion.
                 pass
             raise
         self._renderers_added = True
@@ -435,6 +441,8 @@ class HeatmapLayer:
         try:
             self._source_end_wait_signal.disconnect(self._source_end_wait_slot)
         except (TypeError, RuntimeError):
+            # An already disconnected or deleted source needs no further end-wait
+            # disconnection.
             pass
         self._source_end_wait_signal = None
         self._source_end_wait_slot = None
@@ -492,6 +500,8 @@ class HeatmapLayer:
             try:
                 self._source_interval_signal.disconnect(self._source_interval_slot)
             except (TypeError, RuntimeError):
+                # A deleted sender or already disconnected source needs no further
+                # disconnection.
                 pass
             self._source_interval_signal = None
             self._source_interval_slot = None
@@ -1223,6 +1233,8 @@ class Plot2DLayerMixin:
             try:
                 disconnect(handler)
             except (TypeError, RuntimeError):
+                # A deleted sender or already disconnected signal needs no further
+                # disconnection.
                 pass
 
     def _set_layer_opacity(self, layer: Any, opacity: float) -> None:
@@ -1476,6 +1488,8 @@ class Plot2DLayerMixin:
             try:
                 self.plot.removeItem(item)
             except (AttributeError, RuntimeError, ValueError):
+                # Preserve the failed move while attempting to roll back its partially
+                # added renderer.
                 pass
 
         if target is self.__dict__.get("vb"):

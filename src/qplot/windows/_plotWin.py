@@ -11,7 +11,6 @@ from qplot.tools import (
     unpack_param,
 )
 
-from . import _plot_axis_scaling
 from ._commands import (
     command_spec,
     command_with_status,
@@ -73,8 +72,6 @@ if TYPE_CHECKING:
 
     import qplot
 
-
-_axis_scale_power_text = _plot_axis_scaling._axis_scale_power_text
 
 _MAX_TICK_POSITIONS = 2048
 

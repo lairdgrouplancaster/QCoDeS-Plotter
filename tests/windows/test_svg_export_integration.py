@@ -270,7 +270,9 @@ def test_svg_failure_cancel_and_source_protection(real_plot, tmp_path, monkeypat
     with monkeypatch.context() as patch:
         patch.setattr(plot.widget.scene(), "render", failed_render)
         dialog.ui.exportBtn.click()
-    assert errors and "render failed" in errors.pop()[2]
+    assert errors
+    last_error = errors.pop()
+    assert "render failed" in last_error[2]
     assert target.read_bytes() == sentinel
     assert not any(tmp_path.glob(".existing.svg.*"))
     # An input database disguised by an SVG suffix must be rejected before

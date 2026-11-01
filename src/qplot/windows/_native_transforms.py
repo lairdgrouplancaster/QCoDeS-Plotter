@@ -500,6 +500,8 @@ class NativePlotDataItem(pg.PlotDataItem):
             try:
                 prior.sigTransformChanged.disconnect(self._schedule_display_range_check)
             except (RuntimeError, TypeError):
+                # A replaced or deleted viewbox needs no further transform-signal
+                # disconnection.
                 pass
         self._qplot_range_viewbox = viewbox
         timer = getattr(self, "_qplot_range_timer", None)

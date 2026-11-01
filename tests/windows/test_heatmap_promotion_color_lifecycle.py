@@ -101,7 +101,7 @@ def _promote_with_pending_primary(main, target, monkeypatch):
     def hold_new_primary(self, finished=True, worker=None):
         if self not in sources:
             publications.append((self, finished, worker))
-            return
+            return None
         return original(self, finished, worker=worker)
 
     monkeypatch.setattr(plot2d, "refreshPlot", hold_new_primary)

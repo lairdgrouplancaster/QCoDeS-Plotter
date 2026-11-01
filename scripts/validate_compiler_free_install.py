@@ -376,9 +376,10 @@ def fresh_checkout(repository: Path, destination: Path) -> Path:
     validator.run([*trusted_git, 'fetch', '--depth', '1', str(repository.resolve()), revision],
                   cwd=destination)
     validator.run(['git', 'checkout', '--detach', 'FETCH_HEAD'], cwd=destination)
-    assert subprocess.check_output(
+    checked_revision = subprocess.check_output(
         ['git', 'rev-parse', 'HEAD'], cwd=destination, text=True,
-    ).strip() == revision
+    ).strip()
+    assert checked_revision == revision
     return destination
 
 

@@ -2672,7 +2672,7 @@ def _planned_steps_metadata(
         "measure_parameters": list(dependencies),
         # This deliberately models the lossy public field that caused the
         # regression.  Planned steps must come from the per-dependent shapes.
-        "setpoint_shape": max(shapes.values(), key=lambda shape: len(shape)),
+        "setpoint_shape": max(shapes.values(), key=len),
         "run_description": json.dumps(
             {
                 "interdependencies_": {"dependencies": dependencies},

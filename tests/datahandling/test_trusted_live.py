@@ -355,11 +355,15 @@ def _qcodes_wal_writer_process(
             except BaseException:
                 control.send(("error", traceback.format_exc()))
     except EOFError:
+        # Controller EOF ends this test writer; its finally block still performs
+        # rollback and closes owned resources.
         pass
     except BaseException:
         try:
             control.send(("startup_error", traceback.format_exc()))
         except (BrokenPipeError, EOFError, OSError):
+            # The test controller has disappeared, so the child cannot deliver its
+            # startup diagnostic.
             pass
     finally:
         if writer is not None:
@@ -367,6 +371,8 @@ def _qcodes_wal_writer_process(
                 try:
                     writer.execute("ROLLBACK")
                 except BaseException:
+                    # Rollback is best effort in test-writer teardown; subsequent
+                    # connection and measurement cleanup still runs.
                     pass
             writer.close()
         if run_context is not None:
@@ -498,6 +504,8 @@ def _cleanup_fault_reader_process(
             try:
                 reader.close()
             except BaseException:
+                # This fixture deliberately injected native cleanup failure and already
+                # recorded the outcome sent to the parent.
                 pass
         control.close()
 
@@ -604,6 +612,8 @@ def _forced_cleanup_fault_process(
             try:
                 reader.close()
             except BaseException:
+                # This fixture deliberately injected forced-cleanup failure and already
+                # recorded the outcome sent to the parent.
                 pass
         control.close()
 
@@ -1048,6 +1058,8 @@ class _QcodesWalWriter:
             try:
                 self.request("stop", timeout=10)
             except (AssertionError, BrokenPipeError, EOFError, OSError):
+                # A dead test writer cannot acknowledge stop; join and forced
+                # termination below still clean it up.
                 pass
         self.process.join(10)
         if self.process.is_alive():

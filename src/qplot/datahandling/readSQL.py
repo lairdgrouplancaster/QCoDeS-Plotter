@@ -2214,6 +2214,8 @@ def _table_storage_bytes_by_name(cursor, table_names):
         try:
             sizes[name] = int(value)
         except (TypeError, ValueError):
+            # Invalid dbstat size metadata is omitted rather than reported as a
+            # fabricated byte count.
             pass
 
     return sizes

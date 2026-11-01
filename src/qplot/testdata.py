@@ -838,6 +838,8 @@ def enable_generation_provenance_for_writer(connection):
             try:
                 original_rollback()
             except sqlite3.Error:
+                # Preserve the provenance commit failure while attempting rollback of
+                # the explicitly enabled writer.
                 pass
             last_synchronized_total_changes = connection.total_changes
             last_synchronized_schema_version = connection.execute(
@@ -904,6 +906,8 @@ def enable_generation_provenance_for_writer(connection):
         try:
             original_rollback()
         except sqlite3.Error:
+            # Preserve provenance setup failure while attempting to roll back the
+            # explicitly enabled writer transaction.
             pass
         raise
 
@@ -1221,10 +1225,14 @@ def _close_publication_connection(connection):
     try:
         connection.rollback()
     except sqlite3.Error:
+        # Continue to close this synthetic-publication connection even if its rollback
+        # fails.
         pass
     try:
         connection.close()
     except sqlite3.Error:
+        # Cleanup failure is secondary to publication handling; the guard/backup
+        # recovery path remains authoritative.
         pass
 
 
@@ -1246,6 +1254,8 @@ def _create_publication_guard(database_path):
         try:
             guard_path.unlink()
         except OSError:
+            # Preserve the publication-guard creation error; do not mask it with
+            # secondary unlink failure.
             pass
         raise _unsafe_publication_error(database_path) from error
     return guard_path
@@ -1461,6 +1471,8 @@ def _replace_database_file(
             try:
                 backup_path.unlink()
             except OSError:
+                # A failed backup removal must not roll back a successfully installed
+                # synthetic database.
                 pass
         if (
                 guard_path is not None
@@ -1741,6 +1753,8 @@ def generate_database(
                     try:
                         _remove_owned_temporary_artifacts(temporary_path)
                     except Exception:
+                        # Preserve the generation failure; owned temporary cleanup has
+                        # already been attempted in the failure path.
                         pass
     except GenerationCancelled:
         _timestamped_message(

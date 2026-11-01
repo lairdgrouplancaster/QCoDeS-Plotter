@@ -188,11 +188,15 @@ def _apsw_wal_writer_process(database_path: str, control: Connection) -> None:
             except BaseException:
                 control.send(("error", traceback.format_exc()))
     except EOFError:
+        # Controller EOF ends this test writer; its finally block still closes the
+        # database and pipe.
         pass
     except BaseException:
         try:
             control.send(("startup_error", traceback.format_exc()))
         except (BrokenPipeError, EOFError, OSError):
+            # The test controller has disappeared, so the child cannot deliver its
+            # startup diagnostic.
             pass
     finally:
         if connection is not None:
@@ -266,6 +270,8 @@ class _ApswWalWriter:
             try:
                 self.request("stop", timeout=10)
             except (AssertionError, BrokenPipeError, EOFError, OSError):
+                # A dead test writer cannot acknowledge stop; join and forced
+                # termination below still clean it up.
                 pass
         self.process.join(10)
         if self.process.is_alive():
@@ -344,11 +350,15 @@ def _qcodes_wal_writer_process(database_path: str, control: Connection) -> None:
             except BaseException:
                 control.send(("error", traceback.format_exc()))
     except EOFError:
+        # Controller EOF ends this test writer; its finally block still closes the
+        # measurement and pipe.
         pass
     except BaseException:
         try:
             control.send(("startup_error", traceback.format_exc()))
         except (BrokenPipeError, EOFError, OSError):
+            # The test controller has disappeared, so the child cannot deliver its
+            # startup diagnostic.
             pass
     finally:
         if run_context is not None:
@@ -432,6 +442,8 @@ class _QcodesWalWriter:
             try:
                 self.request("stop", timeout=10)
             except (AssertionError, BrokenPipeError, EOFError, OSError):
+                # A dead test writer cannot acknowledge stop; join and forced
+                # termination below still clean it up.
                 pass
         self.process.join(10)
         if self.process.is_alive():
@@ -1331,6 +1343,8 @@ def test_late_cancel_for_last_completed_generation_does_not_interrupt_next_job(
         try:
             supervisor.close(timeout=0.2)
         except TrustedLiveHelperForcedTerminationError:
+            # Forced retirement is an expected outcome of the deliberately stale
+            # cancellation test.
             pass
     _assert_helper_stopped(supervisor, helper_pid)
 
@@ -1769,6 +1783,8 @@ def test_close_failure_retains_resources_until_a_later_reap(
         try:
             supervisor.close()
         except TrustedLiveHelperForcedTerminationError:
+            # Forced retirement is expected during this injected failure; the fixture
+            # continues releasing every captured resource.
             pass
         supervisor.reap_closed_resources()
         for connection in (helper.command_send, helper.reply_connection, helper.control_send):

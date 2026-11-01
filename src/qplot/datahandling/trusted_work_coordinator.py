@@ -772,6 +772,8 @@ class TrustedWorkCoordinator:
                 if not active.future.done():
                     return False
             except BaseException:
+                # Future failures are published by the completion callback; shutdown
+                # must still join the executor threads.
                 pass
             self._active = None
         while True:

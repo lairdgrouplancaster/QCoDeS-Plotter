@@ -856,11 +856,15 @@ def _restore_launcher_signal_guards(guards: _LauncherSignalGuards) -> None:
         try:
             pthread_sigmask(signal.SIG_SETMASK, guards.previous_mask)
         except (OSError, RuntimeError, ValueError):
+            # Restore the remaining signal guards even if this platform rejects
+            # restoring the thread signal mask.
             pass
     for signal_number, previous_handler in guards.previous_handlers.items():
         try:
             signal.signal(signal_number, previous_handler)
         except (OSError, RuntimeError, ValueError):
+            # Restore the remaining guards even if one signal handler cannot be restored
+            # in this context.
             pass
 
 
@@ -1278,6 +1282,8 @@ class ShutdownSupervisorClient:
             try:
                 channel.close()
             except OSError:
+                # Closing a cancellation channel must not replace the recorded
+                # cancellation outcome.
                 pass
 
 
@@ -1668,6 +1674,8 @@ def _kqueue_child_exit_observed(
                 try:
                     queue.close()
                 except OSError:
+                    # Preserve the child-exit observation while attempting to close its
+                    # temporary kqueue.
                     pass
         if deadline is not None and time.monotonic() >= deadline:
             return None
@@ -2207,6 +2215,8 @@ def _terminate_and_reap_posix_child(
                     ):
                         break
                 except BaseException:
+                    # Uncertain exit observation must keep retrying the owned process
+                    # group rather than declaring it reaped.
                     pass
                 _record_termination_diagnostic(
                     diagnostics,
@@ -2516,6 +2526,8 @@ def _observe_and_reap(
             try:
                 time.sleep(_OBSERVATION_INTERVAL_SECONDS)
             except BaseException:
+                # An interrupted observation delay must not abandon ownership of the
+                # child being reaped.
                 pass
             continue
         if child_exited:
@@ -2724,6 +2736,8 @@ def _supervise_child_outcome(
                 try:
                     listener.close()
                 except OSError:
+                    # Listener cleanup must not replace the already established startup
+                    # failure.
                     pass
                 listener = None
 
@@ -2909,11 +2923,15 @@ def _supervise_child_outcome(
             try:
                 listener.close()
             except OSError:
+                # Final listener cleanup must not replace the already established
+                # supervision outcome.
                 pass
         if channel is not None:
             try:
                 channel.close()
             except OSError:
+                # Final control-channel cleanup must not replace the already established
+                # supervision outcome.
                 pass
         if process_group is not None:
             process_group.close()
@@ -2987,6 +3005,8 @@ def _terminate_launcher_with_signal(signal_number: int) -> None:
     try:
         signal.signal(signal_number, signal.SIG_DFL)
     except (OSError, RuntimeError, ValueError):
+        # Signal reset may be unsupported in this context; the following exit path still
+        # terminates the launcher.
         pass
     pthread_sigmask = getattr(signal, "pthread_sigmask", None)
     if pthread_sigmask is not None:
@@ -3543,6 +3563,8 @@ def _stop_unready_public_api_launcher(
         try:
             launcher.terminate()
         except (ChildProcessError, OSError):
+            # The launcher may already have exited; bounded observation and reaping
+            # below remain responsible for it.
             pass
         except BaseException as error:
             diagnostics.append(
@@ -3687,6 +3709,8 @@ def launch_gui_for_api(
                     try:
                         listener.close()
                     except OSError:
+                        # Listener cleanup must not replace the already established
+                        # launch failure.
                         pass
                     listener = None
                 cleanup_diagnostics = _stop_unready_public_api_launcher(
@@ -3912,11 +3936,15 @@ def launch_gui_for_api(
             try:
                 listener.close()
             except OSError:
+                # Final listener cleanup must not replace the already established
+                # launcher outcome.
                 pass
         if channel is not None:
             try:
                 channel.close()
             except OSError:
+                # Final channel cleanup must not replace the already established
+                # launcher outcome.
                 pass
         if launcher is not None and not ready and not unready_stopped:
             _stop_unready_public_api_launcher(

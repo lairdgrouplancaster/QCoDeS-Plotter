@@ -372,6 +372,8 @@ def _close_connection(connection: Connection | None) -> None:
     try:
         connection.close()
     except OSError:
+        # A failed close leaves the endpoint open; helper liveness counts it and retains
+        # ownership for another reap.
         pass
 
 
@@ -693,6 +695,8 @@ class TrustedLiveReaderSupervisor:
                 try:
                     self._reap_quarantined_helper_locked()
                 except TrustedLiveHelperForcedTerminationError:
+                    # A pending reap is represented in the returned liveness snapshot
+                    # and remains eligible for a later retry.
                     pass
             snapshot = self._resource_liveness_locked()
             if snapshot.closed and not snapshot.resources_owned:
@@ -716,6 +720,8 @@ class TrustedLiveReaderSupervisor:
                 try:
                     helper_pid = helper.process.pid
                 except (AssertionError, OSError, ValueError):
+                    # An unavailable PID is only missing diagnostic metadata; the
+                    # separate process probe remains conservative.
                     pass
             try:
                 process_alive = process_alive or helper.process.is_alive()
@@ -1055,6 +1061,8 @@ class TrustedLiveReaderSupervisor:
             try:
                 helper.process.join(timeout=timeout)
             except (AssertionError, OSError, ValueError):
+                # An unstarted or unavailable process cannot be joined; the separate
+                # liveness probe decides whether ownership can end.
                 pass
 
         try:
@@ -1067,6 +1075,8 @@ class TrustedLiveReaderSupervisor:
                 try:
                     helper.process.terminate()
                 except (AttributeError, OSError, ValueError):
+                    # A failed terminate still proceeds to bounded join, kill, and
+                    # ownership checks.
                     pass
                 bounded_join(terminate_wait)
             if process_alive():
@@ -1078,6 +1088,8 @@ class TrustedLiveReaderSupervisor:
                     else:
                         helper.process.terminate()
                 except (AttributeError, OSError, ValueError):
+                    # A failed kill is not proof of exit; bounded joins and liveness
+                    # checks below retain the exact helper.
                     pass
                 bounded_join(kill_wait)
         finally:
@@ -1096,6 +1108,8 @@ class TrustedLiveReaderSupervisor:
                         timeout=_REPLY_RECEIVER_JOIN_TIMEOUT_SECONDS
                     )
                 except RuntimeError:
+                    # A receiver may not have started; its liveness remains part of the
+                    # retirement result.
                     pass
         receiver_alive = (
             helper.reply_receiver_started and helper.reply_receiver.is_alive()
@@ -1128,6 +1142,8 @@ class TrustedLiveReaderSupervisor:
             try:
                 helper.reply_receiver.join(timeout=0)
             except RuntimeError:
+                # A receiver may not have started; the subsequent liveness checks still
+                # retain any unreaped resources.
                 pass
         try:
             helper.process.join(timeout=0)
@@ -2098,6 +2114,8 @@ class TrustedLiveReaderSupervisor:
                 try:
                     lock.release()
                 except BaseException:
+                    # Exit cleanup must finish even if releasing its lock fails during
+                    # interpreter teardown.
                     pass
 
     def _wait_for_test_notification(self, expected: bytes, timeout: float) -> None:
@@ -2173,6 +2191,8 @@ class TrustedLiveReaderSupervisor:
             if callback is not None:
                 atexit.unregister(callback)
         except BaseException:
+            # Destructors cannot safely propagate errors during interpreter teardown;
+            # explicit close remains the reporting API.
             pass
 
 

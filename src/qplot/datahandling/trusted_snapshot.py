@@ -349,6 +349,8 @@ def _lazy_scalar(source: str, position: int) -> _LazyScalar:
             if not isinstance(parsed, float) or math.isfinite(parsed):
                 number_value = parsed
         except (OverflowError, ValueError):
+            # Unrepresentable numeric metadata keeps its original text instead of
+            # inventing an approximate numeric value.
             pass
     return _LazyScalar(position, match.end(), "number", number_value, number_text)
 

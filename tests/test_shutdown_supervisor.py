@@ -224,6 +224,7 @@ def _force_cleanup_pid(pid: int) -> None:
     try:
         os.kill(pid, signal.SIGKILL)
     except ProcessLookupError:
+        # The test process is already gone, which satisfies forced fixture cleanup.
         pass
 
 
@@ -2667,6 +2668,8 @@ def test_cancellation_sender_recovers_from_committed_owner_interruption(
             try:
                 original_shutdown(caller_channel)
             except OSError:
+                # The injected sender interruption may already have closed this channel;
+                # preserve the primary test outcome.
                 pass
             sender._finish()
         for thread in requesters:

@@ -1542,6 +1542,8 @@ class PreviewWorker(QtCore.QRunnable):
             try:
                 connection.interrupt()
             except Exception:
+                # A concurrent close can defeat interrupt; the worker cancellation flag
+                # still rejects further work.
                 pass
 
 

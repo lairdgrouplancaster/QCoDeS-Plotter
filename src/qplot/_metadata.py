@@ -72,6 +72,8 @@ def version_info() -> dict:
             info.update(build)
             return info
     except (OSError, ValueError):
+        # Missing or malformed build metadata leaves the installed version as the
+        # authoritative fallback.
         pass
     try:
         direct = json.loads(distribution("qplotter").read_text("direct_url.json") or "{}")
@@ -80,5 +82,7 @@ def version_info() -> dict:
         if vcs.get("vcs") == "git" and re.fullmatch(r"[0-9a-fA-F]{40,64}", commit):
             info["commit"] = commit
     except (PackageNotFoundError, ValueError, AttributeError, TypeError):
+        # Missing editable-install metadata leaves the installed version as the
+        # authoritative fallback.
         pass
     return info

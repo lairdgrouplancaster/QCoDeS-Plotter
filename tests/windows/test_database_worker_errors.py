@@ -205,7 +205,9 @@ def test_public_load_exclusive_lock_reports_error_and_allows_retry(
         assert not window._pending_trusted_read_services
         assert window.RunList.isEnabled()
         assert window.infoBox.isEnabled()
-        _process_until(lambda: service.closed)
+        # The closed flag can precede the control thread's final return.
+        # Use the zero-wait join/reap contract while keeping Qt events moving.
+        _process_until(lambda: service.wait_closed(0))
         liveness = service.liveness()
         assert not liveness.dispatcher_alive
         assert not liveness.control_alive

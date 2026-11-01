@@ -222,6 +222,7 @@ def _windows_associations(destination: Path, *, remove: bool = False) -> None:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, open_with, 0, winreg.KEY_SET_VALUE) as key:
                 winreg.DeleteValue(key, _PROGID)
         except FileNotFoundError:
+            # Removing an already absent per-user association is idempotent.
             pass
         for suffix in (r"\shell\open\command", r"\shell\open", r"\shell", r"\Application", ""):
             winreg.DeleteKey(winreg.HKEY_CURRENT_USER, application + suffix)
@@ -231,6 +232,8 @@ def _windows_associations(destination: Path, *, remove: bool = False) -> None:
                 if winreg.QueryValueEx(key, "")[0] != _windows_command(destination):
                     raise ValueError("Another qPlot launcher owns Open With. Remove it before registering this one.")
         except FileNotFoundError:
+            # No existing registry command means this launcher can create its own
+            # association.
             pass
         for path, name, value in (
             (application, "", "qPlot QCoDeS viewer"),

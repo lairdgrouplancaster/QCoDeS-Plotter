@@ -15,7 +15,6 @@ import numpy as np
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
-from qplot import config
 from qplot.windows import MainWindow, plot2d
 
 
@@ -91,7 +90,7 @@ def close_time_log(win):
 
 
 if __name__ == "__main__":
-    conf = config()
     app = qtw.QApplication(sys.argv)
+    # Retain the top-level widget for the entire Qt event loop.
     w = testMain()
     app.exec()

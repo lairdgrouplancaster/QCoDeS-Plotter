@@ -66,7 +66,7 @@ def _trusted_plot_action(method):
             target, lambda: invoke(self, *args, **kwargs),
             target_window=target_window,
         ):
-            return
+            return None
         return method(self, *args, **kwargs)
     return invoke
 

@@ -161,7 +161,8 @@ def ghz_plot(tmp_path, monkeypatch):
     measurement.register_parameter(frequency)
     measurement.register_parameter(signal, setpoints=(frequency,))
     with measurement.run(write_in_background=False) as datasaver:
-        for value in 5e9 + np.arange(64) * 100:
+        for offset in range(64):
+            value = 5e9 + offset * 100
             datasaver.add_result((frequency, float(value)), (signal, 10.0))
         dataset = datasaver.dataset
         guid = dataset.guid

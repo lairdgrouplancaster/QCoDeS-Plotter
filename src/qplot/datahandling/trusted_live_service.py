@@ -1567,6 +1567,8 @@ class TrustedLiveReadService:
                     try:
                         supervisor.cancel(job)
                     except TrustedLiveCancelledError:
+                        # Cancellation can race an already terminal job; the following
+                        # terminal-state checks resolve that race.
                         pass
                     except BaseException as error:
                         with self._condition:

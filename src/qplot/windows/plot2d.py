@@ -776,6 +776,8 @@ class plot2d(
                     source_cell_count
                     )
             except (TypeError, ValueError):
+                # Invalid point-count metadata cannot refine the existing conservative
+                # downsampling description.
                 pass
 
         return {

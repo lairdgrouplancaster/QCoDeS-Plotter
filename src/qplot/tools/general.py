@@ -145,3 +145,4 @@ def unpack_param(dataset : dataset.data_set.DataSet, paramName : str):
     for ParamSpec in dataset.get_parameters():
         if ParamSpec.name == paramName:
             return ParamSpec
+    return None
