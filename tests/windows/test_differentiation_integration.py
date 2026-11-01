@@ -89,7 +89,9 @@ def integer_array_plot(tmp_path, monkeypatch, request):
         wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
         plot = window.windows[-1]
         wait_for(lambda: hasattr(plot, "axis_data") and not plot.worker.running)
-        plot.monitor.stop()
+        # Each Apply is observed independently. Disable the accepted interval,
+        # since worker completion would otherwise rearm a merely stopped timer.
+        plot.spinBox.setValue(0)
         plot.line.setDynamicRangeLimit(None)
         monkeypatch.setattr(plot, "show_error", lambda *_args: None)
         for name, original in (("x", coordinates), ("y", values)):
@@ -141,7 +143,9 @@ def sweep_plot(tmp_path, monkeypatch, request):
         wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
         plot = window.windows[-1]
         wait_for(lambda: hasattr(plot, "axis_data") and not plot.worker.running)
-        plot.monitor.stop()
+        # Each Apply is observed independently. Disable the accepted interval,
+        # since worker completion would otherwise rearm a merely stopped timer.
+        plot.spinBox.setValue(0)
         monkeypatch.setattr(plot, "show_error", lambda *_args: None)
         valid = ~np.isnan(values)
         np.testing.assert_array_equal(plot.axis_data["x"], np.asarray(coordinates)[valid])
@@ -186,7 +190,7 @@ def apply_operations(plot):
         assert worker is not previous
         assert submitted == [worker]
         wait_for(lambda: bool(finished) and not worker.running)
-    plot.monitor.stop()
+    assert not plot.monitor.isActive()
     assert not [warning for warning in emitted if issubclass(warning.category, RuntimeWarning)]
     return worker, finished, errors
 
