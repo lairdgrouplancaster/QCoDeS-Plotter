@@ -1,7 +1,7 @@
 from math import ceil, floor, isclose, isfinite, isnan, log10, ulp
 from os import path
 from types import MethodType
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, final
 
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
@@ -447,6 +447,7 @@ class plotWidget(
         """Allow plot types to react to qPlot-driven range changes."""
 
     
+    _initial_load_message = "Plot ready; loading data..."
     _label_width = 95 #About the size of 3 s.f. scientific
     def __init__(self, 
                  dataset_key: DatasetKey,
@@ -458,8 +459,8 @@ class plotWidget(
                  show : bool=True
                  ):
         """
-        Initialises window and sets up all required widgets. Also calls functions
-        for static plotting and checks for live plotting.
+        Initialize shared window state without constructing controls or reading.
+        The owner calls initialize_plot_window after concrete construction.
 
         Parameters
         ----------
@@ -506,6 +507,23 @@ class plotWidget(
         self.operations = {}
         self._last_error_text = None
         
+        self._initial_refresh_rate = refrate
+        self._plot_setup_started = False
+        self._plot_setup_complete = False
+
+    @final
+    def initialize_plot_window(self) -> None:
+        """Build controls and start reading after every constructor has returned.
+
+        The window owner calls this once before registering or showing the plot.
+        In particular, heatmap sweep state and cut identity already exist when
+        feature hooks run. A failed setup must be closed, never retried in place.
+        """
+        if self._plot_setup_started:
+            raise RuntimeError("Plot window setup has already started.")
+        self._plot_setup_started = True
+        refrate = self._initial_refresh_rate
+
         ### WIDGETS
         self._window_layout = qtw.QVBoxLayout()
         # The graphics widget supplies its own canvas background.  Avoid
@@ -568,6 +586,11 @@ class plotWidget(
         w.setLayout(self._window_layout)
         self.setCentralWidget(w)
         
+        # Read only after the full control tree and its callbacks are ready.
+        self._plot_setup_complete = True
+        self.load_data()
+        self.show_status(self._initial_load_message, 5000)
+
         # Keep the timer alive through this plot's own terminal display commit,
         # even if another parameter publishes shared dataset completion first.
         if self._refresh_monitor_required(self.ds):
@@ -873,6 +896,10 @@ class plotWidget(
 ###############################################################################
 # Init functions   
     
+    def initFrame(self) -> None:
+        """Create concrete renderers; setup submits their initial read afterward."""
+        raise NotImplementedError("A concrete plot must implement initFrame().")
+
     def initRefresh(self, refrate : float):
         """
         Sets up refresh logic and widgets. Along with top toolbar
@@ -1903,7 +1930,9 @@ class plotWidget(
                 cancel()
         self.visible = False
         self._closed = True
-        self.plot_state_overlay.hide()
+        overlay = self.__dict__.get("plot_state_overlay")
+        if overlay is not None:
+            overlay.hide()
         self.closed.emit(self)
 
         if (

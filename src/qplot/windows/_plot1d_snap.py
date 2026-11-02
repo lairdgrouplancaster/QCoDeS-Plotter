@@ -9,9 +9,10 @@ from PyQt6 import QtWidgets as qtw
 
 from ._commands import command_spec, command_with_status, create_action
 from ._native_transforms import NativePlotDataItem
+from ._plot_host import PlotHost
 
 if TYPE_CHECKING:
-    class _Plot1DSnapBase(qtw.QMainWindow):
+    class _Plot1DSnapBase(PlotHost, qtw.QMainWindow):
         toolbarCo_ord: qtw.QToolBar
         snap_to_trace_action: QtGui.QAction | None
         trace_label: qtw.QLabel | None
@@ -30,22 +31,9 @@ if TYPE_CHECKING:
 
         def mouseMoved(self, pos: object) -> None: ...
 
-        def register_shortcut(
-                self,
-                action: QtGui.QAction,
-                shortcut: object,
-                status_tip: str | None = None,
-                ) -> None: ...
 
-        @staticmethod
-        def formatNum(num: float, sf: int = 3) -> str: ...
-
-        def format_cursor_number(self, value: float) -> str: ...
-
-        def _set_cursor_index_label(self, text: str) -> None: ...
-        def _cursor_1d_x_data(self) -> Any: ...
 else:
-    class _Plot1DSnapBase:
+    class _Plot1DSnapBase(PlotHost):
         pass
 
 

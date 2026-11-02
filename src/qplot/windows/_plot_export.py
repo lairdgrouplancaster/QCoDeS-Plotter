@@ -12,6 +12,8 @@ from PyQt6 import QtWidgets as qtw
 from pyqtgraph import ErrorBarItem, PlotItem
 from pyqtgraph.exporters import CSVExporter, ImageExporter, SVGExporter
 
+from ._plot_host import PlotHost
+
 try:
     from pyqtgraph.GraphicsScene.exportDialog import (
         ExportDialog as _PyqtgraphExportDialog,
@@ -201,22 +203,15 @@ else:
 
 
 if TYPE_CHECKING:
-    class _PlotExportBase(qtw.QMainWindow):
+    class _PlotExportBase(PlotHost, qtw.QMainWindow):
         _dataset_key: DatasetKey
         ds: Any
         param: Any
         plot: Any
         widget: Any
 
-        def show_error(
-                self,
-                title: str,
-                message: str,
-                details: str | None = None,
-                ) -> None: ...
-        def show_status(self, message: str, timeout: int = 5000) -> None: ...
 else:
-    class _PlotExportBase:
+    class _PlotExportBase(PlotHost):
         pass
 
 

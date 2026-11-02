@@ -17,9 +17,10 @@ from ._colorbar import (
     _config_value,
 )
 from ._config_persistence import persist_config_value
+from ._plot_host import PlotHost
 
 if TYPE_CHECKING:
-    class _ColorbarScaleDialogBase:
+    class _ColorbarScaleDialogBase(PlotHost):
         _colorbar_colormap_name: str
         _colorbar_manual_levels: tuple[float, float] | None
         bar: Any
@@ -50,10 +51,8 @@ if TYPE_CHECKING:
         def _data_colorbar_levels(self) -> tuple[float, float] | None: ...
         def _set_colorbar_levels(self, vmin: float, vmax: float) -> None: ...
         def scaleColorbar(self, event: Any = None) -> None: ...
-        def show_status(self, message: str, timeout: int = 5000) -> None: ...
-        def refreshWindow(self, force: bool = False) -> None: ...
 else:
-    class _ColorbarScaleDialogBase:
+    class _ColorbarScaleDialogBase(PlotHost):
         pass
 
 

@@ -47,6 +47,7 @@ class plot2d(
         
     """
     operation_kind = "plot2d"
+    _initial_load_message = "Heatmap ready; loading data..."
     get_mergables = QtCore.pyqtSignal()
     open_subplot = QtCore.pyqtSignal([object, object, tuple])
     sweep_moved = QtCore.pyqtSignal([int, float])
@@ -65,6 +66,18 @@ class plot2d(
         self.__dict__["_colorbar_manual_levels"] = None
 
         
+    @QtCore.pyqtSlot(object)
+    def mouseMoved(self, pos):
+        """Use snap-to-trace readout before the base plot's free cursor."""
+        Plot1DSnapMixin.mouseMoved(self, pos)
+
+
+    @QtCore.pyqtSlot()
+    def change_axis(self, key: str) -> None:
+        """Keep heatmap cut rotation coupled to the axis change."""
+        Plot2DSweepMixin.change_axis(self, key)
+
+
     def initAxes(self) -> None:
         """Keep axis-selection state; expose swaps through Appearance."""
         super().initAxes()
@@ -73,7 +86,7 @@ class plot2d(
 
     def initFrame(self) -> None:
         """
-        Sets up the initial plot and starting data.
+        Create heatmap renderers and controls before the initial data read.
 
         """
         self.vb.set_shift_pan_axis_constraint(True)
@@ -111,11 +124,6 @@ class plot2d(
         self.hover_pixel_outline.hide()
         self._add_plot_overlay(self.hover_pixel_outline)
         self._init_heatmap_layers()
-        
-        # Wait for loader to finish to enure needed data is collected.
-        self.load_data()
-        self.show_status("Heatmap ready; loading data...", 5000)
-
 
     def _connect_heatmap_range_controls(self) -> None:
         self.plot.sigRangeChangedManually.connect(

@@ -31,6 +31,7 @@ class plot1d(Plot1DSnapMixin, MixedPlotMixin, plotWidget):
     
     """
     operation_kind = "plot1d"
+    _initial_load_message = "Line plot ready; loading data..."
     get_mergables = QtCore.pyqtSignal()
     remove_dataset = QtCore.pyqtSignal([object])
     
@@ -47,20 +48,21 @@ class plot1d(Plot1DSnapMixin, MixedPlotMixin, plotWidget):
         super().__init__(*args, **kargs)
         
         
+    @QtCore.pyqtSlot(object)
+    def mouseMoved(self, pos):
+        """Use snap-to-trace readout before the base plot's free cursor."""
+        Plot1DSnapMixin.mouseMoved(self, pos)
+
+
     def initFrame(self) -> None:
         """
-        Sets up the initial plot and starting data.
+        Create the initial line renderer without submitting a data read.
 
         """
         
         self.line = NativePlotDataItem(connect="all")
         self.plot.addItem(self.line)
         self._register_main_line()
-        
-        # Wait for loader to finish to enure needed data is collected.
-        self.load_data()
-        self.show_status("Line plot ready; loading data...", 5000)
-
 
     def _marquee_viewbox(self) -> Any:
         """Use the main trace's coordinate system for selection and hit tests."""

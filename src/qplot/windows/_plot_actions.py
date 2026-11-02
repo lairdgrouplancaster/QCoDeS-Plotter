@@ -41,6 +41,7 @@ from ._plot2d_layers import _heatmap_layer_compatibility, _window_display_unit
 from ._plot_drop_axes import plan_drop_axes
 from ._plot_source_promotion import promote_plot_source
 from ._plot_tiling import place_plot_window
+from ._plotWin import plotWidget
 from ._refresh_interval import refresh_interval_value
 from ._subplots.subplot1d import (
     _subplot_axis_order,
@@ -922,6 +923,8 @@ class PlotActionsMixin:
                 show=show,
                 **kargs,
             )
+            if isinstance(win, plotWidget):
+                win.initialize_plot_window()
             window_type = getattr(win, "operation_kind", None)
             if window_type is None:
                 legacy_window_type = win.__class__.__name__

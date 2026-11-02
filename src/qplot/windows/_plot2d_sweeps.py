@@ -6,14 +6,16 @@ import numpy.typing as npt
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from ._plot_host import PlotHost
 from ._subplots.subplot2d import sweeper
 
 _SweepAxis = Literal["x", "y"]
 
+
 if TYPE_CHECKING:
     from qplot.tools.heatmap_geometry import HeatmapGeometry
 
-    class _Plot2DSweepBase(qtw.QMainWindow):
+    class _Plot2DSweepBase(PlotHost, qtw.QMainWindow):
         _dataset_key: Any
         active_sweep_line_id: int | None
         axis_options: dict[str, str]
@@ -28,7 +30,6 @@ if TYPE_CHECKING:
 
         def change_axis(self, key: str) -> None: ...
 
-        def clear_marquee(self) -> None: ...
 
         def hide_hover_pixel_outline(self) -> None: ...
 
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 
         def _reset_heatmap_hover(self) -> None: ...
 else:
-    class _Plot2DSweepBase:
+    class _Plot2DSweepBase(PlotHost):
         pass
 
 

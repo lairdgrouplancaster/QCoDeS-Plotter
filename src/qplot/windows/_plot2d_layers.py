@@ -33,6 +33,7 @@ from ._display_precision import (
 )
 from ._plot_appearance import ReorderAppearanceTable, configure_appearance_table
 from ._plot_drop_axes import DroppedAxisMapping, displayed_axis_parameter
+from ._plot_host import PlotHost
 from ._plot_refresh import plot_refresh_required
 from ._refresh_interval import refresh_interval_value, set_refresh_interval
 
@@ -593,7 +594,7 @@ class HeatmapLayer:
             show_status(f"{self.label} hidden because {error}.", 5000)
 
 
-class Plot2DLayerMixin:
+class Plot2DLayerMixin(PlotHost):
     """Registry, controls, colour-bar sync, and cleanup for heatmap layers."""
 
     heatmaps: dict[Any, Any]
