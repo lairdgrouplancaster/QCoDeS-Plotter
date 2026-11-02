@@ -398,7 +398,6 @@ def test_real_wal_progressive_ui_refresh_switch_and_close(
             assert refreshed_publication is not selected_publication
             assert refreshed_dialog is not selected_dialog
             selected_publication = refreshed_publication
-            selected_dialog = refreshed_dialog
             assert (errors, logged_errors) == ([], [])
 
             first_context.__exit__(None, None, None)

@@ -152,7 +152,7 @@ def test_average_rebuilds_for_merge_refresh_and_removal(fft_plots, no_callback_e
 
 @pytest.mark.parametrize("fft_plots", [RUNS], indirect=True)
 def test_average_log_and_downsampling_process_display_once(fft_plots, no_callback_errors):
-    _window, (host, _source), _x, _y = fft_plots
+    (host, _) = fft_plots[1]
     click_average(host)
     click_control(host, "fftCheck")
     click_control(host, "logXCheck")
@@ -216,7 +216,7 @@ def test_average_metadata_grouping_and_skip_average(qapplication):
 
 @pytest.mark.parametrize("fft_plots", [{**RUNS, "y": np.tile([1., 5., 2., 4.], 4)}], indirect=True)
 def test_phase_average_is_excluded_from_fft_coordinate_validation(fft_plots, no_callback_errors):
-    _window, (host, _source), _x, _y = fft_plots
+    (host, _) = fft_plots[1]
     click_average(host)
     click_control(host, "phasemapCheck")
     click_control(host, "fftCheck")

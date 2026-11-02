@@ -60,8 +60,10 @@ def test_checkout_reports_provenance_when_git_startup_takes_over_one_second(chec
             delayed = True
             command = [
                 sys.executable, "-c",
-                "import subprocess, sys, time; time.sleep(1.2); "
-                "raise SystemExit(subprocess.call(sys.argv[1:]))",
+                (
+                    "import subprocess, sys, time; time.sleep(1.2); "
+                    + "raise SystemExit(subprocess.call(sys.argv[1:]))"
+                ),
                 *command,
             ]
         return run(command, **kwargs)

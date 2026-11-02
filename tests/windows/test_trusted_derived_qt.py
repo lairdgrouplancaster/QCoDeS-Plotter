@@ -1354,7 +1354,7 @@ def test_late_snapshot_result_is_rejected_by_every_fence_component(
 ) -> None:
     window, bridge, coordinator, _runs = bound_bridge
     source = _BlockingSnapshotSource("snapshot-stale-session")
-    _detail, _publication = _install_snapshot_session(
+    _install_snapshot_session(
         window,
         bridge,
         coordinator,

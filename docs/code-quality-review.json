@@ -7264,5 +7264,97 @@
       "message": "Variable _guid is not used.",
       "source_excerpt": "            (\n                _guid,\n                (\n                    _discarded,\n                    _discarded_revision,"
     }
+  ],
+  "follow_up_reviews": [
+    {
+      "date": "2026-11-02",
+      "source_report": "qplot-code-quality-9lqtf8bk.json",
+      "exported_at_utc": "2026-11-02T08:19:24.792199+00:00",
+      "report_sha256": "603ed312ff50beccd5cd713363974631cf29368d53cdce4054c0a963d87bdc28",
+      "base_commit": "0b69f50c7b4001a302d771cd344b423b7442c1d9",
+      "findings_in_report": 447,
+      "targeted_findings": 43,
+      "status": "implemented; await merged-main scan to confirm GitHub clearance",
+      "groups": [
+        {
+          "rule": "py/unused-local-variable",
+          "finding_numbers": [
+            457,
+            458,
+            459,
+            460,
+            461,
+            462,
+            463,
+            464,
+            465,
+            466,
+            467,
+            468,
+            469,
+            470,
+            471,
+            472,
+            473,
+            474,
+            475,
+            476,
+            477,
+            478,
+            479,
+            480,
+            481,
+            482,
+            483,
+            484,
+            487,
+            488,
+            489,
+            490,
+            1345,
+            1346,
+            1348
+          ],
+          "resolution": "Select the needed fixture fields, use the conventional ignored eviction key, and remove assignments whose values are never observed. Fixture objects and existing cleanup paths continue to own resources."
+        },
+        {
+          "rule": "py/unused-global-variable",
+          "finding_numbers": [
+            512
+          ],
+          "resolution": "Remove the obsolete testdata provenance-prefix alias; its sole test consumer imports the defining file_identity constant directly."
+        },
+        {
+          "rule": "py/implicit-string-concatenation-in-list",
+          "finding_numbers": [
+            551,
+            552,
+            555,
+            556,
+            1356,
+            1357
+          ],
+          "resolution": "Use explicit constant-string addition so single list entries and subprocess programs are unambiguous. Compiled bytecode and constants were verified identical."
+        },
+        {
+          "rule": "py/mixed-returns",
+          "finding_numbers": [
+            532
+          ],
+          "resolution": "Raise the unittest failureException explicitly when no operation matches, making the lookup failure path visible to control-flow analysis."
+        }
+      ],
+      "validation": {
+        "tests_passed": 685,
+        "subtests_passed": 10,
+        "platform_skips": 33,
+        "string_only_files_bytecode_identical": 4,
+        "startup": "offscreen qPlot remained running for eight seconds",
+        "ruff": "passed",
+        "targeted_mypy": "three changed source modules passed",
+        "project_mypy": "91 source files passed"
+      },
+      "github_findings_modified": false
+    }
   ]
 }

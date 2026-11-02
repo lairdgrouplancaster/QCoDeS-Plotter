@@ -522,13 +522,17 @@ def shortcut_help_html() -> str:
     """
     parts = [
         "<h2>Keyboard Shortcuts</h2>",
-        "<p>Use these shortcuts in the active window shown by each heading. "
-        "Cut windows are the 1D plots opened from a 2D heatmap. "
-        "Shortcuts for focused widgets require keyboard focus in that widget.</p>",
-        "<p>Keys use the current platform's notation. On macOS, Qt displays "
-        "the Command key as ⌘ and the Control key as ⌃. "
-        "Text fields and other controls may handle typing, copying, or arrow "
-        "keys themselves. Quit also works while a dialog is open.</p>",
+        (
+            "<p>Use these shortcuts in the active window shown by each heading. "
+            + "Cut windows are the 1D plots opened from a 2D heatmap. "
+            + "Shortcuts for focused widgets require keyboard focus in that widget.</p>"
+        ),
+        (
+            "<p>Keys use the current platform's notation. On macOS, Qt displays "
+            + "the Command key as ⌘ and the Control key as ⌃. "
+            + "Text fields and other controls may handle typing, copying, or arrow "
+            + "keys themselves. Quit also works while a dialog is open.</p>"
+        ),
     ]
     for section in SHORTCUT_HELP_SECTIONS:
         rows: list[tuple[str, str]] = []

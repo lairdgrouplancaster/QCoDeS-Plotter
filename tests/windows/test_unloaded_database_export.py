@@ -200,11 +200,13 @@ def test_plot_export_does_not_recover_unloaded_hot_journal(
     # inspection is allowed to recover it, even though this database is ours.
     subprocess.run([
         sys.executable, "-c",
-        "import os, sqlite3, sys; "
-        "c = sqlite3.connect(sys.argv[1]); "
-        "c.execute('PRAGMA cache_size=1'); "
-        "c.execute(\"UPDATE runs SET name = ?\", ('x' * 100000,)); "
-        "os._exit(0)",
+        (
+            "import os, sqlite3, sys; "
+            + "c = sqlite3.connect(sys.argv[1]); "
+            + "c.execute('PRAGMA cache_size=1'); "
+            + "c.execute(\"UPDATE runs SET name = ?\", ('x' * 100000,)); "
+            + "os._exit(0)"
+        ),
         str(target),
     ], check=True, timeout=15)
     before = _database_artifact_state(target)

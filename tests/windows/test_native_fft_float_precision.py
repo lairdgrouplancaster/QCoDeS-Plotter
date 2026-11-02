@@ -112,7 +112,7 @@ def test_floating_fft_mean_and_log_interactions(fft_plots, no_callback_errors):
 
 @pytest.mark.parametrize("fft_plots", [dict(_CASES[1], heatmap=True), dict(_CASES[3], heatmap=True)], indirect=True)
 def test_floating_heatmap_cut_fft_preserves_finite_dc(fft_plots, no_callback_errors):
-    _window, (plot, _other), _x, _y = fft_plots
+    (plot, _) = fft_plots[1]
     raw_x, raw_y = (v.copy() for v in plot.line.getOriginalDataset())
     expected_x, expected_y = _spectrum(raw_x, raw_y)
     plot.line.setDynamicRangeLimit(None)
