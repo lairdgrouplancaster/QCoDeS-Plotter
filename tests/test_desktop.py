@@ -227,27 +227,33 @@ def test_native_windows_shortcut_and_arguments(tmp_path):
     destination = tmp_path / "qPlot Ω space"
     desktop.setup(destination)
     output = tmp_path / "result.json"
-    # Exercise WScript's real parsing without starting an interactive GUI in CI.
+    # Batch mode prevents script errors from opening an invisible modal dialog
+    # in the noninteractive Windows runner. Keep the real WScript parser.
     (destination / "bootstrap.py").write_text(
         "import json, sys\nfrom pathlib import Path\n"
-        f"Path({str(output)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        f"Path({str(output)!r}).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n",
+        encoding="utf-8",
     )
     for args in ([], [str(tmp_path / "測定 O'Brien %data & x.db")]):
-        subprocess.run(["wscript.exe", "//nologo", str(destination / "launch.vbs"), *args],
-                       cwd=tmp_path, check=True, timeout=20)
-        assert json.loads(output.read_text()) == args
+        result = subprocess.run(
+            ["wscript.exe", "//B", "//nologo", str(destination / "launch.vbs"), *args],
+            cwd=tmp_path, capture_output=True, timeout=20,
+        )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert output.is_file(), (result.stdout, result.stderr)
+        assert json.loads(output.read_text(encoding="utf-8")) == args
+        output.unlink()
     shortcut = destination / "qPlot.lnk"
     assert shortcut.is_file()
     # Also execute the shortcut itself: its saved arguments must preserve the
     # Unicode launcher path, not just the directly invoked VBS script above.
     import time
 
-    output.unlink()
     os.startfile(shortcut)
     deadline = time.monotonic() + 10
     while not output.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
-    assert json.loads(output.read_text()) == []
+    assert json.loads(output.read_text(encoding="utf-8")) == []
     desktop.remove(destination)
 
 
