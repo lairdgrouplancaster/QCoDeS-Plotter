@@ -74,6 +74,12 @@ def _process_until(predicate, timeout: float = 2.0) -> None:
 
 
 class _Service(TrustedLiveReadService):
+    """Identity-only double for bridge binding, without real reader workers.
+
+    Inheritance satisfies the bridge's concrete service-type check; these tests
+    supply work through the fake coordinator rather than this service.
+    """
+
     def __init__(self, instance: DatabaseInstance, nonce: bytes = b"stage5c") -> None:
         self._instance = instance
         self._namespace = TrustedSourceRevisionNamespace(nonce)
@@ -1059,6 +1065,28 @@ def _install_snapshot_session(
     publication = _selected_detail_publication(bridge, coordinator, detail)
     bridge._publish_selected_detail(publication)
     return detail, publication
+
+
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt, SystemExit])
+def test_snapshot_identity_comparison_errors_are_rejected(error_type) -> None:
+    class RaisingIdentity:
+        def __eq__(self, other):
+            raise error_type("malformed snapshot identity")
+
+    assert not TrustedDerivedQtBridge._safe_equal(RaisingIdentity(), object())
+
+
+def test_snapshot_identity_non_boolean_comparison_is_rejected() -> None:
+    class NonBooleanIdentity:
+        def __eq__(self, other):
+            return object()
+
+    assert not TrustedDerivedQtBridge._safe_equal(NonBooleanIdentity(), object())
+
+
+@pytest.mark.parametrize("left,right,expected", [(1, 1, True), (1, 2, False), (None, None, True)])
+def test_snapshot_identity_boolean_comparison(left, right, expected) -> None:
+    assert TrustedDerivedQtBridge._safe_equal(left, right) is expected
 
 
 def _wait_snapshot_worker_without_qt(

@@ -7273,7 +7273,7 @@
       "report_sha256": "603ed312ff50beccd5cd713363974631cf29368d53cdce4054c0a963d87bdc28",
       "base_commit": "0b69f50c7b4001a302d771cd344b423b7442c1d9",
       "findings_in_report": 447,
-      "targeted_findings": 43,
+      "targeted_findings": 48,
       "status": "implemented; await merged-main scan to confirm GitHub clearance",
       "groups": [
         {
@@ -7342,6 +7342,29 @@
             532
           ],
           "resolution": "Raise the unittest failureException explicitly when no operation matches, making the lookup failure path visible to control-flow analysis."
+        },
+        {
+          "rule": "py/multiple-definition",
+          "finding_numbers": [
+            1350
+          ],
+          "resolution": "Remove a redundant result sentinel; pytest.raises already rejects every normal return and all kill/reap/timing/database assertions remain."
+        },
+        {
+          "rule": "py/unreachable-statement",
+          "finding_numbers": [
+            79,
+            80
+          ],
+          "resolution": "Collect stepped-generator results through finish_steps instead of using an exception-testing context for normal result extraction."
+        },
+        {
+          "rule": "py/conflicting-attributes",
+          "finding_numbers": [
+            1363,
+            1364
+          ],
+          "resolution": "Declare explicit test-harness overrides selecting the intended concrete base implementation."
         }
       ],
       "validation": {
@@ -7352,9 +7375,416 @@
         "startup": "offscreen qPlot remained running for eight seconds",
         "ruff": "passed",
         "targeted_mypy": "three changed source modules passed",
-        "project_mypy": "91 source files passed"
+        "project_mypy": "91 source files passed",
+        "additional_warning_review_tests_passed": 438,
+        "additional_warning_review_skips": 1,
+        "final_generator_tests_passed": 63,
+        "constructor_and_appearance_tests_passed": 320,
+        "constructor_and_appearance_subtests_passed": 58
       },
-      "github_findings_modified": false
+      "github_findings_modified": false,
+      "severity_review": {
+        "scope": "Every error and warning in the 447-finding export",
+        "summary": {
+          "total": 28,
+          "code_fixes": 11,
+          "reviewed_exceptions": 17,
+          "retained_errors": 2,
+          "retained_warnings": 15
+        },
+        "findings": [
+          {
+            "number": 1368,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 549,
+            "disposition": "reviewed_exception",
+            "reason": "Context-menu hook creates base controls then connects deferred actions; image-dependent handlers execute only after construction."
+          },
+          {
+            "number": 1367,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 548,
+            "disposition": "reviewed_exception",
+            "reason": "Label hook follows axes/frame setup and uses existing shared controls; exercised through real plot/appearance tests."
+          },
+          {
+            "number": 1366,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 540,
+            "disposition": "reviewed_exception",
+            "reason": "Heatmap refresh hook first creates base toolbar state before inserting its autoscale checkbox; later image state is not accessed."
+          },
+          {
+            "number": 1365,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 538,
+            "disposition": "reviewed_exception",
+            "reason": "Axes construction hook follows shared-state setup; sweeper sets cut identity before super, and the heatmap override first builds base axes."
+          },
+          {
+            "number": 1364,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "tests/windows/test_trusted_live_ui.py",
+            "reported_line": 930,
+            "disposition": "code_fix",
+            "reason": "See the code-change resolution and docs/code-quality-errors-warnings.md."
+          },
+          {
+            "number": 1363,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "tests/windows/test_trusted_live_ui.py",
+            "reported_line": 4087,
+            "disposition": "code_fix",
+            "reason": "See the code-change resolution and docs/code-quality-errors-warnings.md."
+          },
+          {
+            "number": 1362,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 412,
+            "disposition": "reviewed_exception",
+            "reason": "All four flagged runtime methods resolve solely to PlotWindowFeedbackMixin; duplicate type declarations do not exist at runtime."
+          },
+          {
+            "number": 1357,
+            "severity": "warning",
+            "rule": "py/implicit-string-concatenation-in-list",
+            "path": "src/qplot/windows/plot2d.py",
+            "reported_line": 1138,
+            "disposition": "code_fix",
+            "reason": "See the code-change resolution and docs/code-quality-errors-warnings.md."
+          },
+          {
+            "number": 1356,
+            "severity": "warning",
+            "rule": "py/implicit-string-concatenation-in-list",
+            "path": "src/qplot/windows/plot2d.py",
+            "reported_line": 1135,
+            "disposition": "code_fix",
+            "reason": "See the code-change resolution and docs/code-quality-errors-warnings.md."
+          },
+          {
+            "number": 1350,
+            "severity": "warning",
+            "rule": "py/multiple-definition",
+            "path": "tests/datahandling/test_readonly.py",
+            "reported_line": 2411,
+            "disposition": "code_fix",
+            "reason": "See the code-change resolution and docs/code-quality-errors-warnings.md."
+          },
+          {
+            "number": 1198,
+            "severity": "warning",
+            "rule": "py/unreachable-statement",
+            "path": "tests/datahandling/test_trusted_live_supervisor.py",
+            "reported_line": 2190,
+            "disposition": "reviewed_exception",
+            "reason": "pytest.raises suppresses the expected context-body exception after supervisor __exit__; subsequent cleanup assertions are reachable and execute in the passing test."
+          },
+          {
+            "number": 613,
+            "severity": "error",
+            "rule": "py/missing-call-to-init",
+            "path": "tests/datahandling/test_trusted_work_coordinator.py",
+            "reported_line": 127,
+            "disposition": "reviewed_exception",
+            "reason": "Deterministic test service supplies observations, requests, close and wait operations. Parent initialization would defeat the fake worker/resource lifecycle; concrete coordinator type checking requires inheritance."
+          },
+          {
+            "number": 612,
+            "severity": "error",
+            "rule": "py/missing-call-to-init",
+            "path": "tests/windows/test_trusted_derived_qt.py",
+            "reported_line": 76,
+            "disposition": "reviewed_exception",
+            "reason": "Identity-only test double; concrete bridge type check requires inheritance, while parent initialization would start real reader workers. Work is supplied by the fake coordinator."
+          },
+          {
+            "number": 607,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plot1d_traces.py",
+            "reported_line": 1635,
+            "disposition": "reviewed_exception",
+            "reason": "The override synchronizes base controls and guards access to not-yet-created heatmap_controls through __dict__.get."
+          },
+          {
+            "number": 606,
+            "severity": "warning",
+            "rule": "py/incomplete-ordering",
+            "path": "src/qplot/windows/_widgets/run_list_items.py",
+            "reported_line": 468,
+            "disposition": "reviewed_exception",
+            "reason": "Qt tree sorting uses the less-than override; adding unrelated rich comparisons is outside the widget contract."
+          },
+          {
+            "number": 605,
+            "severity": "warning",
+            "rule": "py/incomplete-ordering",
+            "path": "src/qplot/windows/_colorbar.py",
+            "reported_line": 148,
+            "disposition": "reviewed_exception",
+            "reason": "Qt widget item exposes the required less-than sorting hook; it does not claim general rich-value ordering."
+          },
+          {
+            "number": 602,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/_subplots/subplot2d.py",
+            "reported_line": 77,
+            "disposition": "reviewed_exception",
+            "reason": "The cut uses the snap mouseMoved override intentionally; other duplicate declarations are typing-only."
+          },
+          {
+            "number": 601,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/plot2d.py",
+            "reported_line": 33,
+            "disposition": "reviewed_exception",
+            "reason": "Snap mouseMoved and sweep change_axis deliberately override base handlers. Other flagged duplicates are typing declarations; actual runtime owners are recorded."
+          },
+          {
+            "number": 600,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/plot1d.py",
+            "reported_line": 18,
+            "disposition": "reviewed_exception",
+            "reason": "Snap mouseMoved is a deliberate runtime override. Other flagged duplicates are typing declarations; actual runtime owners are recorded."
+          },
+          {
+            "number": 598,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/_mixed_plots.py",
+            "reported_line": 30,
+            "disposition": "reviewed_exception",
+            "reason": "Runtime _heatmap_colorbar_items comes from Plot2DLayerMixin; the colorbar declaration exists only under TYPE_CHECKING."
+          },
+          {
+            "number": 555,
+            "severity": "warning",
+            "rule": "py/implicit-string-concatenation-in-list",
+            "path": "tests/windows/test_unloaded_database_export.py",
+            "reported_line": 203,
+            "disposition": "code_fix",
+            "reason": "See the code-change resolution and docs/code-quality-errors-warnings.md."
+          },
+          {
+            "number": 556,
+            "severity": "warning",
+            "rule": "py/implicit-string-concatenation-in-list",
+            "path": "tests/test_version_info.py",
+            "reported_line": 63,
+            "disposition": "code_fix",
+            "reason": "See the code-change resolution and docs/code-quality-errors-warnings.md."
+          },
+          {
+            "number": 552,
+            "severity": "warning",
+            "rule": "py/implicit-string-concatenation-in-list",
+            "path": "src/qplot/windows/_commands.py",
+            "reported_line": 528,
+            "disposition": "code_fix",
+            "reason": "See the code-change resolution and docs/code-quality-errors-warnings.md."
+          },
+          {
+            "number": 551,
+            "severity": "warning",
+            "rule": "py/implicit-string-concatenation-in-list",
+            "path": "src/qplot/windows/_commands.py",
+            "reported_line": 525,
+            "disposition": "code_fix",
+            "reason": "See the code-change resolution and docs/code-quality-errors-warnings.md."
+          },
+          {
+            "number": 456,
+            "severity": "warning",
+            "rule": "py/file-not-closed",
+            "path": "src/qplot/datahandling/trusted_live.py",
+            "reported_line": 779,
+            "disposition": "reviewed_exception",
+            "reason": "The physically read-only header descriptor is closed exactly once through _close_preflight_file_descriptor in finally. Cleanup uncertainty is surfaced and quarantined by tested preflight-failure handling."
+          },
+          {
+            "number": 80,
+            "severity": "warning",
+            "rule": "py/unreachable-statement",
+            "path": "tests/test_bug_hunt_tiny_heatmap_bins.py",
+            "reported_line": 50,
+            "disposition": "code_fix",
+            "reason": "See the code-change resolution and docs/code-quality-errors-warnings.md."
+          },
+          {
+            "number": 79,
+            "severity": "warning",
+            "rule": "py/unreachable-statement",
+            "path": "tests/test_bug_hunt_bounded_mixed_means.py",
+            "reported_line": 97,
+            "disposition": "code_fix",
+            "reason": "See the code-change resolution and docs/code-quality-errors-warnings.md."
+          },
+          {
+            "number": 78,
+            "severity": "warning",
+            "rule": "py/unreachable-statement",
+            "path": "src/qplot/windows/_trusted_derived_qt.py",
+            "reported_line": 1449,
+            "disposition": "reviewed_exception",
+            "reason": "Custom __eq__ can raise arbitrary exceptions or return non-booleans. New tests prove the rejection path is reachable for RuntimeError, KeyboardInterrupt, SystemExit and non-boolean results."
+          }
+        ],
+        "runtime_mro_evidence": {
+          "1362": {
+            "hide_plot_state": [
+              "qplot.windows._plot_feedback.PlotWindowFeedbackMixin"
+            ],
+            "show_error": [
+              "qplot.windows._plot_feedback.PlotWindowFeedbackMixin"
+            ],
+            "show_plot_state": [
+              "qplot.windows._plot_feedback.PlotWindowFeedbackMixin"
+            ],
+            "show_status": [
+              "qplot.windows._plot_feedback.PlotWindowFeedbackMixin"
+            ]
+          },
+          "602": {
+            "_cursor_1d_x_data": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "_set_cursor_index_label": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "formatNum": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "format_cursor_number": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "mouseMoved": [
+              "qplot.windows._plot1d_snap.Plot1DSnapMixin",
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "register_shortcut": [
+              "qplot.windows._plot_feedback.PlotWindowFeedbackMixin"
+            ]
+          },
+          "601": {
+            "_cursor_1d_x_data": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "_marquee_axis_assignment_changed": [
+              "qplot.windows._plot_marquee.PlotMarqueeMixin"
+            ],
+            "_marquee_viewbox": [
+              "qplot.windows._plot_marquee.PlotMarqueeMixin"
+            ],
+            "_set_cursor_index_label": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "_update_native_precision_status": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "_update_plot_annotation": [
+              "qplot.windows._plot_annotation.PlotAnnotationMixin"
+            ],
+            "apply_axis_major_tick_count_preference": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "change_axis": [
+              "qplot.windows._plot2d_sweeps.Plot2DSweepMixin",
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "clear_marquee": [
+              "qplot.windows._plot_marquee.PlotMarqueeMixin"
+            ],
+            "formatNum": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "format_cursor_number": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "mouseMoved": [
+              "qplot.windows._plot1d_snap.Plot1DSnapMixin",
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "refreshWindow": [
+              "qplot.windows._plot_refresh.PlotRefreshMixin"
+            ],
+            "register_shortcut": [
+              "qplot.windows._plot_feedback.PlotWindowFeedbackMixin"
+            ],
+            "show_plot_state": [
+              "qplot.windows._plot_feedback.PlotWindowFeedbackMixin"
+            ],
+            "show_status": [
+              "qplot.windows._plot_feedback.PlotWindowFeedbackMixin"
+            ]
+          },
+          "600": {
+            "_cursor_1d_x_data": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "_marquee_axis_assignment_changed": [
+              "qplot.windows._plot_marquee.PlotMarqueeMixin"
+            ],
+            "_set_cursor_index_label": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "_update_native_precision_status": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "_update_plot_annotation": [
+              "qplot.windows._plot_annotation.PlotAnnotationMixin"
+            ],
+            "apply_axis_major_tick_count_preference": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "formatNum": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "format_cursor_number": [
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "mouseMoved": [
+              "qplot.windows._plot1d_snap.Plot1DSnapMixin",
+              "qplot.windows._plotWin.plotWidget"
+            ],
+            "refreshWindow": [
+              "qplot.windows._plot_refresh.PlotRefreshMixin"
+            ],
+            "register_shortcut": [
+              "qplot.windows._plot_feedback.PlotWindowFeedbackMixin"
+            ],
+            "show_plot_state": [
+              "qplot.windows._plot_feedback.PlotWindowFeedbackMixin"
+            ],
+            "show_status": [
+              "qplot.windows._plot_feedback.PlotWindowFeedbackMixin"
+            ]
+          },
+          "598": {
+            "_heatmap_colorbar_items": [
+              "qplot.windows._plot2d_layers.Plot2DLayerMixin"
+            ]
+          }
+        },
+        "documentation": "docs/code-quality-errors-warnings.md",
+        "github_dismissals_performed": false
+      }
     }
   ]
 }

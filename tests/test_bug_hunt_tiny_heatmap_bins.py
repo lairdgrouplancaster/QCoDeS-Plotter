@@ -7,6 +7,7 @@ import pytest
 
 import qplot.tools.worker as worker_module
 from qplot.datahandling.trusted_heatmap import NumericHeatmapPlan, numeric_heatmap
+from tests._generator_results import finish_steps
 from tests.test_worker_array_heatmaps import heatmap_dataset, make_worker, run_worker
 
 
@@ -44,10 +45,7 @@ def test_spatial_means_preserve_cells_across_coordinate_scales(
             plan = NumericHeatmapPlan("fast", "slow", "signal", 1, 4, 2,
                                       (None, None), False)
             work = numeric_heatmap(_SqlExecutor(dataset.conn), dataset, plan, 9, True)
-            with pytest.raises(StopIteration) as finished:
-                while True:
-                    next(work)
-            heatmap = finished.value.value
+            heatmap = finish_steps(work)
             grid, axes = heatmap.grid, heatmap.axes
             assert heatmap.matching_count == 9
         else:

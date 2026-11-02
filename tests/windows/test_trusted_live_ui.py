@@ -934,6 +934,10 @@ class _TrustedPreviewBoundaryHarness(
 ):
     """Use the real run-list/details widgets around fake Stage 4 workers."""
 
+    def _sync_empty_state(self) -> None:
+        """Keep lifecycle accounting when combining the real control mixins."""
+        _LifecycleHarness._sync_empty_state(self)
+
     def __init__(self, instance: DatabaseInstance, service: _FakeService) -> None:
         super().__init__(instance, service)
         runs = {1: {"guid": "guid-a", "run_timestamp": 1.0}}
@@ -1060,7 +1064,7 @@ class _TrustedActionHarness(plot_actions.PlotActionsMixin):
         self.opened = []
         self.export_filename = "trusted-export.csv"
 
-    def _reload_if_database_instance_changed(self, _database_path: str) -> bool:
+    def _reload_if_database_instance_changed(self, database_path: str) -> bool:
         return False
 
     def openWin(
@@ -4085,6 +4089,12 @@ def test_trusted_failed_explicit_plot_leaves_selection_with_no_dataset_cleanup(
     """An explicit action owns cleanup; the next DB-free selection does not."""
 
     class Harness(_TrustedActionHarness, database_actions.DatabaseActionsMixin):
+        def _reload_if_database_instance_changed(self, database_path: str) -> bool:
+            """Use the action harness's fixed identity instead of real reloads."""
+            return _TrustedActionHarness._reload_if_database_instance_changed(
+                self, database_path,
+            )
+
         def __init__(self, instance, service, guid) -> None:
             super().__init__(instance, service, guid)
             self.RunList = _SelectionRunList(7, guid)

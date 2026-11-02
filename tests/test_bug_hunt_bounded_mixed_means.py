@@ -12,6 +12,7 @@ from qplot.datahandling import trusted_heatmap
 from qplot.datahandling.readonly import sqlite_read_only_connection
 from qplot.datahandling.trusted_live_service import TrustedLiveReadService
 from qplot.tools.finite_means import FiniteBinMeans
+from tests._generator_results import finish_steps
 from tests.datahandling.test_trusted_plot import (
     make_run,
     prohibit_snapshots,
@@ -91,11 +92,9 @@ def test_sql_mixed_fractional_mean_is_independent_of_pages(
                 "fast", "slow", "signal", 1, 4, 2, (None, None), False,
             )
             work = trusted_heatmap.numeric_heatmap(_SqlExecutor(connection), dataset, plan, 3, True)
-            with pytest.raises(StopIteration) as finished:
-                while True:
-                    next(work)
+            heatmap = finish_steps(work)
         expected = float(sum(map(Fraction, values), Fraction()) / 3)
-        assert finished.value.value.grid[0, 0] == expected
+        assert heatmap.grid[0, 0] == expected
 
 
 @pytest.mark.parametrize("page_size", [1, 2])

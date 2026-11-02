@@ -52,7 +52,7 @@ GitHub alert state was not modified by this review.
 ## Follow-up: 2 November 2026
 
 The fresh `qplot-code-quality-9lqtf8bk.json` export contains 447 findings. This
-follow-up re-evaluates retained findings for readability and targets 43 more:
+follow-up re-evaluates retained findings for readability and targets 48 more:
 
 | Rule | Findings | Change |
 | --- | ---: | --- |
@@ -60,6 +60,9 @@ follow-up re-evaluates retained findings for readability and targets 43 more:
 | Unused global variable | 1 | Remove the testdata provenance-prefix alias and import its defining constant in the test. |
 | Implicit string concatenation | 6 | Make deliberate concatenation explicit in help text, messages and subprocess programs. |
 | Mixed returns | 1 | Make the operation lookup's failing path an explicit unittest failure exception. |
+| Variable defined multiple times | 1 | Remove a redundant cancellation-test result sentinel; the expected-exception assertion already rejects normal returns. |
+| Unreachable code | 2 | Return generator results through a shared exhaustion helper. |
+| Conflicting attributes | 2 | Explicitly select concrete test-harness implementations. |
 
 The follow-up entry in the JSON records the export hash, base commit, exact
 finding IDs and grouped rationale. The fixture parameters retain their owner
@@ -75,3 +78,10 @@ bytecode and constants. Explicit addition follows the
 [CodeQL recommendation](https://codeql.github.com/codeql-query-help/python/py-implicit-string-concatenation-in-list/).
 
 A fresh scan of the merged default branch is required to confirm the reduction.
+
+The [error and warning review](code-quality-errors-warnings.md) covers all 28
+higher-severity findings individually: 11 code fixes and 17 reviewed exceptions
+with concrete reasons and supporting evidence. The JSON records the same
+dispositions and runtime mixin method owners. The additional review passed 438
+tests, including new malformed-comparison tests that demonstrate why a flagged
+exception handler must remain.
