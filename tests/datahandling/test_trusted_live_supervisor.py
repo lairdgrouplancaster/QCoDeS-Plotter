@@ -734,8 +734,7 @@ def test_immediate_cooperative_cancellation_keeps_the_helper_reusable(
 def test_child_operation_deadline_retires_incarnation_before_fresh_job(
     wal_writer: _ApswWalWriter,
 ) -> None:
-    supervisor = TrustedLiveReaderSupervisor.open(wal_writer.database_path)
-    try:
+    with TrustedLiveReaderSupervisor.open(wal_writer.database_path) as supervisor:
         first_pid = supervisor.helper_pid
         first_incarnation = supervisor.incarnation
         assert first_pid is not None
@@ -755,8 +754,6 @@ def test_child_operation_deadline_retires_incarnation_before_fresh_job(
         assert supervisor.helper_pid != first_pid
         assert supervisor.incarnation != first_incarnation
         replacement_pid = supervisor.helper_pid
-    finally:
-        supervisor.close()
     assert replacement_pid is not None
     _assert_helper_stopped(supervisor, replacement_pid)
 
@@ -764,11 +761,10 @@ def test_child_operation_deadline_retires_incarnation_before_fresh_job(
 def test_parent_reply_timeout_cooperatively_retires_before_fresh_job(
     wal_writer: _ApswWalWriter,
 ) -> None:
-    supervisor = TrustedLiveReaderSupervisor.open(
+    with TrustedLiveReaderSupervisor.open(
         wal_writer.database_path,
         cancellation_grace_seconds=2.0,
-    )
-    try:
+    ) as supervisor:
         first_pid = supervisor.helper_pid
         first_incarnation = supervisor.incarnation
         assert first_pid is not None
@@ -788,8 +784,6 @@ def test_parent_reply_timeout_cooperatively_retires_before_fresh_job(
         assert supervisor.helper_pid != first_pid
         assert supervisor.incarnation != first_incarnation
         replacement_pid = supervisor.helper_pid
-    finally:
-        supervisor.close()
     assert replacement_pid is not None
     _assert_helper_stopped(supervisor, replacement_pid)
 
@@ -797,12 +791,11 @@ def test_parent_reply_timeout_cooperatively_retires_before_fresh_job(
 def test_noncooperative_job_is_forced_down_and_next_explicit_job_is_fresh(
     wal_writer: _ApswWalWriter,
 ) -> None:
-    supervisor = TrustedLiveReaderSupervisor.open(
+    with TrustedLiveReaderSupervisor.open(
         wal_writer.database_path,
         cancellation_grace_seconds=0.1,
         _test_fault="hang_before_operation",
-    )
-    try:
+    ) as supervisor:
         first_pid = supervisor.helper_pid
         first_incarnation = supervisor.incarnation
         assert first_pid is not None
@@ -827,8 +820,6 @@ def test_noncooperative_job_is_forced_down_and_next_explicit_job_is_fresh(
         assert wal_writer.request("commit", value="after-forced-stop") == 1
         assert wal_writer.request("checkpoint", mode="TRUNCATE") == (0, 0, 0)
         second_pid = supervisor.helper_pid
-    finally:
-        supervisor.close()
     assert second_pid is not None
     _assert_helper_stopped(supervisor, second_pid)
 
@@ -836,11 +827,10 @@ def test_noncooperative_job_is_forced_down_and_next_explicit_job_is_fresh(
 def test_crashed_helper_is_not_replayed_and_next_job_uses_fresh_incarnation(
     wal_writer: _ApswWalWriter,
 ) -> None:
-    supervisor = TrustedLiveReaderSupervisor.open(
+    with TrustedLiveReaderSupervisor.open(
         wal_writer.database_path,
         _test_fault="crash_before_reply",
-    )
-    try:
+    ) as supervisor:
         first_pid = supervisor.helper_pid
         first_incarnation = supervisor.incarnation
         assert first_pid is not None
@@ -856,8 +846,6 @@ def test_crashed_helper_is_not_replayed_and_next_job_uses_fresh_incarnation(
         assert supervisor.helper_pid != first_pid
         assert supervisor.incarnation != first_incarnation
         second_pid = supervisor.helper_pid
-    finally:
-        supervisor.close()
     assert second_pid is not None
     _assert_helper_stopped(supervisor, second_pid)
 
@@ -865,11 +853,10 @@ def test_crashed_helper_is_not_replayed_and_next_job_uses_fresh_incarnation(
 def test_cleanup_quarantine_discards_only_the_faulted_incarnation(
     wal_writer: _ApswWalWriter,
 ) -> None:
-    supervisor = TrustedLiveReaderSupervisor.open(
+    with TrustedLiveReaderSupervisor.open(
         wal_writer.database_path,
         _test_fault="cleanup_quarantine",
-    )
-    try:
+    ) as supervisor:
         first_pid = supervisor.helper_pid
         first_incarnation = supervisor.incarnation
         assert first_pid is not None
@@ -883,8 +870,6 @@ def test_cleanup_quarantine_discards_only_the_faulted_incarnation(
         assert supervisor.helper_pid != first_pid
         assert supervisor.incarnation != first_incarnation
         second_pid = supervisor.helper_pid
-    finally:
-        supervisor.close()
     assert second_pid is not None
     _assert_helper_stopped(supervisor, second_pid)
 
@@ -1115,11 +1100,10 @@ def test_invalid_or_stale_reply_fails_closed_and_fresh_job_recovers(
     wal_writer: _ApswWalWriter,
     fault: str,
 ) -> None:
-    supervisor = TrustedLiveReaderSupervisor.open(
+    with TrustedLiveReaderSupervisor.open(
         wal_writer.database_path,
         _test_fault=fault,
-    )
-    try:
+    ) as supervisor:
         first_pid = supervisor.helper_pid
         first_incarnation = supervisor.incarnation
         assert first_pid is not None
@@ -1134,8 +1118,6 @@ def test_invalid_or_stale_reply_fails_closed_and_fresh_job_recovers(
         assert supervisor.helper_pid != first_pid
         assert supervisor.incarnation != first_incarnation
         replacement_pid = supervisor.helper_pid
-    finally:
-        supervisor.close()
     assert replacement_pid is not None
     _assert_helper_stopped(supervisor, replacement_pid)
 
@@ -1146,34 +1128,33 @@ def test_query_batch_reply_cardinality_mismatch_retires_the_incarnation(
     monkeypatch: pytest.MonkeyPatch,
     mutation: str,
 ) -> None:
-    supervisor = TrustedLiveReaderSupervisor.open(wal_writer.database_path)
-    first_pid = supervisor.helper_pid
-    first_incarnation = supervisor.incarnation
-    assert first_pid is not None
-    real_decode = supervisor_module.decode_reply_frame
+    with TrustedLiveReaderSupervisor.open(wal_writer.database_path) as supervisor:
+        first_pid = supervisor.helper_pid
+        first_incarnation = supervisor.incarnation
+        assert first_pid is not None
+        real_decode = supervisor_module.decode_reply_frame
 
-    def decode_mutated_batch(frame: bytes) -> ProtocolEnvelope:
-        envelope = real_decode(frame)
-        if envelope.operation != "query_batch":
-            return envelope
-        results = list(envelope.payload["results"])
-        if mutation == "truncate":
-            results = results[:-1]
-        else:
-            results.append(results[-1])
-        return ProtocolEnvelope(
-            envelope.session,
-            envelope.generation,
-            envelope.operation,
-            {**envelope.payload, "results": results},
+        def decode_mutated_batch(frame: bytes) -> ProtocolEnvelope:
+            envelope = real_decode(frame)
+            if envelope.operation != "query_batch":
+                return envelope
+            results = list(envelope.payload["results"])
+            if mutation == "truncate":
+                results = results[:-1]
+            else:
+                results.append(results[-1])
+            return ProtocolEnvelope(
+                envelope.session,
+                envelope.generation,
+                envelope.operation,
+                {**envelope.payload, "results": results},
+            )
+
+        monkeypatch.setattr(
+            supervisor_module,
+            "decode_reply_frame",
+            decode_mutated_batch,
         )
-
-    monkeypatch.setattr(
-        supervisor_module,
-        "decode_reply_frame",
-        decode_mutated_batch,
-    )
-    try:
         job = supervisor.submit_query_batch(
             (TrustedQuery("SELECT 1"), TrustedQuery("SELECT 2")),
             timeout=5.0,
@@ -1187,8 +1168,6 @@ def test_query_batch_reply_cardinality_mismatch_retires_the_incarnation(
         assert supervisor.helper_pid != first_pid
         assert supervisor.incarnation != first_incarnation
         replacement_pid = supervisor.helper_pid
-    finally:
-        supervisor.close()
     assert replacement_pid is not None
     _assert_helper_stopped(supervisor, replacement_pid)
 
@@ -1352,11 +1331,10 @@ def test_late_cancel_for_last_completed_generation_does_not_interrupt_next_job(
 def test_duplicate_cancel_remains_fatal_after_the_next_generation_activates(
     wal_writer: _ApswWalWriter,
 ) -> None:
-    supervisor = TrustedLiveReaderSupervisor.open(
+    with TrustedLiveReaderSupervisor.open(
         wal_writer.database_path,
         _test_fault="hang_close",
-    )
-    try:
+    ) as supervisor:
         cancelled = supervisor.submit_query(
             "WITH RECURSIVE values_(n) AS ("
             "SELECT count(*) FROM supervisor_probe "
@@ -1393,8 +1371,6 @@ def test_duplicate_cancel_remains_fatal_after_the_next_generation_activates(
         assert supervisor.helper_pid != first_pid
         assert supervisor.incarnation != first_incarnation
         replacement_pid = supervisor.helper_pid
-    finally:
-        supervisor.close()
     assert replacement_pid is not None
     _assert_helper_stopped(supervisor, replacement_pid)
 
@@ -1402,8 +1378,7 @@ def test_duplicate_cancel_remains_fatal_after_the_next_generation_activates(
 def test_wrong_session_control_frame_is_fatal_but_next_job_can_recover(
     wal_writer: _ApswWalWriter,
 ) -> None:
-    supervisor = TrustedLiveReaderSupervisor.open(wal_writer.database_path)
-    try:
+    with TrustedLiveReaderSupervisor.open(wal_writer.database_path) as supervisor:
         first_pid = supervisor.helper_pid
         first_incarnation = supervisor.incarnation
         assert first_pid is not None
@@ -1434,8 +1409,6 @@ def test_wrong_session_control_frame_is_fatal_but_next_job_can_recover(
         assert supervisor.helper_pid != first_pid
         assert supervisor.incarnation != first_incarnation
         replacement_pid = supervisor.helper_pid
-    finally:
-        supervisor.close()
     assert replacement_pid is not None
     _assert_helper_stopped(supervisor, replacement_pid)
 
@@ -1618,11 +1591,10 @@ def test_startup_and_normal_close_are_bounded(
     wal_writer: _ApswWalWriter,
 ) -> None:
     started = time.monotonic()
-    supervisor = TrustedLiveReaderSupervisor.open(
+    with TrustedLiveReaderSupervisor.open(
         wal_writer.database_path,
         startup_timeout_seconds=15.0,
-    )
-    try:
+    ) as supervisor:
         assert time.monotonic() - started < 15.0
         helper_pid = supervisor.helper_pid
         assert helper_pid is not None
@@ -1630,8 +1602,6 @@ def test_startup_and_normal_close_are_bounded(
         started = time.monotonic()
         supervisor.close()
         assert time.monotonic() - started < 10.0
-    finally:
-        supervisor.close()
     _assert_helper_stopped(supervisor, helper_pid)
 
 
@@ -2180,13 +2150,19 @@ def test_context_manager_cleanup_does_not_mask_a_body_exception(
     helper_pid = supervisor.helper_pid
     assert helper_pid is not None
 
-    with pytest.raises(_ContextBodyError, match="body sentinel"):
+    body_error = _ContextBodyError("body sentinel")
+    caught_errors: list[BaseException] = []
+    try:
         with supervisor:
             job = supervisor.submit_query("SELECT 1", timeout=20.0)
             supervisor._wait_for_test_notification(b"operation_started", 10.0)
             supervisor._wait_for_test_notification(b"operation_hang", 10.0)
-            raise _ContextBodyError("body sentinel")
+            raise body_error
+    except _ContextBodyError as caught:
+        caught_errors.append(caught)
 
+    assert len(caught_errors) == 1
+    assert caught_errors[0] is body_error
     assert supervisor.closed
     assert job.done
     _assert_helper_stopped(supervisor, helper_pid)
@@ -2312,11 +2288,10 @@ def test_main_file_replacement_is_rejected_at_each_operation_boundary(
         connection.close(True)
 
     accepted = database_instance(selected)
-    supervisor = TrustedLiveReaderSupervisor.open(
+    with TrustedLiveReaderSupervisor.open(
         selected,
         expected_database_instance=accepted,
-    )
-    try:
+    ) as supervisor:
         assert supervisor.query(
             "SELECT value FROM identity_probe",
             timeout=5.0,
@@ -2343,8 +2318,6 @@ def test_main_file_replacement_is_rejected_at_each_operation_boundary(
         assert supervisor.incarnation == first_incarnation + 1
         assert supervisor.database_instance == accepted
         assert not supervisor.helper_alive
-    finally:
-        supervisor.close()
 
     replacement_reader = apsw.Connection(str(selected), flags=apsw.SQLITE_OPEN_READONLY)
     try:

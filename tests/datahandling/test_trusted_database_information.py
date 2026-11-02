@@ -20,8 +20,7 @@ from tests.datahandling.test_trusted_live import (
 def test_metadata_pragmas_read_only_and_fixed_plan(live_writer):
     live_writer.request("barrier")
     before = _artifact_state(live_writer.database_path)
-    reader = TrustedLiveReader.open(live_writer.database_path)
-    try:
+    with TrustedLiveReader.open(live_writer.database_path) as reader:
         for name in ("user_version", "application_id", "page_count", "page_size"):
             result = reader.query(f"PRAGMA main.{name}")
             assert result.columns == (name,)
@@ -45,7 +44,5 @@ def test_metadata_pragmas_read_only_and_fixed_plan(live_writer):
         assert info.latest_run.run_id == 1
         assert not info.latest_run.as_dict()["is_completed"]
         _assert_safe_audit(reader.audit().counters)
-    finally:
-        reader.close()
     _assert_safe_audit(reader.audit().counters)
     _assert_protected_artifacts_unchanged(before, _artifact_state(live_writer.database_path))

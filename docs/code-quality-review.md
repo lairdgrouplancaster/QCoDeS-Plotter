@@ -85,3 +85,23 @@ with concrete reasons and supporting evidence. The JSON records the same
 dispositions and runtime mixin method owners. The additional review passed 438
 tests, including new malformed-comparison tests that demonstrate why a flagged
 exception handler must remain.
+
+
+## Follow-up to the 399-finding export
+
+The `qplot-code-quality-k6zxb1vu.json` export confirms all 48 targets from PR #104
+have cleared. This follow-up targets another **29 existing findings: both
+remaining errors, two warnings and 25 notes**. The derived-work service contract
+removes partly initialized concrete-service inheritance from test doubles. The
+appearance base constructor no longer calls into incomplete subclass controls.
+Reader/supervisor test lifetimes use context managers while retaining cleanup
+faults, close timing and protected-database assertions.
+
+The latest [error and warning review](code-quality-errors-warnings.md) records
+all 17 high-severity findings and the specific reasons for retaining 13 warnings.
+The JSON records the new export hash, base commit and exact targets. New request
+Protocol declarations may add informational findings; net counts require the
+next scan. No findings were dismissed or suppressed.
+
+Validation: 642 tests and 29 subtests passed, with one Windows-only skip. Ruff,
+project mypy (91 files), and an eight-second offscreen qPlot startup passed.

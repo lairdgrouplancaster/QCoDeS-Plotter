@@ -260,12 +260,11 @@ def test_refresh_reconciles_real_idle_helper_respawn_at_same_data_version(
 ) -> None:
     writer = stage4_wal_writer
     accepted = database_instance(writer.database_path)
-    supervisor = TrustedLiveReaderSupervisor.open(
+    with TrustedLiveReaderSupervisor.open(
         writer.database_path,
         expected_database_instance=accepted,
-    )
-    adapter = TrustedMetadataQueryAdapter(supervisor, writer.database_path)
-    try:
+    ) as supervisor:
+        adapter = TrustedMetadataQueryAdapter(supervisor, writer.database_path)
         bootstrap = adapter.bootstrap()
         cursor = 0
         while cursor < bootstrap.run_id_watermark:
@@ -291,8 +290,6 @@ def test_refresh_reconciles_real_idle_helper_respawn_at_same_data_version(
         assert restarted.run_id_watermark == bootstrap.run_id_watermark
         assert supervisor.helper_alive
         assert writer.request("checkpoint", mode="TRUNCATE") == (0, 0, 0)
-    finally:
-        supervisor.close()
 
 
 @pytest.mark.parametrize("stage4_wal_writer", [0, 10], indirect=True)

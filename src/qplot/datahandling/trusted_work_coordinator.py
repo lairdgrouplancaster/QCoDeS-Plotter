@@ -35,7 +35,7 @@ from qplot.datahandling.trusted_live_queries import (
     trusted_derived_source_revision,
 )
 from qplot.datahandling.trusted_live_service import (
-    TrustedLiveReadService,
+    TrustedDerivedReadService,
     TrustedReadQueueFullError,
     TrustedReadRequestCancelledError,
     TrustedReadRequestDeadlineError,
@@ -278,7 +278,7 @@ class TrustedWorkCoordinator:
         self,
         database_instance: DatabaseInstance,
         runs: Sequence[TrustedDerivedRun],
-        service: TrustedLiveReadService,
+        service: TrustedDerivedReadService,
         *,
         cache: TrustedDerivedDiskCache | None = None,
         formats: Mapping[TrustedWorkKind, WorkFormat] | None = None,
@@ -289,8 +289,8 @@ class TrustedWorkCoordinator:
         deadline_seconds: float = TRUSTED_DERIVED_DEFAULT_DEADLINE_SECONDS,
         own_service: bool = False,
     ) -> None:
-        if not isinstance(service, TrustedLiveReadService):
-            raise TypeError("service must be TrustedLiveReadService.")
+        if not isinstance(service, TrustedDerivedReadService):
+            raise TypeError("service must be TrustedDerivedReadService.")
         if service.database_instance != database_instance:
             raise ValueError("The service and coordinator database instances differ.")
         if not 0 < deadline_seconds <= 300:
@@ -573,7 +573,7 @@ class TrustedWorkCoordinator:
         self,
         database_instance: DatabaseInstance,
         runs: Sequence[TrustedDerivedRun],
-        service: TrustedLiveReadService,
+        service: TrustedDerivedReadService,
         *,
         own_service: bool | None = None,
         priority: tuple[int | None, Sequence[int]] | None = None,
@@ -581,6 +581,8 @@ class TrustedWorkCoordinator:
     ) -> None:
         self._require_owner()
         self._require_open()
+        if not isinstance(service, TrustedDerivedReadService):
+            raise TypeError("service must be TrustedDerivedReadService.")
         if service.database_instance != database_instance:
             raise ValueError("The replacement service is bound to another database.")
         prior_service = self._service
@@ -1218,7 +1220,7 @@ class TrustedWorkCoordinator:
         self,
         work: ScheduledWork,
         run: TrustedDerivedRun,
-        service: TrustedLiveReadService,
+        service: TrustedDerivedReadService,
         reused: _RetainedObservation | None,
         memory_payload: tuple[TrustedCacheWorkKey, DerivedPayload] | None,
         selected_detail_attempt: _SelectedDetailAttempt | None,
@@ -1458,7 +1460,7 @@ class TrustedWorkCoordinator:
     @staticmethod
     def _read_selected_detail(
         attempt: _SelectedDetailAttempt,
-        service: TrustedLiveReadService,
+        service: TrustedDerivedReadService,
         deadline: float,
         cancel_check: Callable[[], None],
     ) -> TrustedSelectedRunDetail | None:

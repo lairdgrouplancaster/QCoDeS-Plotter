@@ -18,10 +18,11 @@ import math
 import os
 import threading
 import time
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field, replace
 from enum import IntEnum, StrEnum
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, Generic, Protocol, TypeVar, cast
 
 from qplot.datahandling.file_identity import DatabaseInstance, database_instance
 from qplot.datahandling.plot_progress import PlotProgress
@@ -381,7 +382,63 @@ def _priority(value: object) -> int:
     return priority
 
 
-class TrustedLiveReadService:
+class TrustedDerivedRequest[ResultT](Protocol):
+    """Cancellable result handle consumed by the derived-work coordinator."""
+
+    @property
+    def done(self) -> bool: ...
+
+    def cancel(self) -> bool: ...
+
+    def wait(self, timeout: float | None = None) -> ResultT: ...
+
+
+class TrustedDerivedReadService(ABC):
+    """Nominal read-service contract for derived work and its Qt bridge.
+
+    Implementations supply bounded, cancellable reads for one exact database
+    instance. The concrete broker owns reader resources; deterministic doubles
+    can implement this contract without partially initializing that broker.
+    Identity, namespace and publication checks remain the consumers' responsibility.
+    """
+
+    @property
+    @abstractmethod
+    def database_instance(self) -> DatabaseInstance:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def session_generation(self) -> int:
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def source_revision_namespace(self) -> TrustedSourceRevisionNamespace:
+        raise NotImplementedError
+
+    @abstractmethod
+    def submit_derived_source(
+        self, run_id: int, *, deadline: float | None = None,
+    ) -> TrustedDerivedRequest[TrustedDerivedSourceObservation]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def submit_selected_run(
+        self, run_id: int, *, deadline: float | None = None,
+    ) -> TrustedDerivedRequest[TrustedSelectedRunDetail]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def close_async(self) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    def wait_closed(self, timeout: float | None = None) -> bool:
+        raise NotImplementedError
+
+
+class TrustedLiveReadService(TrustedDerivedReadService):
     """Own exactly one persistent trusted helper for one database instance."""
 
     def __init__(

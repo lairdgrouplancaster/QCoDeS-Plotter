@@ -37,7 +37,7 @@ from qplot.datahandling.trusted_live_queries import (
     TrustedSetpointSummary,
     TrustedSourceRevision,
 )
-from qplot.datahandling.trusted_live_service import TrustedLiveReadService
+from qplot.datahandling.trusted_live_service import TrustedDerivedReadService
 from qplot.datahandling.trusted_work_coordinator import (
     TrustedDerivedErrorRecord,
     TrustedDerivedRun,
@@ -106,7 +106,7 @@ class _SnapshotRequestFence:
     run_index: int
     run_id: int
     run_guid: str
-    service: TrustedLiveReadService
+    service: TrustedDerivedReadService
     service_session_generation: int
     snapshot_token: object
     session_serial: int
@@ -155,7 +155,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self._shutting_down = False
         self._binding_serial = 0
         self._database_instance: DatabaseInstance | None = None
-        self._service: TrustedLiveReadService | None = None
+        self._service: TrustedDerivedReadService | None = None
         self._coordinator: TrustedWorkCoordinator | None = None
         self._coordinator_generation: int | None = None
         self._retiring: list[TrustedWorkCoordinator] = []
@@ -293,7 +293,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self,
         database: DatabaseInstance,
         runs: Mapping[int, Mapping[str, object]],
-        service: TrustedLiveReadService,
+        service: TrustedDerivedReadService,
     ) -> bool:
         """Idempotently refresh one already-active trusted database binding."""
 
@@ -333,7 +333,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self,
         database: DatabaseInstance,
         runs: Mapping[int, Mapping[str, object]],
-        service: TrustedLiveReadService,
+        service: TrustedDerivedReadService,
     ) -> None:
         """Bind after the cheap run-list transaction has committed."""
 
@@ -342,8 +342,8 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             return
         if not isinstance(database, DatabaseInstance) or database.identity is None:
             raise ValueError("The trusted Qt bridge requires an exact database.")
-        if not isinstance(service, TrustedLiveReadService):
-            raise TypeError("service must be TrustedLiveReadService.")
+        if not isinstance(service, TrustedDerivedReadService):
+            raise TypeError("service must be TrustedDerivedReadService.")
         if database_instances_differ(database, service.database_instance):
             raise ValueError("The bridge service is bound to another database.")
         derived_runs, run_ids, run_guids = self._normalise_runs(database, runs, service)
@@ -1682,7 +1682,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self,
         database: DatabaseInstance,
         runs: Mapping[int, Mapping[str, object]],
-        service: TrustedLiveReadService,
+        service: TrustedDerivedReadService,
     ) -> tuple[tuple[TrustedDerivedRun, ...], list[int], list[str]]:
         ordered: list[tuple[int, str]] = []
         for raw_run_id, metadata in runs.items():
@@ -1712,7 +1712,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         database: DatabaseInstance,
         run_id: int,
         guid: str,
-        service: TrustedLiveReadService,
+        service: TrustedDerivedReadService,
     ) -> TrustedDerivedRun:
         provisional = repr(
             (

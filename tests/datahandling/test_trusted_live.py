@@ -1504,8 +1504,7 @@ def test_posix_dms_lock_survives_writer_exit_and_reader_handles_restart(
 def test_macos_last_reader_close_allows_only_shm_coordination_metadata(
     live_writer: _QcodesWalWriter,
 ) -> None:
-    reader = TrustedLiveReader.open(live_writer.database_path)
-    try:
+    with TrustedLiveReader.open(live_writer.database_path) as reader:
         assert _probe_rows(reader) == ((0, "initial", 0),)
         live_writer.request("exit_without_sqlite_cleanup")
         live_writer.process.join(10)
@@ -1517,8 +1516,6 @@ def test_macos_last_reader_close_allows_only_shm_coordination_metadata(
         assert _probe_rows(reader) == ((0, "initial", 0),)
         assert _probe_rows(reader) == ((0, "initial", 0),)
         before_close = _stable_artifact_state(live_writer.database_path)
-    finally:
-        reader.close()
 
     after_close = _stable_artifact_state(live_writer.database_path)
     _assert_protected_artifacts_unchanged(before_close, after_close)
@@ -1598,15 +1595,12 @@ def test_native_boundary_changes_only_allowed_shm_coordination_state(
     assert before["-shm"] is not None
     assert before["-journal"] is None
 
-    reader = TrustedLiveReader.open(live_writer.database_path)
-    try:
+    with TrustedLiveReader.open(live_writer.database_path) as reader:
         assert _probe_rows(reader) == ((0, "initial", 0),)
         assert reader.data_version() > 0
         counters = reader.audit().counters
         _assert_safe_audit(counters)
         assert counters["shm_unmap_delete_forwarded"] == 0
-    finally:
-        reader.close()
 
     _assert_safe_audit(reader.audit().counters)
     assert reader.audit().counters["proof_active"] == 0
@@ -2152,16 +2146,13 @@ def test_mutating_and_unsafe_sql_is_rejected_without_source_changes(
         "SELECT load_extension('forbidden')",
     )
 
-    reader = TrustedLiveReader.open(live_writer.database_path)
-    try:
+    with TrustedLiveReader.open(live_writer.database_path) as reader:
         for statement in rejected_statements:
             with pytest.raises(TrustedLiveSqlRejectedError):
                 reader.query(statement)
             assert _probe_rows(reader) == ((0, "initial", 0),)
         assert reader.query("PRAGMA data_version").columns == ("data_version",)
         _assert_safe_audit(reader.audit().counters)
-    finally:
-        reader.close()
 
     _assert_safe_audit(reader.audit().counters)
     _assert_protected_artifacts_unchanged(
@@ -2396,11 +2387,10 @@ def test_sparse_large_database_is_read_directly_without_a_full_size_copy(
         if allocated_blocks:
             assert allocated_blocks * 512 < source_status.st_size // 2
 
-        reader = TrustedLiveReader.open(writer.database_path)
-        temporary_directory = reader.temporary_directory
-        assert temporary_directory is not None
-        assert temporary_directory.is_dir()
-        try:
+        with TrustedLiveReader.open(writer.database_path) as reader:
+            temporary_directory = reader.temporary_directory
+            assert temporary_directory is not None
+            assert temporary_directory.is_dir()
             startup_counters = reader.audit().counters
             assert startup_counters["source_read_bytes"] < min(
                 sparse_size // 4,
@@ -2434,8 +2424,6 @@ def test_sparse_large_database_is_read_directly_without_a_full_size_copy(
                 and path.name
                 not in {"sparse.db-wal", "sparse.db-shm", "sparse.db-journal"}
             )
-        finally:
-            reader.close()
         _assert_safe_audit(reader.audit().counters)
         assert not temporary_directory.exists()
     finally:
@@ -2581,16 +2569,13 @@ def test_preflight_close_uncertainty_quarantines_process_session(
 def test_process_session_is_exclusive_and_reusable_after_close(
     live_writer: _QcodesWalWriter,
 ) -> None:
-    first = TrustedLiveReader.open(live_writer.database_path)
-    try:
+    with TrustedLiveReader.open(live_writer.database_path) as first:
         with pytest.raises(
             TrustedLiveReaderUnavailableError,
             match="existing trusted reader",
         ):
             TrustedLiveReader.open(live_writer.database_path)
         assert first.query("SELECT 1").rows == ((1,),)
-    finally:
-        first.close()
 
     with TrustedLiveReader.open(live_writer.database_path) as replacement:
         assert _probe_rows(replacement) == ((0, "initial", 0),)

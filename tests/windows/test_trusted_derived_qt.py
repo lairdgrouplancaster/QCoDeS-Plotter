@@ -24,7 +24,7 @@ from qplot.datahandling.trusted_live_queries import (
     TrustedSourceRevision,
     TrustedSourceRevisionNamespace,
 )
-from qplot.datahandling.trusted_live_service import TrustedLiveReadService
+from qplot.datahandling.trusted_live_service import TrustedDerivedReadService
 from qplot.datahandling.trusted_presentation import build_selected_run_presentation
 from qplot.datahandling.trusted_snapshot import (
     TRUSTED_SNAPSHOT_LOAD_MORE_TEXT,
@@ -73,12 +73,8 @@ def _process_until(predicate, timeout: float = 2.0) -> None:
     raise AssertionError("Qt condition was not reached")
 
 
-class _Service(TrustedLiveReadService):
-    """Identity-only double for bridge binding, without real reader workers.
-
-    Inheritance satisfies the bridge's concrete service-type check; these tests
-    supply work through the fake coordinator rather than this service.
-    """
+class _Service(TrustedDerivedReadService):
+    """Identity-only implementation; the fake coordinator supplies the work."""
 
     def __init__(self, instance: DatabaseInstance, nonce: bytes = b"stage5c") -> None:
         self._instance = instance
@@ -92,6 +88,22 @@ class _Service(TrustedLiveReadService):
     @property
     def source_revision_namespace(self) -> TrustedSourceRevisionNamespace:
         return self._namespace
+
+    @property
+    def session_generation(self) -> int:
+        return self._session_generation
+
+    def submit_derived_source(self, run_id: int, *, deadline=None):
+        raise AssertionError("The bridge fixture must not submit derived reads.")
+
+    def submit_selected_run(self, run_id: int, *, deadline=None):
+        raise AssertionError("The bridge fixture must not submit selected reads.")
+
+    def close_async(self) -> bool:
+        raise AssertionError("The bridge does not own this service.")
+
+    def wait_closed(self, timeout: float | None = None) -> bool:
+        raise AssertionError("The bridge does not own this service.")
 
 
 class _ObjectSignal:
@@ -190,7 +202,7 @@ class _SelectedRequest:
         self.cancelled = True
         return True
 
-    def wait(self, _timeout: float | None = None) -> TrustedSelectedRunDetail:
+    def wait(self, timeout: float | None = None) -> TrustedSelectedRunDetail:
         if self.cancelled:
             raise InterruptedError("selected-detail request cancelled")
         if not self.done:
@@ -862,6 +874,25 @@ def bound_bridge(tmp_path):
     QtWidgets.QApplication.processEvents()
     window.hide()
     window.deleteLater()
+
+
+@pytest.mark.parametrize("failure", ["unrelated", "wrong-database"])
+def test_bridge_rejects_invalid_service_without_invalidating_current_binding(
+    bound_bridge, failure: str,
+) -> None:
+    window, bridge, coordinator, runs = bound_bridge
+    instance = window._loaded_database_instance
+    invalid = (
+        object() if failure == "unrelated"
+        else _Service(replace(instance, identity=(7, 12345)))
+    )
+    expected_error = TypeError if failure == "unrelated" else ValueError
+    before = bridge._binding_serial
+    with pytest.raises(expected_error):
+        bridge.bind_database(instance, runs, invalid)
+    assert bridge._binding_serial == before
+    assert bridge._coordinator is coordinator
+    assert bridge._service is window._trusted_read_service
 
 
 def _publication(

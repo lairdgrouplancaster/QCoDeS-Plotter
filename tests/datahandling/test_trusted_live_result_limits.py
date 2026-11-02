@@ -531,13 +531,12 @@ def test_exact_row_and_aggregate_cell_boundaries_succeed(
     wal_writer: _ApswWalWriter,
 ) -> None:
     assert TRUSTED_LIVE_MAX_CELLS_PER_REPLY == (TRUSTED_LIVE_MAX_ROWS_PER_RESULT * 4)
-    supervisor = TrustedLiveReaderSupervisor.open(
+    with TrustedLiveReaderSupervisor.open(
         wal_writer.database_path,
         operation_timeout_seconds=45.0,
         reply_timeout_seconds=60.0,
-    )
-    helper_pid = supervisor.helper_pid
-    try:
+    ) as supervisor:
+        helper_pid = supervisor.helper_pid
         started = time.monotonic()
         result = supervisor.query(
             _recursive_rows_sql("NULL AS a, NULL AS b, NULL AS c, NULL AS d"),
@@ -551,8 +550,6 @@ def test_exact_row_and_aggregate_cell_boundaries_succeed(
         assert supervisor.helper_pid == helper_pid
         assert supervisor.query("SELECT 8", timeout=5.0).rows == ((8,),)
         assert wal_writer.request("checkpoint", mode="TRUNCATE") == (0, 0, 0)
-    finally:
-        supervisor.close()
     assert not supervisor.helper_alive
 
 
@@ -671,12 +668,11 @@ def test_statement_limit_uncertainty_retires_direct_reader(
     fault: str,
 ) -> None:
     _commit_before_rejection(wal_writer)
-    reader = TrustedLiveReader.open(
+    with TrustedLiveReader.open(
         wal_writer.database_path,
         _test_statement_limit_fault=fault,
-    )
-    protected_before = _protected_artifact_contents(wal_writer.database_path)
-    try:
+    ) as reader:
+        protected_before = _protected_artifact_contents(wal_writer.database_path)
         with pytest.raises(TrustedLiveCleanupError, match="reader connection"):
             reader.query_batch(
                 (
@@ -693,8 +689,6 @@ def test_statement_limit_uncertainty_retires_direct_reader(
         assert audit["source_write"] == 0
         assert audit["source_truncate"] == 0
         assert audit["source_delete"] == 0
-    finally:
-        reader.close()
 
     with TrustedLiveReader.open(wal_writer.database_path) as replacement:
         assert replacement.query("SELECT 12", timeout=5.0).rows == ((12,),)
@@ -705,11 +699,10 @@ def test_statement_limit_cleanup_overrides_reusable_result_limit(
     wal_writer: _ApswWalWriter,
 ) -> None:
     _commit_before_rejection(wal_writer)
-    reader = TrustedLiveReader.open(
+    with TrustedLiveReader.open(
         wal_writer.database_path,
         _test_statement_limit_fault="statement_limit_restore",
-    )
-    try:
+    ) as reader:
         with pytest.raises(TrustedLiveCleanupError) as caught:
             reader.query(
                 _wide_zeroblob_sql(9),
@@ -719,8 +712,6 @@ def test_statement_limit_cleanup_overrides_reusable_result_limit(
         assert isinstance(caught.value.__cause__, TrustedLiveResultLimitError)
         assert isinstance(caught.value.__cause__.__cause__, apsw.TooBigError)
         assert reader.closed
-    finally:
-        reader.close()
     assert wal_writer.request("checkpoint", mode="TRUNCATE") == (0, 0, 0)
 
 
@@ -736,12 +727,11 @@ def test_statement_limit_uncertainty_retires_helper_incarnation(
     wal_writer: _ApswWalWriter,
     fault: str,
 ) -> None:
-    supervisor = TrustedLiveReaderSupervisor.open(
+    with TrustedLiveReaderSupervisor.open(
         wal_writer.database_path,
         _test_fault=fault,
-    )
-    replacement_pid: int | None = None
-    try:
+    ) as supervisor:
+        replacement_pid: int | None = None
         first_pid = supervisor.helper_pid
         first_incarnation = supervisor.incarnation
         assert first_pid is not None
@@ -771,8 +761,6 @@ def test_statement_limit_uncertainty_retires_helper_incarnation(
             payload=b"writer-progress",
         )
         assert wal_writer.request("checkpoint", mode="TRUNCATE") == (0, 0, 0)
-    finally:
-        supervisor.close()
     assert replacement_pid is not None
     _assert_helper_stopped(supervisor, replacement_pid)
 
@@ -780,13 +768,12 @@ def test_statement_limit_uncertainty_retires_helper_incarnation(
 def test_helper_reuses_clean_incarnation_after_live_result_limit(
     wal_writer: _ApswWalWriter,
 ) -> None:
-    supervisor = TrustedLiveReaderSupervisor.open(
+    with TrustedLiveReaderSupervisor.open(
         wal_writer.database_path,
         startup_timeout_seconds=10.0,
         shutdown_timeout_seconds=5.0,
-    )
-    helper_pid = supervisor.helper_pid
-    try:
+    ) as supervisor:
+        helper_pid = supervisor.helper_pid
         assert helper_pid is not None
         _commit_before_rejection(wal_writer)
         protected_before = _protected_artifact_contents(wal_writer.database_path)
@@ -810,7 +797,5 @@ def test_helper_reuses_clean_incarnation_after_live_result_limit(
             payload=b"writer-progress",
         )
         assert wal_writer.request("checkpoint", mode="TRUNCATE") == (0, 0, 0)
-    finally:
-        supervisor.close()
     assert not supervisor.helper_alive
     assert supervisor.helper_pid is None

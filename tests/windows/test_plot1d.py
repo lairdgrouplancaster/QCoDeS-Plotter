@@ -1086,6 +1086,27 @@ class SnapToTraceTestCase(unittest.TestCase):
             widget.deleteLater()
             host.deleteLater()
 
+    def test_trace_appearance_defers_subclass_sync_until_controls_exist(self):
+        class Dialog(_TraceAppearanceDialog):
+            def __init__(self, owner):
+                super().__init__(owner)
+                self.extra_controls_ready = True
+                self.sync_swap_axes_control()
+
+            def sync_swap_axes_control(self):
+                if not self.__dict__.get("extra_controls_ready", False):
+                    raise AssertionError("Subclass controls have not been built")
+                super().sync_swap_axes_control()
+
+        host = qtw.QMainWindow()
+        host.lines = {}
+        try:
+            dialog = Dialog(host)
+            self.assertTrue(dialog.extra_controls_ready)
+            self.assertFalse(dialog.swap_axes.isEnabled())
+        finally:
+            host.deleteLater()
+
     def test_trace_appearance_swap_checkbox_applies_and_disables_when_invalid(self):
         class Host(qtw.QMainWindow):
             def __init__(self):
