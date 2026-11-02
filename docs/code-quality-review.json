@@ -7274,7 +7274,7 @@
       "base_commit": "0b69f50c7b4001a302d771cd344b423b7442c1d9",
       "findings_in_report": 447,
       "targeted_findings": 48,
-      "status": "implemented; await merged-main scan to confirm GitHub clearance",
+      "status": "Confirmed: the next export contains 399 findings, down from 447; all 48 targeted finding numbers are absent.",
       "groups": [
         {
           "rule": "py/unused-local-variable",
@@ -7785,6 +7785,257 @@
         "documentation": "docs/code-quality-errors-warnings.md",
         "github_dismissals_performed": false
       }
+    },
+    {
+      "date": "2026-11-02",
+      "source_report": "qplot-code-quality-k6zxb1vu.json",
+      "exported_at_utc": "2026-11-02T16:05:44.936367+00:00",
+      "report_sha256": "633cf6af4ea1d2c1e777d20071046471d2e439bf55e1503c7fb7a15bc9c3e95a",
+      "base_commit": "4bfcaa38d931876f90be191833e43905f787f6e3",
+      "findings_in_report": 399,
+      "targeted_findings": 29,
+      "status": "Implemented; await merged-main scan to confirm clearance. New request Protocol declarations may add informational findings.",
+      "groups": [
+        {
+          "rule": "py/missing-call-to-init",
+          "finding_numbers": [
+            612,
+            613
+          ],
+          "resolution": "Implement the nominal derived-read service contract instead of inheriting a partly initialized concrete broker. Keep nominal type checks and exact database binding checks, including replacement binding. Deterministic doubles now implement every required operation and fail explicitly for unsupported reads/ownership."
+        },
+        {
+          "rule": "py/init-calls-subclass",
+          "finding_numbers": [
+            607
+          ],
+          "resolution": "Initialize only base appearance controls in the base constructor; subclass synchronization runs after subclass controls exist."
+        },
+        {
+          "rule": "py/should-use-with",
+          "finding_numbers": [
+            1215,
+            1212,
+            1213,
+            1211,
+            1210,
+            1209,
+            1207,
+            1208,
+            1206,
+            1205,
+            1204,
+            1203,
+            1202,
+            1201,
+            1200,
+            1199,
+            97,
+            93,
+            91,
+            92,
+            90,
+            89,
+            86,
+            85
+          ],
+          "resolution": "Use reader/supervisor context managers for 24 test resource lifetimes. Preserve explicit close timing, post-close assertions, fault injection and protected-file checks. Include pre-try setup in the managed lifetime."
+        },
+        {
+          "rule": "py/unreachable-statement",
+          "finding_numbers": [
+            1198
+          ],
+          "resolution": "Catch the supervisor context body exception explicitly and assert that the exact original exception survives cleanup. Post-close helper/job/checkpoint assertions follow a visible exception-handler path."
+        },
+        {
+          "rule": "py/unused-local-variable",
+          "finding_numbers": [
+            1347
+          ],
+          "resolution": "The same explicit exception-handler control flow makes the job.done assertion visible to the analyser."
+        }
+      ],
+      "validation": {
+        "tests_passed": 642,
+        "subtests_passed": 29,
+        "platform_skips": 1,
+        "project_mypy": "91 source files passed",
+        "ruff": "passed",
+        "startup": "qPlot remained running offscreen for eight seconds"
+      },
+      "github_findings_modified": false,
+      "severity_review": {
+        "scope": "Every error and warning in the 399-finding export",
+        "summary": {
+          "total": 17,
+          "code_fixes": 4,
+          "reviewed_exceptions": 13,
+          "retained_errors": 0,
+          "retained_warnings": 13
+        },
+        "findings": [
+          {
+            "number": 1368,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 549,
+            "disposition": "reviewed_exception",
+            "reason": "Context-menu hook creates base controls then connects deferred actions; image-dependent handlers execute only after construction."
+          },
+          {
+            "number": 1367,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 548,
+            "disposition": "reviewed_exception",
+            "reason": "Label hook follows axes/frame setup and uses existing shared controls; exercised through real plot/appearance tests."
+          },
+          {
+            "number": 1366,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 540,
+            "disposition": "reviewed_exception",
+            "reason": "Heatmap refresh hook first creates base toolbar state before inserting its autoscale checkbox; later image state is not accessed."
+          },
+          {
+            "number": 1365,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 538,
+            "disposition": "reviewed_exception",
+            "reason": "Axes construction hook follows shared-state setup; sweeper sets cut identity before super, and the heatmap override first builds base axes."
+          },
+          {
+            "number": 1362,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 412,
+            "disposition": "reviewed_exception",
+            "reason": "All four flagged runtime methods resolve solely to PlotWindowFeedbackMixin; duplicate type declarations do not exist at runtime."
+          },
+          {
+            "number": 1198,
+            "severity": "warning",
+            "rule": "py/unreachable-statement",
+            "path": "tests/datahandling/test_trusted_live_supervisor.py",
+            "reported_line": 2190,
+            "disposition": "code_fix",
+            "reason": "Catch the supervisor context body exception explicitly and assert that the exact original exception survives cleanup. Post-close helper/job/checkpoint assertions follow a visible exception-handler path."
+          },
+          {
+            "number": 613,
+            "severity": "error",
+            "rule": "py/missing-call-to-init",
+            "path": "tests/datahandling/test_trusted_work_coordinator.py",
+            "reported_line": 127,
+            "disposition": "code_fix",
+            "reason": "Implement the nominal derived-read service contract instead of inheriting a partly initialized concrete broker."
+          },
+          {
+            "number": 612,
+            "severity": "error",
+            "rule": "py/missing-call-to-init",
+            "path": "tests/windows/test_trusted_derived_qt.py",
+            "reported_line": 76,
+            "disposition": "code_fix",
+            "reason": "Implement the nominal derived-read service contract instead of inheriting a partly initialized concrete broker."
+          },
+          {
+            "number": 607,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plot1d_traces.py",
+            "reported_line": 1635,
+            "disposition": "code_fix",
+            "reason": "Initialize only base appearance controls in the base constructor; subclass synchronization runs after subclass controls exist."
+          },
+          {
+            "number": 606,
+            "severity": "warning",
+            "rule": "py/incomplete-ordering",
+            "path": "src/qplot/windows/_widgets/run_list_items.py",
+            "reported_line": 468,
+            "disposition": "reviewed_exception",
+            "reason": "Qt tree sorting uses the less-than override; adding unrelated rich comparisons is outside the widget contract."
+          },
+          {
+            "number": 605,
+            "severity": "warning",
+            "rule": "py/incomplete-ordering",
+            "path": "src/qplot/windows/_colorbar.py",
+            "reported_line": 148,
+            "disposition": "reviewed_exception",
+            "reason": "Qt widget item exposes the required less-than sorting hook; it does not claim general rich-value ordering."
+          },
+          {
+            "number": 602,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/_subplots/subplot2d.py",
+            "reported_line": 77,
+            "disposition": "reviewed_exception",
+            "reason": "The cut uses the snap mouseMoved override intentionally; other duplicate declarations are typing-only."
+          },
+          {
+            "number": 601,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/plot2d.py",
+            "reported_line": 33,
+            "disposition": "reviewed_exception",
+            "reason": "Snap mouseMoved and sweep change_axis deliberately override base handlers. Other flagged duplicates are typing declarations; actual runtime owners are recorded."
+          },
+          {
+            "number": 600,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/plot1d.py",
+            "reported_line": 18,
+            "disposition": "reviewed_exception",
+            "reason": "Snap mouseMoved is a deliberate runtime override. Other flagged duplicates are typing declarations; actual runtime owners are recorded."
+          },
+          {
+            "number": 598,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/_mixed_plots.py",
+            "reported_line": 30,
+            "disposition": "reviewed_exception",
+            "reason": "Runtime _heatmap_colorbar_items comes from Plot2DLayerMixin; the colorbar declaration exists only under TYPE_CHECKING."
+          },
+          {
+            "number": 456,
+            "severity": "warning",
+            "rule": "py/file-not-closed",
+            "path": "src/qplot/datahandling/trusted_live.py",
+            "reported_line": 779,
+            "disposition": "reviewed_exception",
+            "reason": "The physically read-only header descriptor is closed exactly once through _close_preflight_file_descriptor in finally. Cleanup uncertainty is surfaced and quarantined by tested preflight-failure handling."
+          },
+          {
+            "number": 78,
+            "severity": "warning",
+            "rule": "py/unreachable-statement",
+            "path": "src/qplot/windows/_trusted_derived_qt.py",
+            "reported_line": 1449,
+            "disposition": "reviewed_exception",
+            "reason": "Custom __eq__ can raise arbitrary exceptions or return non-booleans. New tests prove the rejection path is reachable for RuntimeError, KeyboardInterrupt, SystemExit and non-boolean results."
+          }
+        ]
+      },
+      "retained_notes": [
+        {
+          "number": 1214,
+          "reason": "Explicit close(timeout=2.0) is the cancellation/reply-race operation under test and is repeated in finally with the same bound; replacing it with context cleanup changes that failure-path bound."
+        }
+      ]
     }
   ]
 }

@@ -67,9 +67,8 @@ def test_completed_generation_window_rejects_prior_incarnation_and_future(
 ):
     database = tmp_path / "source.db"
     initialise_or_create_database_at(str(database), journal_mode="DELETE")
-    supervisor = TrustedLiveReaderSupervisor(database)
-    supervisor._next_generation = 17
-    try:
+    with TrustedLiveReaderSupervisor(database) as supervisor:
+        supervisor._next_generation = 17
         assert supervisor.query("SELECT 1").rows == ((1,),)
         current = supervisor.submit_query(
             "WITH RECURSIVE x(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM x "
@@ -80,8 +79,6 @@ def test_completed_generation_window_rejects_prior_incarnation_and_future(
         )
         with pytest.raises(TrustedLiveProtocolError):
             supervisor.wait(current)
-    finally:
-        supervisor.close()
 
 
 class _DelayedControl:

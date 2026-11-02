@@ -28,7 +28,7 @@ from qplot.datahandling.trusted_live_queries import (
     trusted_derived_source_revision,
 )
 from qplot.datahandling.trusted_live_service import (
-    TrustedLiveReadService,
+    TrustedDerivedReadService,
     TrustedReadQueueFullError,
 )
 from qplot.datahandling.trusted_work_coordinator import (
@@ -116,7 +116,7 @@ class _Request:
         self._cancelled = True
         return True
 
-    def wait(self, _timeout: float | None = None) -> TrustedDerivedSourceObservation:
+    def wait(self, timeout: float | None = None) -> TrustedDerivedSourceObservation:
         if self._cancelled:
             raise InterruptedError("fake request cancelled")
         if not self.done:
@@ -124,12 +124,8 @@ class _Request:
         return self._result
 
 
-class _Service(TrustedLiveReadService):
-    """In-memory service double; real initialization would start reader workers.
-
-    Inheritance satisfies the coordinator's concrete service-type check. Every
-    service operation used by these tests is supplied by this double.
-    """
+class _Service(TrustedDerivedReadService):
+    """In-memory implementation of the derived-read service contract."""
 
     def __init__(
         self,
@@ -152,14 +148,21 @@ class _Service(TrustedLiveReadService):
     def source_revision_namespace(self) -> TrustedSourceRevisionNamespace:
         return self.namespace
 
-    def submit_derived_source(self, run_id: int, **_kwargs: Any) -> _Request:  # type: ignore[override]
+    def submit_derived_source(self, run_id: int, **_kwargs: Any) -> _Request:
         self.submissions.append(run_id)
         return _Request(self.observations[run_id], self.release)
+
+    @property
+    def session_generation(self) -> int:
+        return 1
+
+    def submit_selected_run(self, run_id: int, *, deadline=None):
+        raise AssertionError("This coordinator fixture does not supply selected detail.")
 
     def close_async(self) -> bool:
         return True
 
-    def wait_closed(self, _timeout: float | None = None) -> bool:
+    def wait_closed(self, timeout: float | None = None) -> bool:
         return True
 
 
@@ -172,6 +175,34 @@ def _runs(observations: dict[int, TrustedDerivedSourceObservation]):
         )
         for run_id, observation in sorted(observations.items())
     )
+
+
+@pytest.mark.parametrize("replacement", [False, True])
+@pytest.mark.parametrize("failure", ["unrelated", "wrong-database"])
+def test_service_contract_rejects_invalid_binding_before_changing_state(
+    tmp_path: Path, replacement: bool, failure: str,
+) -> None:
+    instance = _instance()
+    original = _Service(instance, {})
+    invalid = object() if failure == "unrelated" else _Service(_instance(12), {})
+    expected_error = TypeError if failure == "unrelated" else ValueError
+    if not replacement:
+        with pytest.raises(expected_error):
+            TrustedWorkCoordinator(instance, (), invalid)
+        return
+
+    coordinator = TrustedWorkCoordinator(
+        instance, (), original,
+        cache=TrustedDerivedDiskCache(tmp_path / "disabled", enabled=False),
+    )
+    try:
+        before = coordinator.snapshot
+        with pytest.raises(expected_error):
+            coordinator.switch_database(instance, (), invalid)
+        assert coordinator.snapshot == before
+        assert coordinator._service is original
+    finally:
+        assert coordinator.wait_closed(1.0)
 
 
 def _drain(coordinator: TrustedWorkCoordinator, timeout: float = 5.0) -> None:
@@ -2240,7 +2271,7 @@ def test_progressive_layout_pages_restart_only_after_the_priority_pass_drains(
             super().__init__(instance, {1: first_page, 2: ordinary})
             self._sequences = {1: [first_page, completed], 2: [ordinary]}
 
-        def submit_derived_source(self, run_id: int, **_kwargs: Any) -> _Request:  # type: ignore[override]
+        def submit_derived_source(self, run_id: int, **_kwargs: Any) -> _Request:
             self.submissions.append(run_id)
             sequence = self._sequences[run_id]
             observation = sequence.pop(0) if len(sequence) > 1 else sequence[0]

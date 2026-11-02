@@ -1632,7 +1632,8 @@ class _TraceAppearanceDialog(qtw.QDialog):
                 lambda _value, name=property_name: self._apply_selection(name)
             )
         self._update_control_enabled_states(False)
-        self.sync_swap_axes_control()
+        # Subclass controls do not exist until their own constructor runs.
+        _TraceAppearanceDialog.sync_swap_axes_control(self)
 
     def sync_swap_axes_control(self) -> None:
         """Synchronise the global Swap X/Y checkbox with the plot window."""
