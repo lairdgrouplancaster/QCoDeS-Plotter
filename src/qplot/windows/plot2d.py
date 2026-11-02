@@ -1132,11 +1132,15 @@ class plot2d(
                 ])
 
         lines.extend([
-            "The full-resolution heatmap limit can be changed using the "
-            "Preferences dialog.",
+            (
+                "The full-resolution heatmap limit can be changed using the "
+                + "Preferences dialog."
+            ),
             "",
-            "The full-resolution limit controls when qPlot switches to an "
-            "averaged display grid.",
+            (
+                "The full-resolution limit controls when qPlot switches to an "
+                + "averaged display grid."
+            ),
             ])
         return "\n".join(lines)
 

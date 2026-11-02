@@ -38,7 +38,6 @@ from qplot.datahandling.file_identity import (
     QPLOT_GENERATION_LINEAGE_WINDOW,
     QPLOT_GENERATION_PROVENANCE_TABLE,
     QPLOT_GENERATION_PROVENANCE_TOKEN_BYTES,
-    QPLOT_GENERATION_PROVENANCE_TRIGGER_PREFIX,
     database_publication_guard_path,
     generation_lineage_transition_statements,
     generation_provenance_trigger,
@@ -124,7 +123,6 @@ _MAXIMUM_FREQUENCY = 4.0
 _SINUSOID_COMPONENT_COUNT = 2
 _RESULT_CHUNK_POINTS = 10_000
 _TEMPORARY_DATABASE_PREFIX = ".qplot-testdata-"
-_PROVENANCE_TRIGGER_PREFIX = QPLOT_GENERATION_PROVENANCE_TRIGGER_PREFIX
 _PROVENANCE_WRITER_ENABLED_ATTRIBUTE = "_qplot_provenance_writer_enabled"
 _SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 _SQLITE_HEADER = b"SQLite format 3\x00"

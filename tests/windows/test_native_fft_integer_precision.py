@@ -116,7 +116,7 @@ def test_integer_fft_preserves_ac_dc_secondary_refresh_and_csv(
 
 @pytest.mark.parametrize("fft_plots", [dict(_OFFSET_CASES[0], heatmap=True)], indirect=True)
 def test_integer_heatmap_cut_fft_retains_object_cells(fft_plots, no_callback_errors):
-    _window, (plot, _other), _x, _y = fft_plots
+    (plot, _) = fft_plots[1]
     raw_x, raw_y = plot.line.getOriginalDataset()
     assert raw_y.dtype.kind == "O"
     expected_x, expected_y = _offset_spectrum(raw_x, raw_y)
@@ -134,7 +134,7 @@ def test_integer_heatmap_cut_fft_retains_object_cells(fft_plots, no_callback_err
     {"x": np.arange(3), "y": np.array([-(2**60), 1, 2**60])},
 ], indirect=True)
 def test_integer_fft_dc_is_exact_original_mean(fft_plots, no_callback_errors):
-    _window, (plot, _other), _x, _y = fft_plots
+    (plot, _) = fft_plots[1]
     click_control(plot, "fftCheck")
     assert plot.line.getData()[1][0] == 1 / 3
     np.testing.assert_allclose(plot.line.getData()[1][1], 2**60 / np.sqrt(3), rtol=1e-14)

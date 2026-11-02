@@ -24,7 +24,7 @@ class OperationsPanelTestCase(unittest.TestCase):
             item = widget.list_options.item(index)
             if item.label == label:
                 return item
-        self.fail(f"Operation option not found: {label}")
+        raise self.failureException(f"Operation option not found: {label}")
 
     def test_operations_panel_layout_is_installed_once(self):
         messages = []

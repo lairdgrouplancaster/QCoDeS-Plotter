@@ -135,7 +135,7 @@ def test_manual_snapshot_completes_native_tick_layout(
 def test_axis_snapshots_follow_completed_overlay_geometry(
     fft_plots, qapplication, axis, monkeypatch,
 ):
-    _window, (plot, _source), _x, _y = fft_plots
+    (plot, _) = fft_plots[1]
     open_dialog = plot.open_axis_scale_dialog
     applications = []
     monkeypatch.setattr(plot, "_apply_axis_scale_manual_limits",

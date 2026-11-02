@@ -1893,7 +1893,7 @@ class TrustedWorkCoordinator:
             or self._reused_observation_bytes > TRUSTED_DERIVED_MAX_REUSED_SOURCE_BYTES
         ):
             (
-                _guid,
+                _,
                 (
                     _discarded,
                     _discarded_revision,

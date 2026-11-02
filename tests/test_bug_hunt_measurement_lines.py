@@ -98,7 +98,7 @@ def test_precision_overlay_tracks_secondary_visibility_and_removal(integer_plots
 
 @pytest.mark.parametrize("integer_plots", [("adjacent_uint_y", False)], indirect=True)
 def test_precision_recovery_preserves_newer_unrelated_error(integer_plots):
-    _window, (plot, _source), _x, _y, _slopes = integer_plots
+    (plot, _) = integer_plots[1]
     plot.show_plot_state("Source read failed", "A newer error", kind="error")
     plot.line.setVisible(False)
     plot._update_native_precision_status()

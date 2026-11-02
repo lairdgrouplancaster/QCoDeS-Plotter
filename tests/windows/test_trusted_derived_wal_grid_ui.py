@@ -427,6 +427,5 @@ def test_real_wal_partial_two_dependent_grid_populates_detail_before_images(
             close_main_window(window, timeout_ms=12_000)
         if context_open:
             context.__exit__(None, None, None)
-            context_open = False
         assert writer.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0] == 0
         writer.close()

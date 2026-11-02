@@ -779,7 +779,7 @@ def test_forced_shutdown_reaps_a_real_stuck_trusted_live_helper_and_preserves_wa
             writer_stdout, writer_stderr = writer.communicate(timeout=2.0)
         except subprocess.TimeoutExpired:
             writer.kill()
-            writer_stdout, writer_stderr = writer.communicate()
+            writer.communicate()
             raise
         assert writer.returncode == 0, writer_stderr
         if writer_stdout:

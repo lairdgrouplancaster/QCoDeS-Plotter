@@ -48,3 +48,40 @@ review, not proof that the program has no other defects. After merging the PRs,
 wait for a successful scan of the merged `main` commit and export a fresh report.
 Only that report can establish which GitHub findings have cleared or changed.
 GitHub alert state was not modified by this review.
+
+## Follow-up: 2 November 2026
+
+The fresh `qplot-code-quality-9lqtf8bk.json` export contains 447 findings. This
+follow-up re-evaluates retained findings for readability and targets 48 more:
+
+| Rule | Findings | Change |
+| --- | ---: | --- |
+| Unused local variable | 35 | Select needed fixture fields; remove unused state/result assignments; mark the ignored eviction key conventionally. |
+| Unused global variable | 1 | Remove the testdata provenance-prefix alias and import its defining constant in the test. |
+| Implicit string concatenation | 6 | Make deliberate concatenation explicit in help text, messages and subprocess programs. |
+| Mixed returns | 1 | Make the operation lookup's failing path an explicit unittest failure exception. |
+| Variable defined multiple times | 1 | Remove a redundant cancellation-test result sentinel; the expected-exception assertion already rejects normal returns. |
+| Unreachable code | 2 | Return generator results through a shared exhaustion helper. |
+| Conflicting attributes | 2 | Explicitly select concrete test-harness implementations. |
+
+The follow-up entry in the JSON records the export hash, base commit, exact
+finding IDs and grouped rationale. The fixture parameters retain their owner
+objects throughout each test. Existing publication, cancellation, numerical and
+cleanup assertions remain in place.
+
+Validation: 685 tests and 10 subtests passed across all affected test files and
+the coordinator, plot and command suites; 33 Windows timestamp cases were skipped
+locally. Ruff, project mypy (91 source files), targeted mypy and the offscreen
+startup check passed. The four
+files changed only for explicit string concatenation produce identical Python
+bytecode and constants. Explicit addition follows the
+[CodeQL recommendation](https://codeql.github.com/codeql-query-help/python/py-implicit-string-concatenation-in-list/).
+
+A fresh scan of the merged default branch is required to confirm the reduction.
+
+The [error and warning review](code-quality-errors-warnings.md) covers all 28
+higher-severity findings individually: 11 code fixes and 17 reviewed exceptions
+with concrete reasons and supporting evidence. The JSON records the same
+dispositions and runtime mixin method owners. The additional review passed 438
+tests, including new malformed-comparison tests that demonstrate why a flagged
+exception handler must remain.

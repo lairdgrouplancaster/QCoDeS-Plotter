@@ -125,6 +125,12 @@ class _Request:
 
 
 class _Service(TrustedLiveReadService):
+    """In-memory service double; real initialization would start reader workers.
+
+    Inheritance satisfies the coordinator's concrete service-type check. Every
+    service operation used by these tests is supplied by this double.
+    """
+
     def __init__(
         self,
         instance: DatabaseInstance,

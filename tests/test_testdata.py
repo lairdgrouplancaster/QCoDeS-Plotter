@@ -29,6 +29,7 @@ from qplot.datahandling.file_identity import (
     DATABASE_PUBLICATION_GUARD_SUFFIX,
     QPLOT_GENERATION_LINEAGE_RING_TABLE,
     QPLOT_GENERATION_LINEAGE_STATE_TABLE,
+    QPLOT_GENERATION_PROVENANCE_TRIGGER_PREFIX,
     database_file_identity,
     database_has_qplot_generation_marker,
 )
@@ -2123,7 +2124,7 @@ def test_writer_enablement_upgrades_legacy_numeric_provenance_triggers(tmp_path)
         }
         assert upgraded_names.isdisjoint(legacy_names)
         assert any(
-            name.startswith(testdata_module._PROVENANCE_TRIGGER_PREFIX)
+            name.startswith(QPLOT_GENERATION_PROVENANCE_TRIGGER_PREFIX)
             for name in upgraded_names
         )
         assert {

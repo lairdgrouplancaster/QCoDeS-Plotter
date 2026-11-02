@@ -152,7 +152,7 @@ def test_float64_native_centering(measured_plots, no_callback_errors, tmp_path):
     indirect=True,
 )
 def test_float64_offset_gradient(measured_plots, no_callback_errors):
-    _window, (host,), x, y = measured_plots
+    (host,) = measured_plots[1]
     operation_option(host, "dy/dx").input.setChecked(True)
     assert apply_operations(host)[1:] == ([True], [])
     expected = np.full(3, 4.0)

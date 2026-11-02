@@ -157,7 +157,7 @@ def test_standalone_full_view_and_owned_subset_keep_signal_and_padding_semantics
 def test_line_and_heatmap_cut_context_applies_guard_once_and_notifies_once(
     fft_plots, monkeypatch, qapplication,
 ):
-    _window, (plot, _source), _x, _y = fft_plots
+    (plot, _) = fft_plots[1]
     plot.vb.setXRange(.1, .9, padding=0)
     qapplication.processEvents()
     applications = []

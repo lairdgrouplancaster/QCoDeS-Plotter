@@ -2407,18 +2407,15 @@ def test_database_access_probe_cancellation_kills_and_reaps_blocked_child(
         cancellation_checks += 1
         return bool(blocked_process.communicate_timeouts)
 
-    no_result = object()
-    result = no_result
     cancel_started = perf_counter()
     with pytest.raises(InterruptedError, match="cancelled"):
-        result = database_module.database_access_error(
+        database_module.database_access_error(
             database_path,
             timeout=30,
             cancelled_callback=cancel_after_one_poll,
         )
 
     assert perf_counter() - cancel_started < 1
-    assert result is no_result
     assert len(popen_calls) == 1
     assert cancellation_checks >= 3
     assert blocked_process.kill_calls == 1
