@@ -81,6 +81,10 @@ def test_open_status_tooltip_refreshes_with_message(qapplication, main_window):
         show_message('Updated status')
         assert QtWidgets.QToolTip.text() == label.toolTip()
         assert 'Updated status' in QtWidgets.QToolTip.text()
+        assert label.toolTip().startswith('Updated status\nLast updated: ')
+        show_message('')
+        assert label.text() == ''
+        assert label.toolTip() == ''
     finally:
         QtWidgets.QToolTip.hideText()
         if main_window:
@@ -277,6 +281,7 @@ def test_toolbar_messages_persist_and_fit_narrow_windows(qapplication):
         visible = True
         monitorIntervalChanged = lambda *args: None
         refreshWindow = lambda *args: None
+        refresh_plot_data = lambda *args: None
 
     window = Window()
     window.monitor = QtCore.QTimer(window)
@@ -290,7 +295,7 @@ def test_toolbar_messages_persist_and_fit_narrow_windows(qapplication):
         window.show_status(message, timeout=1)
         QtTest.QTest.qWait(20)
         assert feedback.message == message
-        assert feedback.status_label.toolTip().startswith(message + '\nCreated: ')
+        assert feedback.status_label.toolTip().startswith(message + '\nLast updated: ')
         assert feedback.status_label.width() < feedback.status_label.fontMetrics().horizontalAdvance(message)
         assert feedback.isVisible() and window.spinBox.isVisible()
         assert feedback.geometry().left() > window.spinBox.geometry().right()

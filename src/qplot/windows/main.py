@@ -1,7 +1,6 @@
 import os
 import sys
 import threading
-from datetime import datetime
 from time import monotonic, perf_counter
 from typing import cast
 
@@ -38,7 +37,7 @@ from ._dataset_handle import DatasetHandle, DatasetKey
 from ._error_dialog import ErrorDialog
 from ._help import add_help_menu
 from ._plot_actions import PlotActionsMixin
-from ._plot_status import _StatusLabel
+from ._status import StatusLabel
 from ._preferences import (
     PreferencesDialog,
     create_preferences_action,
@@ -580,16 +579,9 @@ class MainWindow(
             )
         self._version_info = version_info()
         self.setWindowTitle(f"qPlot - {self._version_info['version']}")
-        self.status_label = _StatusLabel(self)
+        self.status_label = StatusLabel(self)
         self.status_label.setObjectName("mainStatusMessage")
-        self.status_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.status_label.setAlignment(
-            QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
-        )
         self.status_label.setAccessibleName("Main window status")
-        self.status_label.setSizePolicy(
-            qtw.QSizePolicy.Policy.Ignored, qtw.QSizePolicy.Policy.Preferred
-        )
         status_bar = cast(qtw.QStatusBar, self.statusBar())
         status_bar.addPermanentWidget(self.status_label, 1)
         startup_elapsed = perf_counter() - startup_start
@@ -1654,11 +1646,7 @@ class MainWindow(
         Show persistent feedback; timeout is retained for plot feedback callers.
 
         """
-        self.status_label.setText(message)
-        updated_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-        self.status_label.setToolTip(
-            f"{message}\nLast updated: {updated_at}" if message else ""
-        )
+        self.status_label.show_message(message)
 
         # A preview-drop action is initiated in a separate plot window, which
         # can cover the main window and its status bar.  Mirror feedback to
