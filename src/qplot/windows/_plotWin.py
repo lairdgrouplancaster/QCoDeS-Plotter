@@ -928,7 +928,7 @@ class plotWidget(
         self.refreshPlotButton.setToolTip("Refresh plot data now (R)")
         self.refreshPlotButton.setAccessibleName("Refresh plot data")
         self.refreshPlotButton.setFixedSize(28, 26)
-        self.refreshPlotButton.clicked.connect(lambda: self.refresh_plot_data())
+        self.refreshPlotButton.clicked.connect(self.refresh_plot_data)
         self.toolbarRef.addWidget(self.refreshPlotButton)
         self.toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
         self.toolbarRef.addWidget(self.spinBox)
@@ -1462,7 +1462,7 @@ class plotWidget(
         main_menu = menu.addMenu("&View")
         
         refreshAction = create_action("window.refresh", self)
-        refreshAction.triggered.connect(lambda: self.refresh_plot_data())
+        refreshAction.triggered.connect(self.refresh_plot_data)
         if hasattr(self, "get_mergables"): # Force refresh 1d line options
             refreshAction.triggered.connect(lambda: self.get_mergables.emit())
         main_menu.addAction(refreshAction)

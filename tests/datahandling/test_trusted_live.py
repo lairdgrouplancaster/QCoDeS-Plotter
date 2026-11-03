@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -667,17 +668,26 @@ def _preflight_cleanup_fault_process(
             trusted_live_module.checked_path_bound_file_identity = (
                 fail_identity_handle_close
             )
-        elif fault == "header_descriptor":
-            real_close = trusted_live_module._close_preflight_file_descriptor
+        elif fault in {
+            "header_descriptor", "header_keyboard_interrupt", "header_system_exit",
+        }:
+            real_header = trusted_live_module._database_header_journal_mode
 
-            def fail_header_descriptor_close(file_descriptor: int) -> None:
-                real_close(file_descriptor)
-                raise trusted_live_module._PreflightFileDescriptorCloseError(
-                    5,
-                    "simulated checked header descriptor close failure",
-                )
+            def fail_header_descriptor_close(path: Path) -> str:
+                real_close = os.close
 
-            trusted_live_module._close_preflight_file_descriptor = (
+                def fail_close(file_descriptor: int) -> None:
+                    if fault == "header_keyboard_interrupt":
+                        raise KeyboardInterrupt("simulated interrupted header close")
+                    if fault == "header_system_exit":
+                        raise SystemExit("simulated interrupted header close")
+                    real_close(file_descriptor)
+                    raise OSError(5, "simulated checked header descriptor close failure")
+
+                with patch.object(os, "close", side_effect=fail_close):
+                    return real_header(path)
+
+            trusted_live_module._database_header_journal_mode = (
                 fail_header_descriptor_close
             )
         else:
@@ -2546,7 +2556,9 @@ def test_forced_cleanup_uncertainty_is_chained_and_quarantined(
     assert "Terminate the process" in reuse_error[1]
 
 
-@pytest.mark.parametrize("fault", ["identity_handle", "header_descriptor"])
+@pytest.mark.parametrize("fault", [
+    "identity_handle", "header_descriptor", "header_keyboard_interrupt", "header_system_exit",
+])
 def test_preflight_close_uncertainty_quarantines_process_session(
     tmp_path: Path,
     fault: str,

@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pyqtgraph as pg
 import qcodes
-from PyQt6 import QtCore, QtGui, QtPrintSupport
+from PyQt6 import QtCore, QtGui, QtPrintSupport, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import (
     CSVExporter,
@@ -249,6 +249,20 @@ class _PyqtgraphDialogHost(qtw.QMainWindow):
 
 
 class PlotWindowRefreshTestCase(unittest.TestCase):
+    def test_refresh_button_discards_checked_argument_and_refreshes_source(self):
+        window = plotWidget.__new__(plotWidget)
+        qtw.QMainWindow.__init__(window)
+        window.monitor = QtCore.QTimer(window)
+        window._can_process_refresh = lambda: True
+        refreshes = []
+        window.refreshWindow = lambda force=False: refreshes.append(force)
+        try:
+            window.initRefresh(refrate=1.5)
+            window.refreshPlotButton.clicked.emit(True)
+            self.assertEqual(refreshes, [True])
+        finally:
+            sip.delete(window)
+
     class Timer:
         def __init__(self):
             self.stopped = 0
@@ -1330,6 +1344,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
     def test_plot_options_menu_includes_preferences_and_excludes_confirmation_duplicates(self):
         class Host(qtw.QMainWindow):
             initMenu = plotWidget.initMenu
+            refresh_plot_data = plotWidget.refresh_plot_data
             createPopupMenu = plotWidget.createPopupMenu
             register_shortcut = plotWidget.register_shortcut
             _add_plot_area_resize_menu = plotWidget._add_plot_area_resize_menu
@@ -1830,6 +1845,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
         class Host(qtw.QMainWindow):
             initContextMenu = plotWidget.initContextMenu
             initMenu = plotWidget.initMenu
+            refresh_plot_data = plotWidget.refresh_plot_data
             createPopupMenu = plotWidget.createPopupMenu
             register_shortcut = plotWidget.register_shortcut
             _add_plot_area_resize_menu = plotWidget._add_plot_area_resize_menu
@@ -1954,6 +1970,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
     def test_plot_resize_menu_has_fixed_presets_and_custom_size_action(self):
         class Host(qtw.QMainWindow):
             initMenu = plotWidget.initMenu
+            refresh_plot_data = plotWidget.refresh_plot_data
             createPopupMenu = plotWidget.createPopupMenu
             register_shortcut = plotWidget.register_shortcut
             _add_plot_area_resize_menu = plotWidget._add_plot_area_resize_menu

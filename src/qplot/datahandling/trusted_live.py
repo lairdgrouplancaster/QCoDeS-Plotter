@@ -788,7 +788,14 @@ def _database_header_journal_mode(database_path: Path) -> str:
                 remaining -= len(part)
             header = b"".join(header_parts)
         finally:
-            _close_preflight_file_descriptor(file_descriptor)
+            try:
+                os.close(file_descriptor)
+            except BaseException as error:
+                # Never retry an uncertain close: the OS may already have
+                # consumed and reassigned this descriptor number, even on EINTR.
+                # An interruption is uncertain too; quarantine the process even
+                # if close did not return an ordinary OSError.
+                raise _PreflightFileDescriptorCloseError(*error.args) from error
     except _PreflightFileDescriptorCloseError:
         raise
     except OSError as error:
@@ -817,17 +824,6 @@ def _database_header_journal_mode(database_path: Path) -> str:
         "The selected database uses unsupported SQLite header read/write "
         f"versions {read_version}/{write_version}."
     )
-
-
-def _close_preflight_file_descriptor(file_descriptor: int) -> None:
-    """Close one preflight fd exactly once and surface uncertain cleanup."""
-
-    try:
-        os.close(file_descriptor)
-    except OSError as error:
-        # In particular, never retry close(2) after EINTR: supported kernels
-        # may already have consumed and reassigned the descriptor number.
-        raise _PreflightFileDescriptorCloseError(*error.args) from error
 
 
 def _capture_source_identity(
