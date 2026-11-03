@@ -1,15 +1,24 @@
 # Error and warning dispositions
 
-The latest export, `qplot-code-quality-_acaoijs.json`, was made on
-2 November 2026 at 21:47 UTC, after the successful scan of merged main commit
-`cf3bad34d95d28191544e5a9d187c7c1c429b764`. It has **374 findings: no errors,
-13 warnings and 361 notes**. All 29 targets from PR #105 cleared.
+The latest export, `qplot-code-quality-jn_sae33.json`, was made on
+3 November 2026 at 09:12 UTC, after the successful scan of merged main commit
+`c4e0e80c5873221386c1b239495b1fd6dc6fdaa4`. It has **360 findings: one error,
+four warnings and 355 notes**. All nine structural warnings from PR #106 cleared,
+and the typing-declaration notes fell by six as expected.
 
-This follow-up addresses the **nine structural warnings**. The remaining four
-warnings have individual reasons below. These are source review conclusions;
-a successful merged-main scan must confirm clearance. No GitHub findings have
-been dismissed or suppressed. Earlier reviews remain in
-[the JSON audit](code-quality-review.json).
+## Current assertion correction
+
+Finding **1403**, `py/side-effect-in-assert`, concerns `assert window.close()` in
+the lifecycle test added in PR #106. Call `close()` first and assert its returned
+boolean separately. The fixture's database load now follows the same pattern.
+Both operations therefore still run when Python removes assertions.
+
+All ten lifecycle tests and Ruff passed. An optimized-bytecode comparison proves
+both calls were omitted before this correction and remain afterward. The next
+merged-main scan must confirm clearance. No findings have been dismissed or
+suppressed. The four reviewed warning exceptions remain below.
+
+## Confirmed structural fixes from PR #106
 
 ## Post-construction setup
 
@@ -73,7 +82,7 @@ The new unused-import note for `Generic` is not actionable: the existing
 `TrustedReadRequest(Generic[_ResultT])` declaration uses it. The Protocol and
 typing-only declarations remain intentional interfaces.
 
-Validation: the complete window and widget suites passed **2,965 tests and
+Structural-change validation: the complete window and widget suites passed **2,965 tests and
 82 subtests**, with 55 platform/feature skips. A final focused recheck passed
 11 tests covering the lifecycle and real line/heatmap/cut plotting. Ruff and
 project mypy (92 files) passed, and qPlot remained running through an eight-second

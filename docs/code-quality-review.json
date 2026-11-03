@@ -8045,7 +8045,7 @@
       "base_commit": "cf3bad34d95d28191544e5a9d187c7c1c429b764",
       "findings_in_report": 374,
       "targeted_findings": 9,
-      "status": "Implemented and locally validated; await a merged-main scan to confirm clearance.",
+      "status": "Confirmed by qplot-code-quality-jn_sae33.json: all nine structural warning targets cleared and the six net typing-declaration notes cleared. A new assertion-side-effect error in the added test is handled in the next review.",
       "groups": [
         {
           "rule": "py/init-calls-subclass",
@@ -8292,6 +8292,90 @@
         "existing_diagnostics_after": 187,
         "added_diagnostics": 0,
         "comparison": "Same module, diagnostic message and code; source line shifts ignored."
+      }
+    },
+    {
+      "date": "2026-11-03",
+      "source_report": "qplot-code-quality-jn_sae33.json",
+      "exported_at_utc": "2026-11-03T09:12:08.314827+00:00",
+      "report_sha256": "2cda2165188b5fa9a820ae90d6ff5a47866fda4c50b095c7afdce15a15d7dbf1",
+      "base_commit": "c4e0e80c5873221386c1b239495b1fd6dc6fdaa4",
+      "findings_in_report": 360,
+      "targeted_findings": 1,
+      "status": "Implemented and locally validated; await a merged-main scan to confirm clearance.",
+      "groups": [
+        {
+          "rule": "py/side-effect-in-assert",
+          "finding_numbers": [
+            1403
+          ],
+          "resolution": "Execute window.close() before asserting its boolean return value, so optimized Python retains the close operation."
+        }
+      ],
+      "additional_unreported_cleanup": "Move the same new test fixture\u2019s database load before its return-value assertion, following the same rule.",
+      "validation": {
+        "tests_passed": 10,
+        "suite": "tests/windows/test_plot_initialization.py",
+        "ruff": "passed",
+        "optimized_python": "Both close() and load_file() disappear in the original optimize=2 bytecode and remain in the corrected bytecode."
+      },
+      "github_findings_modified": false,
+      "severity_review": {
+        "scope": "Every error and warning in the 360-finding export",
+        "summary": {
+          "total": 5,
+          "code_fixes": 1,
+          "reviewed_exceptions": 4,
+          "retained_errors": 0,
+          "retained_warnings": 4
+        },
+        "findings": [
+          {
+            "number": 1403,
+            "severity": "error",
+            "rule": "py/side-effect-in-assert",
+            "path": "tests/windows/test_plot_initialization.py",
+            "reported_line": 79,
+            "disposition": "code_fix",
+            "reason": "Execute window.close() before asserting its boolean return value, so optimized Python retains the close operation."
+          },
+          {
+            "number": 606,
+            "severity": "warning",
+            "rule": "py/incomplete-ordering",
+            "path": "src/qplot/windows/_widgets/run_list_items.py",
+            "reported_line": 468,
+            "disposition": "reviewed_exception",
+            "reason": "Qt tree sorting uses the less-than override; adding unrelated rich comparisons is outside the widget contract."
+          },
+          {
+            "number": 605,
+            "severity": "warning",
+            "rule": "py/incomplete-ordering",
+            "path": "src/qplot/windows/_colorbar.py",
+            "reported_line": 148,
+            "disposition": "reviewed_exception",
+            "reason": "Qt widget item exposes the required less-than sorting hook; it does not claim general rich-value ordering."
+          },
+          {
+            "number": 456,
+            "severity": "warning",
+            "rule": "py/file-not-closed",
+            "path": "src/qplot/datahandling/trusted_live.py",
+            "reported_line": 779,
+            "disposition": "reviewed_exception",
+            "reason": "The physically read-only header descriptor is closed exactly once through _close_preflight_file_descriptor in finally. Cleanup uncertainty is surfaced and quarantined by tested preflight-failure handling."
+          },
+          {
+            "number": 78,
+            "severity": "warning",
+            "rule": "py/unreachable-statement",
+            "path": "src/qplot/windows/_trusted_derived_qt.py",
+            "reported_line": 1449,
+            "disposition": "reviewed_exception",
+            "reason": "Custom __eq__ can raise arbitrary exceptions or return non-booleans. New tests prove the rejection path is reachable for RuntimeError, KeyboardInterrupt, SystemExit and non-boolean results."
+          }
+        ]
       }
     }
   ]
