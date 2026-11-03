@@ -37,12 +37,12 @@ from ._dataset_handle import DatasetHandle, DatasetKey
 from ._error_dialog import ErrorDialog
 from ._help import add_help_menu
 from ._plot_actions import PlotActionsMixin
-from ._status import StatusLabel
 from ._preferences import (
     PreferencesDialog,
     create_preferences_action,
 )
 from ._run_controls import AUTO_PLOT_KEY, RunControlsMixin
+from ._status import StatusLabel
 from ._trusted_derived_qt import TrustedDerivedQtBridge
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
