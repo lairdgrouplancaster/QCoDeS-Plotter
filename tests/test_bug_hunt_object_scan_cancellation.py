@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 import qplot.tools.worker as worker_module
-from qplot.tools.worker import PlotWorkCancelled, loader
 from tests.test_worker_array_heatmaps import heatmap_dataset, make_worker
 
 
@@ -69,7 +68,7 @@ def test_real_mixed_records_cancel_during_classification(
 
 @pytest.mark.parametrize("method_name", ["_real_line_values", "_real_heatmap_values"])
 def test_object_complex_validation_cancels_and_retains_late_rejection(monkeypatch, method_name):
-    worker = loader.__new__(loader)
+    worker = worker_module.loader.__new__(worker_module.loader)
     worker.param = SimpleNamespace(name="signal")
     values = np.arange(4096).astype(object)
     values[-1] = 1j
@@ -88,7 +87,7 @@ def test_object_complex_validation_cancels_and_retains_late_rejection(monkeypatc
 
     with monkeypatch.context() as patch:
         patch.setattr(worker_module.np, "iscomplexobj", observe)
-        with pytest.raises(PlotWorkCancelled):
+        with pytest.raises(worker_module.PlotWorkCancelled):
             getattr(worker, method_name)(values, "signal")
     assert consumed == 1024
     np.testing.assert_array_equal(values, original)

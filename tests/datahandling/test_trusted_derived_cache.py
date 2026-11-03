@@ -13,15 +13,6 @@ import pytest
 
 import qplot.datahandling.trusted_derived_cache as cache_module
 from qplot.datahandling.file_identity import DatabaseInstance
-from qplot.datahandling.trusted_derived_cache import (
-    TRUSTED_DERIVED_CACHE_FORMAT_VERSION,
-    TRUSTED_DERIVED_CACHE_MAX_CONTAINER_ITEMS,
-    TRUSTED_DERIVED_CACHE_MAX_TEXT_BYTES,
-    TrustedDerivedDiskCache,
-    _preflight_json,
-    canonical_trusted_cache_key,
-    trusted_cache_filename,
-)
 from qplot.datahandling.trusted_derived_rendering import (
     TRUSTED_DERIVED_MAX_ENCODED_IMAGE_BYTES,
 )
@@ -37,7 +28,7 @@ _DEFAULT_OPTIONS = RenderingOptions()
 
 
 def test_scientifically_corrected_renderer_uses_cache_format_after_v2() -> None:
-    assert TRUSTED_DERIVED_CACHE_FORMAT_VERSION > 2
+    assert cache_module.TRUSTED_DERIVED_CACHE_FORMAT_VERSION > 2
 
 
 def _key(
@@ -176,7 +167,7 @@ def _write_cache_entries_in_process(
     ready: object,
     release: object,
 ) -> None:
-    cache = TrustedDerivedDiskCache(
+    cache = cache_module.TrustedDerivedDiskCache(
         Path(root),
         max_entry_bytes=4_096,
         max_total_bytes=32_768,
@@ -192,7 +183,7 @@ def _write_cache_entries_in_process(
 def test_cache_round_trip_exact_key_separation_and_atomic_replacement(
     tmp_path: Path,
 ) -> None:
-    cache = TrustedDerivedDiskCache(tmp_path / "cache")
+    cache = cache_module.TrustedDerivedDiskCache(tmp_path / "cache")
     first = _key(1)
     second = _key(2)
 
@@ -210,12 +201,12 @@ def test_valid_existing_same_key_entry_is_reused_without_replacement(
 ) -> None:
     root = tmp_path / "cache"
     key = _key(193)
-    first = TrustedDerivedDiskCache(root)
+    first = cache_module.TrustedDerivedDiskCache(root)
     assert first.put(key, _payload("original"))
-    entry = root / trusted_cache_filename(key)
+    entry = root / cache_module.trusted_cache_filename(key)
     before = _stable_artifact_snapshot(entry)
 
-    second = TrustedDerivedDiskCache(root)
+    second = cache_module.TrustedDerivedDiskCache(root)
     assert second.put(key, _payload("different-render-is-not-published"))
 
     assert _stable_artifact_snapshot(entry) == before
@@ -228,11 +219,11 @@ def test_publication_never_clobbers_existing_sqlite_database_destination(
 ) -> None:
     root = tmp_path / "cache"
     key = _key(194)
-    destination = root / trusted_cache_filename(key)
+    destination = root / cache_module.trusted_cache_filename(key)
     _create_queryable_sqlite_database(destination)
     before = _database_family_snapshot(destination)
     selected = tmp_path / "selected" / "live.db"
-    cache = TrustedDerivedDiskCache(root)
+    cache = cache_module.TrustedDerivedDiskCache(root)
     cache.configure_for_database(
         DatabaseInstance(str(selected), str(selected), (7, 194))
     )
@@ -247,8 +238,8 @@ def test_publication_never_clobbers_existing_sqlite_database_destination(
 @pytest.mark.parametrize(
     "byte_count",
     [
-        TRUSTED_DERIVED_CACHE_MAX_TEXT_BYTES - 1,
-        TRUSTED_DERIVED_CACHE_MAX_TEXT_BYTES + 1,
+        cache_module.TRUSTED_DERIVED_CACHE_MAX_TEXT_BYTES - 1,
+        cache_module.TRUSTED_DERIVED_CACHE_MAX_TEXT_BYTES + 1,
         1_100_008,
     ],
 )
@@ -256,7 +247,7 @@ def test_valid_png_payloads_on_both_sides_of_text_limit_round_trip(
     tmp_path: Path,
     byte_count: int,
 ) -> None:
-    cache = TrustedDerivedDiskCache(tmp_path / "cache")
+    cache = cache_module.TrustedDerivedDiskCache(tmp_path / "cache")
     payload = _image_payload(byte_count)
 
     assert cache.put(_key(byte_count), payload)
@@ -266,7 +257,7 @@ def test_valid_png_payloads_on_both_sides_of_text_limit_round_trip(
 def test_maximum_encoded_and_decoded_image_boundary_round_trips(
     tmp_path: Path,
 ) -> None:
-    cache = TrustedDerivedDiskCache(tmp_path / "cache")
+    cache = cache_module.TrustedDerivedDiskCache(tmp_path / "cache")
     payload = _image_payload(
         TRUSTED_DERIVED_MAX_ENCODED_IMAGE_BYTES,
         width=2_048,
@@ -280,22 +271,22 @@ def test_maximum_encoded_and_decoded_image_boundary_round_trips(
 def test_binary_preflight_rejects_encoded_and_decoded_overflow_boundaries() -> None:
     maximum = TRUSTED_DERIVED_MAX_ENCODED_IMAGE_BYTES
     maximum_base64 = base64.b64encode(bytes(maximum))
-    _preflight_json(b'["bytes","' + maximum_base64 + b'"]')
+    cache_module._preflight_json(b'["bytes","' + maximum_base64 + b'"]')
 
     decoded_overflow = base64.b64encode(bytes(maximum + 1))
     with pytest.raises(ValueError, match="byte scalar is oversized"):
-        _preflight_json(b'["bytes","' + decoded_overflow + b'"]')
+        cache_module._preflight_json(b'["bytes","' + decoded_overflow + b'"]')
     with pytest.raises(ValueError, match="byte scalar is oversized"):
-        _preflight_json(b'["bytes","' + maximum_base64 + b'A"]')
+        cache_module._preflight_json(b'["bytes","' + maximum_base64 + b'A"]')
 
 
 def test_oversized_ordinary_text_is_not_treated_as_binary() -> None:
-    oversized = b"x" * (TRUSTED_DERIVED_CACHE_MAX_TEXT_BYTES + 1)
+    oversized = b"x" * (cache_module.TRUSTED_DERIVED_CACHE_MAX_TEXT_BYTES + 1)
 
     with pytest.raises(ValueError, match="string is oversized"):
-        _preflight_json(b'["str","' + oversized + b'"]')
+        cache_module._preflight_json(b'["str","' + oversized + b'"]')
     with pytest.raises(ValueError, match="string is oversized"):
-        _preflight_json(b'{"description":"' + oversized + b'"}')
+        cache_module._preflight_json(b'{"description":"' + oversized + b'"}')
 
 
 def test_key_encoding_preserves_bool_integer_float_and_string_types() -> None:
@@ -304,8 +295,8 @@ def test_key_encoding_preserves_bool_integer_float_and_string_types() -> None:
         for value in (True, 1, 1.0, "1")
     ]
 
-    assert len({canonical_trusted_cache_key(key) for key in keys}) == 4
-    assert len({trusted_cache_filename(key) for key in keys}) == 4
+    assert len({cache_module.canonical_trusted_cache_key(key) for key in keys}) == 4
+    assert len({cache_module.trusted_cache_filename(key) for key in keys}) == 4
 
 
 @pytest.mark.parametrize("mutation", ["truncate", "corrupt", "version"])
@@ -313,10 +304,10 @@ def test_corrupt_truncated_and_incompatible_entries_are_misses(
     tmp_path: Path,
     mutation: str,
 ) -> None:
-    cache = TrustedDerivedDiskCache(tmp_path / "cache")
+    cache = cache_module.TrustedDerivedDiskCache(tmp_path / "cache")
     key = _key()
     assert cache.put(key, _payload())
-    path = cache.root / trusted_cache_filename(key)
+    path = cache.root / cache_module.trusted_cache_filename(key)
     data = path.read_bytes()
     if mutation == "truncate":
         path.write_bytes(data[:10])
@@ -324,9 +315,9 @@ def test_corrupt_truncated_and_incompatible_entries_are_misses(
         path.write_bytes(data[:-1] + bytes((data[-1] ^ 1,)))
     else:
         changed = bytearray(data)
-        marker = f'"format_version":{TRUSTED_DERIVED_CACHE_FORMAT_VERSION}'.encode()
+        marker = f'"format_version":{cache_module.TRUSTED_DERIVED_CACHE_FORMAT_VERSION}'.encode()
         offset = changed.index(marker) + len(marker) - 1
-        changed[offset] = ord(str((TRUSTED_DERIVED_CACHE_FORMAT_VERSION + 1) % 10))
+        changed[offset] = ord(str((cache_module.TRUSTED_DERIVED_CACHE_FORMAT_VERSION + 1) % 10))
         path.write_bytes(changed)
 
     assert cache.get(key) is None
@@ -336,7 +327,7 @@ def test_disabled_cache_miss_and_put_create_no_filesystem_entries(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "must-not-exist"
-    cache = TrustedDerivedDiskCache(root, enabled=False)
+    cache = cache_module.TrustedDerivedDiskCache(root, enabled=False)
 
     assert cache.get(_key()) is None
     assert not cache.put(_key(), _payload())
@@ -345,7 +336,7 @@ def test_disabled_cache_miss_and_put_create_no_filesystem_entries(
 
 def test_available_cache_miss_does_not_create_its_root(tmp_path: Path) -> None:
     root = tmp_path / "missing-cache"
-    cache = TrustedDerivedDiskCache(root)
+    cache = cache_module.TrustedDerivedDiskCache(root)
 
     assert cache.get(_key()) is None
     assert not root.exists()
@@ -355,7 +346,7 @@ def test_permission_and_disk_full_failures_degrade_to_uncached_result(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    cache = TrustedDerivedDiskCache(tmp_path / "cache")
+    cache = cache_module.TrustedDerivedDiskCache(tmp_path / "cache")
     key = _key()
 
     def disk_full(_source: object, _destination: object) -> None:
@@ -383,7 +374,7 @@ def test_corrupt_sqlite_index_disables_cache_and_degrades_to_false(
     root = tmp_path / "cache"
     root.mkdir()
     (root / ".qplot-derived-cache-index.sqlite3").write_bytes(b"not sqlite")
-    cache = TrustedDerivedDiskCache(root)
+    cache = cache_module.TrustedDerivedDiskCache(root)
 
     assert not cache.put(_key(), _payload())
     assert not cache.enabled
@@ -420,7 +411,7 @@ def test_foreign_qcodes_inventory_and_existing_sidecars_are_never_modified(
 
     monkeypatch.setattr(cache_module.sqlite3, "connect", recording_connect)
     source_status = source.stat()
-    cache = TrustedDerivedDiskCache(inventory.parent)
+    cache = cache_module.TrustedDerivedDiskCache(inventory.parent)
     cache.configure_for_database(
         DatabaseInstance(
             str(source),
@@ -443,7 +434,7 @@ def test_incompatible_qplot_inventory_and_sidecars_are_never_modified(
 ) -> None:
     root = tmp_path / "cache"
     inventory = root / ".qplot-derived-cache-index.sqlite3"
-    _seed_cache_index(root, trusted_cache_filename(_key(221)))
+    _seed_cache_index(root, cache_module.trusted_cache_filename(_key(221)))
     connection = sqlite3.connect(inventory)
     try:
         connection.execute(
@@ -457,7 +448,7 @@ def test_incompatible_qplot_inventory_and_sidecars_are_never_modified(
             f"incompatible-sidecar{suffix}".encode()
         )
     before = _database_family_snapshot(inventory)
-    cache = TrustedDerivedDiskCache(root)
+    cache = cache_module.TrustedDerivedDiskCache(root)
 
     assert not cache.put(_key(221), _payload("must-remain-uncached"))
 
@@ -468,10 +459,10 @@ def test_incompatible_qplot_inventory_and_sidecars_are_never_modified(
 
 def test_new_and_existing_qplot_inventories_remain_writable(tmp_path: Path) -> None:
     root = tmp_path / "cache"
-    first = TrustedDerivedDiskCache(root)
+    first = cache_module.TrustedDerivedDiskCache(root)
     assert first.put(_key(222), _payload("new-inventory"))
 
-    second = TrustedDerivedDiskCache(root)
+    second = cache_module.TrustedDerivedDiskCache(root)
     assert second.put(_key(223), _payload("existing-inventory"))
 
     assert second.get(_key(222)) == _payload("new-inventory")
@@ -487,7 +478,7 @@ def test_index_failures_at_every_publication_phase_are_best_effort(
     monkeypatch: pytest.MonkeyPatch,
     phase: str,
 ) -> None:
-    cache = TrustedDerivedDiskCache(tmp_path / "cache")
+    cache = cache_module.TrustedDerivedDiskCache(tmp_path / "cache")
     original_open_index = cache._open_index
     destructive_operations: list[str] = []
     monkeypatch.setattr(
@@ -559,7 +550,7 @@ def test_index_failures_at_every_publication_phase_are_best_effort(
 def test_cache_cancellation_is_checked_at_normal_phase_boundaries(
     tmp_path: Path,
 ) -> None:
-    cache = TrustedDerivedDiskCache(tmp_path / "cache")
+    cache = cache_module.TrustedDerivedDiskCache(tmp_path / "cache")
     key = _key()
     checks = 0
 
@@ -579,7 +570,7 @@ def test_eviction_only_removes_owned_cache_entries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = tmp_path / "cache"
-    cache = TrustedDerivedDiskCache(
+    cache = cache_module.TrustedDerivedDiskCache(
         root,
         max_entry_bytes=4_096,
         max_total_bytes=8_192,
@@ -611,7 +602,7 @@ def test_unproved_temporary_lookalike_is_retained_and_disables_cache(
     corrupt = root / f"{'a' * 64}.{'b' * 32}.tmp"
     corrupt.write_bytes(b"not a qPlot cache frame")
     before = _stable_artifact_snapshot(corrupt)
-    cache = TrustedDerivedDiskCache(root)
+    cache = cache_module.TrustedDerivedDiskCache(root)
 
     assert not cache.put(_key(197), _payload("uncached"))
 
@@ -624,17 +615,17 @@ def test_stale_temporary_cleanup_uses_central_guard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source_root = tmp_path / "source"
-    source_cache = TrustedDerivedDiskCache(source_root)
+    source_cache = cache_module.TrustedDerivedDiskCache(source_root)
     key = _key(198)
     assert source_cache.put(key, _payload("framed"))
-    source = source_root / trusted_cache_filename(key)
+    source = source_root / cache_module.trusted_cache_filename(key)
     root = tmp_path / "cache"
     root.mkdir()
     stem = source.stem
     for token in ("1" * 32, "2" * 32):
         (root / f"{stem}.{token}.tmp").write_bytes(source.read_bytes())
     monkeypatch.setattr(cache_module, "TRUSTED_DERIVED_CACHE_MAX_TEMP_FILES", 1)
-    cache = TrustedDerivedDiskCache(root)
+    cache = cache_module.TrustedDerivedDiskCache(root)
     operations: list[str] = []
     monkeypatch.setattr(
         cache,
@@ -655,13 +646,13 @@ def test_inventory_overflow_cleanup_uses_central_guard(
     root.mkdir()
     for value in range(4):
         source_root = tmp_path / f"source-{value}"
-        source_cache = TrustedDerivedDiskCache(source_root)
+        source_cache = cache_module.TrustedDerivedDiskCache(source_root)
         key = _key(210 + value)
         assert source_cache.put(key, _payload(str(value)))
-        source = source_root / trusted_cache_filename(key)
+        source = source_root / cache_module.trusted_cache_filename(key)
         (root / source.name).write_bytes(source.read_bytes())
     monkeypatch.setattr(cache_module, "TRUSTED_DERIVED_CACHE_MAX_CLEANUP_FILES", 4)
-    cache = TrustedDerivedDiskCache(root)
+    cache = cache_module.TrustedDerivedDiskCache(root)
     operations: list[str] = []
     monkeypatch.setattr(
         cache,
@@ -685,7 +676,7 @@ def test_eviction_rechecks_selection_atomically_before_unlink(
     _seed_cache_index(root, target.name)
     before = _database_family_snapshot(target)
     first_database = tmp_path / "first" / "live.db"
-    cache = TrustedDerivedDiskCache(
+    cache = cache_module.TrustedDerivedDiskCache(
         root,
         max_entry_bytes=4_096,
         max_total_bytes=8_192,
@@ -780,7 +771,7 @@ def test_corrupt_index_deletion_target_disables_cache_without_deleting_anything(
     _seed_cache_index(root, row_names[row_kind])
     protected = database_family + (escaped, nested, normalized)
     snapshots = {path: _stable_artifact_snapshot(path) for path in protected}
-    cache = TrustedDerivedDiskCache(
+    cache = cache_module.TrustedDerivedDiskCache(
         root,
         max_entry_bytes=4_096,
         max_total_bytes=8_192,
@@ -799,14 +790,14 @@ def test_corrupt_index_deletion_target_disables_cache_without_deleting_anything(
 def test_posix_cache_root_and_entries_ignore_ordinary_umask(tmp_path: Path) -> None:
     if os.name != "posix":
         pytest.skip("POSIX modes are not available")
-    cache = TrustedDerivedDiskCache(tmp_path / "cache")
+    cache = cache_module.TrustedDerivedDiskCache(tmp_path / "cache")
     prior = os.umask(0o022)
     try:
         assert cache.put(_key(), _payload())
     finally:
         os.umask(prior)
 
-    entry = cache.root / trusted_cache_filename(_key())
+    entry = cache.root / cache_module.trusted_cache_filename(_key())
     assert stat.S_IMODE(cache.root.stat().st_mode) == 0o700
     assert stat.S_IMODE(entry.stat().st_mode) == 0o600
 
@@ -816,7 +807,7 @@ def test_cache_inside_database_directory_is_disabled(tmp_path: Path) -> None:
     database_dir.mkdir()
     database_path = database_dir / "live.db"
     instance = DatabaseInstance(str(database_path), str(database_path), (7, 91))
-    cache = TrustedDerivedDiskCache(database_dir / "qplot-cache")
+    cache = cache_module.TrustedDerivedDiskCache(database_dir / "qplot-cache")
     cache.configure_for_database(instance)
 
     assert not cache.enabled
@@ -861,7 +852,7 @@ def test_unsafe_configuration_never_removes_selected_database_family_or_lookalik
         if not path.exists():
             path.write_bytes(f"pre-existing-lookalike-{index}".encode())
 
-    cache = TrustedDerivedDiskCache(database_directory)
+    cache = cache_module.TrustedDerivedDiskCache(database_directory)
     cache.configure_for_database(
         DatabaseInstance(
             str(first_directory / "live.db"),
@@ -887,7 +878,7 @@ def test_unsafe_configuration_never_removes_selected_database_family_or_lookalik
 
 
 def test_default_cache_uses_platform_application_cache_root(tmp_path: Path) -> None:
-    cache = TrustedDerivedDiskCache()
+    cache = cache_module.TrustedDerivedDiskCache()
     expected = Path(trusted_derived_cache_root())
     database_path = tmp_path / "database" / "live.db"
     database_path.parent.mkdir()
@@ -906,7 +897,7 @@ def test_more_than_cleanup_window_cannot_escape_global_caps(tmp_path: Path) -> N
     root.mkdir()
     for index in range(4_100):
         (root / f"{index:064x}.qdc").write_bytes(b"remnant")
-    cache = TrustedDerivedDiskCache(
+    cache = cache_module.TrustedDerivedDiskCache(
         root,
         max_entry_bytes=4_096,
         max_total_bytes=4_096,
@@ -970,7 +961,7 @@ def test_overflow_recovery_never_inspects_or_unlinks_more_than_one_window(
     monkeypatch.setattr(Path, "stat", counted_stat)
     monkeypatch.setattr(Path, "unlink", counted_unlink)
     monkeypatch.setattr(os, "scandir", CountedScandir)
-    cache = TrustedDerivedDiskCache(root)
+    cache = cache_module.TrustedDerivedDiskCache(root)
 
     assert not cache.put(_key(), _payload())
     assert directory_entries <= 4_096
@@ -994,7 +985,7 @@ def test_failed_overflow_deletion_disables_writes_and_never_claims_success(
         return real_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", denied)
-    cache = TrustedDerivedDiskCache(root)
+    cache = cache_module.TrustedDerivedDiskCache(root)
 
     assert not cache.put(_key(), _payload())
     assert not cache.enabled
@@ -1003,10 +994,10 @@ def test_failed_overflow_deletion_disables_writes_and_never_claims_success(
 
 def test_two_cache_instances_share_global_entry_and_byte_limits(tmp_path: Path) -> None:
     root = tmp_path / "cache"
-    first = TrustedDerivedDiskCache(
+    first = cache_module.TrustedDerivedDiskCache(
         root, max_entry_bytes=4_096, max_total_bytes=4_096, max_entries=1
     )
-    second = TrustedDerivedDiskCache(
+    second = cache_module.TrustedDerivedDiskCache(
         root, max_entry_bytes=4_096, max_total_bytes=4_096, max_entries=1
     )
 
@@ -1028,7 +1019,7 @@ def test_database_switch_blocks_old_cache_publication_inside_new_database_direct
     first_directory.mkdir()
     new_directory.mkdir()
     root = new_directory / "cache"
-    cache = TrustedDerivedDiskCache(root)
+    cache = cache_module.TrustedDerivedDiskCache(root)
     cache.configure_for_database(
         DatabaseInstance(
             str(first_directory / "live.db"),
@@ -1089,7 +1080,7 @@ def test_database_switch_preserves_completed_preexisting_cache_artifacts(
     first_directory.mkdir()
     new_directory.mkdir()
     root = new_directory / "cache"
-    cache = TrustedDerivedDiskCache(root)
+    cache = cache_module.TrustedDerivedDiskCache(root)
     cache.configure_for_database(
         DatabaseInstance(
             str(first_directory / "live.db"),
@@ -1123,7 +1114,7 @@ def test_database_switch_commits_exclusion_while_writer_holds_publication_lock(
     new_directory = tmp_path / "new"
     first_directory.mkdir()
     new_directory.mkdir()
-    cache = TrustedDerivedDiskCache(new_directory / "cache")
+    cache = cache_module.TrustedDerivedDiskCache(new_directory / "cache")
     cache.configure_for_database(
         DatabaseInstance(
             str(first_directory / "live.db"),
@@ -1174,7 +1165,7 @@ def test_database_switch_commits_exclusion_while_writer_holds_publication_lock(
     assert not configuration.is_alive()
     assert put_outcome == [False]
     assert not cache.enabled
-    assert not (cache.root / trusted_cache_filename(_key())).exists()
+    assert not (cache.root / cache_module.trusted_cache_filename(_key())).exists()
     assert len(tuple(cache.root.glob("*.tmp"))) == 1
 
 
@@ -1211,7 +1202,7 @@ def test_cache_propagates_cancellation_and_deadline_exceptions(
     operation: str,
     error_type: type[BaseException],
 ) -> None:
-    cache = TrustedDerivedDiskCache(tmp_path / "cache")
+    cache = cache_module.TrustedDerivedDiskCache(tmp_path / "cache")
 
     def cancelled() -> None:
         raise error_type("cache phase stopped")
@@ -1227,43 +1218,43 @@ def test_json_preflight_counts_whitespace_separated_nodes_and_bounds_text() -> N
     child = b"[" + b",\n\t".join([b"true"] * 65_536) + b"]"
     excessive_nodes = b"[" + child + b",\n\t" + child + b"]"
     with pytest.raises(ValueError, match="too many nodes"):
-        _preflight_json(excessive_nodes)
+        cache_module._preflight_json(excessive_nodes)
     oversized_text = b'"' + b"x" * (1024 * 1024 + 1) + b'"'
     with pytest.raises(ValueError, match="string is oversized"):
-        _preflight_json(oversized_text)
+        cache_module._preflight_json(oversized_text)
 
 
 def test_json_preflight_enforces_exact_array_item_boundary_with_whitespace() -> None:
-    maximum = TRUSTED_DERIVED_CACHE_MAX_CONTAINER_ITEMS
-    _preflight_json(b"[\n" + b", \n\t".join([b"null"] * maximum) + b"\n]")
+    maximum = cache_module.TRUSTED_DERIVED_CACHE_MAX_CONTAINER_ITEMS
+    cache_module._preflight_json(b"[\n" + b", \n\t".join([b"null"] * maximum) + b"\n]")
 
     with pytest.raises(ValueError, match="too many items"):
-        _preflight_json(b"[\n" + b", \n\t".join([b"null"] * (maximum + 1)) + b"\n]")
+        cache_module._preflight_json(b"[\n" + b", \n\t".join([b"null"] * (maximum + 1)) + b"\n]")
 
 
 def test_json_preflight_enforces_exact_object_item_boundary_with_whitespace() -> None:
-    maximum = TRUSTED_DERIVED_CACHE_MAX_CONTAINER_ITEMS
+    maximum = cache_module.TRUSTED_DERIVED_CACHE_MAX_CONTAINER_ITEMS
     item = b'"repeated" : null'
-    _preflight_json(b"{\n" + b", \n\t".join([item] * maximum) + b"\n}")
+    cache_module._preflight_json(b"{\n" + b", \n\t".join([item] * maximum) + b"\n}")
 
     with pytest.raises(ValueError, match="too many items"):
-        _preflight_json(b"{\n" + b", \n\t".join([item] * (maximum + 1)) + b"\n}")
+        cache_module._preflight_json(b"{\n" + b", \n\t".join([item] * (maximum + 1)) + b"\n}")
 
 
 def test_json_preflight_tracks_nested_container_and_aggregate_limits_separately() -> (
     None
 ):
-    half = TRUSTED_DERIVED_CACHE_MAX_CONTAINER_ITEMS // 2
+    half = cache_module.TRUSTED_DERIVED_CACHE_MAX_CONTAINER_ITEMS // 2
     child = b"[" + b",\n".join([b"null"] * half) + b"]"
-    _preflight_json(b"[" + child + b",\n" + child + b"]")
+    cache_module._preflight_json(b"[" + child + b",\n" + child + b"]")
 
     excessive_child = (
         b"["
-        + b",\n".join([b"null"] * (TRUSTED_DERIVED_CACHE_MAX_CONTAINER_ITEMS + 1))
+        + b",\n".join([b"null"] * (cache_module.TRUSTED_DERIVED_CACHE_MAX_CONTAINER_ITEMS + 1))
         + b"]"
     )
     with pytest.raises(ValueError, match="too many items"):
-        _preflight_json(b"[[],\n" + excessive_child + b"]")
+        cache_module._preflight_json(b"[[],\n" + excessive_child + b"]")
 
 
 def test_steady_state_put_does_not_rescan_cache_directory(
@@ -1271,7 +1262,7 @@ def test_steady_state_put_does_not_rescan_cache_directory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = tmp_path / "cache"
-    cache = TrustedDerivedDiskCache(root)
+    cache = cache_module.TrustedDerivedDiskCache(root)
     calls = 0
     original = Path.iterdir
 
@@ -1297,7 +1288,7 @@ def test_surrogate_cache_key_degrades_to_miss(tmp_path: Path) -> None:
         TrustedSourceRevision(b"revision"),
         "renderer-v1",
     )
-    cache = TrustedDerivedDiskCache(tmp_path / "cache")
+    cache = cache_module.TrustedDerivedDiskCache(tmp_path / "cache")
 
     assert cache.get(key) is None
     assert not cache.put(key, _payload())
@@ -1306,16 +1297,16 @@ def test_surrogate_cache_key_degrades_to_miss(tmp_path: Path) -> None:
 
 def test_json_preflight_rejects_depth_and_node_growth_before_decode() -> None:
     with pytest.raises(ValueError, match="deeply nested"):
-        _preflight_json(b"[" * 33 + b"]" * 33)
+        cache_module._preflight_json(b"[" * 33 + b"]" * 33)
     child = b"[" + b",".join([b'"x"'] * 65_536) + b"]"
     with pytest.raises(ValueError, match="too many nodes"):
-        _preflight_json(b"[" + child + b"," + child + b"]")
+        cache_module._preflight_json(b"[" + child + b"," + child + b"]")
 
 
 def test_invalid_payload_schema_degrades_to_uncached_result(tmp_path: Path) -> None:
     payload = _payload()
     payload["status"] = "invented"
-    cache = TrustedDerivedDiskCache(tmp_path / "cache")
+    cache = cache_module.TrustedDerivedDiskCache(tmp_path / "cache")
 
     assert not cache.put(_key(), payload)
     assert cache.get(_key()) is None

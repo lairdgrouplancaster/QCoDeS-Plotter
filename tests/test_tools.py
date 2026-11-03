@@ -18,7 +18,6 @@ from qplot.tools.plot_tools import (
     pass_filter,
     subtract_mean,
 )
-from qplot.tools.worker import OperationExecutionError, PlotWorkCancelled, loader
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
 from qplot.windows._plotWin import plotWidget
 
@@ -66,7 +65,7 @@ class ToolFunctionTestCase(unittest.TestCase):
                     side_effect=blocking_prep,
                     ),
                 ):
-            worker = loader(
+            worker = worker_module.loader(
                 Cache(),
                 Param(),
                 {"x": object(), "signal": object()},
@@ -111,7 +110,7 @@ class ToolFunctionTestCase(unittest.TestCase):
             def __exit__(self, _exc_type, _exc_value, _traceback):
                 self._lock.release()
 
-        worker = loader.__new__(loader)
+        worker = worker_module.loader.__new__(worker_module.loader)
         worker.running = True
         worker.emitter = RecordingEmitter()
         worker._cancelled = threading.Event()
@@ -145,7 +144,7 @@ class ToolFunctionTestCase(unittest.TestCase):
 
     def test_cancellation_between_pipeline_operations_skips_remaining_work(self):
         calls = []
-        worker = loader.__new__(loader)
+        worker = worker_module.loader.__new__(worker_module.loader)
         worker.axis_data = {
             "x": np.array([1.0, 2.0]),
             "y": np.array([3.0, 4.0]),
@@ -162,8 +161,8 @@ class ToolFunctionTestCase(unittest.TestCase):
 
         worker.operations = [cancelling_operation, skipped_operation]
 
-        with self.assertRaises(PlotWorkCancelled):
-            loader.do_operations(worker)
+        with self.assertRaises(worker_module.PlotWorkCancelled):
+            worker_module.loader.do_operations(worker)
 
         self.assertEqual(calls, ["first"])
         np.testing.assert_array_equal(worker.axis_data["y"], [3.0, 4.0])
@@ -176,14 +175,14 @@ class ToolFunctionTestCase(unittest.TestCase):
             def execute(self):
                 raise AssertionError("Unrelated execute method must not be used")
 
-        worker = loader.__new__(loader)
+        worker = worker_module.loader.__new__(worker_module.loader)
         worker.axis_data = {
             "x": np.array([1.0, 2.0]),
             "y": np.array([3.0, 4.0]),
             }
         worker.operations = [ThirdPartyOperation()]
 
-        result = loader.do_operations(worker)
+        result = worker_module.loader.do_operations(worker)
 
         np.testing.assert_array_equal(result[1], [4.0, 5.0])
 
@@ -237,7 +236,7 @@ class ToolFunctionTestCase(unittest.TestCase):
         self.assertEqual(matrix.loc[1, 1], 13)
 
     def test_shaped_2d_loader_handles_sparse_live_grids(self):
-        worker = loader.__new__(loader)
+        worker = worker_module.loader.__new__(worker_module.loader)
         worker.axes_dict = {"x": "fast", "y": "slow"}
         worker.param = type("Param", (), {"depends_on_": ("slow", "fast")})()
         worker.param_dict = {
@@ -252,7 +251,7 @@ class ToolFunctionTestCase(unittest.TestCase):
         fast[0, :2] = [0.0, 1.0]
         signal[0, :2] = [42.0, 43.0]
 
-        axis_data, _axis_param, data_grid = loader.for_shaped_2d(
+        axis_data, _axis_param, data_grid = worker_module.loader.for_shaped_2d(
             worker,
             {"slow": slow, "fast": fast},
             signal,
@@ -263,7 +262,7 @@ class ToolFunctionTestCase(unittest.TestCase):
         np.testing.assert_array_equal(data_grid, np.array([[42.0, 43.0]]))
 
     def test_shaped_2d_loader_transposes_when_axes_are_swapped(self):
-        worker = loader.__new__(loader)
+        worker = worker_module.loader.__new__(worker_module.loader)
         worker.axes_dict = {"x": "slow", "y": "fast"}
         worker.param = type("Param", (), {"depends_on_": ("slow", "fast")})()
         worker.param_dict = {
@@ -278,7 +277,7 @@ class ToolFunctionTestCase(unittest.TestCase):
         fast[0, :2] = [0.0, 1.0]
         signal[0, :2] = [42.0, 43.0]
 
-        axis_data, _axis_param, data_grid = loader.for_shaped_2d(
+        axis_data, _axis_param, data_grid = worker_module.loader.for_shaped_2d(
             worker,
             {"slow": slow, "fast": fast},
             signal,
@@ -289,7 +288,7 @@ class ToolFunctionTestCase(unittest.TestCase):
         np.testing.assert_array_equal(data_grid, np.array([[42.0], [43.0]]))
 
     def test_shaped_2d_loader_maps_serpentine_rows_by_coordinates(self):
-        worker = loader.__new__(loader)
+        worker = worker_module.loader.__new__(worker_module.loader)
         worker.axes_dict = {"x": "fast", "y": "slow"}
         worker.param = type("Param", (), {"depends_on_": ("slow", "fast")})()
         worker.param_dict = {
@@ -301,7 +300,7 @@ class ToolFunctionTestCase(unittest.TestCase):
         fast = np.array([[0.0, 1.0, 2.0], [2.0, 1.0, 0.0]])
         signal = np.array([[0.0, 1.0, 2.0], [12.0, 11.0, 10.0]])
 
-        axis_data, _axis_param, data_grid = loader.for_shaped_2d(
+        axis_data, _axis_param, data_grid = worker_module.loader.for_shaped_2d(
             worker,
             {"slow": slow, "fast": fast},
             signal,
@@ -315,7 +314,7 @@ class ToolFunctionTestCase(unittest.TestCase):
             )
 
     def test_shaped_2d_loader_maps_high_offset_serpentine_rows(self):
-        worker = loader.__new__(loader)
+        worker = worker_module.loader.__new__(worker_module.loader)
         worker.axes_dict = {"x": "frequency", "y": "slow"}
         worker.param = type(
             "Param",
@@ -334,7 +333,7 @@ class ToolFunctionTestCase(unittest.TestCase):
         slow = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]])
         signal = np.array([[0.0, 1.0, 2.0], [12.0, 11.0, 10.0]])
 
-        axis_data, _axis_param, data_grid = loader.for_shaped_2d(
+        axis_data, _axis_param, data_grid = worker_module.loader.for_shaped_2d(
             worker,
             {"slow": slow, "frequency": frequency},
             signal,
@@ -351,7 +350,7 @@ class ToolFunctionTestCase(unittest.TestCase):
             )
 
     def test_worker_canonicalizes_descending_heatmap_axes_and_grid(self):
-        worker = loader.__new__(loader)
+        worker = worker_module.loader.__new__(worker_module.loader)
         worker.axis_data = {
             "x": np.array([4.0, 1.0, 0.0]),
             "y": np.array([13.0, 10.0]),
@@ -361,7 +360,7 @@ class ToolFunctionTestCase(unittest.TestCase):
             [3.0, 2.0, 1.0],
             ])
 
-        loader._canonicalize_heatmap(worker)
+        worker_module.loader._canonicalize_heatmap(worker)
 
         np.testing.assert_array_equal(worker.axis_data["x"], [0.0, 1.0, 4.0])
         np.testing.assert_array_equal(worker.axis_data["y"], [10.0, 13.0])
@@ -388,7 +387,7 @@ class ToolFunctionTestCase(unittest.TestCase):
                 worker.max_heatmap_grid_cells = 16
                 worker.max_heatmap_grid_side = 4
 
-                loader._load_large_heatmap_from_sql(worker)
+                worker_module.loader._load_large_heatmap_from_sql(worker)
             finally:
                 worker_module.cache_database_path = old_database_path
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
@@ -447,8 +446,8 @@ class ToolFunctionTestCase(unittest.TestCase):
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 2
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 3
 
-                loader._load_large_heatmap_from_sql(worker)
-                loader._canonicalize_heatmap(worker)
+                worker_module.loader._load_large_heatmap_from_sql(worker)
+                worker_module.loader._canonicalize_heatmap(worker)
             finally:
                 worker_module.cache_database_path = old_database_path
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
@@ -484,8 +483,8 @@ class ToolFunctionTestCase(unittest.TestCase):
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 4
                 worker_module.MAX_SQL_HEATMAP_GRID_SIDE = 2
 
-                loader._load_large_heatmap_from_sql(worker)
-                loader._canonicalize_heatmap(worker)
+                worker_module.loader._load_large_heatmap_from_sql(worker)
+                worker_module.loader._canonicalize_heatmap(worker)
             finally:
                 worker_module.cache_database_path = old_database_path
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
@@ -533,8 +532,8 @@ class ToolFunctionTestCase(unittest.TestCase):
                         lambda _cache, path=database_path: path
                         )
 
-                    loader._load_large_heatmap_from_sql(worker)
-                    loader._canonicalize_heatmap(worker)
+                    worker_module.loader._load_large_heatmap_from_sql(worker)
+                    worker_module.loader._canonicalize_heatmap(worker)
                     self.assertEqual(
                         worker.heatmap_source_axis_ranges,
                         {"x": (0.0, 39.0), "y": (0.0, 29.0)},
@@ -605,8 +604,8 @@ class ToolFunctionTestCase(unittest.TestCase):
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 12
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 12
 
-                loader._load_large_heatmap_from_sql(worker)
-                loader._canonicalize_heatmap(worker)
+                worker_module.loader._load_large_heatmap_from_sql(worker)
+                worker_module.loader._canonicalize_heatmap(worker)
             finally:
                 worker_module.cache_database_path = old_database_path
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
@@ -644,7 +643,7 @@ class ToolFunctionTestCase(unittest.TestCase):
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = 1_000
                 worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 1_000
 
-                loader._load_large_heatmap_from_sql(worker)
+                worker_module.loader._load_large_heatmap_from_sql(worker)
             finally:
                 worker_module.cache_database_path = old_database_path
                 worker_module.MAX_SQL_HEATMAP_SOURCE_ROWS = old_source_rows
@@ -669,7 +668,7 @@ class ToolFunctionTestCase(unittest.TestCase):
             worker_module.MAX_SQL_HEATMAP_GRID_CELLS = 100
             worker_module.SQL_HEATMAP_SAMPLES_PER_CELL = 4
 
-            _axis_x, _axis_y, data_grid = loader._heatmap_grid_from_arrays(
+            _axis_x, _axis_y, data_grid = worker_module.loader._heatmap_grid_from_arrays(
                 worker,
                 x,
                 y,
@@ -696,7 +695,7 @@ class ToolFunctionTestCase(unittest.TestCase):
             worker_module.MAX_SQL_HEATMAP_GRID_SIDE = 20
             worker_module.SQL_HEATMAP_SAMPLES_PER_CELL = 1
 
-            _axis_x, _axis_y, data_grid = loader._heatmap_grid_from_arrays(
+            _axis_x, _axis_y, data_grid = worker_module.loader._heatmap_grid_from_arrays(
                 worker,
                 x,
                 y,
@@ -726,7 +725,7 @@ class ToolFunctionTestCase(unittest.TestCase):
         worker._array_heatmap_cardinality_exact = (True, True)
         worker.heatmap_source_grid_shape = None
 
-        _x_axis, _y_axis, data_grid = loader._spatial_aggregation_grid(
+        _x_axis, _y_axis, data_grid = worker_module.loader._spatial_aggregation_grid(
             worker,
             np.array([10.0, 20.0]),
             2,
@@ -747,11 +746,11 @@ class ToolFunctionTestCase(unittest.TestCase):
         worker.max_full_heatmap_points = 10
         worker._large_heatmap_point_count = lambda: 10
 
-        self.assertFalse(loader._should_use_sql_heatmap(worker))
+        self.assertFalse(worker_module.loader._should_use_sql_heatmap(worker))
 
         worker._large_heatmap_point_count = lambda: 11
 
-        self.assertTrue(loader._should_use_sql_heatmap(worker))
+        self.assertTrue(worker_module.loader._should_use_sql_heatmap(worker))
 
     def test_large_heatmap_sql_mode_uses_selected_parameter_count_not_run_rows(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -785,8 +784,8 @@ class ToolFunctionTestCase(unittest.TestCase):
             try:
                 worker_module.cache_database_path = lambda _cache: database_path
 
-                self.assertEqual(loader._large_heatmap_point_count(worker), 80)
-                self.assertFalse(loader._should_use_sql_heatmap(worker))
+                self.assertEqual(worker_module.loader._large_heatmap_point_count(worker), 80)
+                self.assertFalse(worker_module.loader._should_use_sql_heatmap(worker))
             finally:
                 worker_module.cache_database_path = old_database_path
 
@@ -827,7 +826,7 @@ class ToolFunctionTestCase(unittest.TestCase):
         class Cache:
             rundescriber = Rundescriber()
 
-        worker = loader.__new__(loader)
+        worker = worker_module.loader.__new__(worker_module.loader)
         worker.cache = Cache()
         worker.table_name = "results"
         worker.param = Param("signal")
@@ -917,7 +916,7 @@ class ToolFunctionTestCase(unittest.TestCase):
         def failing_operation(_data):
             raise ValueError("bad operation")
 
-        worker = loader.__new__(loader)
+        worker = worker_module.loader.__new__(worker_module.loader)
         worker.axis_data = {
             "x": np.array([1.0, 2.0]),
             "y": np.array([3.0, 4.0]),
@@ -928,7 +927,7 @@ class ToolFunctionTestCase(unittest.TestCase):
             lambda data: {"x": data["x"] + 10},
             ]
         with self.assertRaisesRegex(RuntimeError, "bad operation"):
-            loader.do_operations(worker)
+            worker_module.loader.do_operations(worker)
 
         np.testing.assert_array_equal(worker.axis_data["x"], [1.0, 2.0])
         np.testing.assert_array_equal(worker.axis_data["y"], [3.0, 4.0])
@@ -939,18 +938,18 @@ class ToolFunctionTestCase(unittest.TestCase):
         worker.operations = [lambda data: data]
 
         with self.assertRaisesRegex(
-                OperationExecutionError,
+                worker_module.OperationExecutionError,
                 "exceeds the full-resolution operation limit",
                 ):
-            loader._should_use_sql_heatmap(worker)
+            worker_module.loader._should_use_sql_heatmap(worker)
 
     def test_heatmap_gridding_preserves_float64_coordinate_and_value_precision(self):
-        worker = loader.__new__(loader)
+        worker = worker_module.loader.__new__(worker_module.loader)
         worker.sampled_heatmap_source = False
         worker.aggregated_heatmap_source = False
         baseline = 1_000_000_000_000.0
 
-        x_axis, _y_axis, data_grid = loader._heatmap_grid_from_arrays(
+        x_axis, _y_axis, data_grid = worker_module.loader._heatmap_grid_from_arrays(
             worker,
             np.array([baseline, baseline + 1.0]),
             np.array([0.0, 0.0]),
@@ -971,7 +970,7 @@ class ToolFunctionTestCase(unittest.TestCase):
                 self.unit = unit
                 self.depends_on_ = depends_on
 
-        worker = loader.__new__(loader)
+        worker = worker_module.loader.__new__(worker_module.loader)
         worker.param = Param("current", "Current", "A", ("gate",))
         worker.display_param = Param("current", "Current", "A", ("gate",))
         worker.axis_param = {
@@ -982,7 +981,7 @@ class ToolFunctionTestCase(unittest.TestCase):
             OperationCall("dy/dx", lambda data: data, derivative_axis="x"),
             ]
 
-        loader._apply_operation_metadata(worker)
+        worker_module.loader._apply_operation_metadata(worker)
 
         self.assertEqual(worker.display_param.label, "d(Current)/d(Gate voltage)")
         self.assertEqual(worker.display_param.unit, "A/V")
@@ -1002,9 +1001,9 @@ class ToolFunctionTestCase(unittest.TestCase):
         worker.sampled_heatmap_source = False
         worker.aggregated_heatmap_source = False
 
-        results = loader.do_operations(worker)
+        results = worker_module.loader.do_operations(worker)
         worker.dataGrid = results[2]
-        loader._aggregate_operated_heatmap_if_needed(worker)
+        worker_module.loader._aggregate_operated_heatmap_if_needed(worker)
 
         np.testing.assert_allclose(worker.dataGrid, [[1.5, 4.5]])
         self.assertEqual(

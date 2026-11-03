@@ -5,13 +5,13 @@ from fractions import Fraction
 import numpy as np
 import pytest
 
+import qplot.tools.worker as worker_module
 from qplot.datahandling import trusted_heatmap, trusted_plot
 from qplot.datahandling.trusted_heatmap import NumericHeatmap, NumericHeatmapPlan
 from qplot.datahandling.trusted_live_service import (
     TrustedLiveReadService,
     TrustedReadRequestCancelledError,
 )
-from qplot.tools.worker import loader
 from tests.datahandling.test_trusted_plot import (
     make_run,
     prohibit_snapshots,
@@ -135,7 +135,6 @@ def test_larger_aggregate_batches_preserve_weighted_means_and_reply_limits(tmp_p
 
 @pytest.mark.parametrize('ranges', [(None, None), ((1., 3.), (0., 2.)), ((100., 101.), None)])
 def test_paged_means_match_existing_spatial_renderer(tmp_path, monkeypatch, ranges):
-    import qplot.tools.worker as worker_module
     path = tmp_path / 'means.db'
     _, guid, table = make_run(path)
     writer = sqlite3.connect(path)
@@ -157,7 +156,7 @@ def test_paged_means_match_existing_spatial_renderer(tmp_path, monkeypatch, rang
         axis_ranges = {axis: bounds for axis, bounds in zip(('x', 'y'), ranges, strict=True)
                        if bounds is not None}
         def render():
-            worker = loader(dataset.cache, dataset.paramspecs['z'], dataset.paramspecs,
+            worker = worker_module.loader(dataset.cache, dataset.paramspecs['z'], dataset.paramspecs,
                             {'x': 'y', 'y': 'x'}, max_full_heatmap_points=4,
                             max_heatmap_grid_cells=4, max_heatmap_grid_side=2,
                             heatmap_axis_ranges=axis_ranges)
@@ -170,7 +169,7 @@ def test_paged_means_match_existing_spatial_renderer(tmp_path, monkeypatch, rang
             return worker
         actual = render()
         assert all(isinstance(value, NumericHeatmap) for value in service._plot_prefix_cache.values())
-        monkeypatch.setattr(loader, '_trusted_heatmap_plan', lambda self: None)
+        monkeypatch.setattr(worker_module.loader, '_trusted_heatmap_plan', lambda self: None)
         reference = render()
         np.testing.assert_allclose(actual.dataGrid, reference.dataGrid, rtol=1e-14, equal_nan=True)
         for axis in ('x', 'y'):
@@ -367,7 +366,7 @@ def test_large_numeric_plot_never_stages_raw_rows_and_refuses_full_resolution_op
         assert isinstance(result, NumericHeatmap)
         assert result.grid.size <= 4
         assert result.cardinality_exact == (False, False)
-        plot_worker = loader(
+        plot_worker = worker_module.loader(
             dataset.cache, dataset.paramspecs['z'], dataset.paramspecs, {'x': 'y', 'y': 'x'},
             max_full_heatmap_points=4, max_heatmap_grid_cells=4, max_heatmap_grid_side=2,
         )

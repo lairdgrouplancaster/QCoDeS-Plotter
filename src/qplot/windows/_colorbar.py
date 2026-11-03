@@ -21,11 +21,6 @@ _PREFERRED_COLORBAR_COLORMAPS = (
 )
 
 
-_DEFAULT_HIDDEN_COLORBAR_PREFIXES = ("gist",)
-_DEFAULT_HIDDEN_COLORBAR_SUFFIXES = ("_r",)
-_DEFAULT_HIDDEN_COLORBAR_NAMES = ("gray", "grey", "Grays")
-
-
 _CET_COLORBAR_SUBTYPES = (
     ("linear", "Linear"),
     ("divergent", "Divergent"),
@@ -140,6 +135,11 @@ _COLORBAR_COLORMAP_LABELS = {
     "turbo": "Turbo",
     "viridis": "Viridis",
 }
+
+
+def _colorbar_colormap_label(name: str) -> str:
+    """Use the same readable label in color-map tables and appearance controls."""
+    return _COLORBAR_COLORMAP_LABELS.get(name, name)
 
 
 _COLORBAR_TABLE_SORT_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1

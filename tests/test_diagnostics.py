@@ -1,8 +1,10 @@
 import logging
+import sys
 import tempfile
 import unittest
 from io import StringIO
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from qplot import diagnostics
 from qplot.datahandling.database import _bounded_worker_error
@@ -210,6 +212,31 @@ class DiagnosticsTestCase(unittest.TestCase):
         self.assertIn("Uncaught exception", text)
         self.assertIn("ValueError: exception details omitted", text)
         self.assertNotIn("uncaught value", text)
+
+    def test_reinstall_and_reset_restore_each_original_exception_hook(self):
+        diagnostics._reset_logging_for_tests()
+        first_original, next_original = Mock(), Mock()
+        with patch.object(sys, "excepthook", first_original):
+            diagnostics.configure_logging(log_file=self.temp_path / "qplot.log", force=True)
+            diagnostics.install_excepthook()
+            current = diagnostics.install_excepthook()
+            error = ValueError("private exception value")
+            current(type(error), error, error.__traceback__)
+            first_original.assert_called_once_with(type(error), error, error.__traceback__)
+
+            diagnostics._reset_logging_for_tests()
+            self.assertIs(sys.excepthook, first_original)
+            sys.excepthook = next_original
+            diagnostics.install_excepthook(call_original=False)
+            diagnostics._reset_logging_for_tests()
+            self.assertIs(sys.excepthook, next_original)
+
+    def test_reset_without_an_installed_hook_preserves_the_callers_hook(self):
+        diagnostics._reset_logging_for_tests()
+        original = Mock()
+        with patch.object(sys, "excepthook", original):
+            diagnostics._reset_logging_for_tests()
+            self.assertIs(sys.excepthook, original)
 
     def test_failed_log_file_setup_is_non_fatal(self):
         logger = diagnostics.configure_logging(

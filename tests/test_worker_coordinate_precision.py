@@ -10,8 +10,8 @@ from qcodes.dataset import (
     load_or_create_experiment,
 )
 
+import qplot.tools.worker as worker_module
 from qplot.datahandling.readonly import load_by_id_read_only
-from qplot.tools.worker import PlotWorkCancelled, loader
 from tests.windows.test_complex_line_data import database_state
 
 
@@ -53,7 +53,7 @@ def coordinate_dataset(tmp_path, *, coordinates, shaped=False, split=False, reco
 
 def coordinate_worker(dataset, *, swapped=False, **kwargs):
     parameters = {parameter.name: parameter for parameter in dataset.get_parameters()}
-    return loader(dataset.cache, parameters["signal"], parameters,
+    return worker_module.loader(dataset.cache, parameters["signal"], parameters,
                   {"x": "slow" if swapped else "fast", "y": "fast" if swapped else "slow"},
                   **kwargs)
 
@@ -107,7 +107,7 @@ def test_coordinate_precision_check_remains_cancellable(tmp_path, monkeypatch):
 
         original_check = worker._check_cancelled
         monkeypatch.setattr(worker, "_check_cancelled", cancel_after_unique)
-        with pytest.raises(PlotWorkCancelled):
+        with pytest.raises(worker_module.PlotWorkCancelled):
             worker._float_heatmap_coordinates(np.array([2**53, 2**53 + 4]), "fast")
 
 
@@ -129,7 +129,6 @@ def test_collisions_between_records_with_different_dtypes(tmp_path, unsigned):
 
 @pytest.mark.parametrize("discarded_inexact", [False, True])
 def test_streaming_precision_guard_after_unique_set_saturates(tmp_path, monkeypatch, discarded_inexact):
-    import qplot.tools.worker as worker_module
 
     # Each source value is a separate chunk. A one-coordinate limit drops the
     # set before the last sample arrives; no unbounded history may be retained.

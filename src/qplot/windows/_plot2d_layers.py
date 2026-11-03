@@ -21,8 +21,8 @@ from qplot.tools.heatmap_geometry import (
 )
 
 from ._colorbar import (
-    _COLORBAR_COLORMAP_LABELS,
     _colorbar_colormap_for_name,
+    _colorbar_colormap_label,
     _colorbar_colormap_preview,
 )
 from ._display_precision import (
@@ -1954,7 +1954,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
 
         name_getter = getattr(self.owner, "_current_colorbar_colormap_name", None)
         name = str(name_getter()) if callable(name_getter) else "viridis"
-        self.color_scale_name.setText(_COLORBAR_COLORMAP_LABELS.get(name, name))
+        self.color_scale_name.setText(_colorbar_colormap_label(name))
         self.color_scale_name.setToolTip(name)
         self.color_scale_preview.setPixmap(
             _colorbar_colormap_preview(name, width=190, height=18)

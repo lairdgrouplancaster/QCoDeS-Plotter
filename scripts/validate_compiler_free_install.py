@@ -33,7 +33,7 @@ EDIT_AFTER = 'after-edit-without-reinstall'
 def windows_command_line_api():
     """Resolve the Windows parser and its matching allocation release once."""
     import ctypes
-    from ctypes import wintypes
+    import ctypes.wintypes as wintypes
 
     parse = ctypes.WinDLL('shell32', use_last_error=True).CommandLineToArgvW
     parse.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]

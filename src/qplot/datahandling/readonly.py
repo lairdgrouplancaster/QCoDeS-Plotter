@@ -385,8 +385,8 @@ def _windows_sqlite_shared_lock_bytes(
         ):
     """Hold SQLite's Windows shared-lock ranges using nonblocking LockFileEx."""
     import ctypes
+    import ctypes.wintypes as wintypes
     import msvcrt
-    from ctypes import wintypes
 
     class _Overlapped(ctypes.Structure):
         _fields_ = (

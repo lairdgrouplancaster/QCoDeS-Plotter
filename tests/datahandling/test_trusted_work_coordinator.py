@@ -31,12 +31,6 @@ from qplot.datahandling.trusted_live_service import (
     TrustedDerivedReadService,
     TrustedReadQueueFullError,
 )
-from qplot.datahandling.trusted_work_coordinator import (
-    TRUSTED_DERIVED_MAX_REUSED_SOURCE_BYTES,
-    TRUSTED_DERIVED_MAX_REUSED_SOURCES,
-    TrustedDerivedRun,
-    TrustedWorkCoordinator,
-)
 from qplot.datahandling.trusted_work_scheduler import (
     RenderingOptions,
     TrustedWorkKind,
@@ -168,7 +162,7 @@ class _Service(TrustedDerivedReadService):
 
 def _runs(observations: dict[int, TrustedDerivedSourceObservation]):
     return tuple(
-        TrustedDerivedRun(
+        coordinator_module.TrustedDerivedRun(
             run_id,
             observation.run_guid,
             trusted_derived_source_revision(observation),
@@ -188,10 +182,10 @@ def test_service_contract_rejects_invalid_binding_before_changing_state(
     expected_error = TypeError if failure == "unrelated" else ValueError
     if not replacement:
         with pytest.raises(expected_error):
-            TrustedWorkCoordinator(instance, (), invalid)
+            coordinator_module.TrustedWorkCoordinator(instance, (), invalid)
         return
 
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance, (), original,
         cache=TrustedDerivedDiskCache(tmp_path / "disabled", enabled=False),
     )
@@ -205,7 +199,7 @@ def test_service_contract_rejects_invalid_binding_before_changing_state(
         assert coordinator.wait_closed(1.0)
 
 
-def _drain(coordinator: TrustedWorkCoordinator, timeout: float = 5.0) -> None:
+def _drain(coordinator: coordinator_module.TrustedWorkCoordinator, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         coordinator.poll()
@@ -227,7 +221,7 @@ def _wait_for(event: threading.Event, timeout: float = 2.0) -> None:
 
 def _provisional_runs(observations: dict[int, TrustedDerivedSourceObservation]):
     return tuple(
-        TrustedDerivedRun(run_id, observation.run_guid, TrustedSourceRevision(b"old"))
+        coordinator_module.TrustedDerivedRun(run_id, observation.run_guid, TrustedSourceRevision(b"old"))
         for run_id, observation in sorted(observations.items())
     )
 
@@ -251,7 +245,7 @@ def test_wait_closed_bounds_worker_completion_callback(
         callback_entered.set()
         release_callback.wait(5.0)
 
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         _Service(instance, observations, release=release_work),
@@ -292,7 +286,7 @@ def test_failed_worker_does_not_leave_shutdown_pending(
     instance = _instance()
     observations = {1: _observation(1, instance)}
     ready = threading.Event()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         _Service(instance, observations),
@@ -494,7 +488,7 @@ def _progressive_observation(
 
 
 def _poll_completed_claims(
-    coordinator: TrustedWorkCoordinator,
+    coordinator: coordinator_module.TrustedWorkCoordinator,
     count: int,
     *,
     maximum_owner_turns: int = 128,
@@ -515,7 +509,7 @@ def test_real_coordinator_preserves_tier_first_priority_and_eventual_drain(
     observations = {index: _observation(index, instance) for index in range(1, 5)}
     service = _Service(instance, observations)
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -559,7 +553,7 @@ def test_atomic_priority_cannot_claim_from_the_previous_viewport(
     instance = _instance(52)
     observations = {run_id: _observation(run_id, instance) for run_id in range(1, 4)}
     service = _Service(instance, observations)
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -622,7 +616,7 @@ def test_selected_108_by_7_images_preempt_hundreds_of_background_pages(
 
     service = _HugeFirstService()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs({1: huge, 2: selected}),
         service,
@@ -687,7 +681,7 @@ def test_remaining_continuation_cannot_starve_or_republish_sibling_images(
     service = _NeverConclusiveService()
     publications = []
     wakeups: queue.Queue[None] = queue.Queue()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs({1: huge, 2: visible}),
         service,
@@ -767,7 +761,7 @@ def test_progressive_visible_run_cannot_gate_conclusive_visible_sibling_images(
 
     service = _ProgressiveSiblingService()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs({1: progressive, 2: conclusive}),
         service,
@@ -840,7 +834,7 @@ def test_remaining_append_stream_cannot_starve_same_tier_progressive_page(
 
     service = _AppendStreamService()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs({1: observations[1]}),
         service,
@@ -919,7 +913,7 @@ def test_newly_progressive_selected_guid_enters_existing_round_next(
     observations = {
         run_id: _progressive_observation(run_id, instance) for run_id in range(1, 4)
     }
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         _Service(instance, observations),
@@ -989,7 +983,7 @@ def test_newly_visible_active_progressive_run_is_next_at_page_boundary(
             )
 
     service = _VisiblePromotionService()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(first_pages),
         service,
@@ -1054,7 +1048,7 @@ def test_continuous_selection_churn_admits_background_metadata_within_bound(
         2: _observation(2, instance),
     }
     service = _Service(instance, observations)
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -1178,7 +1172,7 @@ def test_aged_progressive_and_ordinary_background_metadata_rotate_under_churn(
             return _Request(self.observations[run_id])
 
     service = _RotatingBackgroundService()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -1305,7 +1299,7 @@ def test_selected_metadata_replay_and_images_precede_aged_background_metadata(
     observations = {1: background, 2: selected}
     service = _Service(instance, observations)
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -1396,7 +1390,7 @@ def test_selected_progressive_continuation_survives_aging_bound_without_backgrou
             )
 
     service = _SelectedProgressiveService()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs({1: first_page}),
         service,
@@ -1472,7 +1466,7 @@ def test_selected_progressive_yields_remaining_metadata_by_aging_bound(
             return _Request(remaining)
 
     service = _SelectedAndRemainingService()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs({1: remaining, 2: selected}),
         service,
@@ -1539,7 +1533,7 @@ def test_retry_blocked_remaining_metadata_does_not_hide_ordinary_aging_peer(
             return _Request(self.observations[run_id])
 
     service = _FirstRemainingRetryService()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -1620,7 +1614,7 @@ def test_retry_blocked_remaining_metadata_does_not_hide_progressive_aging_peer(
             return _Request(terminal if run_id == 2 else foreground)
 
     service = _BlockedThenProgressiveService()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -1699,7 +1693,7 @@ def test_ordinary_aging_skips_served_stale_progressive_slot_for_unserved_peer(
     foreground = _observation(3, instance)
     observations = {1: progressive_a, 2: progressive_b, 3: foreground}
     service = _Service(instance, observations)
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -1822,7 +1816,7 @@ def test_two_transient_slots_keep_independent_retry_deadlines(
             return _Request(self.observations[run_id])
 
     service = _EachSlotFailsOnceService()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -1926,7 +1920,7 @@ def test_deferred_changes_between_progressive_pages_remain_paced(
             return _Request(observation)
 
     service = _ChangingProgressiveService()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs({1: first_page}),
         service,
@@ -2025,7 +2019,7 @@ def test_warm_cached_selected_metadata_without_observation_protects_images(
     cache = _WarmSelectedCache()
     service = _Service(instance, observations)
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -2096,7 +2090,7 @@ def test_terminal_metadata_revision_replays_one_fresh_selected_detail(
     instance = _instance(71)
     observation = _observation(1, instance)
     final_revision = trusted_derived_source_revision(observation)
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs({1: observation}),
         _Service(instance, {1: observation}),
@@ -2156,9 +2150,9 @@ def test_reused_observation_lru_has_strict_entry_and_byte_bounds(
     instance = _instance()
     observations = {
         index: _observation(index, instance)
-        for index in range(1, TRUSTED_DERIVED_MAX_REUSED_SOURCES + 2)
+        for index in range(1, coordinator_module.TRUSTED_DERIVED_MAX_REUSED_SOURCES + 2)
     }
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         _Service(instance, observations),
@@ -2172,13 +2166,13 @@ def test_reused_observation_lru_has_strict_entry_and_byte_bounds(
             coordinator._observation_size(observation),
         )
 
-    assert len(coordinator._reused_observations) == (TRUSTED_DERIVED_MAX_REUSED_SOURCES)
+    assert len(coordinator._reused_observations) == (coordinator_module.TRUSTED_DERIVED_MAX_REUSED_SOURCES)
     assert "guid-1" not in coordinator._reused_observations
     assert (
-        coordinator._reused_observation_bytes <= TRUSTED_DERIVED_MAX_REUSED_SOURCE_BYTES
+        coordinator._reused_observation_bytes <= coordinator_module.TRUSTED_DERIVED_MAX_REUSED_SOURCE_BYTES
     )
 
-    retained_size = TRUSTED_DERIVED_MAX_REUSED_SOURCE_BYTES // 2 + 1
+    retained_size = coordinator_module.TRUSTED_DERIVED_MAX_REUSED_SOURCE_BYTES // 2 + 1
     coordinator._clear_reused_observations()
     coordinator._adopt_observation(
         observations[1],
@@ -2204,7 +2198,7 @@ def test_observation_identity_and_size_are_computed_once_off_owner_thread(
     observations = {1: _observation(1, instance)}
     service = _Service(instance, observations)
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _provisional_runs(observations),
         service,
@@ -2215,7 +2209,7 @@ def test_observation_identity_and_size_are_computed_once_off_owner_thread(
     revision_threads: list[int] = []
     size_threads: list[int] = []
     real_revision = coordinator_module.trusted_derived_source_revision
-    real_size = TrustedWorkCoordinator._observation_size
+    real_size = coordinator_module.TrustedWorkCoordinator._observation_size
 
     def revision_off_owner(observation: TrustedDerivedSourceObservation):
         thread_id = threading.get_ident()
@@ -2235,7 +2229,7 @@ def test_observation_identity_and_size_are_computed_once_off_owner_thread(
         revision_off_owner,
     )
     monkeypatch.setattr(
-        TrustedWorkCoordinator,
+        coordinator_module.TrustedWorkCoordinator,
         "_observation_size",
         staticmethod(size_off_owner),
     )
@@ -2279,7 +2273,7 @@ def test_progressive_layout_pages_restart_only_after_the_priority_pass_drains(
 
     service = _ProgressiveService()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs({1: first_page, 2: ordinary}),
         service,
@@ -2370,7 +2364,7 @@ def test_immediate_progressive_worker_yields_one_owner_turn_before_restart(
     service = _ProgressiveService()
     publications = []
     wakeups: list[int] = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(first_pages),
         service,
@@ -2509,7 +2503,7 @@ def test_progressive_metadata_pages_are_tier_fair_and_owner_preemptible(
 
     service = _TieredProgressiveService()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(first_pages),
         service,
@@ -2631,7 +2625,7 @@ def test_progressive_pages_do_not_amplify_outputs_or_cache_writes(
     monkeypatch.setattr(cache, "put", cache_put)
     service = _ThreePageService()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs({1: observations[0]}),
         service,
@@ -2724,9 +2718,9 @@ def test_identical_revision_terminal_page_unparks_one_complete_output_sequence(
     monkeypatch.setattr(cache, "put", cache_put)
     service = _IdenticalRevisionService()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
-        (TrustedDerivedRun(1, "guid-1", fixed_revision),),
+        (coordinator_module.TrustedDerivedRun(1, "guid-1", fixed_revision),),
         service,
         cache=cache,
         on_publish=publications.append,
@@ -2819,9 +2813,9 @@ def test_conclusive_reopen_unparks_after_permanent_progressive_failure(
     monkeypatch.setattr(cache, "put", cache_put)
     service = _PermanentThenConclusiveService()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
-        (TrustedDerivedRun(1, "guid-1", fixed_revision),),
+        (coordinator_module.TrustedDerivedRun(1, "guid-1", fixed_revision),),
         service,
         cache=cache,
         on_publish=publications.append,
@@ -2928,7 +2922,7 @@ def test_progressive_runs_rotate_page_by_page_then_fully_drain_once(
     monkeypatch.setattr(cache, "put", cache_put)
     service = _ThreePagesEachService()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(first_pages),
         service,
@@ -3033,7 +3027,7 @@ def test_immediate_progressive_pages_have_bounded_owner_work_and_wakeups(
 
     service = _AlwaysProgressiveService()
     wakeups: list[int] = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(first_pages),
         service,
@@ -3107,7 +3101,7 @@ def test_repeated_stale_progressive_outcomes_keep_one_paced_notifier(
             raise InterruptedError("stale progressive attempt")
 
     service = _RepeatedStaleService()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs({1: first_page}),
         service,
@@ -3156,7 +3150,7 @@ def test_progressive_ready_state_is_exactly_one_byte_per_run(
 ) -> None:
     instance = _instance(55)
     observations = {run_id: _observation(run_id, instance) for run_id in range(1, 18)}
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         _Service(instance, observations),
@@ -3214,7 +3208,7 @@ def test_completed_preview_replay_hits_cache_without_repeating_other_work(
         "render_trusted_derived_payload",
         record_render,
     )
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -3258,7 +3252,7 @@ def test_append_reconciliation_adopts_refined_existing_revision(tmp_path: Path) 
     instance = _instance()
     observations = {index: _observation(index, instance) for index in (1, 2)}
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _provisional_runs({1: observations[1]}),
         _Service(instance, observations),
@@ -3275,7 +3269,7 @@ def test_append_reconciliation_adopts_refined_existing_revision(tmp_path: Path) 
     coordinator.reconcile_runs(
         (
             *refined,
-            TrustedDerivedRun(
+            coordinator_module.TrustedDerivedRun(
                 2,
                 observations[2].run_guid,
                 TrustedSourceRevision(b"new-provisional"),
@@ -3298,7 +3292,7 @@ def test_completion_and_publication_are_marshaled_to_owner_thread(
     wake_threads: list[int] = []
     publish_threads: list[int] = []
     owner = threading.get_ident()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         _Service(instance, observations),
@@ -3337,7 +3331,7 @@ def test_append_reconciliation_does_not_replay_completed_history(
     observations = {1: _observation(1, instance)}
     service = _Service(instance, observations)
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -3362,7 +3356,7 @@ def test_active_change_is_coalesced_until_a_complete_prefix_publishes(
     instance = _instance()
     observations = {1: _observation(1, instance)}
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         _Service(instance, observations),
@@ -3388,7 +3382,7 @@ def test_deferred_change_survives_authoritative_revision_refinement(
     observations = {1: _observation(1, instance)}
     service = _Service(instance, observations, release=release)
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _provisional_runs(observations),
         service,
@@ -3415,7 +3409,7 @@ def test_database_switch_cancels_old_claim_and_publishes_nothing_stale(
     first_observations = {1: _observation(1, first_instance)}
     second_observations = {2: _observation(2, second_instance)}
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         first_instance,
         _runs(first_observations),
         _Service(first_instance, first_observations, release=release),
@@ -3443,7 +3437,7 @@ def test_helper_restart_and_format_change_invalidate_only_their_namespaces(
     instance = _instance()
     observations = {1: _observation(1, instance)}
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         _Service(instance, observations),
@@ -3487,7 +3481,7 @@ def test_helper_restart_preserves_selected_and_multi_run_visible_tiers(
     instance = _instance(56)
     observations = {run_id: _observation(run_id, instance) for run_id in range(1, 5)}
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         _Service(instance, observations),
@@ -3537,7 +3531,7 @@ def test_queued_old_completion_after_switch_to_fewer_runs_is_inert(
     observations = {1: _observation(1, first)}
     publications: list[object] = []
     errors: list[object] = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         first,
         _provisional_runs(observations),
         _Service(first, observations, release=release),
@@ -3565,7 +3559,7 @@ def test_queued_old_helper_completion_is_not_adopted(tmp_path: Path) -> None:
     observations = {1: _observation(1, instance)}
     publications = []
     service = _Service(instance, observations, release=release)
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _provisional_runs(observations),
         service,
@@ -3619,7 +3613,7 @@ def test_corrupt_cache_index_does_not_prevent_rendered_publication(
     cache = TrustedDerivedDiskCache(root)
     publications = []
     errors = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         _Service(instance, observations),
@@ -3673,7 +3667,7 @@ def test_existing_sqlite_cache_destination_does_not_prevent_publication(
     cache = CollisionCache(tmp_path / "cache")
     publications = []
     errors = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         _Service(instance, observations),
@@ -3745,7 +3739,7 @@ def test_corrupt_index_deletion_target_still_publishes_rendered_results(
     )
     publications = []
     errors = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         _Service(instance, observations),
@@ -3790,7 +3784,7 @@ def test_stale_failure_has_no_callback_and_carries_no_exception_graph(
     cache = _BlockingFailureCache()
     queued = threading.Event()
     errors: list[object] = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         first,
         _runs(observations),
         _Service(first, observations),
@@ -3830,7 +3824,7 @@ def test_absolute_deadline_covers_initial_cache_lookup(tmp_path: Path) -> None:
     instance = _instance(26)
     observations = {1: _observation(1, instance)}
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         _Service(instance, observations),
@@ -3901,7 +3895,7 @@ def _render_empty_retry_payload(
 
 
 def _poll_only_on_wakeup(
-    coordinator: TrustedWorkCoordinator,
+    coordinator: coordinator_module.TrustedWorkCoordinator,
     wakeups: queue.Queue[float],
     *,
     timeout: float = 15.0,
@@ -4016,7 +4010,7 @@ def test_lower_tier_retry_backoff_does_not_block_new_selected_images(
 
     service = _OneLowerTierFailureService()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -4164,7 +4158,7 @@ def test_lower_tier_retry_does_not_block_promoted_parked_continuation(
 
     service = _LowerFailureThenTerminalService()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -4307,7 +4301,7 @@ def test_deferred_source_change_keeps_retry_backoff_until_exact_deadline(
             return _Request(observation)
 
     service = _DeferredChangeService()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _provisional_runs(observations),
         service,
@@ -4382,7 +4376,7 @@ def test_immediate_source_change_preserves_parked_retry_and_admits_peer(
             return _Request(peer)
 
     service = _ProgressiveRetryService()
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -4510,7 +4504,7 @@ def test_background_aging_skips_exact_retry_delayed_slot_for_foreground_work(
 
     service = _AgingRetryService()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,
@@ -4572,7 +4566,7 @@ def test_transient_retry_schedules_a_new_owner_wakeup_at_backoff_deadline(
     service = _TimedPressuredService(instance, observations, failures=1)
     wakeups: queue.Queue[float] = queue.Queue()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _provisional_runs(observations),
         service,
@@ -4608,7 +4602,7 @@ def test_repeated_transient_retries_are_event_driven_and_capped_without_errors(
     service = _TimedPressuredService(instance, observations, failures=4)
     wakeups: queue.Queue[float] = queue.Queue()
     errors = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _provisional_runs(observations),
         service,
@@ -4668,7 +4662,7 @@ def test_source_change_during_transient_failure_preserves_backoff_for_newest_sou
     service = _BlockedTransientService(instance, observations, failures=1)
     wakeups: queue.Queue[float] = queue.Queue()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _provisional_runs(observations),
         service,
@@ -4701,7 +4695,7 @@ def test_retry_notifier_cannot_revive_obsolete_generation(
     service = _TimedPressuredService(instance, observations, failures=1)
     wakeups: queue.Queue[float] = queue.Queue()
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _provisional_runs(observations),
         service,
@@ -4737,7 +4731,7 @@ def test_transient_broker_pressure_retries_without_error_publication(
     observations = {1: _observation(1, instance)}
     service = _PressuredService(instance, observations, failures=2)
     publications = []
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _provisional_runs(observations),
         service,
@@ -4773,7 +4767,7 @@ def test_deferred_change_after_terminal_preview_failure_regenerates(
     monkeypatch.setattr(coordinator_module, "render_trusted_derived_payload", render)
     publications = []
     service = _Service(instance, observations)
-    coordinator = TrustedWorkCoordinator(
+    coordinator = coordinator_module.TrustedWorkCoordinator(
         instance,
         _runs(observations),
         service,

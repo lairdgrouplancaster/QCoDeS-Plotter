@@ -13,7 +13,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from qplot import _desktop_bootstrap
+import qplot._desktop_bootstrap
 from qplot._auxiliary_paths import ensure_safe_auxiliary_path
 
 _MARKER = "qplot-desktop-launcher-v1"
@@ -251,8 +251,6 @@ def _windows_associations(destination: Path, *, remove: bool = False) -> None:
 
 
 def setup(destination: Path, *, associations: bool = False) -> None:
-    import qplot
-
     destination = destination.expanduser().absolute()
     if sys.platform not in {"darwin", "win32"}:
         raise ValueError("Desktop launcher setup supports macOS and Windows only.")
@@ -269,7 +267,7 @@ def setup(destination: Path, *, associations: bool = False) -> None:
         else:
             destination.mkdir()
             resources = _windows_launcher(destination, python)
-        shutil.copyfile(_desktop_bootstrap.__file__, resources / "bootstrap.py")
+        shutil.copyfile(qplot._desktop_bootstrap.__file__, resources / "bootstrap.py")
         record = {"marker": _MARKER, "python": str(python), "prefix": sys.prefix,
                   "package": str(Path(qplot.__file__).absolute()), "associations": associations}
         (resources / "installation.json").write_text(json.dumps(record, indent=2), encoding="utf-8")

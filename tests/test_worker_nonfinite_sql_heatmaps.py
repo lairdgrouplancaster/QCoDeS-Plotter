@@ -13,7 +13,6 @@ from qcodes.dataset import (
 
 import qplot.tools.worker as worker_module
 from qplot.datahandling.readonly import load_by_id_read_only
-from qplot.tools.worker import loader
 
 
 @contextmanager
@@ -49,7 +48,7 @@ def numeric_heatmap(tmp_path, records, shape=None):
 
 def make_worker(dataset, **kwargs):
     params = {param.name: param for param in dataset.get_parameters()}
-    return loader(
+    return worker_module.loader(
         dataset.cache, params["signal"], params, {"x": "fast", "y": "slow"},
         **kwargs,
     )

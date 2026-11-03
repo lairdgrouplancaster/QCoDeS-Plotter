@@ -12,13 +12,13 @@ from qcodes.dataset import (
     load_or_create_experiment,
 )
 
+import qplot.tools.worker as worker_module
 from qplot.datahandling import readonly
 from qplot.datahandling.qcodes_cache import update_cache_parameter_data
 from qplot.datahandling.trusted_live_service import (
     TrustedLiveReadService,
     TrustedReadRequestCancelledError,
 )
-from qplot.tools.worker import loader
 
 
 def make_run(path, *, arrays=False, dimensions=2):
@@ -56,15 +56,14 @@ def prohibit_snapshots(monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("Trusted plotting attempted a whole-database snapshot")
     monkeypatch.setattr(readonly, "_copy_file_cooperatively", forbidden)
-    import qplot.tools.worker as worker
-    monkeypatch.setattr(worker, "qcodes_read_only_connection", forbidden)
-    monkeypatch.setattr(worker, "sqlite_read_only_connection", forbidden)
+    monkeypatch.setattr(worker_module, "qcodes_read_only_connection", forbidden)
+    monkeypatch.setattr(worker_module, "sqlite_read_only_connection", forbidden)
 
 
 def work(dataset, *, limit=2_000_000):
     param = dataset.paramspecs["z"]
     axes = {"x": "y", "y": "x"} if len(param.depends_on_) == 2 else {"x": "x", "y": "z"}
-    worker = loader(dataset.cache, param, dataset.paramspecs, axes,
+    worker = worker_module.loader(dataset.cache, param, dataset.paramspecs, axes,
                     max_full_heatmap_points=limit)
     worker.setAutoDelete(False)
     errors, finished = [], []
@@ -371,7 +370,7 @@ def test_accepted_trusted_failure_never_falls_back(tmp_path, monkeypatch):
         def fail(*_args):
             raise TrustedLiveReaderUnavailableError("accepted session failure")
         monkeypatch.setattr(trusted_plot, "plot_prefix", fail)
-        worker = loader(dataset.cache, dataset.paramspecs["z"], dataset.paramspecs,
+        worker = worker_module.loader(dataset.cache, dataset.paramspecs["z"], dataset.paramspecs,
                         {"x": "y", "y": "x"})
         errors, finished = [], []
         worker.emitter.errorOccurred.connect(errors.append)
@@ -405,7 +404,7 @@ def test_plot_worker_cancel_discards_partial_prefix(tmp_path, monkeypatch):
     thread = None
     try:
         dataset = service.submit_plot_dataset(guid).wait()
-        worker = loader(dataset.cache, dataset.paramspecs["z"], dataset.paramspecs,
+        worker = worker_module.loader(dataset.cache, dataset.paramspecs["z"], dataset.paramspecs,
                         {"x": "y", "y": "x"})
         finished = []
         worker.emitter.finished.connect(finished.append, QtCore.Qt.ConnectionType.DirectConnection)
@@ -444,7 +443,7 @@ def test_huge_planned_line_is_rejected_before_cache_allocation(tmp_path, monkeyp
     service = TrustedLiveReadService(path)
     try:
         dataset = service.submit_plot_dataset(guid).wait()
-        worker = loader(dataset.cache, dataset.paramspecs["z"], dataset.paramspecs,
+        worker = worker_module.loader(dataset.cache, dataset.paramspecs["z"], dataset.paramspecs,
                         {"x": "x", "y": "z"})
         errors, finished = [], []
         worker.emitter.errorOccurred.connect(errors.append)
