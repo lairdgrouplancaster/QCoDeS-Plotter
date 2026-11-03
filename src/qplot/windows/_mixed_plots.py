@@ -10,6 +10,7 @@ from ._plot2d_colorbar import Plot2DColorbarMixin
 from ._plot2d_layers import Plot2DLayerMixin
 from ._plot_data_viewbox import PlotDataViewBox, coordinate_viewbox
 from ._plot_drop_axes import plot_axis_entries
+from ._plot_host import PlotHost
 from ._plot_source_promotion import source_promotion_operation_error
 
 if TYPE_CHECKING:
@@ -18,12 +19,8 @@ if TYPE_CHECKING:
     class _MixedPlotBase(PlotAxisScalingMixin):
         operation_kind: str
 
-        def apply_axis_major_tick_count_preference(self) -> None: ...
-        def _update_plot_annotation(self) -> None: ...
-        def _add_plot_overlay(self, item: Any, viewbox: Any = None) -> None: ...
-        def _marquee_viewbox(self) -> Any: ...
 else:
-    class _MixedPlotBase:
+    class _MixedPlotBase(PlotHost):
         pass
 
 

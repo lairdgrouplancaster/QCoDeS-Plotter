@@ -7794,7 +7794,7 @@
       "base_commit": "4bfcaa38d931876f90be191833e43905f787f6e3",
       "findings_in_report": 399,
       "targeted_findings": 29,
-      "status": "Implemented; await merged-main scan to confirm clearance. New request Protocol declarations may add informational findings.",
+      "status": "Confirmed by the next merged-main export: all 29 targeted finding numbers are absent. Total findings fell from 399 to 374; errors fell from two to zero and warnings from 15 to 13.",
       "groups": [
         {
           "rule": "py/missing-call-to-init",
@@ -8036,6 +8036,263 @@
           "reason": "Explicit close(timeout=2.0) is the cancellation/reply-race operation under test and is repeated in finally with the same bound; replacing it with context cleanup changes that failure-path bound."
         }
       ]
+    },
+    {
+      "date": "2026-11-02",
+      "source_report": "qplot-code-quality-_acaoijs.json",
+      "exported_at_utc": "2026-11-02T21:47:18.223874+00:00",
+      "report_sha256": "232a13ba9d6920946fb1afd202e6827fd878c7a2323d7501f28c5fc68778a715",
+      "base_commit": "cf3bad34d95d28191544e5a9d187c7c1c429b764",
+      "findings_in_report": 374,
+      "targeted_findings": 9,
+      "status": "Implemented and locally validated; await a merged-main scan to confirm clearance.",
+      "groups": [
+        {
+          "rule": "py/init-calls-subclass",
+          "finding_numbers": [
+            1365,
+            1366,
+            1367,
+            1368
+          ],
+          "resolution": "Separate construction from owner-driven, single-use initialization. Establish all concrete-window state, build all controls, then submit the initial read. Frame creation no longer starts a read; pre-setup refreshes do nothing and a missing initial worker is retried without rebuilding renderers."
+        },
+        {
+          "rule": "py/conflicting-attributes",
+          "finding_numbers": [
+            1362,
+            598,
+            600,
+            601,
+            602
+          ],
+          "resolution": "Use one cooperative PlotHost declaration of host requirements, implemented by the corresponding feature owners. Keep the four intentional Qt slot selections explicit in the concrete windows. Shared declarations are typing-only and provide no runtime implementation."
+        }
+      ],
+      "validation": {
+        "full_suites": "tests/windows and tests/widgets",
+        "tests_passed": 2965,
+        "subtests_passed": 82,
+        "platform_or_feature_skips": 55,
+        "final_focused_recheck": "11 passed, covering final lifecycle code and real line/heatmap/cut plotting",
+        "project_mypy": "92 source files passed, including PlotHost",
+        "additional_typing_comparison": "The same 187 pre-existing diagnostics in three additional modules; none added.",
+        "ruff": "passed",
+        "startup": "qPlot remained running offscreen for eight seconds on the final source"
+      },
+      "runtime_method_ownership": {
+        "base_commit": "cf3bad34d95d28191544e5a9d187c7c1c429b764",
+        "unchanged_method_owners": 1424,
+        "differences": [
+          {
+            "class": "plotWidget",
+            "method": "initFrame",
+            "before": null,
+            "after": "qplot.windows._plotWin.plotWidget"
+          },
+          {
+            "class": "plotWidget",
+            "method": "initialize_plot_window",
+            "before": null,
+            "after": "qplot.windows._plotWin.plotWidget"
+          },
+          {
+            "class": "plot1d",
+            "method": "initialize_plot_window",
+            "before": null,
+            "after": "qplot.windows._plotWin.plotWidget"
+          },
+          {
+            "class": "plot1d",
+            "method": "mouseMoved",
+            "before": "qplot.windows._plot1d_snap.Plot1DSnapMixin",
+            "after": "qplot.windows.plot1d.plot1d"
+          },
+          {
+            "class": "plot2d",
+            "method": "change_axis",
+            "before": "qplot.windows._plot2d_sweeps.Plot2DSweepMixin",
+            "after": "qplot.windows.plot2d.plot2d"
+          },
+          {
+            "class": "plot2d",
+            "method": "initialize_plot_window",
+            "before": null,
+            "after": "qplot.windows._plotWin.plotWidget"
+          },
+          {
+            "class": "plot2d",
+            "method": "mouseMoved",
+            "before": "qplot.windows._plot1d_snap.Plot1DSnapMixin",
+            "after": "qplot.windows.plot2d.plot2d"
+          },
+          {
+            "class": "sweeper",
+            "method": "initialize_plot_window",
+            "before": null,
+            "after": "qplot.windows._plotWin.plotWidget"
+          },
+          {
+            "class": "sweeper",
+            "method": "mouseMoved",
+            "before": "qplot.windows._plot1d_snap.Plot1DSnapMixin",
+            "after": "qplot.windows._subplots.subplot2d.sweeper"
+          }
+        ]
+      },
+      "github_findings_modified": false,
+      "severity_review": {
+        "scope": "Every error and warning in the 374-finding export",
+        "summary": {
+          "total": 13,
+          "code_fixes": 9,
+          "reviewed_exceptions": 4,
+          "retained_errors": 0,
+          "retained_warnings": 4
+        },
+        "findings": [
+          {
+            "number": 1368,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 549,
+            "disposition": "code_fix",
+            "reason": "Context menus and their signal connections are built after construction and before initial read submission."
+          },
+          {
+            "number": 1367,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 548,
+            "disposition": "code_fix",
+            "reason": "Coordinate and heatmap label controls are built after construction and before initial read submission."
+          },
+          {
+            "number": 1366,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 540,
+            "disposition": "code_fix",
+            "reason": "Refresh controls are built in the explicit post-construction setup phase, before the initial read and periodic monitoring."
+          },
+          {
+            "number": 1365,
+            "severity": "warning",
+            "rule": "py/init-calls-subclass",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 538,
+            "disposition": "code_fix",
+            "reason": "The owner calls initialize_plot_window only after the entire constructor chain has returned. Axis hooks observe complete concrete-window state; no initial read is submitted until all controls are ready."
+          },
+          {
+            "number": 1362,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/_plotWin.py",
+            "reported_line": 412,
+            "disposition": "code_fix",
+            "reason": "Feedback, export and refresh mixins share one PlotHost declaration of required methods. The actual feedback implementation overrides that shared declaration."
+          },
+          {
+            "number": 606,
+            "severity": "warning",
+            "rule": "py/incomplete-ordering",
+            "path": "src/qplot/windows/_widgets/run_list_items.py",
+            "reported_line": 468,
+            "disposition": "reviewed_exception",
+            "reason": "Qt tree sorting uses the less-than override; adding unrelated rich comparisons is outside the widget contract."
+          },
+          {
+            "number": 605,
+            "severity": "warning",
+            "rule": "py/incomplete-ordering",
+            "path": "src/qplot/windows/_colorbar.py",
+            "reported_line": 148,
+            "disposition": "reviewed_exception",
+            "reason": "Qt widget item exposes the required less-than sorting hook; it does not claim general rich-value ordering."
+          },
+          {
+            "number": 602,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/_subplots/subplot2d.py",
+            "reported_line": 77,
+            "disposition": "code_fix",
+            "reason": "Shared host requirements replace duplicate declarations. The concrete cut explicitly delegates its Qt mouse slot to snap handling."
+          },
+          {
+            "number": 601,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/plot2d.py",
+            "reported_line": 33,
+            "disposition": "code_fix",
+            "reason": "Shared host requirements replace duplicate declarations. The concrete heatmap explicitly delegates Qt mouse readout to snapping and axis changes to sweep-aware handling."
+          },
+          {
+            "number": 600,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/plot1d.py",
+            "reported_line": 18,
+            "disposition": "code_fix",
+            "reason": "Shared host requirements replace duplicate declarations. The concrete line window explicitly delegates its Qt mouse slot to snap handling."
+          },
+          {
+            "number": 598,
+            "severity": "warning",
+            "rule": "py/conflicting-attributes",
+            "path": "src/qplot/windows/_mixed_plots.py",
+            "reported_line": 30,
+            "disposition": "code_fix",
+            "reason": "The layer and colorbar features inherit one shared heatmap-item requirement. The layer implementation overrides it; a second colorbar stub no longer obscures ownership."
+          },
+          {
+            "number": 456,
+            "severity": "warning",
+            "rule": "py/file-not-closed",
+            "path": "src/qplot/datahandling/trusted_live.py",
+            "reported_line": 779,
+            "disposition": "reviewed_exception",
+            "reason": "The physically read-only header descriptor is closed exactly once through _close_preflight_file_descriptor in finally. Cleanup uncertainty is surfaced and quarantined by tested preflight-failure handling."
+          },
+          {
+            "number": 78,
+            "severity": "warning",
+            "rule": "py/unreachable-statement",
+            "path": "src/qplot/windows/_trusted_derived_qt.py",
+            "reported_line": 1449,
+            "disposition": "reviewed_exception",
+            "reason": "Custom __eq__ can raise arbitrary exceptions or return non-booleans. New tests prove the rejection path is reachable for RuntimeError, KeyboardInterrupt, SystemExit and non-boolean results."
+          }
+        ]
+      },
+      "informational_review": {
+        "new_unused_import": {
+          "number": 1402,
+          "path": "src/qplot/datahandling/trusted_live_service.py",
+          "reason": "Generic is used by the existing TrustedReadRequest(Generic[_ResultT]) declaration; retain the import."
+        },
+        "source_declaration_count": {
+          "before": 52,
+          "after": 46,
+          "reason": "Consolidating duplicate declarations removes six ellipsis statements overall in the affected sources. New locations and net GitHub note counts require a fresh scan."
+        }
+      },
+      "additional_typing_comparison": {
+        "modules": [
+          "qplot.windows._plotWin",
+          "qplot.windows._plot_actions",
+          "qplot.windows._plot_annotation"
+        ],
+        "existing_diagnostics_before": 187,
+        "existing_diagnostics_after": 187,
+        "added_diagnostics": 0,
+        "comparison": "Same module, diagnostic message and code; source line shifts ignored."
+      }
     }
   ]
 }

@@ -11,6 +11,7 @@ from ._plot_appearance import (
     ReorderAppearanceTable,
     configure_appearance_table,
 )
+from ._plot_host import PlotHost
 from ._plot_refresh import plot_refresh_required
 from ._plot_transform_labels import native_axis_quantities
 from ._refresh_interval import refresh_interval_value
@@ -32,8 +33,9 @@ TRACE_COLOR_PALETTE = (
     "#ffffff",
     )
 
+
 if TYPE_CHECKING:
-    class _Plot1DTraceBase(qtw.QMainWindow):
+    class _Plot1DTraceBase(PlotHost, qtw.QMainWindow):
         axes_dock: Any
         axis_options: dict[str, str]
         box_count: int
@@ -63,15 +65,12 @@ if TYPE_CHECKING:
 
         def update_theme(self, config: Any) -> None: ...
 
-        def _marquee_axis_assignment_changed(self) -> None: ...
-
-        def _update_native_precision_status(self) -> None: ...
 
         def closeEvent(self, event: object) -> None: ...
 
         def add_trace_from_dialog(self, label: str, trace_key: Any) -> None: ...
 else:
-    class _Plot1DTraceBase:
+    class _Plot1DTraceBase(PlotHost):
         pass
 
 

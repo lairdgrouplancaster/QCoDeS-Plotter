@@ -8,12 +8,13 @@ from qplot.diagnostics import log_user_error
 
 from ._commands import CommandSpec, configure_action
 from ._error_dialog import ErrorDialog
+from ._plot_host import PlotHost
 
 if TYPE_CHECKING:
-    class _PlotWindowFeedbackBase(qtw.QMainWindow):
+    class _PlotWindowFeedbackBase(PlotHost, qtw.QMainWindow):
         visible: bool
 else:
-    class _PlotWindowFeedbackBase:
+    class _PlotWindowFeedbackBase(PlotHost):
         pass
 
 

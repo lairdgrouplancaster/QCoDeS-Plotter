@@ -84,6 +84,7 @@ class sweeper(Plot1DSnapMixin, plotWidget):
     their counterpart.
     """
     operation_kind = "sweeper"
+    _initial_load_message = "Cut plot ready; loading data..."
     sweep_moved = QtCore.pyqtSignal([int, str, str, float, object])
     merge_compatibility_changed = QtCore.pyqtSignal()
     remove_sweep = QtCore.pyqtSignal([int])
@@ -119,6 +120,12 @@ class sweeper(Plot1DSnapMixin, plotWidget):
             self.param.name,
             sweep_id=self.sweep_id,
             )
+
+
+    @QtCore.pyqtSlot(object)
+    def mouseMoved(self, pos):
+        """Use snap-to-trace readout before the base plot's free cursor."""
+        Plot1DSnapMixin.mouseMoved(self, pos)
 
 
     def initAxes(self):
@@ -204,19 +211,12 @@ class sweeper(Plot1DSnapMixin, plotWidget):
 
     def initFrame(self):
         """
-        Sets up the initial plot and starting data.
-        
-        Note, is copy of plot1d.initFrame
+        Create the cut renderer before setup submits the initial data read.
 
         """
         self.line = NativePlotDataItem(connect="all")
         self.plot.addItem(self.line)
         self._install_axis_scale_trace_handler(self.line)
-        
-        # Wait for loader to finish to enure needed data is collected.
-        self.load_data()
-        self.show_status("Cut plot ready; loading data...", 5000)
-
 
     def _capture_overlay_state(self) -> _OverlayState | None:
         overlay = self.__dict__.get("plot_state_overlay")

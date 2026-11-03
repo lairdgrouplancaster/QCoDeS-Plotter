@@ -8,6 +8,8 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from qplot.configuration.fonts import FONT_SIZE_KEY
 
+from ._plot_host import PlotHost
+
 SHOW_SOURCE_ANNOTATION_KEY = "user_preference.show_source_annotation"
 
 
@@ -123,7 +125,7 @@ class PlotSourceLabel(pg.GraphicsWidget):
         return QtCore.QSizeF(width, self._height)
 
 
-class PlotAnnotationMixin:
+class PlotAnnotationMixin(PlotHost):
     def _init_plot_annotation(self):
         self.source_annotation = PlotSourceLabel()
         # PlotItem reserves row zero for its title, aligned with the data axes.

@@ -20,10 +20,11 @@ from qplot.tools import loader
 from qplot.tools.operation_registry import OperationValidationError
 
 from ._dataset_handle import DatasetKey, dataset_key_matches_current_source
+from ._plot_host import PlotHost
 from ._refresh_interval import refresh_interval_value
 
 if TYPE_CHECKING:
-    class _PlotRefreshBase(qtw.QMainWindow):
+    class _PlotRefreshBase(PlotHost, qtw.QMainWindow):
         _last_error_text: str | None
         _live: bool
         axis_data: dict[str, Any]
@@ -47,24 +48,9 @@ if TYPE_CHECKING:
         def axis_options(self) -> dict[str, str]: ...
 
         def _set_param_axis_labels(self) -> None: ...
-        def hide_plot_state(self) -> None: ...
-        def initFrame(self) -> None: ...
         def monitorIntervalChanged(self, interval: float) -> None: ...
-        def show_error(
-                self,
-                title: str,
-                message: str,
-                details: str | None = None,
-                ) -> None: ...
-        def show_plot_state(
-                self,
-                title: object,
-                detail: object | None = None,
-                kind: str = "info",
-                ) -> None: ...
-        def show_status(self, message: str, timeout: int = 5000) -> None: ...
 else:
-    class _PlotRefreshBase:
+    class _PlotRefreshBase(PlotHost):
         pass
 
 
@@ -87,6 +73,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
     def _can_process_refresh(self) -> bool:
         """Return whether this window still has an active dataset owner."""
+
+        if not self.__dict__.get("_plot_setup_complete", True):
+            return False
 
         if not self.__dict__.get("_closed", False):
             return True
@@ -580,9 +569,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
             dataset = self.ds
             current_ds_len = dataset.number_of_results
 
-            # Plot has started, worker first defined in initFrame
+            # Retry the initial read without rebuilding existing renderers.
             if not hasattr(self, "worker"):
-                self.initFrame()  # defined in children classes
+                self.load_data()
                 retry = True
                 return
 

@@ -11,6 +11,7 @@ from PyQt6 import QtWidgets as qtw
 from pyqtgraph.graphicsItems.ViewBox import axisCtrlTemplate_generic
 
 from ._plot_data_viewbox import coordinate_viewbox
+from ._plot_host import PlotHost
 
 _AxisName = Literal["x", "y", "x2", "y2"]
 _AXIS_MENU_ITEMS: tuple[tuple[_AxisName, str], ...] = (
@@ -48,8 +49,9 @@ _AXIS_ALIASES: dict[str, _AxisName] = {
 
 _NumericValue = float | npt.ArrayLike
 
+
 if TYPE_CHECKING:
-    class _PlotAxisScalingBase(qtw.QMainWindow):
+    class _PlotAxisScalingBase(PlotHost, qtw.QMainWindow):
         _axis_scale_controls: dict[_AxisName, Any]
         _axis_scale_dialog: qtw.QDialog | None
         _axis_scale_tabs: qtw.QTabWidget | None
@@ -61,7 +63,7 @@ if TYPE_CHECKING:
         def _context_menu_action(self, text: str) -> Any | None: ...
         def _view_range_changed_programmatically(self) -> None: ...
 else:
-    class _PlotAxisScalingBase:
+    class _PlotAxisScalingBase(PlotHost):
         pass
 
 

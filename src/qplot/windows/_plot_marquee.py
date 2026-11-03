@@ -12,6 +12,7 @@ from qplot.tools.sample_statistics import (
     finite_sum_is_zero,
 )
 
+from ._plot_host import PlotHost
 from ._widgets import CopyableTableWidget
 
 _MarqueeHandle = Literal["nw", "n", "ne", "e", "se", "s", "sw", "w"]
@@ -27,7 +28,7 @@ class _MarqueeDragState(TypedDict):
 
 
 if TYPE_CHECKING:
-    class _PlotMarqueeBase(qtw.QMainWindow):
+    class _PlotMarqueeBase(PlotHost, qtw.QMainWindow):
         _marquee_drag_state: _MarqueeDragState | None
         _marquee_stats_dialog: qtw.QDialog
         marquee: QtCore.QRectF | None
@@ -38,10 +39,9 @@ if TYPE_CHECKING:
         vb: Any
         closed: QtCore.pyqtBoundSignal
 
-        def formatNum(self, value: float) -> str: ...
         def _view_range_changed_programmatically(self) -> None: ...
 else:
-    class _PlotMarqueeBase:
+    class _PlotMarqueeBase(PlotHost):
         pass
 
 

@@ -105,3 +105,23 @@ next scan. No findings were dismissed or suppressed.
 
 Validation: 642 tests and 29 subtests passed, with one Windows-only skip. Ruff,
 project mypy (91 files), and an eight-second offscreen qPlot startup passed.
+
+
+## Structural-warning follow-up to the 374-finding export
+
+The export `qplot-code-quality-_acaoijs.json` confirms all 29 targets from PR #105
+cleared: 374 findings remain, comprising zero errors, 13 warnings and 361 notes.
+This follow-up addresses the nine constructor-hook and mixin-conflict warnings.
+It separates construction, control creation and initial read submission, shares
+host requirements across features, and makes the four deliberate Qt handler
+choices explicit. The latest [dispositions](code-quality-errors-warnings.md)
+explain the four retained warnings and the lifecycle/MRO evidence. No findings
+were dismissed or suppressed; the next merged-main scan must confirm clearance.
+
+
+Validation for the structural follow-up: the full window/widget suites passed
+2,965 tests and 82 subtests, with 55 platform/feature skips. The final focused
+recheck passed 11 tests. Ruff, project mypy (92 files), the runtime owner
+comparison and an eight-second offscreen startup check passed. Three additional
+modules outside the configured mypy set retain the same 187 existing diagnostics;
+none were added.
