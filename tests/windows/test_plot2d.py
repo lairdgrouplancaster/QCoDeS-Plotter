@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pyqtgraph as pg
+import pytest
 from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 
@@ -69,6 +70,44 @@ def test_control_layout_preserves_pending_data_range_instead_of_empty_view():
         assert expected[1][0] > 0
     finally:
         viewbox.close()
+
+
+@pytest.mark.parametrize("zoomed", [False, True])
+def test_visible_reload_resolves_pending_auto_range_without_overriding_zoom(zoomed):
+    viewbox = pg.ViewBox()
+    image = pg.ImageItem(np.arange(12).reshape(4, 3), axisOrder="row-major")
+    viewbox.addItem(image)
+    image.setRect(QtCore.QRectF(-0.5, -0.5, 3, 4))
+    assert viewbox._autoRangeNeedsUpdate
+    window = plot2d.__new__(plot2d)
+    qtw.QMainWindow.__init__(window)
+    window.vb = viewbox
+    window.worker = SimpleNamespace(running=False)
+    window.param = SimpleNamespace(name="signal")
+    window._large_heatmap_sql_mode = True
+    window._heatmap_full_axis_ranges = {"x": (0.0, 2.0), "y": (0.0, 3.0)}
+    window._heatmap_last_view_ranges = None
+    window._has_plottable_heatmap_data = lambda: True
+    loads = []
+    window.load_data = lambda **kwargs: loads.append(kwargs)
+    try:
+        if zoomed:
+            viewbox.setRange(xRange=(0.0, 1.0), yRange=(0.5, 1.5), padding=0)
+        # A debounce timer can expire before the hidden widget's first paint.
+        window._reload_visible_heatmap_data()
+        if zoomed:
+            assert len(loads) == 1
+            assert loads[0]["heatmap_axis_ranges"] == {
+                "x": (0.0, 1.0), "y": (0.5, 1.5),
+            }
+        else:
+            assert loads == []
+            assert not viewbox._autoRangeNeedsUpdate
+            ranges = window._visible_heatmap_axis_ranges()
+            assert ranges is None
+    finally:
+        viewbox.close()
+        sip.delete(window)
 
 
 def _colorbar_config_values(overrides=None):

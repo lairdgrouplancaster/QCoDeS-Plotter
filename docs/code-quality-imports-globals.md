@@ -85,3 +85,51 @@ The native Windows cases still require Windows CI. No GitHub finding was
 dismissed or suppressed. A successful scan of merged main must establish which
 findings clear. The new assert-side-effect error in this export is addressed
 separately by PR #107; this follow-up is based on main and does not duplicate it.
+
+## Fresh export: 3 November, 15:57 UTC
+
+`qplot-code-quality-pcugdsiq.json` contains **325 findings: 320 notes, four
+warnings and one error**. All 29 mixed-import findings and all six unused-global
+findings have cleared. Counts for the other rule categories are unchanged;
+several finding IDs moved with source locations.
+
+Signature note 1448 remains: its message identifies the auto-level call in
+`_plot2d_colorbar.py`, not the manual-range caller previously clarified. That
+call and the two remaining manual-level calls in `plot2d.py` now unpack the
+pair and pass both endpoints explicitly. The previous boolean return-contract
+correction remains in place. No color-range policy or validation changes.
+
+The exported assertion error, now 1461, refers to the old line 79 in
+`test_plot_initialization.py`. Main already contains PR #107's fix: `close()`
+and `load_file()` execute before their assertions, and both survive compilation
+with Python optimization enabled. The two merge-triggered quality scans
+overlapped: the scan of newer main `12ee805` finished at 13:55:37 UTC, while the
+scan of its parent `94b41d2` finished at 13:55:58 UTC. The stale error was created
+at 13:55:53 UTC. This export therefore cannot establish that the assertion fix
+failed. A new scan of the latest main, without an older scan finishing after
+it, is needed to settle the alert state.
+
+Validation of the caller follow-up: 116 colorbar, appearance and initialization
+tests and 10 subtests passed; Ruff, project mypy and an eight-second offscreen
+qPlot startup check passed. The 22 variable-array record tests also passed
+locally. A current-main Windows Python 3.14 CI job failed one variable-array
+plot/export case; that job was rerun to check reproducibility. A local pass
+does not establish that the Windows failure is fixed.
+
+### Hidden heatmap viewport race
+
+The unchanged Windows retry passed all 3,244 tests and 45 subtests (81 skips),
+confirming that the variable-array failure was intermittent. Further tracing
+found a concrete pre-paint race: a hidden heatmap's ViewBox can still have its
+data auto-range pending when the visible-data reload timer fires. Reading
+`viewRange()` at that point returns the default `(0, 1)` viewport and requests
+only that subset of the measurement. This can remove the outer coordinates
+expected by the original full-data plot test.
+
+Visible-range selection now resolves pending auto-range before constructing a
+query. A real ViewBox/ImageItem regression deterministically requested the
+incorrect subset before the fix. Its companion case verifies that explicit
+user zoom remains unchanged. The original variable-array assertions remain
+intact. The focused plotting suites passed 130 tests and 10 subtests; another
+five real-database heatmap integration tests passed, along with Ruff, project
+mypy and the eight-second startup check.
