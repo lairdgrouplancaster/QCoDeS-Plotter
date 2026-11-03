@@ -295,7 +295,7 @@ def _windows_file_identity(canonical_path: str) -> DatabaseFileIdentity | None:
 
     try:
         import ctypes
-        from ctypes import wintypes
+        import ctypes.wintypes as wintypes
     except (ImportError, AttributeError):
         return None
 
@@ -346,7 +346,7 @@ def _checked_windows_file_identity(
 
     try:
         import ctypes
-        from ctypes import wintypes
+        import ctypes.wintypes as wintypes
     except (ImportError, AttributeError):
         return None
 
@@ -418,7 +418,7 @@ def _windows_handle_identity(handle) -> DatabaseFileIdentity | None:
 
     try:
         import ctypes
-        from ctypes import wintypes
+        import ctypes.wintypes as wintypes
     except (ImportError, AttributeError):
         return None
 

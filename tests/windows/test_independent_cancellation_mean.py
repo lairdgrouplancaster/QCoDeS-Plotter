@@ -6,6 +6,7 @@ from math import isfinite
 import numpy as np
 import pytest
 
+import qplot.tools.plot_tools as plot_tools
 from tests.windows.test_differentiation_integration import (
     apply_operations,
     operation_option,
@@ -63,7 +64,6 @@ def test_heatmap_row_mean_preserves_measured_cancellation_residual(
 
 
 def test_mixed_sign_mean_cancels_during_compensated_sum():
-    from qplot.tools.plot_tools import _center_float_samples
 
     calls = 0
 
@@ -74,11 +74,10 @@ def test_mixed_sign_mean_cancels_during_compensated_sum():
 
     values = np.r_[-1., np.ones(2048)]
     with pytest.raises(InterruptedError, match="cancelled"):
-        _center_float_samples(values, cancelled_callback=cancelled)
+        plot_tools._center_float_samples(values, cancelled_callback=cancelled)
 
 
 def test_mixed_sign_mean_cancels_during_exact_fallback(monkeypatch):
-    import qplot.tools.plot_tools as plot_tools
 
     original_sample_fraction = plot_tools.sample_fraction
     calls = 0

@@ -15,12 +15,12 @@ handles.
 from __future__ import annotations
 
 import ctypes
+import ctypes.wintypes as wintypes
 import math
 import os
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
-from ctypes import wintypes
 from dataclasses import dataclass
 from typing import Any, Protocol
 

@@ -12,7 +12,6 @@ from qcodes.dataset import (
 
 import qplot.tools.worker as worker_module
 from qplot.datahandling.readonly import load_by_id_read_only
-from qplot.tools.worker import loader
 
 
 def _run_worker(worker):
@@ -24,7 +23,7 @@ def _run_worker(worker):
 
 
 def _bare_worker():
-    worker = loader.__new__(loader)
+    worker = worker_module.loader.__new__(worker_module.loader)
     worker.axes_dict = {"x": "fast", "y": "slow"}
     worker.param = type(
         "Param",
@@ -104,7 +103,7 @@ def test_real_qcodes_heatmap_preserves_real_values_or_rejects_complex(
     dataset = load_by_id_read_only(run_id, str(path))
     try:
         params = {param.name: param for param in dataset.get_parameters()}
-        worker = loader(
+        worker = worker_module.loader(
             dataset.cache, params["signal"], params,
             {"x": "x", "y": "y"},
             force_sql_heatmap=force_sql,
@@ -180,7 +179,7 @@ def test_complex_scalar_heatmap_coordinates_are_rejected_without_publication(
     dataset = load_by_id_read_only(run_id, str(path))
     try:
         params = {param.name: param for param in dataset.get_parameters()}
-        worker = loader(
+        worker = worker_module.loader(
             dataset.cache,
             params["signal"],
             params,

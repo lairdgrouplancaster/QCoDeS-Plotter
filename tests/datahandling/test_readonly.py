@@ -729,8 +729,8 @@ def _mark_file_sparse_on_windows(path):
         return
 
     import ctypes
+    import ctypes.wintypes as wintypes
     import msvcrt
-    from ctypes import wintypes
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     device_io_control = kernel32.DeviceIoControl
@@ -787,7 +787,7 @@ def _allocated_file_size(path):
         return blocks * 512
 
     import ctypes
-    from ctypes import wintypes
+    import ctypes.wintypes as wintypes
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     get_compressed_file_size = kernel32.GetCompressedFileSizeW

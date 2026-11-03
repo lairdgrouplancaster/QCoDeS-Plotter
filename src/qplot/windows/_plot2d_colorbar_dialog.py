@@ -7,9 +7,9 @@ from PyQt6 import QtWidgets as qtw
 
 from ._colorbar import (
     _CET_COLORBAR_SUBTYPES,
-    _COLORBAR_COLORMAP_LABELS,
     _COLORBAR_TABLE_SORT_ROLE,
     _MATPLOTLIB_COLORBAR_SUBTYPES,
+    _colorbar_colormap_label,
     _colorbar_colormap_preview,
     _colorbar_colormap_type_label,
     _colorbar_subtype_config_key,
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
         def _current_colorbar_colormap_name(self) -> str: ...
         def _current_colorbar_levels(self) -> tuple[float, float] | None: ...
         def _data_colorbar_levels(self) -> tuple[float, float] | None: ...
-        def _set_colorbar_levels(self, vmin: float, vmax: float) -> None: ...
+        def _set_colorbar_levels(self, vmin: float, vmax: float) -> bool: ...
         def scaleColorbar(self, event: Any = None) -> None: ...
 else:
     class _ColorbarScaleDialogBase(PlotHost):
@@ -342,7 +342,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         colormaps = self._available_colorbar_colormaps()
         table.setRowCount(len(colormaps))
         for row, name in enumerate(colormaps):
-            label = _COLORBAR_COLORMAP_LABELS.get(name, name)
+            label = _colorbar_colormap_label(name)
             type_label = _colorbar_colormap_type_label(name)
             name_item = _ColorbarColormapTableItem(label)
             name_item.setData(QtCore.Qt.ItemDataRole.UserRole, name)
@@ -756,7 +756,8 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         if "relevel_refresh" in self.__dict__:
             self.relevel_refresh.setChecked(False)
 
-        self._set_colorbar_levels(*self._colorbar_manual_levels)
+        minimum, maximum = self._colorbar_manual_levels
+        self._set_colorbar_levels(minimum, maximum)
         if "colorbar_manual_radio" in self.__dict__:
             self.colorbar_manual_radio.setChecked(True)
         if self.__dict__.get("_heatmap_color_range_rejected", False):

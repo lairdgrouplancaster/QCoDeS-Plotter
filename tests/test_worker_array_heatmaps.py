@@ -16,7 +16,6 @@ from qplot.datahandling.qcodes_cache import update_cache_parameter_data
 from qplot.datahandling.readonly import load_by_id_read_only
 from qplot.tools.operation_registry import OperationCall
 from qplot.tools.plot_tools import differentiate, fill_heatmap
-from qplot.tools.worker import loader
 
 
 @contextmanager
@@ -70,7 +69,7 @@ def heatmap_dataset(
 
 def make_worker(dataset, **kwargs):
     params = {param.name: param for param in dataset.get_parameters()}
-    return loader(
+    return worker_module.loader(
         dataset.cache, params["signal"], params, {"x": "fast", "y": "slow"},
         **kwargs,
     )

@@ -11,25 +11,6 @@ import pytest
 import qplot.datahandling.trusted_live_queries as query_module
 import qplot.datahandling.trusted_work_scheduler as scheduler_module
 from qplot.datahandling.file_identity import DatabaseInstance
-from qplot.datahandling.trusted_live_queries import (
-    TrustedRunRecord,
-    TrustedSourceRevisionNamespace,
-    trusted_source_revision,
-)
-from qplot.datahandling.trusted_work_scheduler import (
-    CompletionDisposition,
-    RenderingOptions,
-    ScheduledWork,
-    SchedulerLifecycle,
-    TrustedCacheWorkKey,
-    TrustedRunWorkSource,
-    TrustedSourceRevision,
-    TrustedWorkKind,
-    TrustedWorkScheduler,
-    TrustedWorkState,
-    WorkFormat,
-    trusted_derived_cache_root,
-)
 
 
 def _instance(
@@ -39,79 +20,79 @@ def _instance(
     return DatabaseInstance(path, path, identity)
 
 
-def _revision(value: int) -> TrustedSourceRevision:
-    return TrustedSourceRevision(f"revision-{value}".encode())
+def _revision(value: int) -> scheduler_module.TrustedSourceRevision:
+    return scheduler_module.TrustedSourceRevision(f"revision-{value}".encode())
 
 
-def _runs(count: int) -> list[TrustedRunWorkSource]:
+def _runs(count: int) -> list[scheduler_module.TrustedRunWorkSource]:
     return [
-        TrustedRunWorkSource(f"guid-{index}", _revision(index))
+        scheduler_module.TrustedRunWorkSource(f"guid-{index}", _revision(index))
         for index in range(count)
     ]
 
 
-def _drain(scheduler: TrustedWorkScheduler) -> list[ScheduledWork]:
+def _drain(scheduler: scheduler_module.TrustedWorkScheduler) -> list[scheduler_module.ScheduledWork]:
     claimed = []
     while (work := scheduler.claim_next()) is not None:
         claimed.append(work)
         assert (
             scheduler.complete(work, f"result-{work.claim_id}")
-            is CompletionDisposition.ACCEPTED
+            is scheduler_module.CompletionDisposition.ACCEPTED
         )
     return claimed
 
 
-def _order(work: Sequence[ScheduledWork]) -> list[tuple[int, TrustedWorkKind]]:
+def _order(work: Sequence[scheduler_module.ScheduledWork]) -> list[tuple[int, scheduler_module.TrustedWorkKind]]:
     return [(item.run_index, item.key.kind) for item in work]
 
 
 def test_priority_is_selected_then_visible_then_remaining_with_information_order() -> (
     None
 ):
-    scheduler = TrustedWorkScheduler(_instance(), _runs(5))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(5))
     scheduler.select_run(2)
     scheduler.set_visible_range(1, 4)
 
     assert _order(_drain(scheduler)) == [
-        (2, TrustedWorkKind.METADATA),
-        (2, TrustedWorkKind.THUMBNAIL),
-        (2, TrustedWorkKind.PREVIEW),
-        (1, TrustedWorkKind.METADATA),
-        (3, TrustedWorkKind.METADATA),
-        (1, TrustedWorkKind.THUMBNAIL),
-        (3, TrustedWorkKind.THUMBNAIL),
-        (1, TrustedWorkKind.PREVIEW),
-        (3, TrustedWorkKind.PREVIEW),
-        (0, TrustedWorkKind.METADATA),
-        (4, TrustedWorkKind.METADATA),
-        (0, TrustedWorkKind.THUMBNAIL),
-        (4, TrustedWorkKind.THUMBNAIL),
-        (0, TrustedWorkKind.PREVIEW),
-        (4, TrustedWorkKind.PREVIEW),
+        (2, scheduler_module.TrustedWorkKind.METADATA),
+        (2, scheduler_module.TrustedWorkKind.THUMBNAIL),
+        (2, scheduler_module.TrustedWorkKind.PREVIEW),
+        (1, scheduler_module.TrustedWorkKind.METADATA),
+        (3, scheduler_module.TrustedWorkKind.METADATA),
+        (1, scheduler_module.TrustedWorkKind.THUMBNAIL),
+        (3, scheduler_module.TrustedWorkKind.THUMBNAIL),
+        (1, scheduler_module.TrustedWorkKind.PREVIEW),
+        (3, scheduler_module.TrustedWorkKind.PREVIEW),
+        (0, scheduler_module.TrustedWorkKind.METADATA),
+        (4, scheduler_module.TrustedWorkKind.METADATA),
+        (0, scheduler_module.TrustedWorkKind.THUMBNAIL),
+        (4, scheduler_module.TrustedWorkKind.THUMBNAIL),
+        (0, scheduler_module.TrustedWorkKind.PREVIEW),
+        (4, scheduler_module.TrustedWorkKind.PREVIEW),
     ]
 
 
 def test_exact_noncontiguous_viewport_and_range_api_remain_coherent() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(5))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(5))
     scheduler.set_visible_indices((1, 3))
 
     assert _order(_drain(scheduler))[:6] == [
-        (1, TrustedWorkKind.METADATA),
-        (3, TrustedWorkKind.METADATA),
-        (1, TrustedWorkKind.THUMBNAIL),
-        (3, TrustedWorkKind.THUMBNAIL),
-        (1, TrustedWorkKind.PREVIEW),
-        (3, TrustedWorkKind.PREVIEW),
+        (1, scheduler_module.TrustedWorkKind.METADATA),
+        (3, scheduler_module.TrustedWorkKind.METADATA),
+        (1, scheduler_module.TrustedWorkKind.THUMBNAIL),
+        (3, scheduler_module.TrustedWorkKind.THUMBNAIL),
+        (1, scheduler_module.TrustedWorkKind.PREVIEW),
+        (3, scheduler_module.TrustedWorkKind.PREVIEW),
     ]
 
-    scheduler = TrustedWorkScheduler(_instance(), _runs(5))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(5))
     scheduler.set_visible_indices((1, 3))
     scheduler.set_visible_range(1, 4)
     assert scheduler.snapshot().visible_indices == (1, 2, 3)
 
 
 def test_selection_and_viewport_changes_reprioritize_without_duplicates() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(6))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(6))
     first = scheduler.claim_next()
     assert first is not None
     assert first.priority_key == (2, 0, 0)
@@ -119,7 +100,7 @@ def test_selection_and_viewport_changes_reprioritize_without_duplicates() -> Non
 
     scheduler.select_run(5)
     scheduler.set_visible_range(2, 4)
-    assert scheduler.complete(first) is CompletionDisposition.ACCEPTED
+    assert scheduler.complete(first) is scheduler_module.CompletionDisposition.ACCEPTED
 
     claims = [first]
     for priority in ((0, 0, 5), (0, 1, 5), (0, 2, 5), (1, 0, 2)):
@@ -129,22 +110,22 @@ def test_selection_and_viewport_changes_reprioritize_without_duplicates() -> Non
         claims.append(promoted)
         if priority == (1, 0, 2):
             scheduler.set_visible_indices((4,))
-        assert scheduler.complete(promoted) is CompletionDisposition.ACCEPTED
+        assert scheduler.complete(promoted) is scheduler_module.CompletionDisposition.ACCEPTED
 
     viewport_promoted = scheduler.claim_next()
     assert viewport_promoted is not None
     assert viewport_promoted.priority_key == (1, 0, 4)
     claims.append(viewport_promoted)
-    assert scheduler.complete(viewport_promoted) is CompletionDisposition.ACCEPTED
+    assert scheduler.complete(viewport_promoted) is scheduler_module.CompletionDisposition.ACCEPTED
     claims.extend(_drain(scheduler))
 
     identities = [(work.run_index, work.key.kind) for work in claims]
-    assert len(identities) == len(_runs(6)) * len(TrustedWorkKind)
+    assert len(identities) == len(_runs(6)) * len(scheduler_module.TrustedWorkKind)
     assert len(set(identities)) == len(identities)
 
 
 def test_atomic_priority_validates_then_adopts_selection_and_viewport() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(4))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(4))
     scheduler.set_priority(3, (1, 2))
 
     snapshot = scheduler.snapshot()
@@ -160,16 +141,16 @@ def test_atomic_priority_validates_then_adopts_selection_and_viewport() -> None:
 
 
 def test_metadata_dependency_bits_survive_replay_and_reset_on_new_source() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(1))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(1))
     metadata = scheduler.claim_next()
     assert metadata is not None
-    assert scheduler.complete(metadata) is CompletionDisposition.ACCEPTED
+    assert scheduler.complete(metadata) is scheduler_module.CompletionDisposition.ACCEPTED
     assert scheduler.metadata_is_conclusive(0)
     assert not scheduler.metadata_is_progressively_parked(0)
 
     assert scheduler.request_completed_work(
         0,
-        TrustedWorkKind.METADATA,
+        scheduler_module.TrustedWorkKind.METADATA,
         database_instance=_instance(),
         generation=scheduler.generation,
         run_guid="guid-0",
@@ -179,14 +160,14 @@ def test_metadata_dependency_bits_survive_replay_and_reset_on_new_source() -> No
     assert replay is not None
     assert (
         scheduler.park_progressive_metadata(replay, _revision(90))
-        is CompletionDisposition.ACCEPTED
+        is scheduler_module.CompletionDisposition.ACCEPTED
     )
     assert not scheduler.metadata_is_conclusive(0)
     assert scheduler.metadata_is_progressively_parked(0)
 
     assert scheduler.request_completed_work(
         0,
-        TrustedWorkKind.METADATA,
+        scheduler_module.TrustedWorkKind.METADATA,
         database_instance=_instance(),
         generation=scheduler.generation,
         run_guid="guid-0",
@@ -195,10 +176,10 @@ def test_metadata_dependency_bits_survive_replay_and_reset_on_new_source() -> No
     assert terminal is not None
     assert (
         scheduler.unpark_progressive_metadata(terminal)
-        is CompletionDisposition.ACCEPTED
+        is scheduler_module.CompletionDisposition.ACCEPTED
     )
     assert not scheduler.metadata_is_progressively_parked(0)
-    assert scheduler.complete(terminal) is CompletionDisposition.ACCEPTED
+    assert scheduler.complete(terminal) is scheduler_module.CompletionDisposition.ACCEPTED
     assert scheduler.metadata_is_conclusive(0)
 
     scheduler.update_source_revision(0, _revision(91))
@@ -207,45 +188,45 @@ def test_metadata_dependency_bits_survive_replay_and_reset_on_new_source() -> No
     assert refined is not None
     assert (
         scheduler.refine_claim_source_revision(refined, _revision(92))
-        is CompletionDisposition.ACCEPTED
+        is scheduler_module.CompletionDisposition.ACCEPTED
     )
     assert not scheduler.metadata_is_conclusive(0)
 
 
 def test_previous_selection_is_demoted_to_its_current_tier() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(4))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(4))
     scheduler.set_visible_range(0, 2)
     scheduler.select_run(0)
     first = scheduler.claim_next()
     assert first is not None
-    assert scheduler.complete(first) is CompletionDisposition.ACCEPTED
+    assert scheduler.complete(first) is scheduler_module.CompletionDisposition.ACCEPTED
 
     scheduler.select_run(3)
     assert _order(_drain(scheduler))[:6] == [
-        (3, TrustedWorkKind.METADATA),
-        (3, TrustedWorkKind.THUMBNAIL),
-        (3, TrustedWorkKind.PREVIEW),
-        (1, TrustedWorkKind.METADATA),
-        (0, TrustedWorkKind.THUMBNAIL),
-        (1, TrustedWorkKind.THUMBNAIL),
+        (3, scheduler_module.TrustedWorkKind.METADATA),
+        (3, scheduler_module.TrustedWorkKind.THUMBNAIL),
+        (3, scheduler_module.TrustedWorkKind.PREVIEW),
+        (1, scheduler_module.TrustedWorkKind.METADATA),
+        (0, scheduler_module.TrustedWorkKind.THUMBNAIL),
+        (1, scheduler_module.TrustedWorkKind.THUMBNAIL),
     ]
 
 
 def test_remaining_progressive_page_does_not_gate_selected_images() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(2))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(2))
     background_page = scheduler.claim_next()
     assert background_page is not None
     assert (background_page.run_index, background_page.key.kind) == (
         0,
-        TrustedWorkKind.METADATA,
+        scheduler_module.TrustedWorkKind.METADATA,
     )
     assert (
         scheduler.park_progressive_metadata(background_page, _revision(90))
-        is CompletionDisposition.ACCEPTED
+        is scheduler_module.CompletionDisposition.ACCEPTED
     )
     assert scheduler.request_completed_work(
         0,
-        TrustedWorkKind.METADATA,
+        scheduler_module.TrustedWorkKind.METADATA,
         database_instance=_instance(),
         generation=scheduler.generation,
         run_guid="guid-0",
@@ -253,12 +234,12 @@ def test_remaining_progressive_page_does_not_gate_selected_images() -> None:
 
     scheduler.select_run(1)
     selected = []
-    for expected_kind in TrustedWorkKind:
+    for expected_kind in scheduler_module.TrustedWorkKind:
         work = scheduler.claim_next()
         assert work is not None
         assert (work.run_index, work.key.kind) == (1, expected_kind)
         selected.append(work)
-        assert scheduler.complete(work) is CompletionDisposition.ACCEPTED
+        assert scheduler.complete(work) is scheduler_module.CompletionDisposition.ACCEPTED
 
     assert [work.priority_key for work in selected] == [
         (0, 0, 1),
@@ -269,93 +250,93 @@ def test_remaining_progressive_page_does_not_gate_selected_images() -> None:
     assert continuation is not None
     assert (continuation.run_index, continuation.key.kind) == (
         0,
-        TrustedWorkKind.METADATA,
+        scheduler_module.TrustedWorkKind.METADATA,
     )
 
 
 def test_remaining_progressive_page_does_not_split_visible_kind_order() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(3))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(3))
     background_page = scheduler.claim_next()
     assert background_page is not None
     assert (
         scheduler.park_progressive_metadata(background_page, _revision(90))
-        is CompletionDisposition.ACCEPTED
+        is scheduler_module.CompletionDisposition.ACCEPTED
     )
     assert scheduler.request_completed_work(
         0,
-        TrustedWorkKind.METADATA,
+        scheduler_module.TrustedWorkKind.METADATA,
         database_instance=_instance(),
         generation=scheduler.generation,
         run_guid="guid-0",
     )
 
     scheduler.set_visible_indices((2,))
-    for expected_kind in TrustedWorkKind:
+    for expected_kind in scheduler_module.TrustedWorkKind:
         work = scheduler.claim_next()
         assert work is not None
         assert (work.run_index, work.key.kind) == (2, expected_kind)
-        assert scheduler.complete(work) is CompletionDisposition.ACCEPTED
+        assert scheduler.complete(work) is scheduler_module.CompletionDisposition.ACCEPTED
 
     continuation = scheduler.claim_next()
     assert continuation is not None
     assert (continuation.run_index, continuation.key.kind) == (
         0,
-        TrustedWorkKind.METADATA,
+        scheduler_module.TrustedWorkKind.METADATA,
     )
 
 
 def test_progressive_metadata_can_park_all_outputs_and_resume_only_metadata() -> None:
     publications = []
-    scheduler = TrustedWorkScheduler(
+    scheduler = scheduler_module.TrustedWorkScheduler(
         _instance(),
         _runs(1),
         on_publish=publications.append,
     )
     work = scheduler.claim_next()
     assert work is not None
-    assert work.key.kind is TrustedWorkKind.METADATA
+    assert work.key.kind is scheduler_module.TrustedWorkKind.METADATA
     replacement = _revision(99)
 
     assert (
         scheduler.park_progressive_metadata(work, replacement)
-        is CompletionDisposition.ACCEPTED
+        is scheduler_module.CompletionDisposition.ACCEPTED
     )
     assert publications == []
     assert scheduler.snapshot().pending_count == 0
     assert all(
-        scheduler.state_for(0, kind) is TrustedWorkState.COMPLETED
-        for kind in TrustedWorkKind
+        scheduler.state_for(0, kind) is scheduler_module.TrustedWorkState.COMPLETED
+        for kind in scheduler_module.TrustedWorkKind
     )
     assert scheduler.request_completed_work(
         0,
-        TrustedWorkKind.METADATA,
+        scheduler_module.TrustedWorkKind.METADATA,
         database_instance=_instance(),
         generation=scheduler.generation,
         run_guid="guid-0",
     )
     resumed = scheduler.claim_next()
     assert resumed is not None
-    assert resumed.key.kind is TrustedWorkKind.METADATA
+    assert resumed.key.kind is scheduler_module.TrustedWorkKind.METADATA
     assert resumed.key.source_revision == replacement
-    assert scheduler.state_for(0, TrustedWorkKind.THUMBNAIL) is (
-        TrustedWorkState.COMPLETED
+    assert scheduler.state_for(0, scheduler_module.TrustedWorkKind.THUMBNAIL) is (
+        scheduler_module.TrustedWorkState.COMPLETED
     )
-    assert scheduler.state_for(0, TrustedWorkKind.PREVIEW) is TrustedWorkState.COMPLETED
+    assert scheduler.state_for(0, scheduler_module.TrustedWorkKind.PREVIEW) is scheduler_module.TrustedWorkState.COMPLETED
 
 
 def test_progressive_park_rejects_image_replay_and_survives_format_updates() -> None:
     instance = _instance()
-    scheduler = TrustedWorkScheduler(instance, _runs(1))
+    scheduler = scheduler_module.TrustedWorkScheduler(instance, _runs(1))
     metadata = scheduler.claim_next()
     assert metadata is not None
     assert (
         scheduler.park_progressive_metadata(metadata, _revision(90))
-        is CompletionDisposition.ACCEPTED
+        is scheduler_module.CompletionDisposition.ACCEPTED
     )
 
     replacements = {
-        TrustedWorkKind.THUMBNAIL: WorkFormat("thumbnail-progressive-v2"),
-        TrustedWorkKind.PREVIEW: WorkFormat("preview-progressive-v2"),
+        scheduler_module.TrustedWorkKind.THUMBNAIL: scheduler_module.WorkFormat("thumbnail-progressive-v2"),
+        scheduler_module.TrustedWorkKind.PREVIEW: scheduler_module.WorkFormat("preview-progressive-v2"),
     }
     for kind, work_format in replacements.items():
         assert not scheduler.request_completed_work(
@@ -366,7 +347,7 @@ def test_progressive_park_rejects_image_replay_and_survives_format_updates() -> 
             run_guid="guid-0",
         )
         scheduler.update_format(kind, work_format)
-        assert scheduler.state_for(0, kind) is TrustedWorkState.COMPLETED
+        assert scheduler.state_for(0, kind) is scheduler_module.TrustedWorkState.COMPLETED
         assert not scheduler.request_completed_work(
             0,
             kind,
@@ -380,41 +361,41 @@ def test_progressive_park_rejects_image_replay_and_survives_format_updates() -> 
 
 
 def test_source_revision_invalidation_clears_progressive_image_park() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(1))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(1))
     metadata = scheduler.claim_next()
     assert metadata is not None
     assert (
         scheduler.park_progressive_metadata(metadata, _revision(90))
-        is CompletionDisposition.ACCEPTED
+        is scheduler_module.CompletionDisposition.ACCEPTED
     )
 
     replacement = _revision(91)
     scheduler.update_source_revision(0, replacement)
 
-    assert scheduler.snapshot().pending_count == len(TrustedWorkKind)
+    assert scheduler.snapshot().pending_count == len(scheduler_module.TrustedWorkKind)
     assert all(
-        scheduler.state_for(0, kind) is TrustedWorkState.PENDING
-        for kind in TrustedWorkKind
+        scheduler.state_for(0, kind) is scheduler_module.TrustedWorkState.PENDING
+        for kind in scheduler_module.TrustedWorkKind
     )
     refreshed = scheduler.claim_next()
     assert refreshed is not None
-    assert refreshed.key.kind is TrustedWorkKind.METADATA
+    assert refreshed.key.kind is scheduler_module.TrustedWorkKind.METADATA
     assert refreshed.key.source_revision == replacement
 
 
 def test_same_revision_progressive_completion_explicitly_unparks_images() -> None:
     instance = _instance()
-    scheduler = TrustedWorkScheduler(instance, _runs(1))
+    scheduler = scheduler_module.TrustedWorkScheduler(instance, _runs(1))
     first_page = scheduler.claim_next()
     assert first_page is not None
     progressive_revision = _revision(90)
     assert (
         scheduler.park_progressive_metadata(first_page, progressive_revision)
-        is CompletionDisposition.ACCEPTED
+        is scheduler_module.CompletionDisposition.ACCEPTED
     )
     assert scheduler.request_completed_work(
         0,
-        TrustedWorkKind.METADATA,
+        scheduler_module.TrustedWorkKind.METADATA,
         database_instance=instance,
         generation=scheduler.generation,
         run_guid="guid-0",
@@ -425,27 +406,27 @@ def test_same_revision_progressive_completion_explicitly_unparks_images() -> Non
 
     assert (
         scheduler.unpark_progressive_metadata(conclusive_metadata)
-        is CompletionDisposition.ACCEPTED
+        is scheduler_module.CompletionDisposition.ACCEPTED
     )
     assert scheduler.is_current_claim(conclusive_metadata)
-    assert scheduler.state_for(0, TrustedWorkKind.METADATA) is TrustedWorkState.RUNNING
-    assert scheduler.state_for(0, TrustedWorkKind.THUMBNAIL) is TrustedWorkState.PENDING
-    assert scheduler.state_for(0, TrustedWorkKind.PREVIEW) is TrustedWorkState.PENDING
+    assert scheduler.state_for(0, scheduler_module.TrustedWorkKind.METADATA) is scheduler_module.TrustedWorkState.RUNNING
+    assert scheduler.state_for(0, scheduler_module.TrustedWorkKind.THUMBNAIL) is scheduler_module.TrustedWorkState.PENDING
+    assert scheduler.state_for(0, scheduler_module.TrustedWorkKind.PREVIEW) is scheduler_module.TrustedWorkState.PENDING
     assert (
         scheduler.complete(conclusive_metadata, "conclusive metadata")
-        is CompletionDisposition.ACCEPTED
+        is scheduler_module.CompletionDisposition.ACCEPTED
     )
     assert _order(_drain(scheduler)) == [
-        (0, TrustedWorkKind.THUMBNAIL),
-        (0, TrustedWorkKind.PREVIEW),
+        (0, scheduler_module.TrustedWorkKind.THUMBNAIL),
+        (0, scheduler_module.TrustedWorkKind.PREVIEW),
     ]
 
 
 def test_progressive_parking_rejects_stale_and_non_metadata_claims() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(1))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(1))
     metadata = scheduler.claim_next()
     assert metadata is not None
-    assert scheduler.complete(metadata) is CompletionDisposition.ACCEPTED
+    assert scheduler.complete(metadata) is scheduler_module.CompletionDisposition.ACCEPTED
     thumbnail = scheduler.claim_next()
     assert thumbnail is not None
 
@@ -454,7 +435,7 @@ def test_progressive_parking_rejects_stale_and_non_metadata_claims() -> None:
     scheduler.switch_database(_instance((7, 12)), _runs(1))
     assert (
         scheduler.park_progressive_metadata(metadata, _revision(91))
-        is CompletionDisposition.STALE
+        is scheduler_module.CompletionDisposition.STALE
     )
 
 
@@ -462,7 +443,7 @@ def test_database_switch_cancels_work_and_aba_completion_is_stale() -> None:
     publications = []
     old_instance = _instance((7, 11))
     replacement = _instance((7, 12))
-    scheduler = TrustedWorkScheduler(
+    scheduler = scheduler_module.TrustedWorkScheduler(
         old_instance, _runs(2), on_publish=publications.append
     )
     old_work = scheduler.claim_next()
@@ -473,7 +454,7 @@ def test_database_switch_cancels_work_and_aba_completion_is_stale() -> None:
     assert old_work.cancellation.cancelled
     assert scheduler.database_instance == replacement
     assert scheduler.generation == 2
-    assert scheduler.complete(old_work, "obsolete") is CompletionDisposition.STALE
+    assert scheduler.complete(old_work, "obsolete") is scheduler_module.CompletionDisposition.STALE
     assert publications == []
     new_work = scheduler.claim_next()
     assert new_work is not None
@@ -487,7 +468,7 @@ def test_database_switch_cancels_work_and_aba_completion_is_stale() -> None:
 def test_late_completion_is_keyed_and_not_marked_for_new_selection() -> None:
     publications = []
     selected_publications = []
-    scheduler = TrustedWorkScheduler(
+    scheduler = scheduler_module.TrustedWorkScheduler(
         _instance(),
         _runs(2),
         on_publish=publications.append,
@@ -498,7 +479,7 @@ def test_late_completion_is_keyed_and_not_marked_for_new_selection() -> None:
     assert work is not None
 
     scheduler.select_run(1)
-    assert scheduler.complete(work, "run-zero") is CompletionDisposition.ACCEPTED
+    assert scheduler.complete(work, "run-zero") is scheduler_module.CompletionDisposition.ACCEPTED
 
     assert len(publications) == 1
     assert publications[0].key.run_guid == "guid-0"
@@ -508,13 +489,13 @@ def test_late_completion_is_keyed_and_not_marked_for_new_selection() -> None:
 
 def test_transition_callback_database_switch_suppresses_obsolete_publication() -> None:
     publications = []
-    scheduler: TrustedWorkScheduler
+    scheduler: scheduler_module.TrustedWorkScheduler
 
     def switch_on_completion(transition) -> None:
-        if transition.current is TrustedWorkState.COMPLETED:
+        if transition.current is scheduler_module.TrustedWorkState.COMPLETED:
             scheduler.switch_database(_instance((7, 99)), _runs(1))
 
-    scheduler = TrustedWorkScheduler(
+    scheduler = scheduler_module.TrustedWorkScheduler(
         _instance(),
         _runs(1),
         on_transition=switch_on_completion,
@@ -523,18 +504,18 @@ def test_transition_callback_database_switch_suppresses_obsolete_publication() -
     work = scheduler.claim_next()
     assert work is not None
 
-    assert scheduler.complete(work, "obsolete") is CompletionDisposition.STALE
+    assert scheduler.complete(work, "obsolete") is scheduler_module.CompletionDisposition.STALE
     assert publications == []
 
 
 def test_general_publication_reselection_suppresses_selected_publication() -> None:
     selected_publications = []
-    scheduler: TrustedWorkScheduler
+    scheduler: scheduler_module.TrustedWorkScheduler
 
     def reselect(_publication) -> None:
         scheduler.select_run(1)
 
-    scheduler = TrustedWorkScheduler(
+    scheduler = scheduler_module.TrustedWorkScheduler(
         _instance(),
         _runs(2),
         on_publish=reselect,
@@ -544,14 +525,14 @@ def test_general_publication_reselection_suppresses_selected_publication() -> No
     work = scheduler.claim_next()
     assert work is not None
 
-    assert scheduler.complete(work, "run-zero") is CompletionDisposition.ACCEPTED
+    assert scheduler.complete(work, "run-zero") is scheduler_module.CompletionDisposition.ACCEPTED
     assert selected_publications == []
 
 
 def test_idle_scheduler_drains_every_kind_for_every_run() -> None:
     transitions = []
     timestamps = iter(range(100))
-    scheduler = TrustedWorkScheduler(
+    scheduler = scheduler_module.TrustedWorkScheduler(
         _instance(),
         _runs(7),
         clock=lambda: float(next(timestamps)),
@@ -571,7 +552,7 @@ def test_idle_scheduler_drains_every_kind_for_every_run() -> None:
     ]
 
 
-class _LargeRunTable(Sequence[TrustedRunWorkSource]):
+class _LargeRunTable(Sequence[scheduler_module.TrustedRunWorkSource]):
     def __init__(self, count: int) -> None:
         self.count = count
         self.items_materialized = 0
@@ -579,7 +560,7 @@ class _LargeRunTable(Sequence[TrustedRunWorkSource]):
     def __len__(self) -> int:
         return self.count
 
-    def __getitem__(self, index: int) -> TrustedRunWorkSource:
+    def __getitem__(self, index: int) -> scheduler_module.TrustedRunWorkSource:
         if isinstance(index, slice):
             raise TypeError("The scheduler must not slice the run table.")
         if index < 0:
@@ -587,12 +568,12 @@ class _LargeRunTable(Sequence[TrustedRunWorkSource]):
         if not 0 <= index < self.count:
             raise IndexError(index)
         self.items_materialized += 1
-        return TrustedRunWorkSource(f"guid-{index}", _revision(index))
+        return scheduler_module.TrustedRunWorkSource(f"guid-{index}", _revision(index))
 
 
 def test_large_table_has_no_eager_derived_tasks_or_ready_queue() -> None:
     runs = _LargeRunTable(100_000)
-    scheduler = TrustedWorkScheduler(_instance(), runs)
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), runs)
 
     assert runs.items_materialized == 100_000
     assert scheduler.allocated_work_count == 0
@@ -604,17 +585,17 @@ def test_large_table_has_no_eager_derived_tasks_or_ready_queue() -> None:
 
 
 def test_cache_key_changes_for_every_invalidation_dimension() -> None:
-    base = TrustedCacheWorkKey(
+    base = scheduler_module.TrustedCacheWorkKey(
         _instance((1, 1)),
         "run-guid",
-        TrustedWorkKind.THUMBNAIL,
+        scheduler_module.TrustedWorkKind.THUMBNAIL,
         _revision(1),
         "renderer-1",
-        RenderingOptions.from_mapping({"width": 160, "dark": False}),
+        scheduler_module.RenderingOptions.from_mapping({"width": 160, "dark": False}),
     )
 
     variants = {
-        TrustedCacheWorkKey(
+        scheduler_module.TrustedCacheWorkKey(
             _instance((1, 2)),
             base.run_guid,
             base.kind,
@@ -622,7 +603,7 @@ def test_cache_key_changes_for_every_invalidation_dimension() -> None:
             base.renderer_version,
             base.rendering_options,
         ),
-        TrustedCacheWorkKey(
+        scheduler_module.TrustedCacheWorkKey(
             base.database_instance,
             base.run_guid,
             base.kind,
@@ -630,7 +611,7 @@ def test_cache_key_changes_for_every_invalidation_dimension() -> None:
             base.renderer_version,
             base.rendering_options,
         ),
-        TrustedCacheWorkKey(
+        scheduler_module.TrustedCacheWorkKey(
             base.database_instance,
             base.run_guid,
             base.kind,
@@ -638,13 +619,13 @@ def test_cache_key_changes_for_every_invalidation_dimension() -> None:
             "renderer-2",
             base.rendering_options,
         ),
-        TrustedCacheWorkKey(
+        scheduler_module.TrustedCacheWorkKey(
             base.database_instance,
             base.run_guid,
             base.kind,
             base.source_revision,
             base.renderer_version,
-            RenderingOptions.from_mapping({"width": 320, "dark": False}),
+            scheduler_module.RenderingOptions.from_mapping({"width": 320, "dark": False}),
         ),
     }
     assert base not in variants
@@ -652,12 +633,12 @@ def test_cache_key_changes_for_every_invalidation_dimension() -> None:
 
 
 def test_trusted_query_layer_supplies_opaque_data_revision() -> None:
-    run = TrustedRunRecord(4, (("guid", "run-guid"),))
-    namespace = TrustedSourceRevisionNamespace(b"deterministic-test-session")
+    run = query_module.TrustedRunRecord(4, (("guid", "run-guid"),))
+    namespace = query_module.TrustedSourceRevisionNamespace(b"deterministic-test-session")
 
-    first = trusted_source_revision(run, 10, namespace=namespace, helper_incarnation=3)
-    same = trusted_source_revision(run, 10, namespace=namespace, helper_incarnation=3)
-    after_commit = trusted_source_revision(
+    first = query_module.trusted_source_revision(run, 10, namespace=namespace, helper_incarnation=3)
+    same = query_module.trusted_source_revision(run, 10, namespace=namespace, helper_incarnation=3)
+    after_commit = query_module.trusted_source_revision(
         run, 11, namespace=namespace, helper_incarnation=3
     )
 
@@ -667,7 +648,7 @@ def test_trusted_query_layer_supplies_opaque_data_revision() -> None:
 
 def test_revision_and_format_changes_invalidate_only_their_namespace() -> None:
     runs = _runs(1)
-    scheduler = TrustedWorkScheduler(_instance(), runs)
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), runs)
     metadata = scheduler.claim_next()
     assert metadata is not None
     scheduler.complete(metadata)
@@ -675,11 +656,11 @@ def test_revision_and_format_changes_invalidate_only_their_namespace() -> None:
     assert thumbnail is not None
     scheduler.complete(thumbnail)
 
-    scheduler.update_format(TrustedWorkKind.THUMBNAIL, WorkFormat("thumbnail-v2"))
+    scheduler.update_format(scheduler_module.TrustedWorkKind.THUMBNAIL, scheduler_module.WorkFormat("thumbnail-v2"))
     assert (
-        scheduler.state_for(0, TrustedWorkKind.METADATA) is TrustedWorkState.COMPLETED
+        scheduler.state_for(0, scheduler_module.TrustedWorkKind.METADATA) is scheduler_module.TrustedWorkState.COMPLETED
     )
-    assert scheduler.state_for(0, TrustedWorkKind.THUMBNAIL) is TrustedWorkState.PENDING
+    assert scheduler.state_for(0, scheduler_module.TrustedWorkKind.THUMBNAIL) is scheduler_module.TrustedWorkState.PENDING
 
     scheduler.update_source_revision(0, _revision(99))
     assert scheduler.snapshot().completed_count == 0
@@ -693,7 +674,7 @@ def test_stage5a_does_not_create_cache_files_or_render(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     before = set(tmp_path.iterdir())
-    scheduler = TrustedWorkScheduler(_instance(), _runs(3))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(3))
 
     _drain(scheduler)
 
@@ -732,7 +713,7 @@ def test_future_cache_namespace_is_in_application_cache_without_writes(
 ) -> None:
     before = set(tmp_path.iterdir())
 
-    result = trusted_derived_cache_root(
+    result = scheduler_module.trusted_derived_cache_root(
         environment=environment,
         home=home,
         platform=platform,
@@ -744,9 +725,9 @@ def test_future_cache_namespace_is_in_application_cache_without_writes(
 
 def test_scheduler_does_not_follow_caller_run_sequence_mutation() -> None:
     runs = _runs(1)
-    scheduler = TrustedWorkScheduler(_instance(), runs)
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), runs)
 
-    runs.append(TrustedRunWorkSource("guid-late", _revision(99)))
+    runs.append(scheduler_module.TrustedRunWorkSource("guid-late", _revision(99)))
 
     assert scheduler.snapshot().run_count == 1
 
@@ -755,7 +736,7 @@ def test_static_drain_candidate_inspections_are_linear(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_count = 400
-    scheduler = TrustedWorkScheduler(_instance(), _runs(run_count))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(run_count))
     inspections = 0
 
     def counted_range(*args: int):
@@ -768,18 +749,18 @@ def test_static_drain_candidate_inspections_are_linear(
 
     _drain(scheduler)
 
-    assert inspections == run_count * len(TrustedWorkKind)
+    assert inspections == run_count * len(scheduler_module.TrustedWorkKind)
 
 
 def test_database_switch_callback_observes_coherent_new_generation() -> None:
     callback_claims = []
-    scheduler: TrustedWorkScheduler
+    scheduler: scheduler_module.TrustedWorkScheduler
 
     def claim_after_cancel(transition) -> None:
-        if transition.current is TrustedWorkState.CANCELLED:
+        if transition.current is scheduler_module.TrustedWorkState.CANCELLED:
             callback_claims.append(scheduler.claim_next())
 
-    scheduler = TrustedWorkScheduler(
+    scheduler = scheduler_module.TrustedWorkScheduler(
         _instance(),
         _runs(1),
         on_transition=claim_after_cancel,
@@ -795,7 +776,7 @@ def test_database_switch_callback_observes_coherent_new_generation() -> None:
 
 
 def test_scheduler_rejects_wrong_thread_access_before_mutation() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(1))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(1))
     failures: list[BaseException] = []
 
     def access_from_non_owner() -> None:
@@ -814,17 +795,17 @@ def test_scheduler_rejects_wrong_thread_access_before_mutation() -> None:
 
 
 def test_rendering_option_identity_preserves_scalar_type() -> None:
-    boolean = RenderingOptions.from_mapping({"value": True})
-    integer = RenderingOptions.from_mapping({"value": 1})
-    floating = RenderingOptions.from_mapping({"value": 1.0})
+    boolean = scheduler_module.RenderingOptions.from_mapping({"value": True})
+    integer = scheduler_module.RenderingOptions.from_mapping({"value": 1})
+    floating = scheduler_module.RenderingOptions.from_mapping({"value": 1.0})
 
     assert len({boolean, integer, floating}) == 3
-    assert len({WorkFormat("v1", boolean), WorkFormat("v1", integer)}) == 2
+    assert len({scheduler_module.WorkFormat("v1", boolean), scheduler_module.WorkFormat("v1", integer)}) == 2
     keys = {
-        TrustedCacheWorkKey(
+        scheduler_module.TrustedCacheWorkKey(
             _instance(),
             "guid",
-            TrustedWorkKind.PREVIEW,
+            scheduler_module.TrustedWorkKind.PREVIEW,
             _revision(1),
             "v1",
             options,
@@ -836,20 +817,20 @@ def test_rendering_option_identity_preserves_scalar_type() -> None:
 
 def test_rendering_options_retain_canonical_validation() -> None:
     with pytest.raises(ValueError, match="sorted"):
-        RenderingOptions((("z", 1), ("a", 2)))
+        scheduler_module.RenderingOptions((("z", 1), ("a", 2)))
     with pytest.raises(ValueError, match="unique"):
-        RenderingOptions((("a", 1), ("a", 2)))
+        scheduler_module.RenderingOptions((("a", 1), ("a", 2)))
     with pytest.raises(ValueError, match="finite"):
-        RenderingOptions.from_mapping({"value": float("inf")})
+        scheduler_module.RenderingOptions.from_mapping({"value": float("inf")})
     with pytest.raises(TypeError, match="cache-key safe"):
-        RenderingOptions((("value", object()),))  # type: ignore[arg-type]
+        scheduler_module.RenderingOptions((("value", object()),))  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("cache_value", ["", "relative/cache"])
 def test_relative_linux_cache_environment_uses_absolute_home_fallback(
     cache_value: str,
 ) -> None:
-    result = trusted_derived_cache_root(
+    result = scheduler_module.trusted_derived_cache_root(
         environment={"XDG_CACHE_HOME": cache_value},
         home=PurePosixPath("/users/test"),
         platform="linux",
@@ -860,24 +841,24 @@ def test_relative_linux_cache_environment_uses_absolute_home_fallback(
 
 
 def test_source_revision_namespace_covers_reader_and_qplot_restarts() -> None:
-    run = TrustedRunRecord(4, (("guid", "run-guid"),))
-    first_session = TrustedSourceRevisionNamespace(b"first-service")
-    second_session = TrustedSourceRevisionNamespace(b"second-service")
+    run = query_module.TrustedRunRecord(4, (("guid", "run-guid"),))
+    first_session = query_module.TrustedSourceRevisionNamespace(b"first-service")
+    second_session = query_module.TrustedSourceRevisionNamespace(b"second-service")
 
-    stable = trusted_source_revision(
+    stable = query_module.trusted_source_revision(
         run, 2, namespace=first_session, helper_incarnation=1
     )
 
-    assert stable == trusted_source_revision(
+    assert stable == query_module.trusted_source_revision(
         run, 2, namespace=first_session, helper_incarnation=1
     )
-    assert stable != trusted_source_revision(
+    assert stable != query_module.trusted_source_revision(
         run, 3, namespace=first_session, helper_incarnation=1
     )
-    assert stable != trusted_source_revision(
+    assert stable != query_module.trusted_source_revision(
         run, 2, namespace=first_session, helper_incarnation=2
     )
-    assert stable != trusted_source_revision(
+    assert stable != query_module.trusted_source_revision(
         run, 2, namespace=second_session, helper_incarnation=1
     )
 
@@ -888,8 +869,8 @@ def test_source_revision_namespace_factory_is_ephemeral(
     nonces = iter((b"a" * 32, b"b" * 32))
     monkeypatch.setattr(query_module.secrets, "token_bytes", lambda _size: next(nonces))
 
-    first = TrustedSourceRevisionNamespace.create()
-    second = TrustedSourceRevisionNamespace.create()
+    first = query_module.TrustedSourceRevisionNamespace.create()
+    second = query_module.TrustedSourceRevisionNamespace.create()
 
     assert len(first.nonce) == 32
     assert first != second
@@ -921,15 +902,15 @@ def test_repeated_data_version_after_real_wal_reader_restart_is_namespaced(
 
     assert (first_count, second_count) == (1, 2)
     assert first_data_version == second_data_version
-    run = TrustedRunRecord(1, (("guid", "ordinary-run"),))
-    namespace = TrustedSourceRevisionNamespace(b"deterministic-live-service")
-    first_revision = trusted_source_revision(
+    run = query_module.TrustedRunRecord(1, (("guid", "ordinary-run"),))
+    namespace = query_module.TrustedSourceRevisionNamespace(b"deterministic-live-service")
+    first_revision = query_module.trusted_source_revision(
         run,
         first_data_version,
         namespace=namespace,
         helper_incarnation=1,
     )
-    second_revision = trusted_source_revision(
+    second_revision = query_module.trusted_source_revision(
         run,
         second_data_version,
         namespace=namespace,
@@ -939,7 +920,7 @@ def test_repeated_data_version_after_real_wal_reader_restart_is_namespaced(
 
 
 def test_reconcile_runs_appends_without_replaying_completed_work() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(2))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(2))
     assert len(_drain(scheduler)) == 6
 
     scheduler.reconcile_runs(_runs(5))
@@ -949,50 +930,50 @@ def test_reconcile_runs_appends_without_replaying_completed_work() -> None:
     assert len(appended_work) == 9
     assert {work.run_index for work in appended_work} == {2, 3, 4}
     assert _order(appended_work)[:3] == [
-        (4, TrustedWorkKind.METADATA),
-        (4, TrustedWorkKind.THUMBNAIL),
-        (4, TrustedWorkKind.PREVIEW),
+        (4, scheduler_module.TrustedWorkKind.METADATA),
+        (4, scheduler_module.TrustedWorkKind.THUMBNAIL),
+        (4, scheduler_module.TrustedWorkKind.PREVIEW),
     ]
     assert scheduler.snapshot().completed_count == 15
 
 
 def test_exact_completed_kind_replay_is_coalesced_and_identity_guarded() -> None:
     instance = _instance()
-    scheduler = TrustedWorkScheduler(instance, _runs(2))
+    scheduler = scheduler_module.TrustedWorkScheduler(instance, _runs(2))
     assert len(_drain(scheduler)) == 6
     generation = scheduler.generation
 
     assert not scheduler.request_completed_work(
         0,
-        TrustedWorkKind.PREVIEW,
+        scheduler_module.TrustedWorkKind.PREVIEW,
         database_instance=_instance((7, 12)),
         generation=generation,
         run_guid="guid-0",
     )
     assert not scheduler.request_completed_work(
         0,
-        TrustedWorkKind.PREVIEW,
+        scheduler_module.TrustedWorkKind.PREVIEW,
         database_instance=instance,
         generation=generation + 1,
         run_guid="guid-0",
     )
     assert not scheduler.request_completed_work(
         0,
-        TrustedWorkKind.PREVIEW,
+        scheduler_module.TrustedWorkKind.PREVIEW,
         database_instance=instance,
         generation=generation,
         run_guid="guid-replaced",
     )
     assert scheduler.request_completed_work(
         0,
-        TrustedWorkKind.PREVIEW,
+        scheduler_module.TrustedWorkKind.PREVIEW,
         database_instance=instance,
         generation=generation,
         run_guid="guid-0",
     )
     assert not scheduler.request_completed_work(
         0,
-        TrustedWorkKind.PREVIEW,
+        scheduler_module.TrustedWorkKind.PREVIEW,
         database_instance=instance,
         generation=generation,
         run_guid="guid-0",
@@ -1000,21 +981,21 @@ def test_exact_completed_kind_replay_is_coalesced_and_identity_guarded() -> None
 
     replay = scheduler.claim_next()
     assert replay is not None
-    assert (replay.run_index, replay.key.kind) == (0, TrustedWorkKind.PREVIEW)
+    assert (replay.run_index, replay.key.kind) == (0, scheduler_module.TrustedWorkKind.PREVIEW)
     assert scheduler.claim_next() is None
-    assert scheduler.complete(replay) is CompletionDisposition.ACCEPTED
+    assert scheduler.complete(replay) is scheduler_module.CompletionDisposition.ACCEPTED
     assert scheduler.snapshot().completed_count == 6
     assert scheduler.claim_next() is None
 
 
 def test_reconcile_runs_preserves_revision_override() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(1))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(1))
     scheduler.update_source_revision(0, _revision(77))
     _drain(scheduler)
 
     scheduler.reconcile_runs(_runs(2))
     scheduler.select_run(0)
-    scheduler.update_format(TrustedWorkKind.METADATA, WorkFormat("metadata-v2"))
+    scheduler.update_format(scheduler_module.TrustedWorkKind.METADATA, scheduler_module.WorkFormat("metadata-v2"))
     work = scheduler.claim_next()
 
     assert work is not None
@@ -1025,18 +1006,18 @@ def test_reconcile_runs_preserves_revision_override() -> None:
 @pytest.mark.parametrize(
     "runs",
     [
-        [TrustedRunWorkSource("guid-0", _revision(0))] * 2,
+        [scheduler_module.TrustedRunWorkSource("guid-0", _revision(0))] * 2,
         [
-            TrustedRunWorkSource("guid-1", _revision(1)),
-            TrustedRunWorkSource("guid-0", _revision(0)),
+            scheduler_module.TrustedRunWorkSource("guid-1", _revision(1)),
+            scheduler_module.TrustedRunWorkSource("guid-0", _revision(0)),
         ],
-        [TrustedRunWorkSource("guid-replacement", _revision(0))],
+        [scheduler_module.TrustedRunWorkSource("guid-replacement", _revision(0))],
     ],
 )
 def test_reconcile_runs_rejects_duplicates_reorder_and_replacement(
-    runs: list[TrustedRunWorkSource],
+    runs: list[scheduler_module.TrustedRunWorkSource],
 ) -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(2))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(2))
 
     with pytest.raises(ValueError):
         scheduler.reconcile_runs(runs)
@@ -1044,32 +1025,32 @@ def test_reconcile_runs_rejects_duplicates_reorder_and_replacement(
 
 def test_close_callback_observes_closed_scheduler() -> None:
     observations = []
-    scheduler: TrustedWorkScheduler
+    scheduler: scheduler_module.TrustedWorkScheduler
 
     def observe_close(transition) -> None:
-        if transition.current is TrustedWorkState.CANCELLED:
+        if transition.current is scheduler_module.TrustedWorkState.CANCELLED:
             observations.append(scheduler.lifecycle)
             with pytest.raises(RuntimeError, match="closed"):
                 scheduler.claim_next()
 
-    scheduler = TrustedWorkScheduler(_instance(), _runs(1), on_transition=observe_close)
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(1), on_transition=observe_close)
     assert scheduler.claim_next() is not None
 
     scheduler.close()
 
-    assert observations == [SchedulerLifecycle.CLOSED]
+    assert observations == [scheduler_module.SchedulerLifecycle.CLOSED]
     assert scheduler.snapshot().running == ()
 
 
 def test_source_revision_callback_claims_only_revised_work() -> None:
     callback_claims = []
-    scheduler: TrustedWorkScheduler
+    scheduler: scheduler_module.TrustedWorkScheduler
 
     def claim_after_cancel(transition) -> None:
-        if transition.current is TrustedWorkState.CANCELLED:
+        if transition.current is scheduler_module.TrustedWorkState.CANCELLED:
             callback_claims.append(scheduler.claim_next())
 
-    scheduler = TrustedWorkScheduler(
+    scheduler = scheduler_module.TrustedWorkScheduler(
         _instance(), _runs(1), on_transition=claim_after_cancel
     )
     assert scheduler.claim_next() is not None
@@ -1083,18 +1064,18 @@ def test_source_revision_callback_claims_only_revised_work() -> None:
 
 def test_format_callback_claims_only_reformatted_work() -> None:
     callback_claims = []
-    scheduler: TrustedWorkScheduler
+    scheduler: scheduler_module.TrustedWorkScheduler
 
     def claim_after_cancel(transition) -> None:
-        if transition.current is TrustedWorkState.CANCELLED:
+        if transition.current is scheduler_module.TrustedWorkState.CANCELLED:
             callback_claims.append(scheduler.claim_next())
 
-    scheduler = TrustedWorkScheduler(
+    scheduler = scheduler_module.TrustedWorkScheduler(
         _instance(), _runs(1), on_transition=claim_after_cancel
     )
     assert scheduler.claim_next() is not None
 
-    scheduler.update_format(TrustedWorkKind.METADATA, WorkFormat("metadata-v2"))
+    scheduler.update_format(scheduler_module.TrustedWorkKind.METADATA, scheduler_module.WorkFormat("metadata-v2"))
 
     assert callback_claims[0] is not None
     assert callback_claims[0].key.renderer_version == "metadata-v2"
@@ -1102,7 +1083,7 @@ def test_format_callback_claims_only_reformatted_work() -> None:
 
 
 def test_wrong_thread_reads_and_completion_are_rejected() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(1))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(1))
     work = scheduler.claim_next()
     assert work is not None
     failures: list[BaseException] = []
@@ -1130,7 +1111,7 @@ def test_wrong_thread_reads_and_completion_are_rejected() -> None:
 
 
 def test_rendering_option_canonical_values_are_explicitly_tagged() -> None:
-    options = RenderingOptions.from_mapping(
+    options = scheduler_module.RenderingOptions.from_mapping(
         {"bool": True, "float": 1.0, "int": 1, "none": None, "str": "1"}
     )
 
@@ -1208,7 +1189,7 @@ def test_cache_root_uses_target_platform_absolute_path_rules(
     home: PurePath,
     expected: PurePath,
 ) -> None:
-    result = trusted_derived_cache_root(
+    result = scheduler_module.trusted_derived_cache_root(
         environment=environment,
         home=home,
         platform=platform,
@@ -1231,11 +1212,11 @@ def test_cache_root_rejects_relative_home_fallback(
     home: PurePath,
 ) -> None:
     with pytest.raises(ValueError, match="home must be absolute"):
-        trusted_derived_cache_root(environment={}, home=home, platform=platform)
+        scheduler_module.trusted_derived_cache_root(environment={}, home=home, platform=platform)
 
 
 def test_snapshot_does_not_advance_lane_cursors() -> None:
-    scheduler = TrustedWorkScheduler(_instance(), _runs(3))
+    scheduler = scheduler_module.TrustedWorkScheduler(_instance(), _runs(3))
 
     first = scheduler.snapshot()
     second = scheduler.snapshot()

@@ -16,7 +16,6 @@ DEFAULT_MAX_BYTES = 1_000_000
 DEFAULT_BACKUP_COUNT = 3
 
 _ORIGINAL_EXCEPTHOOK = None
-_EXCEPTHOOK_INSTALLED = False
 
 
 def _exception_diagnostic(exc_type, traceback):
@@ -180,7 +179,7 @@ def install_excepthook(call_original=True):
     Installs a process-wide exception hook that writes uncaught exceptions.
 
     """
-    global _ORIGINAL_EXCEPTHOOK, _EXCEPTHOOK_INSTALLED
+    global _ORIGINAL_EXCEPTHOOK
 
     configure_logging()
     if _ORIGINAL_EXCEPTHOOK is None:
@@ -195,7 +194,6 @@ def install_excepthook(call_original=True):
             _ORIGINAL_EXCEPTHOOK(exc_type, exc_value, traceback)
 
     sys.excepthook = hook
-    _EXCEPTHOOK_INSTALLED = True
     return hook
 
 
@@ -297,10 +295,9 @@ def _reset_logging_for_tests():
     Resets qPlot diagnostics globals for isolated unit tests.
 
     """
-    global _ORIGINAL_EXCEPTHOOK, _EXCEPTHOOK_INSTALLED
+    global _ORIGINAL_EXCEPTHOOK
 
     _remove_owned_handlers(get_logger())
-    if _EXCEPTHOOK_INSTALLED and _ORIGINAL_EXCEPTHOOK is not None:
+    if _ORIGINAL_EXCEPTHOOK is not None:
         sys.excepthook = _ORIGINAL_EXCEPTHOOK
     _ORIGINAL_EXCEPTHOOK = None
-    _EXCEPTHOOK_INSTALLED = False

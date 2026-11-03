@@ -161,7 +161,7 @@ def _subprocess_environment(**updates: str) -> dict[str, str]:
 
 def _process_is_running(pid: int) -> bool:
     if os.name == "nt":
-        from ctypes import wintypes
+        import ctypes.wintypes as wintypes
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         open_process = kernel32.OpenProcess
@@ -193,7 +193,7 @@ def _force_cleanup_pid(pid: int) -> None:
     if not _process_is_running(pid):
         return
     if os.name == "nt":
-        from ctypes import wintypes
+        import ctypes.wintypes as wintypes
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         open_process = kernel32.OpenProcess
@@ -1932,8 +1932,8 @@ def test_return_objects_mode_is_intentionally_in_process_and_caller_owned(
 ) -> None:
     """Library callers retain objects without acquiring launcher containment."""
 
-    import qplot
     import qplot.__main__ as qplot_entrypoint
+    from qplot import run as run_qplot
 
     application = object()
     window = object()
@@ -1949,7 +1949,7 @@ def test_return_objects_mode_is_intentionally_in_process_and_caller_owned(
     monkeypatch.setattr(qplot_entrypoint, "_run_gui", run_direct)
     monkeypatch.setattr(supervisor, "launch_gui", unexpected_launcher)
 
-    result = qplot.run(
+    result = run_qplot(
         return_objects=True,
         database_path="caller-owned.db",
     )

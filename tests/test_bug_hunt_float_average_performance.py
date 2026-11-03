@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 import qplot.windows._native_averaging as averaging
-from qplot.windows._native_averaging import NativePlotItem
 from qplot.windows._native_transforms import NativePlotDataItem
 
 
@@ -25,7 +24,7 @@ def test_large_mixed_sign_float_average_avoids_per_cell_replay(
     weights = [2 if replacement else 1, *([1] * 11)]
     expected = float(sum(weight * Fraction(value) for weight, value in zip(weights, values, strict=True))
                      / sum(weights))
-    plot = NativePlotItem()
+    plot = averaging.NativePlotItem()
     try:
         if replacement:
             plot.addItem(NativePlotDataItem(np.arange(7), np.zeros(7)))
@@ -60,7 +59,7 @@ def test_large_mixed_sign_float_average_avoids_per_cell_replay(
 def test_float_average_keeps_extreme_dynamic_range_fallback(qapplication, replacement):
     values = [np.array([1e308, 1e-308]), np.array([-1e308, 2e-308]), np.array([1., -3e-308])]
     weights = [2 if replacement else 1, 1, 1]
-    plot = NativePlotItem()
+    plot = averaging.NativePlotItem()
     try:
         if replacement:
             source = NativePlotDataItem(np.arange(1), np.zeros(1))
@@ -83,7 +82,7 @@ def test_float_average_keeps_extreme_dynamic_range_fallback(qapplication, replac
 
 @pytest.mark.parametrize("last", [np.nan, np.inf, -np.inf])
 def test_nonfinite_float_trace_invalidates_previously_promoted_total(qapplication, last):
-    plot = NativePlotItem()
+    plot = averaging.NativePlotItem()
     try:
         for value in (1., -1., last):
             source = NativePlotDataItem(np.arange(2), np.full(2, value))
@@ -99,7 +98,7 @@ def test_nonfinite_float_trace_invalidates_previously_promoted_total(qapplicatio
 
 
 def test_clear_skips_discarded_averages_but_single_removal_and_reuse_work(qapplication, monkeypatch):
-    plot = NativePlotItem()
+    plot = averaging.NativePlotItem()
     try:
         sources = [NativePlotDataItem(np.arange(3), np.full(3, value)) for value in (1., -2., 4.)]
         for source in sources:

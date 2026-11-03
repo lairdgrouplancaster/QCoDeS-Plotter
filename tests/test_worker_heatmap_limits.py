@@ -15,12 +15,11 @@ from qcodes.dataset import (
 import qplot.tools.worker as worker_module
 from qplot.datahandling.qcodes_cache import update_cache_parameter_data
 from qplot.datahandling.readonly import load_by_id_read_only
-from qplot.tools.worker import OperationExecutionError, PlotWorkCancelled, loader
 
 
 @pytest.fixture
 def worker():
-    worker = loader.__new__(loader)
+    worker = worker_module.loader.__new__(worker_module.loader)
     worker.axes_dict = {"x": "x", "y": "y"}
     worker.param = SimpleNamespace(name="signal", depends_on_=("y", "x"))
     worker.param_dict = {name: SimpleNamespace(name=name) for name in ("x", "y")}
@@ -53,7 +52,7 @@ def test_diagonal_scan_never_allocates_cartesian_grid(worker, shaped, operations
     ):
         if operations:
             with pytest.raises(
-                OperationExecutionError,
+                worker_module.OperationExecutionError,
                 match=r"4,000,000.*exceeds the full-resolution operation limit of 2,000,000",
             ):
                 load()
@@ -133,7 +132,7 @@ def test_cached_rectilinear_shape_is_bounded_before_dense_copy(worker, operation
     x, y = np.meshgrid(np.arange(4, dtype=float), np.arange(3, dtype=float))
     with patch.object(worker, "_shaped_data_grid") as dense_copy:
         if operations:
-            with pytest.raises(OperationExecutionError, match="12.*limit of 6"):
+            with pytest.raises(worker_module.OperationExecutionError, match="12.*limit of 6"):
                 worker.for_shaped_2d({"x": x, "y": y}, x + y)
         else:
             _axes, _params, grid = worker.for_shaped_2d({"x": x, "y": y}, x + y)
@@ -173,7 +172,7 @@ def test_cancellation_during_cardinality_check_prevents_gridding(worker):
         patch.object(worker_module, "data2matrix") as pivot,
         patch.object(worker, "_heatmap_grid_from_arrays") as bounded_grid,
     ):
-        with pytest.raises(PlotWorkCancelled):
+        with pytest.raises(worker_module.PlotWorkCancelled):
             worker.for_unshaped_2d(
                 {"x": coordinates, "y": coordinates},
                 np.isfinite(coordinates), coordinates,
@@ -200,7 +199,7 @@ def test_diagonal_qcodes_heatmap_is_bounded_on_initial_and_cached_load(tmp_path)
     try:
         params = {param.name: param for param in dataset.get_parameters()}
         for read_data, operations in ((True, []), (False, []), (False, [lambda data: data])):
-            worker = loader(
+            worker = worker_module.loader(
                 dataset.cache, params["signal"], params, {"x": "x", "y": "y"},
                 read_data=read_data, operations=operations,
                 max_heatmap_grid_cells=16, max_heatmap_grid_side=3,
@@ -214,7 +213,7 @@ def test_diagonal_qcodes_heatmap_is_bounded_on_initial_and_cached_load(tmp_path)
             if operations:
                 assert finished == [False]
                 assert len(errors) == 1
-                assert isinstance(errors[0], OperationExecutionError)
+                assert isinstance(errors[0], worker_module.OperationExecutionError)
                 assert "4,000,000" in str(errors[0])
             else:
                 assert finished == [True]

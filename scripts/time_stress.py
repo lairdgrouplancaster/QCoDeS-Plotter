@@ -91,6 +91,6 @@ def close_time_log(win):
 
 if __name__ == "__main__":
     app = qtw.QApplication(sys.argv)
-    # Retain the top-level widget for the entire Qt event loop.
-    w = testMain()
+    # The application owns the profiling window for its entire event loop.
+    app.timing_window = testMain()
     app.exec()

@@ -7,9 +7,6 @@ from PyQt6 import QtCore
 
 from ._colorbar import (
     _CET_COLORBAR_SUBTYPES,
-    _DEFAULT_HIDDEN_COLORBAR_NAMES,
-    _DEFAULT_HIDDEN_COLORBAR_PREFIXES,
-    _DEFAULT_HIDDEN_COLORBAR_SUFFIXES,
     _MATPLOTLIB_COLORBAR_SUBTYPES,
     _cet_colorbar_colormap_subtype,
     _colorbar_colormap_for_name,
@@ -24,6 +21,11 @@ from ._plot_axis_scaling import (
     _axis_scale_power_text,
     _install_flush_axis_draw_specs,
 )
+
+_DEFAULT_HIDDEN_COLORBAR_PREFIXES = ("gist",)
+_DEFAULT_HIDDEN_COLORBAR_SUFFIXES = ("_r",)
+_DEFAULT_HIDDEN_COLORBAR_NAMES = ("gray", "grey", "Grays")
+
 
 COLORBAR_WIDTH_KEY = "user_preference.colorbar_width"
 DEFAULT_COLORBAR_WIDTH = 15
@@ -182,7 +184,7 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             return float(minimum_rounding)
         return float(rounding)
 
-    def _set_colorbar_levels(self, vmin, vmax):
+    def _set_colorbar_levels(self, vmin: float, vmax: float) -> bool:
         """
         Apply levels to the colorbar and mirror them in the menu fields.
 
