@@ -531,7 +531,8 @@ class plot2d(
                 if self._colorbar_manual_levels is None:
                     self.scaleColorbar()
                 else:
-                    self._set_colorbar_levels(*self._colorbar_manual_levels)
+                    minimum, maximum = self._colorbar_manual_levels
+                    self._set_colorbar_levels(minimum, maximum)
 
             self.bar.show()
 
@@ -542,7 +543,8 @@ class plot2d(
                 self.__dict__["_colorbar_manual_levels"] = None
                 self.scaleColorbar()
             elif self._colorbar_manual_levels is not None:
-                self._set_colorbar_levels(*self._colorbar_manual_levels)
+                minimum, maximum = self._colorbar_manual_levels
+                self._set_colorbar_levels(minimum, maximum)
             self.__dict__.pop("_colorbar_pending_primary", None)
             
             self._restore_heatmap_interactions()

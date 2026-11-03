@@ -84,7 +84,8 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             return
 
         self._colorbar_manual_levels = None
-        self._set_colorbar_levels(*levels)
+        minimum, maximum = levels
+        self._set_colorbar_levels(minimum, maximum)
 
     def _data_colorbar_levels(self):
         """
