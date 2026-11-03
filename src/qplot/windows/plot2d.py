@@ -1442,7 +1442,13 @@ class plot2d(
             return None
 
         try:
-            view_x, view_y = self._primary_heatmap_viewbox().viewRange()
+            viewbox = self._primary_heatmap_viewbox()
+            # The reload timer may run before the first paint, especially for
+            # hidden plots. Resolve pending auto-range before treating the
+            # initial empty viewport as a user-selected subset of the data.
+            if getattr(viewbox, "_autoRangeNeedsUpdate", False):
+                viewbox.updateAutoRange()
+            view_x, view_y = viewbox.viewRange()
         except Exception:
             return None
 

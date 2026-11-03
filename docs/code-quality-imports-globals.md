@@ -115,3 +115,21 @@ qPlot startup check passed. The 22 variable-array record tests also passed
 locally. A current-main Windows Python 3.14 CI job failed one variable-array
 plot/export case; that job was rerun to check reproducibility. A local pass
 does not establish that the Windows failure is fixed.
+
+### Hidden heatmap viewport race
+
+The unchanged Windows retry passed all 3,244 tests and 45 subtests (81 skips),
+confirming that the variable-array failure was intermittent. Further tracing
+found a concrete pre-paint race: a hidden heatmap's ViewBox can still have its
+data auto-range pending when the visible-data reload timer fires. Reading
+`viewRange()` at that point returns the default `(0, 1)` viewport and requests
+only that subset of the measurement. This can remove the outer coordinates
+expected by the original full-data plot test.
+
+Visible-range selection now resolves pending auto-range before constructing a
+query. A real ViewBox/ImageItem regression deterministically requested the
+incorrect subset before the fix. Its companion case verifies that explicit
+user zoom remains unchanged. The original variable-array assertions remain
+intact. The focused plotting suites passed 130 tests and 10 subtests; another
+five real-database heatmap integration tests passed, along with Ruff, project
+mypy and the eight-second startup check.
