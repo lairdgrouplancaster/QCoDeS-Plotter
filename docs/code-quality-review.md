@@ -125,3 +125,17 @@ recheck passed 11 tests. Ruff, project mypy (92 files), the runtime owner
 comparison and an eight-second offscreen startup check passed. Three additional
 modules outside the configured mypy set retain the same 187 existing diagnostics;
 none were added.
+
+
+## Assertion correction: 3 November 2026
+
+The fresh `qplot-code-quality-jn_sae33.json` export confirms all nine structural
+warnings cleared and six fewer typing-declaration notes. It contains 360 findings:
+one new test error, the four reviewed warnings and 355 notes.
+
+The new error is `assert window.close()` in the lifecycle regression. The close
+now runs before its return value is asserted; the fixture's database load follows
+the same rule. All ten lifecycle tests and Ruff passed. Optimized bytecode omits
+both original calls and retains both corrected calls. The JSON records finding
+1403, the export hash and the exact base commit. Clearance requires the next
+merged-main scan; no findings were dismissed or suppressed.

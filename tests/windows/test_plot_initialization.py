@@ -76,7 +76,8 @@ def test_constructor_defers_controls_and_reading_until_explicit_setup(
             window.initialize_plot_window()
 
         # Even failure before the overlay/refresh toolbar exists is closeable.
-        assert window.close()
+        close_accepted = window.close()
+        assert close_accepted
         assert window._closed
         assert not window.monitor.isActive()
     finally:
@@ -152,7 +153,8 @@ def ready_plot(tmp_path, monkeypatch, request):
         owner.config.config["user_preference"]["confirm_close"] = False
         owner.config.config["user_preference"]["confirm_close_all"] = False
         owner.close_database(status=False)
-        assert owner.load_file(str(path))
+        database_loaded = owner.load_file(str(path))
+        assert database_loaded
         wait_for(lambda: not owner._database_load_active)
         owner.openPlot(guid=guid, show=request.param)
         wait_for(lambda: len(owner.windows) == 1)
