@@ -53,6 +53,8 @@ class RunControlsMixin:
 
     """
 
+    ds: object | None
+
     def initRefresh(self):
         """
         Initialise the main window refresh controls.

@@ -33,6 +33,7 @@ from ._config_persistence import (
     set_widget_value_without_signals,
 )
 from ._database_actions import DatabaseActionsMixin, TestDatabaseGenerationWorker
+from ._database_load_state import DatabaseLoadSession
 from ._dataset_handle import DatasetHandle, DatasetKey
 from ._error_dialog import ErrorDialog
 from ._help import add_help_menu
@@ -475,7 +476,8 @@ class MainWindow(
         self.testDatabaseGenerationThreadPool.setMaxThreadCount(1)
         self._database_load_generation = 0
         self._database_load_active = False
-        self._database_load_state = None
+        self._database_load_publication_active = False
+        self._database_load_state: DatabaseLoadSession | None = None
         self._database_load_worker = None
         self._database_info_generation = 0
         self._database_info_worker = None

@@ -559,10 +559,9 @@ def _collect_owner_database_sources(
         load_state = getattr(owner, "_database_load_state", None)
     except RuntimeError:
         load_state = None
-    if isinstance(load_state, Mapping):
-        add_source(load_state.get("load_instance"))
-        add_identity(load_state.get("load_identity"))
-        add_source(load_state.get("abspath"))
+    if load_state is not None:
+        add_source(load_state.load_instance)
+        add_source(load_state.abspath)
 
     try:
         replacement_state = getattr(owner, "_test_database_replacement_state", None)

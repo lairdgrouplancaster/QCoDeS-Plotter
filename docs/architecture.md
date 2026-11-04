@@ -35,6 +35,21 @@ window actions. It handles:
 * recent database menus
 * database-load progress, cancellation, and restore handling
 
+`_database_load_state.py` defines the pending `DatabaseLoadSession` and immutable
+`DatabaseViewSnapshot`. The snapshot describes the committed view, including its
+reader and database observation; it is separate from the pending worker's state.
+Export protection also includes the pending session's source.
+
+`_database_load_publication.py` owns staging, commit, rollback, and Qt publication
+gates. Run-list insertion may process nested close/shutdown events, so the pending
+reader stays reachable by normal teardown throughout publication. A failed stage
+restores the previous view only after revalidating its source; failed restoration
+closes the view. The action mixin handles result validation, user feedback, retries,
+and restarting progressive work after the transaction has released its gates.
+`_database_observation.py` shares the directional source check: newly created
+WAL/SHM files are allowed, but an already accepted sidecar cannot disappear or be
+replaced. These comparisons use `DatabaseInstance` throughout.
+
 `src/qplot/windows/_plot_actions.py` contains the plot-facing main window
 actions. It handles:
 
