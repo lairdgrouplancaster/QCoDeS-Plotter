@@ -251,7 +251,6 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QPLOT_CI_WHEEL_AUDIT: ${{ github.workspace }}/dist/wheel-installation-audit.py
-      QPLOT_CI_TEST_REPORT: ${{ runner.temp }}/qplot-test-results.xml
 
     steps:
       - name: Check out repository
@@ -274,6 +273,11 @@ jobs:
           cache-local-path: ${{ runner.tool_cache }}/uv-cache
           # Keep downloaded wheels available for subsequent CI runs.
           prune-cache: false
+
+      - name: Configure test report path
+        if: runner.os != 'Windows'
+        shell: bash
+        run: echo "QPLOT_CI_TEST_REPORT=$RUNNER_TEMP/qplot-test-results.xml" >> "$GITHUB_ENV"
 
       - name: Configure Windows temporary directory
         if: runner.os == 'Windows'
