@@ -58,6 +58,20 @@ multiple windows, start in `main.py`; put database-specific behavior in
 `_database_actions.py`, plot-opening/export behavior in `_plot_actions.py`, and
 run-selection or refresh-control behavior in `_run_controls.py`.
 
+`_shutdown_coordinator.py` owns confirmed GUI shutdown: one typed state tracks
+the phase, fixed deadlines, cleanup escalation, and diagnostic snapshots.
+`MainWindow` retains exit confirmation and Qt entry points, with read-only status
+properties for existing publication guards. The process fail-safe and launcher
+remain independent owners of termination at the process boundary.
+
+`_shutdown_resources.py` is the background-resource inventory. Pools register
+when created, and cancellation resolves the current worker for each registered
+binding. Liveness and escalation share that inventory. Reader membership is
+observed afresh from active, pending, and retired services on each scan; readers
+that finish during a liveness probe get a final zero-wait reap. Register new
+background resources at creation so shutdown can account for them. Test window
+teardown also uses this inventory instead of maintaining another pool list.
+
 `src/qplot/windows/_commands.py` is the shared command and shortcut registry.
 Use it when adding menu actions, context-menu actions, keyboard shortcuts, or
 shortcut-help rows so labels, status tips, tooltips, and in-app shortcut help

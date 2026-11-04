@@ -51,6 +51,7 @@ from qplot.windows._window_controls import (
     ask_confirmation_with_dont_ask_again,
 )
 from qplot.windows.plot1d import plot1d
+from tests._shutdown_harness import attach_shutdown
 
 
 class _FailedTrustedRequest:
@@ -2158,6 +2159,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             worker = harness._database_load_worker
             event = Event()
 
+            attach_shutdown(harness)
             harness.closeEvent(event)
         finally:
             main_window.ask_confirmation_with_dont_ask_again = old_confirmation
@@ -2221,7 +2223,9 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 qtw.QMessageBox.StandardButton.No
             )
             event = Event()
-            Harness().closeEvent(event)
+            harness = Harness()
+            attach_shutdown(harness)
+            harness.closeEvent(event)
         finally:
             main_window.ask_confirmation_with_dont_ask_again = old_confirmation
 
@@ -2260,18 +2264,18 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         )()
 
         self.assertTrue(
-            main_window.MainWindow._shutdown_background_work_active(harness)
+            attach_shutdown(harness).background_work_active()
         )
 
         harness.threadPool.active = 0
         preview._workers = {("generation", "guid"): object()}
         self.assertTrue(
-            main_window.MainWindow._shutdown_background_work_active(harness)
+            attach_shutdown(harness).background_work_active()
         )
 
         preview._workers = {}
         self.assertFalse(
-            main_window.MainWindow._shutdown_background_work_active(harness)
+            attach_shutdown(harness).background_work_active()
         )
 
     def test_shutdown_waits_for_retained_supervisor_resources(self):
@@ -2305,11 +2309,11 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         )()
 
         self.assertTrue(
-            main_window.MainWindow._shutdown_background_work_active(harness)
+            attach_shutdown(harness).background_work_active()
         )
         service.resource_cleanup_pending = False
         self.assertFalse(
-            main_window.MainWindow._shutdown_background_work_active(harness)
+            attach_shutdown(harness).background_work_active()
         )
 
     def test_shutdown_poll_does_not_wait_for_supervisor_close_lock(self):
@@ -2343,7 +2347,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         )
         started = time.monotonic()
         try:
-            active = main_window.MainWindow._shutdown_background_work_active(harness)
+            active = attach_shutdown(harness).background_work_active()
             elapsed = time.monotonic() - started
         finally:
             release_lock.set()
@@ -2381,7 +2385,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             },
         )()
 
-        main_window.MainWindow._cancel_plot_work(harness)
+        attach_shutdown(harness).resources.cancel_plot_work()
 
         self.assertTrue(active_worker.cancelled)
         self.assertTrue(queued_worker.cancelled)
@@ -2401,8 +2405,6 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             _finish_deferred_shutdown = main_window.MainWindow._finish_deferred_shutdown
 
             def __init__(self):
-                self._shutdown_started = True
-                self._shutdown_ready = False
                 self._shutdown_timer = Timer()
                 self.infoBox = type(
                     "InfoBox",
@@ -2413,13 +2415,14 @@ class CloseAllPlotsTestCase(unittest.TestCase):
         try:
             qtw.QApplication.closeAllWindows = lambda: closed.append(True)
             harness = Harness()
+            attach_shutdown(harness, waiting=True)
             harness._finish_deferred_shutdown()
         finally:
             qtw.QApplication.closeAllWindows = old_close_all_windows
 
         self.assertTrue(harness._shutdown_timer.stopped)
-        self.assertFalse(harness._shutdown_started)
-        self.assertTrue(harness._shutdown_ready)
+        self.assertFalse(harness._shutdown.waiting)
+        self.assertTrue(harness._shutdown.ready)
         self.assertEqual(closed, [True])
 
     def test_confirmation_options_use_shared_labels_and_config_keys(self):
