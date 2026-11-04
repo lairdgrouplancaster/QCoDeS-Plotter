@@ -147,7 +147,7 @@ def test_real_qcodes_large_snapshot_is_paged_beyond_old_node_limit(
                 lambda: (
                     bridge._detail_display_guid == guid
                     and bridge._selected_detail_publication is not None
-                    and bridge._snapshot_source is not None
+                    and bridge._snapshot_session.source is not None
                 ),
                 timeout=60.0,
             )

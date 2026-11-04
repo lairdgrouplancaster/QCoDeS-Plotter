@@ -155,6 +155,7 @@ files = [
     "src/qplot/windows/_database_load_publication.py",
     "src/qplot/windows/_database_observation.py",
     "src/qplot/windows/_trusted_derived_qt.py",
+    "src/qplot/windows/_snapshot_session.py",
     "src/qplot/windows/main.py",
     "src/qplot/windows/_colorbar.py",
     "src/qplot/windows/_dataset_handle.py",

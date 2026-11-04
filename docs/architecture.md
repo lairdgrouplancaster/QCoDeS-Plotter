@@ -413,9 +413,18 @@ reserved for genuine malformed input, source/detail size omission, excessive
 depth or scalar size, changed-during-read, or comparable
 acquisition/validation failure.
 
-One dedicated single-worker executor services lazy Snapshot pages and values,
-with at most two submitted or queued requests in total. Every request and result
-is tied to the exact `DatabaseInstance`, bridge binding, helper incarnation,
+`windows/_snapshot_session.py` owns the retained raw Snapshot source, session
+cancellation, and the dedicated single-worker executor for lazy pages and values.
+It admits at most two submitted or queued requests in total. Its completion
+callback only queues a result and requests a wakeup; the Qt bridge drains those
+results, validates its current database/selection state, and updates widgets.
+The session revalidates each result individually because publishing a previous
+result can reenter the UI and change selection. Shutdown cancels the session
+and closes the executor without waiting; liveness and diagnostics continue to
+account for unfinished futures.
+
+Every request and result is tied to the exact `DatabaseInstance`, bridge binding,
+helper incarnation,
 source revision, coordinator and selection generations, run ID and GUID,
 Snapshot-session token, parent handle and continuation cursor, and deadline.
 Those identities are checked before submission and again before owner-thread
