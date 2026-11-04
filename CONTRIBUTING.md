@@ -220,6 +220,41 @@ The test suite runs PyQt in headless mode. The shared Qt setup lives in
 `QApplication` creation unless a test has a specific reason to override the
 shared setup.
 
+### CI timing and scheduling
+
+Full macOS and Windows jobs each run two disjoint partitions with two xdist
+workers per job. `tests/_ci_scheduling.py` assigns whole files using the committed
+`tests/ci_timings.json` profile, then starts expensive files first with
+`--dist=loadfile --no-loadscope-reorder`. Tests within a file keep their original
+order. Both partitions and all workers read the same profile from the checkout;
+CI does not fetch changing timing data while collecting tests.
+
+Known file costs scale with the number of collected tests. New files use the
+profile's average cost per test, so they are still included immediately. These
+are scheduling estimates, not performance assertions. The initial profile uses
+elapsed file spans from successful macOS ARM64 Python 3.12 jobs linked in its
+`source` field; it excludes final worker/session teardown and is not a Windows
+benchmark.
+
+Each source-suite job uploads a `qplot-test-timings-*` artifact containing JUnit
+results, including setup and teardown durations. To refresh the profile, download
+reports from successful **full-suite** runs, covering both partitions. Reports
+from several platforms can be supplied together; the updater keeps the slowest
+observed total for each file:
+
+```console
+python scripts/update_ci_timings.py /path/to/partition-1.xml /path/to/partition-2.xml
+```
+
+Review and commit the updated profile. Do not refresh it from compatibility-only
+or interrupted runs, which omit tests. For a local measurement, add
+`-o junit_family=xunit1 --junitxml=/path/to/results.xml` to the test command.
+Failed or malformed reports are rejected before the updater writes the profile.
+
+Ruff runs immediately in an independent required job. Mypy continues to use the
+current revision's installed application and native artifacts. All runtime,
+database-safety, packaging, and platform checks remain required.
+
 GitHub Actions is configured to build the application wheel once and separate
 `cp311-abi3` native wheels for Windows x64, macOS ARM64, macOS Intel, and Linux
 x86_64. Linux publication wheels use cibuildwheel's `manylinux_2_28` image and
