@@ -103,6 +103,14 @@ orchestration: deciding whether to read from the database or cached data,
 starting workers, applying worker results back to plot-window state, and
 surfacing worker failures.
 
+The plot window owns one typed `RefreshPublication` rollback record for the
+latest callback. It captures the prior cache parameter and plot fields, records
+the cache values actually published, and conditionally restores them if the
+source changes before rendering finishes. A nested newer callback replaces the
+record; an older callback cannot restore or discard the newer state. Source
+checks remain at the cache and renderer publication boundaries. Worker result
+data and completion signals remain separate from this GUI-owned rollback state.
+
 `src/qplot/windows/_dataset_handle.py` defines the small `DatasetHandle`
 structure used by the main window and plot windows to track an open dataset,
 its active plot-window user count, and any delayed-release timer.
@@ -153,6 +161,11 @@ preview drag-and-drop, including per-layer renderers and opacity controls,
 hidden source-window refresh ownership, shared-colorbar membership, and layer
 cleanup.
 
+`src/qplot/windows/_source_consumer.py` owns each secondary trace or heatmap's
+shared source-consumer registration and hidden-source interval connection.
+Release is idempotent. The line and heatmap owners retain their distinct final
+monitor, reload-timer, and worker-cancellation policies.
+
 `src/qplot/windows/_plot2d_colorbar.py` contains the heatmap colorbar mixin. It
 owns color autoscaling, colorbar interaction handlers, and color-map selection
 state used by `plot2d.py`.
@@ -196,7 +209,11 @@ sessions receive decoded Stage 5C images from the bridge; retained compatibility
 paths may still use the bounded legacy preview queue.
 
 `src/qplot/windows/_widgets/operations.py` defines the operation panel widgets
-that collect user-selected data operations before refresh processing.
+that collect user-selected data operations before refresh processing. Operation
+identity and heatmap transposition pairs live in `tools/operation_registry.py`;
+promotion copies ordered panel state through `capture_state`/`restore_state`,
+including exact editor text and Apply generation, without using display labels
+as operation identifiers. This state is transient, not a settings format.
 
 `src/qplot/windows/_widgets/dropbox.py` and `toolbar.py` contain smaller
 reusable UI controls used inside plot windows.
@@ -740,10 +757,11 @@ Cache hits and freshly rendered payloads use the same transactional publication
 path; unsupported runs receive bounded nonfatal unavailable cards. The derived
 lanes use `(run tier, work kind, stable index)`: selected metadata (with
 detail), thumbnail, and preview; then visible metadata/thumbnail/preview lanes;
-then the equivalent remaining lanes. Explicit plot and CSV
-actions remain action-owned snapshot consumers addressed by the selected GUID
-and exact `DatabaseInstance`, and snapshot fallback sessions may keep their
-existing preview behavior. Trusted selection never creates an automatic
+then the equivalent remaining lanes. Explicit trusted plots use connection-free `TrustedPlotDataset` metadata and
+broker-owned prefix capture or numeric aggregation. CSV and fallback plot
+actions remain snapshot consumers. All address the selected GUID and exact
+`DatabaseInstance`; snapshot fallback sessions may keep their existing preview
+behavior. Trusted selection never creates an automatic
 fallback copy.
 
 Database switching disarms publications before the old coordinator is made

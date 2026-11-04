@@ -109,7 +109,7 @@ def test_complex_measurement_actual_plot_error_export_and_recovery(tmp_path, mon
         assert not cache_parameter_is_synchronized(plot.ds.cache, "signal")
         assert "axis_data" not in plot.__dict__
         assert plot.line.getData() == (None, None)
-        assert not isinstance(getattr(plot.worker, "_qplot_publication_snapshot", None), dict)
+        assert plot._refresh_publication is None
 
         # Raw run export remains available even when the plot cannot be rendered.
         target = tmp_path / "raw.csv"
@@ -160,7 +160,7 @@ def test_complex_measurement_actual_plot_error_export_and_recovery(tmp_path, mon
                 assert current_cache == prior_cache
                 np.testing.assert_array_equal(real_plot.line.getData()[0], [0, 1, 2])
                 np.testing.assert_array_equal(real_plot.line.getData()[1], [4, 5, 6])
-                assert not isinstance(getattr(real_plot.worker, "_qplot_publication_snapshot", None), dict)
+                assert real_plot._refresh_publication is None
 
                 monkeypatch.setattr(real_plot.oper_widget, "get_data", lambda: [])
                 real_plot.refreshWindow(force=True)

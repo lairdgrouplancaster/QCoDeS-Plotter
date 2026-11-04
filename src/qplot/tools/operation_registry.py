@@ -19,11 +19,13 @@ from qplot.tools.plot_tools import (
 
 @dataclass(frozen=True)
 class OperationSpec:
+    key: str
     name: str
     func: Callable
     input_type: object
     default: object = ""
     derivative_axis: str | None = None
+    transposed_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -56,14 +58,14 @@ class OperationExecutionError(RuntimeError):
 
 COMMON_OPERATION_SPECS = (
     OperationSpec(
-        "Limit Maximum",
+        "limit_maximum", "Limit Maximum",
         lambda limit, data, cancelled_callback=None: pass_filter(
             "low", limit, data, cancelled_callback=cancelled_callback
             ),
         Decimal,
         ),
     OperationSpec(
-        "Limit Minimum",
+        "limit_minimum", "Limit Minimum",
         lambda limit, data, cancelled_callback=None: pass_filter(
             "high", limit, data, cancelled_callback=cancelled_callback
             ),
@@ -74,7 +76,7 @@ COMMON_OPERATION_SPECS = (
 PLOT_OPERATION_SPECS = {
     "plot1d": (
         OperationSpec(
-            "dy/dx",
+            "line_derivative", "dy/dx",
             lambda data, cancelled_callback=None: differentiate(
                 "x", data, cancelled_callback=cancelled_callback
                 ),
@@ -84,37 +86,41 @@ PLOT_OPERATION_SPECS = {
         ),
     "plot2d": (
         OperationSpec(
-            "Subtract Row Mean",
+            "row_mean", "Subtract Row Mean",
             lambda data, cancelled_callback=None: subtract_mean(
                 "x", data, cancelled_callback=cancelled_callback
                 ),
             None,
+            transposed_key="column_mean",
             ),
         OperationSpec(
-            "Subtract Column Mean",
+            "column_mean", "Subtract Column Mean",
             lambda data, cancelled_callback=None: subtract_mean(
                 "y", data, cancelled_callback=cancelled_callback
                 ),
             None,
+            transposed_key="row_mean",
             ),
         OperationSpec(
-            "dz/dx",
+            "derivative_x", "dz/dx",
             lambda data, cancelled_callback=None: differentiate(
                 "x", data, cancelled_callback=cancelled_callback
                 ),
             None,
             derivative_axis="x",
+            transposed_key="derivative_y",
             ),
         OperationSpec(
-            "dz/dy",
+            "derivative_y", "dz/dy",
             lambda data, cancelled_callback=None: differentiate(
                 "y", data, cancelled_callback=cancelled_callback
                 ),
             None,
             derivative_axis="y",
+            transposed_key="derivative_x",
             ),
         OperationSpec(
-            "Fill Below",
+            "fill_below", "Fill Below",
             lambda value, data, cancelled_callback=None: fill_heatmap(
                 "below",
                 data,
@@ -123,9 +129,10 @@ PLOT_OPERATION_SPECS = {
                 ),
             int,
             10,
+            transposed_key="fill_right",
             ),
         OperationSpec(
-            "Fill Right",
+            "fill_right", "Fill Right",
             lambda value, data, cancelled_callback=None: fill_heatmap(
                 "right",
                 data,
@@ -134,25 +141,26 @@ PLOT_OPERATION_SPECS = {
                 ),
             int,
             10,
+            transposed_key="fill_below",
             ),
         ),
     "sweeper": (
         OperationSpec(
-            "Subtract Cut Mean",
+            "cut_mean", "Subtract Cut Mean",
             lambda data, cancelled_callback=None: subtract_mean(
                 "x", data, cancelled_callback=cancelled_callback
                 ),
             None,
             ),
         OperationSpec(
-            "Subtract Fixed Mean",
+            "fixed_mean", "Subtract Fixed Mean",
             lambda data, cancelled_callback=None: subtract_mean(
                 "y", data, cancelled_callback=cancelled_callback
                 ),
             None,
             ),
         OperationSpec(
-            "Differentiate Cut",
+            "cut_derivative", "Differentiate Cut",
             lambda data, cancelled_callback=None: differentiate(
                 "x", data, cancelled_callback=cancelled_callback
                 ),
@@ -160,7 +168,7 @@ PLOT_OPERATION_SPECS = {
             derivative_axis="x",
             ),
         OperationSpec(
-            "Differentiate Fixed",
+            "fixed_derivative", "Differentiate Fixed",
             lambda data, cancelled_callback=None: differentiate(
                 "y", data, cancelled_callback=cancelled_callback
                 ),

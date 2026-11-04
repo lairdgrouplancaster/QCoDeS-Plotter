@@ -17,6 +17,7 @@ from qplot.datahandling.qcodes_cache import update_cache_parameter_data
 from qplot.datahandling.readonly import load_by_id_read_only
 from qplot.tools.operation_registry import PLOT_OPERATION_SPECS, OperationCall
 from qplot.tools.worker import PlotWorkCancelled, loader
+from tests._plot_worker import make_plot_worker
 
 
 def run_worker(worker):
@@ -126,7 +127,7 @@ def test_real_qcodes_coordinate_validity_agrees_across_loading_paths(
 
 @pytest.mark.parametrize("phase", ["coordinate-mask", "grid-selection"])
 def test_shaped_coordinate_masking_is_cancellable_without_modifying_source(phase):
-    worker = loader.__new__(loader)
+    worker = make_plot_worker()
     worker.axes_dict = {"x": "fast", "y": "slow"}
     worker.param = SimpleNamespace(name="signal", depends_on_=("slow", "fast"))
     worker.param_dict = {name: SimpleNamespace(name=name) for name in ("slow", "fast")}

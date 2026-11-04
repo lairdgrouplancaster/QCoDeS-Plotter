@@ -128,3 +128,49 @@ class OperationsPanelTestCase(unittest.TestCase):
             np.testing.assert_array_equal(result["y"], [5.0, 10.0])
         finally:
             main.deleteLater()
+
+    def test_promotion_state_uses_keys_and_preserves_order_text_and_apply_generation(self):
+        source_main, source = self._panel(operations_options_2d)
+        target_main, target = self._panel(operations_options_2d)
+        try:
+            for label, text in (
+                ("Fill Right", ""),
+                ("Limit Maximum", "9007199254740993.125"),
+                ("Subtract Row Mean", None),
+                ("dz/dx", None),
+            ):
+                option = self._option(source, label)
+                option.input.setChecked(True)
+                if text is not None:
+                    option.operation_row.input.setText(text)
+                option.operation_row._label.setText("A changed display label")
+            source._apply_generation = 7
+            # Restoration must also replace pre-existing enabled/hidden order.
+            old = self._option(target, "Limit Minimum")
+            old.input.setChecked(True)
+            old.operation_row.input.setText("-1e2")
+            state = source.capture_state(transpose=True)
+            target.restore_state(state)
+
+            self.assertEqual(target.capture_state(), state)
+            self.assertEqual(
+                [entry.key for entry in state.entries],
+                ["fill_below", "limit_maximum", "column_mean", "derivative_y"],
+            )
+            self.assertEqual(
+                [operation.name for operation in target.get_data()],
+                ["Fill Below", "Limit Maximum", "Subtract Column Mean", "dz/dy"],
+            )
+            self.assertEqual(self._option(target, "Limit Maximum").operation_row.input.text(),
+                             "9007199254740993.125")
+            self.assertEqual(self._option(target, "Fill Below").operation_row.input.text(), "")
+            self.assertEqual(target._apply_generation, 7)
+            self.assertFalse(self._option(target, "Limit Minimum").input.isChecked())
+            self.assertEqual(target.capture_state(transpose=True), source.capture_state())
+
+            source.hide_all()
+            target.restore_state(source.capture_state())
+            self.assertEqual(target.get_data(), [])
+        finally:
+            source_main.deleteLater()
+            target_main.deleteLater()

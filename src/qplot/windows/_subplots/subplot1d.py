@@ -7,7 +7,8 @@ from PyQt6.QtGui import QColor
 from .._native_transforms import NativePlotDataItem
 from .._plot_drop_axes import DroppedAxisMapping
 from .._plot_refresh import plot_refresh_required
-from .._refresh_interval import refresh_interval_value, set_refresh_interval
+from .._refresh_interval import refresh_interval_value
+from .._source_consumer import SourceConsumerRegistration
 
 
 def _subplot_axis_order(
@@ -83,9 +84,7 @@ class subplot1d(NativePlotDataItem):
             DroppedAxisMapping(parent, from_win, axis_order)
             if axis_order is not None else None
         )
-        self._source_consumer_registered = False
-        self._source_interval_signal = None
-        self._source_interval_slot = None
+        self._source_consumer = SourceConsumerRegistration(from_win)
 
         self.choose_from: tuple[str, str] | None = None
         self.axis_param = {}
@@ -170,32 +169,9 @@ class subplot1d(NativePlotDataItem):
 
 
     def _register_source_consumer(self):
-        if self._source_consumer_registered:
+        if not self._source_consumer.register(self.parent):
             return
-
         source = self.from_win
-        source._merged_trace_users = max(
-            int(getattr(source, "_merged_trace_users", 0)),
-            0,
-            ) + 1
-        self._source_consumer_registered = True
-
-        if not getattr(source, "visible", True):
-            parent_spinbox = getattr(self.parent, "spinBox", None)
-            source_spinbox = getattr(source, "spinBox", None)
-            if parent_spinbox is not None and source_spinbox is not None:
-                def sync_interval(interval):
-                    interval = refresh_interval_value(parent_spinbox)
-                    set_refresh_interval(source_spinbox, interval)
-                    source.monitorIntervalChanged(interval)
-
-                sync_interval(refresh_interval_value(parent_spinbox))
-                interval_signal = getattr(parent_spinbox, "valueChanged", None)
-                if interval_signal is not None:
-                    interval_slot = sync_interval
-                    interval_signal.connect(interval_slot)
-                    self._source_interval_signal = interval_signal
-                    self._source_interval_slot = interval_slot
 
         if (
                 getattr(source, "_closed", False)
@@ -206,21 +182,10 @@ class subplot1d(NativePlotDataItem):
 
 
     def _release_source_consumer(self):
-        if not self._source_consumer_registered:
+        remaining = self._source_consumer.release()
+        if remaining is None:
             return
-
         source = self.from_win
-        remaining = max(int(getattr(source, "_merged_trace_users", 1)) - 1, 0)
-        source._merged_trace_users = remaining
-        self._source_consumer_registered = False
-
-        if self._source_interval_signal is not None:
-            try:
-                self._source_interval_signal.disconnect(self._source_interval_slot)
-            except (TypeError, RuntimeError):  # Signal was absent or already gone.
-                pass
-            self._source_interval_signal = None
-            self._source_interval_slot = None
 
         if remaining == 0 and not getattr(source, "visible", True):
             monitor = getattr(source, "monitor", None)

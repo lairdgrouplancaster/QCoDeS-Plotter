@@ -323,7 +323,8 @@ view share one broker-owned supervisor. Snapshot fallback remains a narrow
 initial-open outcome; ordinary fallback selection is basic-only and starts no
 selected-detail worker or additional selected-detail snapshot. Fallback
 metadata and retained preview paths can still create private snapshots.
-Explicit plot/CSV snapshots remain deferred DataSet consumers. Existing
+Trusted plots use broker-owned prefix capture or numeric aggregation; CSV and
+fallback plot actions remain snapshot-backed DataSet consumers. Existing
 fallback previews remain separately permitted. The Stage 5A scheduler and
 Stage 5B coordinator, derived-query, rendering, and cache modules are normal
 installed Python package files and are covered by the same wheel/sdist inventory
@@ -588,7 +589,7 @@ subsequent release/PR operations if supported, never `gh`.
 
 ### Later Python-only releases
 
-Update the application version (for example to `1.6.4`) and changelog, keep
+Update the application version (for example to `1.7.1`) and changelog, keep
 the exact native/APSW pins when still compatible, and merge the changes. Do
 not change native sources/ABI under an existing native version. Then:
 
@@ -597,8 +598,8 @@ git fetch origin
 git switch main
 git pull --ff-only origin main
 python scripts/validate_distribution.py --check-clean
-git tag -a v1.6.4 -m "qPlot 1.6.4"
-git push origin refs/tags/v1.6.4
+git tag -a v1.7.1 -m "qPlot 1.7.1"
+git push origin refs/tags/v1.7.1
 ```
 
 The native release must already contain all four non-yanked compatible wheels.
@@ -639,7 +640,9 @@ GUI startup and the trusted live reader/database-protection smokes. Windows
 runs unprivileged. The workflow has only read permissions and no publishing
 jobs or deployment approvals.
 
-Wait for all 16 matrix jobs to pass before reporting corrected acceptance.
+Wait for all 12 matrix jobs (four platforms × three Python versions) to pass
+before reporting corrected acceptance. Each job exercises both wheel and editable
+installation, for 24 installation exercises in total.
 Link both the original publication run and the new validation run in the
 release notes. If any failure requires an application or native package change,
 use a new package version and the normal release workflow.

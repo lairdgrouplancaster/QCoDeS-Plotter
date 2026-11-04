@@ -15,19 +15,17 @@ from qcodes.dataset import (
 import qplot.tools.worker as worker_module
 from qplot.datahandling.qcodes_cache import update_cache_parameter_data
 from qplot.datahandling.readonly import load_by_id_read_only
+from tests._plot_worker import make_plot_worker
 
 
 @pytest.fixture
 def worker():
-    worker = worker_module.loader.__new__(worker_module.loader)
-    worker.axes_dict = {"x": "x", "y": "y"}
-    worker.param = SimpleNamespace(name="signal", depends_on_=("y", "x"))
-    worker.param_dict = {name: SimpleNamespace(name=name) for name in ("x", "y")}
-    worker.operations = []
-    worker.max_full_heatmap_points = worker_module.MAX_FULL_HEATMAP_POINTS
-    worker.max_heatmap_grid_cells = 16
-    worker.max_heatmap_grid_side = 3
-    return worker
+    return make_plot_worker(
+        axes={"x": "x", "y": "y"},
+        param=SimpleNamespace(name="signal", depends_on_=("y", "x")),
+        param_dict={name: SimpleNamespace(name=name) for name in ("x", "y")},
+        max_heatmap_grid_cells=16, max_heatmap_grid_side=3,
+    )
 
 
 @pytest.mark.parametrize("shaped", [False, True])
