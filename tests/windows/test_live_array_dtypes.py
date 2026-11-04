@@ -119,7 +119,11 @@ def test_live_planned_array_dtype_change(
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
                 plot.refreshWindow(force=True)
-                wait_for(lambda: not plot.worker.running)
+                # The worker can stop before Qt delivers its queued result to
+                # the plot. Wait for publication or error handling as well.
+                wait_for(lambda: not plot.worker.running and (
+                    bool(updates) or plot._last_error_text is not None
+                ))
                 plot.monitor.stop()
                 assert not any(isinstance(w.message, np.exceptions.ComplexWarning) for w in caught)
 
