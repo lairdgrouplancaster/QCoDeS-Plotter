@@ -138,7 +138,7 @@ def _run_gui(
     configure_logging()
     install_excepthook()
     log_event("Starting qPlot %s", package_version())
-    print("Initialising GUI, this may take a few seconds.\n")
+    print(f"Starting qPlot {package_version()}.", flush=True)
 
     try:
         app = qtw.QApplication(sys.argv)
