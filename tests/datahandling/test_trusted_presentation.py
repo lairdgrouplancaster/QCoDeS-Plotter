@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from qplot.datahandling.trusted_live_queries import (
-    TrustedParameterView,
+from qplot.datahandling._trusted_query_metadata import (
     bounded_parameter_presentation,
 )
 from qplot.datahandling.trusted_presentation import (
@@ -24,6 +23,9 @@ from qplot.datahandling.trusted_presentation import (
     bounded_presentation_names,
     build_selected_run_presentation,
     normalize_presentation_tree,
+)
+from qplot.datahandling.trusted_query_types import (
+    TrustedParameterView,
 )
 
 

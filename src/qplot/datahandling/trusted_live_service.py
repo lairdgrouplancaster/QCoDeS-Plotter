@@ -37,20 +37,22 @@ from qplot.datahandling.trusted_live import (
     TrustedQueryResult,
 )
 from qplot.datahandling.trusted_live_queries import (
-    TrustedBootstrapResult,
-    TrustedDatabaseInfo,
-    TrustedDerivedSourceObservation,
     TrustedMetadataQueryAdapter,
-    TrustedRefreshResult,
-    TrustedRunPage,
-    TrustedRunRecord,
-    TrustedSelectedRunDetail,
-    TrustedSourceRevisionNamespace,
 )
 from qplot.datahandling.trusted_live_supervisor import (
     TrustedLiveJob,
     TrustedLiveReaderSupervisor,
     TrustedLiveSupervisorLiveness,
+)
+from qplot.datahandling.trusted_query_types import (
+    TrustedBootstrapResult,
+    TrustedDatabaseInfo,
+    TrustedDerivedSourceObservation,
+    TrustedRefreshResult,
+    TrustedRunPage,
+    TrustedRunRecord,
+    TrustedSelectedRunDetail,
+    TrustedSourceRevisionNamespace,
 )
 
 _LOG = logging.getLogger(__name__)

@@ -15,7 +15,9 @@ from qcodes.dataset import (
 from qcodes.parameters import ManualParameter
 
 from qplot.datahandling import database as database_module
-from qplot.datahandling.trusted_live_queries import TrustedMetadataQueryAdapter
+from qplot.datahandling.trusted_live_queries import (
+    TrustedMetadataQueryAdapter,
+)
 from qplot.datahandling.trusted_live_service import (
     TrustedReadRequestCancelledError,
     TrustedReadRequestDeadlineError,

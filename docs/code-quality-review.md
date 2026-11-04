@@ -1,5 +1,9 @@
 # Code quality review: 1 November 2026
 
+For the current review and refactoring, see the
+[4 November maintainability review](#maintainability-review-4-november-2026).
+The earlier scan counts below are historical.
+
 This review covers all **596 open findings across 27 rules** in the export made
 at `2026-11-01T17:53:20.029278+00:00`. It supersedes the earlier preliminary
 screening. The [individual review record](code-quality-review.json) contains each
@@ -139,3 +143,97 @@ the same rule. All ten lifecycle tests and Ruff passed. Optimized bytecode omits
 both original calls and retains both corrected calls. The JSON records finding
 1403, the export hash and the exact base commit. Clearance requires the next
 merged-main scan; no findings were dismissed or suppressed.
+
+## Maintainability review: 4 November 2026
+
+Reviewed the export `qplot-code-quality-gsvmji1o.json`, produced at
+`2026-11-04T11:19:05.814753+00:00`, against checkout
+`04d86a14e501868523f4f446a1ce69781311c99b`. It contains **318 findings: three
+warnings and 315 notes**. This pass focuses on understandable ownership and
+module dependencies, building on the earlier fault-path reviews.
+
+### Findings addressed
+
+1. **Layout verification had no separate state owner.** The 6,194-line
+   `trusted_live_queries.py` combined metadata caching, six maps of partial and
+   completed layout evidence, numeric verification, preview sampling, and shared
+   value types. Adding a query operation required understanding all of them.
+   `ResultLayoutQueries` now owns layout evidence, its bounded SQL, and the
+   decision sequence that advances it. Executor rebinding, bootstrap reset, and
+   per-run invalidation are explicit operations. The adapter is now 2,148 lines
+   and concentrates on metadata/query orchestration and publication.
+2. **Consumers depended on adapter internals for unrelated work.** The snapshot
+   reader called the adapter's private planned-step method; cache, rendering,
+   broker, and UI modules imported the adapter module for its value types.
+   Shared parameter normalization now lives in `_trusted_query_metadata.py`,
+   immutable contracts in `trusted_query_types.py`, and pure preview sampling in
+   `_trusted_grid_sampling.py`. Internal consumers import their defining
+   modules. Existing public imports through `trusted_live_queries` still work.
+3. **Obsolete hooks made tests look stronger than they were.** The aggregate
+   compatibility switch always returned `False`, and the planned-layout helper
+   always returned `None`. They were no longer alternative implementations.
+   Both are removed, along with two unused private helpers. Their tests now
+   inspect the actual bounded query plan or rejection of unproven layouts by
+   the adapter/renderer. The real-supervisor test no longer patches a switch
+   that production never calls.
+4. **Settings behavior contradicted the documented compatibility policy.**
+   Startup still repaired selected obsolete preference formats through
+   `_migrate_config`, including a removed axis setting. That special path is
+   removed. Incompatible settings now consistently use the existing validated
+   defaults, original-file backup, and atomic replacement path. Current valid
+   settings retain their values. Backup/write failures still allow startup with
+   defaults in memory and leave the original file intact.
+
+The [architecture map](architecture.md#data-loading) describes where future
+changes belong. The change introduces no additional mixin hierarchy or dynamic
+method forwarding. Verification snapshots exposed to the adapter are immutable;
+mutable verification maps stay with their owner.
+
+The extraction preserves the bodies of 107 existing definitions after
+accounting for moved calls and names. A syntax-tree comparison also verified the
+ordering of the extracted layout-decision statements. Query budgets, numeric
+algorithms, transaction boundaries, and source-revision fingerprint payloads
+remain unchanged. The low-level reader, VFS, and process-containment code are
+unchanged.
+
+### GitHub findings retained deliberately
+
+| Findings | Disposition |
+| --- | --- |
+| Warnings 605 and 606: incomplete ordering | Qt uses `__lt__` as its item-sorting hook. These are widget identities, not generally ordered value objects. Adding `__le__`, `__ge__`, or value equality would invent unrelated semantics. |
+| Warning 78: unreachable handler | `_safe_equal` calls arbitrary equality implementations. Existing regressions exercise `RuntimeError`, `KeyboardInterrupt`, `SystemExit`, and non-boolean returns. The rejection handler is reachable and necessary. |
+| 233 notes: `BaseException` handlers | Preserve the reviewed cancellation, cleanup, failure-publication, and process-containment boundaries. Replacing these with `Exception` can bypass ownership retention on interruption. The prior resource review documents concrete failures of that kind. |
+| 70 notes: ineffectual statements | These are typing-only, Protocol, or overload declarations. Keeping explicit type contracts is more useful than replacing conventional ellipses to satisfy this rule. Four executor declarations move with their contract. |
+| Five notes: lambdas | One callback intentionally looks up the current autoscale method; two Qt test adapters bridge plain harness methods; two request factories accept the service's `deadline` keyword. Replacing them with extra forwarding functions would add indirection. |
+| Two notes: complex destructors | Fallback cleanup handles partially initialized or abandoned reader/process owners. Explicit close remains the normal API. Moving the same statements to another helper would hide the lifetime policy. |
+| Four notes: special-method exceptions | Test sentinels reject forbidden truthiness or over-budget binding access. Their assertion failures are intentional. |
+| One note: unused `Generic` | `TrustedReadRequest(Generic[_ResultT])` uses this import. Removing it would break the generic request declaration. |
+
+No finding has been dismissed or suppressed, and this refactor does not promise
+an alert-count reduction. These remaining categories express useful contracts
+or safety boundaries; the substantive maintenance improvement is independent of
+the scan score. A fresh GitHub scan is needed to establish its resulting alert
+state.
+
+### Validation
+
+The full macOS regression run completed with **6,519 tests and 130 subtests
+passing**, 138 platform/feature skips, and one test-adapter failure. That test
+patched the source-revision randomness through the old query module; it now
+imports the defining value-type module. The final focused run passed **251
+tests and 30 subtests**, covering the complete scheduler and query test files,
+the settings changes, recovery failures, and preferences. No observed failure
+remains unresolved.
+
+New query regressions verify that an executor replacement resumes at the next
+4,096-row page, bootstrap discards both pending and completed evidence, and a
+changed run identity restarts only that run's verification. The rewritten
+settings tests verify backup fidelity, validated defaults, failed writes,
+read-only directories, and preservation of current settings without rewriting
+them on startup.
+
+Repository-wide Ruff, project mypy (96 source files), and `git diff --check`
+pass. qPlot remained running through an eight-second offscreen startup check;
+its launcher exited after the check requested termination. The full suite
+required local socket access for the shutdown-supervisor tests. Native Windows
+and platform-specific numeric cases remain subject to their normal CI jobs.

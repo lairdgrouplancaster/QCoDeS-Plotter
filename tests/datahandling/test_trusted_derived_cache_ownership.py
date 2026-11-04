@@ -14,7 +14,9 @@ from qcodes.dataset import (
 
 from qplot.datahandling.file_identity import database_instance
 from qplot.datahandling.trusted_derived_cache import TrustedDerivedDiskCache
-from qplot.datahandling.trusted_live_queries import TrustedSourceRevision
+from qplot.datahandling.trusted_query_types import (
+    TrustedSourceRevision,
+)
 from qplot.datahandling.trusted_work_scheduler import (
     RenderingOptions,
     TrustedCacheWorkKey,

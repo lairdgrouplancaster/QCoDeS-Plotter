@@ -22,8 +22,10 @@ from qplot.datahandling.trusted_derived_cache import TrustedDerivedDiskCache
 from qplot.datahandling.trusted_derived_rendering import (
     render_trusted_derived_payload,
 )
-from qplot.datahandling.trusted_live_queries import trusted_source_revision
 from qplot.datahandling.trusted_live_service import TrustedLiveReadService
+from qplot.datahandling.trusted_query_types import (
+    trusted_source_revision,
+)
 from qplot.datahandling.trusted_work_coordinator import (
     TrustedDerivedRun,
     TrustedWorkCoordinator,

@@ -20,6 +20,8 @@ from qplot.datahandling.trusted_derived_rendering import (
 )
 from qplot.datahandling.trusted_live_queries import (
     TrustedMetadataQueryAdapter,
+)
+from qplot.datahandling.trusted_query_types import (
     TrustedSourceRevisionNamespace,
 )
 from qplot.datahandling.trusted_work_scheduler import TrustedWorkKind

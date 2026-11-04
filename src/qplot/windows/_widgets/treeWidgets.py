@@ -11,18 +11,18 @@ from PyQt6 import (
     QtWidgets as qtw,
 )
 
-from qplot.datahandling.trusted_live_queries import (
-    TrustedParameterView,
-    TrustedRunRecord,
-    TrustedSelectedRunDetail,
-    TrustedSetpointSummary,
-)
 from qplot.datahandling.trusted_presentation import (
     TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES,
     bounded_presentation_error,
     bounded_presentation_text,
     bounded_selected_run_fields,
     normalize_presentation_tree,
+)
+from qplot.datahandling.trusted_query_types import (
+    TrustedParameterView,
+    TrustedRunRecord,
+    TrustedSelectedRunDetail,
+    TrustedSetpointSummary,
 )
 
 from .._commands import (

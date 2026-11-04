@@ -21,7 +21,9 @@ from qplot.datahandling.readonly import (
     load_by_id_read_only,
     sqlite_read_only_connection,
 )
-from qplot.datahandling.trusted_live_queries import TrustedParameterView
+from qplot.datahandling.trusted_query_types import (
+    TrustedParameterView,
+)
 from qplot.testdata import (
     CSV_COLUMNS,
     INSTRUCTION_FILE_NAMES,
@@ -115,7 +117,9 @@ def _artifact_state(path):
 
 
 def test_initial_mixed_run_shows_all_dimension_placeholders_without_result_reads(mixed_database):
-    from qplot.datahandling.trusted_live_queries import TrustedMetadataQueryAdapter
+    from qplot.datahandling.trusted_live_queries import (
+        TrustedMetadataQueryAdapter,
+    )
     from tests.datahandling.test_stage5c_real_qcodes import _ReadOnlySqliteExecutor
 
     path, specs = mixed_database

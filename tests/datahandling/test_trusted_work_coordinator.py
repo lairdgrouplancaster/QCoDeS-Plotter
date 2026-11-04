@@ -19,17 +19,17 @@ from qplot.datahandling.trusted_derived_cache import (
     TrustedDerivedDiskCache,
     trusted_cache_filename,
 )
-from qplot.datahandling.trusted_live_queries import (
+from qplot.datahandling.trusted_live_service import (
+    TrustedDerivedReadService,
+    TrustedReadQueueFullError,
+)
+from qplot.datahandling.trusted_query_types import (
     Trusted2DGridLayout,
     TrustedDerivedSourceObservation,
     TrustedParameterView,
     TrustedSourceRevision,
     TrustedSourceRevisionNamespace,
     trusted_derived_source_revision,
-)
-from qplot.datahandling.trusted_live_service import (
-    TrustedDerivedReadService,
-    TrustedReadQueueFullError,
 )
 from qplot.datahandling.trusted_work_scheduler import (
     RenderingOptions,

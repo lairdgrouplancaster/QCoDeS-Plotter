@@ -6,7 +6,9 @@ from qplot.datahandling.trusted_live import (
     TrustedLiveReader,
     TrustedLiveSqlRejectedError,
 )
-from qplot.datahandling.trusted_live_queries import TrustedMetadataQueryAdapter
+from qplot.datahandling.trusted_live_queries import (
+    TrustedMetadataQueryAdapter,
+)
 from tests.datahandling.test_trusted_live import (
     _artifact_state,
     _assert_protected_artifacts_unchanged,

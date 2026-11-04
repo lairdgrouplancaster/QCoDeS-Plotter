@@ -13,6 +13,7 @@ from qcodes.dataset import (
     load_or_create_experiment,
 )
 
+from qplot.datahandling import _trusted_result_layout as layout_queries
 from qplot.datahandling import trusted_live_queries as queries
 from qplot.datahandling.file_identity import database_instance
 from qplot.datahandling.trusted_live import TrustedQueryResult
@@ -114,11 +115,11 @@ def test_nd_counts_and_axis_steps_in_run_metadata_and_detail(
         adapter = queries.TrustedMetadataQueryAdapter(executor, path)
         _load_basic_runs(adapter)
         # Force more than one transaction even for the small mixed fixture.
-        monkeypatch.setattr(queries, "_TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS",
+        monkeypatch.setattr(layout_queries, "_TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS",
                             17 if dimensions <= 4 else 4096)
         while True:
             fields = adapter.expensive_run(1).as_dict()
-            state = adapter._nd_counts[1]
+            state = adapter._layouts.nd_state(1)
             if state.after_row_id == state.result_watermark:
                 break
             assert fields["read_setpoint_count"] is None
@@ -139,7 +140,7 @@ def test_nd_counts_and_axis_steps_in_run_metadata_and_detail(
 
 def test_nd_count_progress_is_scheduled_until_complete(tmp_path, monkeypatch):
     path, axes = _database(tmp_path, 4, mixed=True)
-    monkeypatch.setattr(queries, "_TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS", 17)
+    monkeypatch.setattr(layout_queries, "_TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS", 17)
     executor = _ReadOnlySqliteExecutor(path)
     try:
         adapter = queries.TrustedMetadataQueryAdapter(executor, path)
@@ -177,24 +178,24 @@ def test_nd_verifier_rejects_unproven_layouts(mutation):
         values[18] = (1, 1, 2.5)
     else:
         values[2], values[3] = values[3], values[2]
-    state = queries._NDDependentCount(
-        ("x", "y", "z"), "signal", tuple(queries._NDCountAxis() for _ in range(3)),
+    state = layout_queries._NDDependentCount(
+        ("x", "y", "z"), "signal", tuple(layout_queries._NDCountAxis() for _ in range(3)),
     )
     for row in values:
         if state.viable:
-            state = queries.TrustedMetadataQueryAdapter._consume_nd_count(state, row)
+            state = layout_queries.ResultLayoutQueries._consume_nd_count(state, row)
     assert not state.viable
 
 
 def test_cancelled_nd_page_keeps_last_accepted_cursor(tmp_path, monkeypatch):
     path, _axes = _database(tmp_path, 4)
-    monkeypatch.setattr(queries, "_TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS", 17)
+    monkeypatch.setattr(layout_queries, "_TRUSTED_PROGRESSIVE_LAYOUT_PAGE_ROWS", 17)
     executor = _ReadOnlySqliteExecutor(path)
     try:
         adapter = queries.TrustedMetadataQueryAdapter(executor, path)
         _load_basic_runs(adapter)
         adapter.expensive_run(1)
-        accepted = adapter._nd_counts[1]
+        accepted = adapter._layouts.nd_state(1)
         query = executor.query
 
         def cancel(sql, *args, **kwargs):
@@ -206,7 +207,7 @@ def test_cancelled_nd_page_keeps_last_accepted_cursor(tmp_path, monkeypatch):
             patch.setattr(executor, "query", cancel)
             with pytest.raises(RuntimeError, match="cancelled nD page"):
                 adapter.expensive_run(1)
-        assert adapter._nd_counts[1] is accepted
+        assert adapter._layouts.nd_state(1) is accepted
         for _ in range(10):
             fields = adapter.expensive_run(1).as_dict()
             if fields["read_setpoint_count"] is not None:

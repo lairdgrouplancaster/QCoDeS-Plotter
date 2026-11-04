@@ -12,11 +12,17 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from qcodes import Station
 from qcodes.parameters import ManualParameter
+from qcodes.station import Station
 from qcodes.utils.json_utils import NumpyJSONEncoder
 
+from qplot.datahandling import _trusted_query_metadata as metadata_module
 from qplot.datahandling import trusted_live_queries as trusted_queries_module
+from qplot.datahandling._trusted_query_metadata import (
+    parameter_views_bounded,
+    planned_setpoint_steps,
+    quote_sqlite_identifier,
+)
 from qplot.datahandling.trusted_live import (
     TRUSTED_LIVE_MAX_ROWS_PER_RESULT,
     TRUSTED_LIVE_MAX_SCALAR_BYTES,
@@ -27,10 +33,6 @@ from qplot.datahandling.trusted_live_queries import (
     TRUSTED_RUN_PAGE_SIZE,
     TRUSTED_RUN_PAGE_SIZE_MAX,
     TrustedMetadataQueryAdapter,
-    TrustedMetadataQueryError,
-    TrustedParameterView,
-    TrustedSetpointSummary,
-    quote_sqlite_identifier,
 )
 from qplot.datahandling.trusted_presentation import (
     TRUSTED_PRESENTATION_MAX_FIELD_VALUE_BYTES,
@@ -41,6 +43,11 @@ from qplot.datahandling.trusted_presentation import (
     TRUSTED_PRESENTATION_MAX_RENDERED_NODES,
     TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES,
     TRUSTED_PRESENTATION_MAX_UNAVAILABLE_FIELDS,
+)
+from qplot.datahandling.trusted_query_types import (
+    TrustedMetadataQueryError,
+    TrustedParameterView,
+    TrustedSetpointSummary,
 )
 from qplot.datahandling.trusted_snapshot import (
     TRUSTED_SNAPSHOT_MAX_INPUT_BYTES,
@@ -787,7 +794,7 @@ def _drain_expensive_run(
     fields: dict[str, Any] = {}
     for _page in range(maximum_pages):
         fields = adapter.expensive_run(run_id).as_dict()
-        if run_id not in adapter._regular_layout_progress:
+        if adapter._layouts.pending_state(run_id) is None:
             return fields
     raise AssertionError("The bounded progressive layout verifier did not drain.")
 
@@ -1784,7 +1791,7 @@ def test_dependent_blocked_fast_first_grid_reports_logical_shape_and_count(tmp_p
     assert fields["setpoint_shape"] == [251, 16]
     assert fields["point_shape"] == [251, 16, 2]
     assert fields["setpoint_shape_source"] == "observed"
-    proof = adapter._validated_grid_layouts[1]
+    proof = adapter._layouts.grid_proof(1)
     assert proof.dependencies == ("x", "y")
     assert proof.shape == (251, 16)
     assert proof.fast_axis_index == 0
@@ -1847,8 +1854,8 @@ def test_large_fast_axis_candidate_starts_bounded_full_prefix_verification(tmp_p
     assert fields["setpoint_count"] is None
     assert fields["setpoint_shape"] is None
     assert fields["setpoint_shape_source"] is None
-    assert 1 not in adapter._validated_grid_layouts
-    assert adapter._regular_layout_progress[1].after_row_id == 4_096
+    assert adapter._layouts.grid_proof(1) is None
+    assert adapter._layouts.pending_state(1).after_row_id == 4_096
     result_queries = [
         query
         for query in executor.queries
@@ -1894,7 +1901,7 @@ def test_unfinalized_interleaved_complete_prefix_becomes_logical_and_resumes_app
     assert initial["point_shape"] == [107, 861, 2]
     assert initial["setpoint_shape_source"] == "observed"
     assert initial["setpoint_count"] != initial_watermark
-    initial_proof = adapter._validated_grid_layouts[1]
+    initial_proof = adapter._layouts.grid_proof(1)
     assert initial_proof.shape == (107, 861)
     assert initial_proof.fast_axis_index == 1
     assert tuple(pattern.dependent for pattern in initial_proof.dependent_rows) == (
@@ -1916,7 +1923,7 @@ def test_unfinalized_interleaved_complete_prefix_becomes_logical_and_resumes_app
     assert appended["setpoint_shape"] == [108, 861]
     assert appended["point_shape"] == [108, 861, 2]
     assert appended["setpoint_count"] != 185_976
-    appended_proof = adapter._validated_grid_layouts[1]
+    appended_proof = adapter._layouts.grid_proof(1)
     assert appended_proof.shape == (108, 861)
     assert tuple(pattern.dependent for pattern in appended_proof.dependent_rows) == (
         "signal",
@@ -1960,7 +1967,7 @@ def test_unfinalized_interleaved_partial_final_row_uses_planned_extent(
     assert fields["setpoint_count"] == 92_988
     assert fields["read_setpoint_count"] == acquired_logical_count
     assert fields["read_setpoint_count"] < fields["setpoint_count"]
-    proof = adapter._validated_grid_layouts[1]
+    proof = adapter._layouts.grid_proof(1)
     assert proof.shape == (108, 861)
     assert proof.source == "planned"
     assert tuple(pattern.dependent for pattern in proof.dependent_rows) == (
@@ -1988,8 +1995,8 @@ def test_unplanned_incomplete_irregular_run_stays_unknown(tmp_path):
     assert incomplete["setpoint_shape"] is None
     assert incomplete["setpoint_count"] is None
     assert incomplete["read_setpoint_count"] is None
-    assert 1 not in adapter._validated_grid_layouts
-    assert 1 not in adapter._regular_layout_progress
+    assert adapter._layouts.grid_proof(1) is None
+    assert adapter._layouts.pending_state(1) is None
 
 
 def test_sparse_anchor_candidate_does_not_publish_exact_shape_before_full_prefix(
@@ -2014,7 +2021,7 @@ def test_sparse_anchor_candidate_does_not_publish_exact_shape_before_full_prefix
     assert first["setpoint_shape"] is None
     assert first["setpoint_count"] is None
     assert first["setpoint_shape_source"] is None
-    assert 1 not in adapter._validated_grid_layouts
+    assert adapter._layouts.grid_proof(1) is None
     progressive_pages = _progressive_layout_queries(executor, table_name)
     assert progressive_pages
     assert progressive_pages[0].bindings == (0, 201 * 301, 4_096)
@@ -2055,7 +2062,7 @@ def test_progressive_full_vector_rejects_changed_interior_with_same_endpoints(
     # different.  Endpoint-only comparison used to accept this as Cartesian.
     executor.result_row_overrides[table_name][23 + 12] = (1.0, 121.0)
     monkeypatch.setattr(
-        adapter,
+        adapter._layouts,
         "_infer_regular_setpoint_observation",
         lambda *_args, **_kwargs: None,
     )
@@ -2068,7 +2075,7 @@ def test_progressive_full_vector_rejects_changed_interior_with_same_endpoints(
     assert fields["setpoint_shape"] is None
     assert fields["setpoint_count"] is None
     assert fields["setpoint_shape_source"] is None
-    assert 1 not in adapter._validated_grid_layouts
+    assert adapter._layouts.grid_proof(1) is None
     assert [
         query.bindings[0]
         for query in _progressive_layout_queries(
@@ -2091,7 +2098,7 @@ def test_progressive_interleaved_full_prefix_tracks_vector_ownership_and_account
         storage_pattern="interleaved",
     )
     monkeypatch.setattr(
-        adapter,
+        adapter._layouts,
         "_infer_regular_setpoint_observation",
         lambda *_args, **_kwargs: None,
     )
@@ -2101,18 +2108,18 @@ def test_progressive_interleaved_full_prefix_tracks_vector_ownership_and_account
 
     first = adapter.expensive_run(1).as_dict()
     assert first["setpoint_shape"] is None
-    assert adapter._regular_layout_progress[1].after_row_id == 4_096
+    assert adapter._layouts.pending_state(1).after_row_id == 4_096
     second = adapter.expensive_run(1).as_dict()
     assert second["setpoint_shape"] is None
-    assert adapter._regular_layout_progress[1].after_row_id == 8_192
+    assert adapter._layouts.pending_state(1).after_row_id == 8_192
     third = adapter.expensive_run(1).as_dict()
 
     assert third["setpoint_shape"] == [17, 257]
     assert third["setpoint_count"] == 17 * 257
     assert third["read_setpoint_count"] == 17 * 257
     assert third["point_shape"] == [17, 257, 2]
-    assert 1 not in adapter._regular_layout_progress
-    proof = adapter._validated_grid_layouts[1]
+    assert adapter._layouts.pending_state(1) is None
+    proof = adapter._layouts.grid_proof(1)
     assert tuple(
         (
             pattern.dependent,
@@ -2168,7 +2175,7 @@ def test_progressive_interleaved_full_prefix_rejects_structural_mismatch(
         # phase; the physical watermark must account for every logical cell.
         executor.result_counts[table_name] -= 1
     monkeypatch.setattr(
-        adapter,
+        adapter._layouts,
         "_infer_regular_setpoint_observation",
         lambda *_args, **_kwargs: None,
     )
@@ -2181,8 +2188,8 @@ def test_progressive_interleaved_full_prefix_rejects_structural_mismatch(
     assert fields["setpoint_shape"] is None
     assert fields["setpoint_count"] is None
     assert fields["setpoint_shape_source"] is None
-    assert 1 not in adapter._validated_grid_layouts
-    assert 1 not in adapter._regular_layout_progress
+    assert adapter._layouts.grid_proof(1) is None
+    assert adapter._layouts.pending_state(1) is None
     assert [
         query.bindings[0] for query in _progressive_layout_queries(executor, table_name)
     ] == [0]
@@ -2212,7 +2219,7 @@ def test_single_dependent_null_cell_does_not_hide_rectangular_axes(tmp_path):
     assert fields["setpoint_shape"] == [17, 23]
     assert fields["setpoint_count"] == 17 * 23
     assert fields["setpoint_shape_source"] == "observed"
-    proof = adapter._validated_grid_layouts[1]
+    proof = adapter._layouts.grid_proof(1)
     assert proof.shape == (17, 23)
     assert proof.fast_axis_index == 1
 
@@ -2244,7 +2251,7 @@ def test_shared_row_multi_dependent_null_cell_preserves_exact_grid(tmp_path):
     assert fields["setpoint_shape"] == [17, 23]
     assert fields["setpoint_count"] == 17 * 23
     assert fields["point_shape"] == [17, 23]
-    proof = adapter._validated_grid_layouts[1]
+    proof = adapter._layouts.grid_proof(1)
     assert proof.shape == (17, 23)
     assert proof.fast_axis_index == 1
     assert tuple(
@@ -2288,7 +2295,7 @@ def test_interleaved_missing_first_phase_learns_owner_from_later_group(tmp_path)
     assert fields["setpoint_shape"] == [17, 23]
     assert fields["setpoint_count"] == 17 * 23
     assert fields["point_shape"] == [17, 23, 2]
-    proof = adapter._validated_grid_layouts[1]
+    proof = adapter._layouts.grid_proof(1)
     assert proof.shape == (17, 23)
     assert proof.fast_axis_index == 1
     assert tuple(
@@ -2330,22 +2337,26 @@ def test_blocked_missing_first_row_stays_unknown_without_owner_evidence(tmp_path
 
     assert fields["setpoint_shape"] is None
     assert fields["setpoint_count"] is None
-    assert 1 not in adapter._validated_grid_layouts
-    assert 1 not in adapter._regular_layout_progress
+    assert adapter._layouts.grid_proof(1) is None
+    assert adapter._layouts.pending_state(1) is None
 
 
-def test_incomplete_planned_fast_first_grid_has_no_guessed_layout() -> None:
-    proof = trusted_queries_module._planned_dense_2d_layout_proof(
-        {
-            "setpoint_shape": (251, 16),
-            "setpoint_shape_source": "planned",
-            "result_count": 1_000,
-            "is_completed": False,
-        },
-        ((("fast", "slow"), "signal"),),
+def test_incomplete_planned_fast_first_grid_has_no_guessed_layout(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1,))
+    table_name = _configure_regular_result(
+        executor, shape=(251, 16), fast_axis_index=0,
     )
+    _declare_regular_result_shape(executor, shape=(251, 16))
+    executor.result_counts[table_name] = 1
+    executor.runs[1]["is_completed"] = False
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
 
-    assert proof is None
+    fields = adapter.expensive_run(1).as_dict()
+
+    assert fields["setpoint_shape"] == [251, 16]
+    assert fields["setpoint_shape_source"] == "planned"
+    assert adapter._layouts.grid_proof(1) is None
 
 
 def test_ambiguous_multi_dependent_layout_is_rejected_by_one_full_prefix_page(
@@ -2374,7 +2385,7 @@ def test_ambiguous_multi_dependent_layout_is_rejected_by_one_full_prefix_page(
 
     assert fields["setpoint_shape"] is None
     assert fields["setpoint_count"] is None
-    assert 1 not in adapter._regular_layout_progress
+    assert adapter._layouts.pending_state(1) is None
     progressive_pages = [
         query
         for query in executor.queries
@@ -2397,7 +2408,7 @@ def test_progressive_fallback_advances_one_bounded_keyset_page_per_call(
         fast_axis_index=1,
     )
     monkeypatch.setattr(
-        adapter,
+        adapter._layouts,
         "_infer_regular_setpoint_observation",
         lambda *_args, **_kwargs: None,
     )
@@ -2406,17 +2417,17 @@ def test_progressive_fallback_advances_one_bounded_keyset_page_per_call(
 
     first = adapter.expensive_run(1).as_dict()
     assert first["setpoint_shape"] is None
-    assert adapter._regular_layout_progress[1].after_row_id == 4_096
+    assert adapter._layouts.pending_state(1).after_row_id == 4_096
 
     second = adapter.expensive_run(1).as_dict()
     assert second["setpoint_shape"] is None
-    assert adapter._regular_layout_progress[1].after_row_id == 8_192
+    assert adapter._layouts.pending_state(1).after_row_id == 8_192
 
     third = adapter.expensive_run(1).as_dict()
     assert third["setpoint_shape"] == [130, 65]
     assert third["setpoint_count"] == 130 * 65
-    assert 1 not in adapter._regular_layout_progress
-    assert adapter._validated_grid_layouts[1].shape == (130, 65)
+    assert adapter._layouts.pending_state(1) is None
+    assert adapter._layouts.grid_proof(1).shape == (130, 65)
 
     pages = [
         query
@@ -2446,7 +2457,7 @@ def test_progressive_fallback_stops_immediately_after_conclusive_invalidity(
     # page can make the invalid direction evidence recover.
     executor.result_row_overrides[table_name][2] = (0.0, 10.0)
     monkeypatch.setattr(
-        adapter,
+        adapter._layouts,
         "_infer_regular_setpoint_observation",
         lambda *_args, **_kwargs: None,
     )
@@ -2458,7 +2469,7 @@ def test_progressive_fallback_stops_immediately_after_conclusive_invalidity(
 
     assert fields["setpoint_shape"] is None
     assert fields["setpoint_count"] is None
-    assert 1 not in adapter._regular_layout_progress
+    assert adapter._layouts.pending_state(1) is None
     pages = [
         query
         for query in executor.queries
@@ -2574,7 +2585,7 @@ def test_torn_main_wal_size_observation_cannot_enable_aggregate_scan(
     tmp_path,
     monkeypatch,
 ):
-    adapter, _executor = _adapter(tmp_path, (1,))
+    adapter, executor = _adapter(tmp_path, (1,))
     database_path = os.fspath(tmp_path / "accepted.db")
     wal_path = f"{database_path}-wal"
     main_sizes = iter((1, _LOGICAL_LARGE_SOURCE_BYTES))
@@ -2597,9 +2608,17 @@ def test_torn_main_wal_size_observation_cannot_enable_aggregate_scan(
             st_ctime_ns=size,
         )
 
-    monkeypatch.setattr(os, "stat", observed_stat)
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    executor.clear_history()
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "stat", observed_stat)
+        adapter.expensive_run(1)
 
-    assert not adapter._bounded_aggregate_prefix(6)
+    result_sql = "\n".join(query.sql.upper() for query in executor.queries)
+    assert "DISTINCT" not in result_sql
+    assert "GROUP BY" not in result_sql
+    assert "DBSTAT" not in result_sql
 
 
 def test_selected_detail_contains_plain_parameters_metadata_snapshot_and_summaries(
@@ -2688,7 +2707,7 @@ def test_planned_setpoint_steps_preserve_independent_dependent_shapes():
         {"z0": [3], "z1": [5], "z2": [7]},
     )
 
-    assert TrustedMetadataQueryAdapter._planned_setpoint_steps(
+    assert planned_setpoint_steps(
         metadata,
         ("x0", "x1", "x2"),
     ) == {"x0": 3, "x1": 5, "x2": 7}
@@ -2769,7 +2788,7 @@ def test_planned_setpoint_steps_follow_each_dependency_order():
         {"forward": [3, 5], "reverse": [5, 3]},
     )
 
-    assert TrustedMetadataQueryAdapter._planned_setpoint_steps(
+    assert planned_setpoint_steps(
         metadata,
         ("x", "y"),
     ) == {"x": 3, "y": 5}
@@ -2792,7 +2811,7 @@ def test_planned_setpoint_steps_require_shared_axis_counts_to_agree(
         shapes,
     )
 
-    assert TrustedMetadataQueryAdapter._planned_setpoint_steps(
+    assert planned_setpoint_steps(
         metadata,
         ("shared",),
     ) == expected
@@ -3034,7 +3053,7 @@ def test_parameter_view_source_iterators_stop_after_limit_probe(monkeypatch):
     parameters = GuardedParameters({"present": {}})
     dependencies = GuardedDependencies(["present"])
     monkeypatch.setattr(
-        trusted_queries_module,
+        metadata_module,
         "_json_object",
         lambda _value: {
             "interdependencies_": {
@@ -3044,7 +3063,7 @@ def test_parameter_view_source_iterators_stop_after_limit_probe(monkeypatch):
         },
     )
 
-    views, truncated = TrustedMetadataQueryAdapter._parameter_views_bounded(
+    views, truncated = parameter_views_bounded(
         {"run_description": "guarded"},
         TrustedQueryResult(
             ("layout_id", "parameter", "label", "unit", "inferred_from"),
@@ -3365,3 +3384,84 @@ def test_selected_layouts_drain_bounded_monotonic_pages_without_loss(tmp_path):
     drained_ids = [layout_id for page in executor.layout_page_ids for layout_id in page]
     assert drained_ids == list(range(1, layout_count + 1))
     assert len(drained_ids) == len(set(drained_ids)) == layout_count
+
+
+def test_layout_verification_resumes_through_rebound_executor(tmp_path):
+    adapter, original = _adapter(tmp_path, (1,))
+    table = _configure_regular_result(original, shape=(130, 65), fast_axis_index=1)
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    first = adapter.expensive_run(1).as_dict()
+    assert first["read_setpoint_count"] is None
+
+    replacement = _FakeExecutor((1,))
+    _configure_regular_result(replacement, shape=(130, 65), fast_axis_index=1)
+    original.clear_history()
+    adapter.bind_executor(replacement)
+    adapter.expensive_run(1)
+    completed = adapter.expensive_run(1).as_dict()
+
+    assert not original.queries
+    assert completed["read_setpoint_count"] == 130 * 65
+    assert completed["setpoint_shape"] == [130, 65]
+    assert [
+        query.bindings[0]
+        for query in _progressive_layout_queries(replacement, table)
+    ] == [4_096, 8_192]
+
+
+def test_rebootstrap_discards_pending_and_completed_layout_evidence(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1, 2))
+    complete_table = _configure_regular_result(
+        executor, run_id=1, shape=(17, 23), fast_axis_index=1,
+    )
+    pending_table = _configure_regular_result(
+        executor, run_id=2, shape=(130, 65), fast_axis_index=1,
+    )
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    assert adapter.expensive_run(1).as_dict()["read_setpoint_count"] == 17 * 23
+    assert adapter.expensive_run(2).as_dict()["read_setpoint_count"] is None
+
+    # A new bootstrap must inspect the prefix again, even at the same watermark.
+    executor.result_row_overrides[complete_table][23 + 12] = (1.0, 121.0)
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    executor.clear_history()
+    complete = adapter.expensive_run(1).as_dict()
+    adapter.expensive_run(2)
+
+    assert complete["read_setpoint_count"] is None
+    assert [
+        query.bindings[0]
+        for query in _progressive_layout_queries(executor, pending_table)
+    ] == [0]
+
+
+def test_run_identity_change_restarts_only_its_layout_verification(tmp_path):
+    adapter, executor = _adapter(tmp_path, (1, 2))
+    tables = {
+        run_id: _configure_regular_result(
+            executor, run_id=run_id, shape=(130, 65), fast_axis_index=1,
+        )
+        for run_id in (1, 2)
+    }
+    bootstrap = adapter.bootstrap()
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    for run_id in (1, 2):
+        adapter.expensive_run(run_id)
+
+    executor.runs[1]["guid"] = "replacement-run-guid"
+    _load_basic_pages(adapter, 0, bootstrap.run_id_watermark)
+    executor.clear_history()
+    for run_id in (1, 2):
+        adapter.expensive_run(run_id)
+
+    assert [
+        query.bindings[0]
+        for query in _progressive_layout_queries(executor, tables[1])
+    ] == [0]
+    assert [
+        query.bindings[0]
+        for query in _progressive_layout_queries(executor, tables[2])
+    ] == [4_096]

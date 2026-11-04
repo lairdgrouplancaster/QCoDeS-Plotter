@@ -45,7 +45,6 @@ from qplot.datahandling.trusted_live import (
     TrustedLiveSourceIOError,
     TrustedLiveUnsupportedSourceError,
 )
-from qplot.datahandling.trusted_live_queries import run_records_as_dict
 from qplot.datahandling.trusted_live_service import (
     SNAPSHOT_FALLBACK_MODE,
     TRUSTED_LIVE_MODE,
@@ -56,6 +55,9 @@ from qplot.datahandling.trusted_live_service import (
 from qplot.datahandling.trusted_presentation import (
     bounded_presentation_error,
     bounded_selected_run_fields,
+)
+from qplot.datahandling.trusted_query_types import (
+    run_records_as_dict,
 )
 from qplot.diagnostics import log_exception
 

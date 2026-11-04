@@ -1,5 +1,20 @@
 # Error and warning dispositions
 
+## Current review: 4 November 2026
+
+The `qplot-code-quality-gsvmji1o.json` export has **three warnings, 315 notes,
+and no errors**. The remaining warnings are 605 and 606 (Qt item sorting) and
+78 (the defensive snapshot-identity comparison). Their specific retention
+reasons below still apply. Adding general rich ordering to identity-bearing Qt
+items or removing a tested malformed-comparison boundary would compromise the
+code to satisfy the analyser. No warning was dismissed or suppressed.
+
+The [maintainability follow-up](code-quality-review.md#maintainability-review-4-november-2026)
+records the structural changes and disposition of the remaining note categories.
+The earlier scan counts and findings below are historical.
+
+## Earlier reviews
+
 The [3 November resource review](code-quality-resource-lifetimes.md) supersedes
 the retention of finding 456 below. It makes descriptor cleanup explicit and
 fixes process-session reuse after an interrupted close. The other three warning

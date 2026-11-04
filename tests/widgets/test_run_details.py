@@ -16,11 +16,7 @@ import numpy as np
 from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
-from qplot.datahandling.trusted_live_queries import (
-    TrustedParameterView,
-    TrustedRunRecord,
-    TrustedSelectedRunDetail,
-    TrustedSetpointSummary,
+from qplot.datahandling._trusted_query_metadata import (
     bounded_parameter_presentation,
     bounded_setpoint_presentation,
 )
@@ -30,6 +26,12 @@ from qplot.datahandling.trusted_presentation import (
     TRUSTED_PRESENTATION_MAX_TOOLTIP_BYTES,
     TRUSTED_PRESENTATION_MAX_VALUE_BYTES,
     build_selected_run_presentation,
+)
+from qplot.datahandling.trusted_query_types import (
+    TrustedParameterView,
+    TrustedRunRecord,
+    TrustedSelectedRunDetail,
+    TrustedSetpointSummary,
 )
 from qplot.datahandling.trusted_snapshot import (
     TRUSTED_SNAPSHOT_LOAD_MORE_TEXT,

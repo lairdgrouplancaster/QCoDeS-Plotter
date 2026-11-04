@@ -21,9 +21,11 @@ from qplot.datahandling.readonly import load_by_id_read_only
 from qplot.datahandling.trusted_derived_rendering import render_trusted_derived_payload
 from qplot.datahandling.trusted_live_queries import (
     TrustedMetadataQueryAdapter,
-    TrustedSourceRevisionNamespace,
 )
 from qplot.datahandling.trusted_live_service import TrustedLiveReadService
+from qplot.datahandling.trusted_query_types import (
+    TrustedSourceRevisionNamespace,
+)
 from qplot.datahandling.trusted_work_scheduler import TrustedWorkKind
 from qplot.tools import worker as workers
 from tests.datahandling.test_stage5c_real_qcodes import (
