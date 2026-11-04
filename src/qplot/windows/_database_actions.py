@@ -1604,9 +1604,7 @@ class DatabaseActionsMixin:
                     refresh_worker,
                 )
             )
-        worker.signals.finished.connect(
-            lambda *args: self.database_refresh_finished(*args)
-            )
+        worker.signals.finished.connect(self.database_refresh_finished)
         self.databaseRefreshThreadPool.start(worker)
 
 

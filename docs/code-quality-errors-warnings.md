@@ -1,5 +1,10 @@
 # Error and warning dispositions
 
+The [3 November resource review](code-quality-resource-lifetimes.md) supersedes
+the retention of finding 456 below. It makes descriptor cleanup explicit and
+fixes process-session reuse after an interrupted close. The other three warning
+dispositions remain applicable.
+
 The latest export, `qplot-code-quality-jn_sae33.json`, was made on
 3 November 2026 at 09:12 UTC, after the successful scan of merged main commit
 `c4e0e80c5873221386c1b239495b1fd6dc6fdaa4`. It has **360 findings: one error,

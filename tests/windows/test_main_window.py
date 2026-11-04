@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import ANY, patch
 
 import numpy as np
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 from qcodes.dataset.sqlite.database import get_DB_location
 
@@ -3855,7 +3855,7 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
         def topLevelItemCount(self):
             return 0
 
-    class Harness:
+    class Harness(QtCore.QObject):
         refreshMain = main_window.MainWindow.refreshMain
         database_refresh_finished = main_window.MainWindow.database_refresh_finished
         _apply_database_refresh_result = (
@@ -3868,6 +3868,7 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
         _current_refresh_interval = main_window.MainWindow._current_refresh_interval
 
         def __init__(self):
+            super().__init__()
             self.fileTextbox = DatabaseLoadUiTestCase.Field("empty.db")
             self.RunList = RefreshMainEmptyDatabaseTestCase.RunList()
             self.spinBox = DatabaseLoadUiTestCase.SpinBox(1.5)
@@ -3906,6 +3907,16 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
                 ("No measurements found yet; still waiting for new runs.", 3000),
             ],
         )
+
+    def test_destroyed_receiver_disconnects_its_worker_completion(self):
+        harness = self.Harness()
+        harness.refreshMain()
+        worker = harness.databaseRefreshThreadPool.workers[0]
+        self.assertEqual(worker.signals.receivers(worker.signals.finished), 1)
+
+        sip.delete(harness)
+
+        self.assertEqual(worker.signals.receivers(worker.signals.finished), 0)
 
     def test_repeated_refresh_requests_are_coalesced_while_worker_is_active(self):
         harness = self.Harness()
@@ -4011,7 +4022,7 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
         def __init__(self):
             self.preview = RefreshMainPreviewUpdateTestCase.Preview()
 
-    class Harness:
+    class Harness(QtCore.QObject):
         refreshMain = main_window.MainWindow.refreshMain
         database_refresh_finished = main_window.MainWindow.database_refresh_finished
         _apply_database_refresh_result = (
@@ -4022,6 +4033,7 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
         )
 
         def __init__(self, updated_runs):
+            super().__init__()
             self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
             self.RunList = RefreshMainPreviewUpdateTestCase.RunList(updated_runs)
             self.infoBox = RefreshMainPreviewUpdateTestCase.InfoBox()
@@ -4337,7 +4349,7 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
         def isChecked(self):
             return self.checked
 
-    class Harness:
+    class Harness(QtCore.QObject):
         refreshMain = main_window.MainWindow.refreshMain
         database_refresh_finished = main_window.MainWindow.database_refresh_finished
         _apply_database_refresh_result = (
@@ -4345,6 +4357,7 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
         )
 
         def __init__(self, auto_plot_checked):
+            super().__init__()
             self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
             self.RunList = RefreshMainAutoPlotTestCase.RunList()
             self.infoBox = RefreshMainAutoPlotTestCase.InfoBox()

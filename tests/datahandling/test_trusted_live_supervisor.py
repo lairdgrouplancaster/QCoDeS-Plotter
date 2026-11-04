@@ -1944,18 +1944,17 @@ def test_close_consumes_an_already_buffered_job_reply_without_a_cancel_race(
     wal_writer: _ApswWalWriter,
 ) -> None:
     for value in range(8):
-        supervisor = TrustedLiveReaderSupervisor.open(wal_writer.database_path)
-        helper_pid = supervisor.helper_pid
-        helper = supervisor._helper
-        assert helper_pid is not None
-        assert helper is not None
-        job = supervisor.submit_query("SELECT ?", (value,), timeout=5.0)
-        try:
+        with TrustedLiveReaderSupervisor.open(
+            wal_writer.database_path, shutdown_timeout_seconds=2.0,
+        ) as supervisor:
+            helper_pid = supervisor.helper_pid
+            helper = supervisor._helper
+            assert helper_pid is not None
+            assert helper is not None
+            job = supervisor.submit_query("SELECT ?", (value,), timeout=5.0)
             # Wait for bytes without consuming them, so close deterministically
             # encounters a completed operation still marked active in the parent.
             assert helper.reply_ready.wait(10.0)
-            supervisor.close(timeout=2.0)
-        finally:
             supervisor.close(timeout=2.0)
 
         assert supervisor.closed

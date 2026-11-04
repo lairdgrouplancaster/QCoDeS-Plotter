@@ -127,6 +127,7 @@ def test_refresh_interval_text_does_not_overlap_native_buttons(theme, style_name
         window.spinBox.deleteLater()
         window.ds = SimpleNamespace(running=True)
         window.refreshWindow = lambda: None
+        window.refresh_plot_data = lambda: None
         plotWidget.initRefresh(window, 0.1)
     window.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen)
     window.setStyleSheet(theme.main)

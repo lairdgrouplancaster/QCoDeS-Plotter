@@ -1,5 +1,10 @@
 # Deeper review of CodeQL notes: 3 November 2026
 
+The later [resource and callback review](code-quality-resource-lifetimes.md)
+supersedes retention of lambda findings 712, 1449 and 1451. Their targets already
+have suitable Qt slot signatures; direct connections also provide explicit Qt
+receiver lifetime management.
+
 This follow-up revisits notes previously retained too broadly as intentional.
 It uses the 360-finding `qplot-code-quality-jn_sae33.json` export from
 09:12 UTC on 3 November and source at merged-main commit

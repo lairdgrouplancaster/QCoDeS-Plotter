@@ -207,11 +207,8 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
         plot_messages = []
 
         class StatusLabel:
-            def setText(self, message):
+            def show_message(self, message):
                 main_messages.append(message)
-
-            def setToolTip(self, tooltip):
-                pass
 
         target = type(
             "Target",
