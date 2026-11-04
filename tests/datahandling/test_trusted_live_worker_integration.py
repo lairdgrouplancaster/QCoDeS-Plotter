@@ -18,13 +18,6 @@ from qplot.datahandling.trusted_live import (
     TrustedLiveReaderUnavailableError,
     TrustedLiveUnsupportedSourceError,
 )
-from qplot.datahandling.trusted_live_queries import (
-    TrustedBootstrapResult,
-    TrustedRefreshResult,
-    TrustedRunPage,
-    TrustedRunRecord,
-    TrustedSelectedRunDetail,
-)
 from qplot.datahandling.trusted_live_service import (
     SNAPSHOT_FALLBACK_MODE,
     TRUSTED_LIVE_MODE,
@@ -34,6 +27,13 @@ from qplot.datahandling.trusted_live_service import (
 from qplot.datahandling.trusted_presentation import (
     TRUSTED_PRESENTATION_MAX_ERROR_BYTES,
     build_selected_run_presentation,
+)
+from qplot.datahandling.trusted_query_types import (
+    TrustedBootstrapResult,
+    TrustedRefreshResult,
+    TrustedRunPage,
+    TrustedRunRecord,
+    TrustedSelectedRunDetail,
 )
 from qplot.datahandling.trusted_snapshot import normalize_trusted_snapshot
 

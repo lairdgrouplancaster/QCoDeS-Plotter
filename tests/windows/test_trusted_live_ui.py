@@ -26,13 +26,13 @@ from qplot.datahandling.trusted_live import (
     TrustedLiveQueryError,
     TrustedQueryResult,
 )
-from qplot.datahandling.trusted_live_queries import (
+from qplot.datahandling.trusted_live_service import TrustedLiveReadService
+from qplot.datahandling.trusted_presentation import build_selected_run_presentation
+from qplot.datahandling.trusted_query_types import (
     TrustedBootstrapResult,
     TrustedRunRecord,
     TrustedSelectedRunDetail,
 )
-from qplot.datahandling.trusted_live_service import TrustedLiveReadService
-from qplot.datahandling.trusted_presentation import build_selected_run_presentation
 from qplot.datahandling.trusted_snapshot import normalize_trusted_snapshot
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import _plot_actions as plot_actions

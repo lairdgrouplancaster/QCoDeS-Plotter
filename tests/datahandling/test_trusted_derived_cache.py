@@ -16,7 +16,9 @@ from qplot.datahandling.file_identity import DatabaseInstance
 from qplot.datahandling.trusted_derived_rendering import (
     TRUSTED_DERIVED_MAX_ENCODED_IMAGE_BYTES,
 )
-from qplot.datahandling.trusted_live_queries import TrustedSourceRevision
+from qplot.datahandling.trusted_query_types import (
+    TrustedSourceRevision,
+)
 from qplot.datahandling.trusted_work_scheduler import (
     RenderingOptions,
     TrustedCacheWorkKey,

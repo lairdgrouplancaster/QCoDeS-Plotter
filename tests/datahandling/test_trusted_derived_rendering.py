@@ -7,6 +7,11 @@ from dataclasses import replace
 
 import pytest
 
+from qplot.datahandling._trusted_grid_sampling import (
+    _representative_grid_sample,
+    _trusted_2d_sample_plans,
+    _validated_sampled_grid_layout,
+)
 from qplot.datahandling.file_identity import DatabaseInstance
 from qplot.datahandling.trusted_derived_rendering import (
     TRUSTED_DERIVED_MAX_IMAGE_WIDTH,
@@ -16,16 +21,12 @@ from qplot.datahandling.trusted_derived_rendering import (
     render_trusted_derived_payload,
     trusted_derived_payload_size,
 )
-from qplot.datahandling.trusted_live_queries import (
+from qplot.datahandling.trusted_query_types import (
     Trusted2DDependentRowPattern,
     Trusted2DGridLayout,
     Trusted2DLayoutProof,
     TrustedDerivedSourceObservation,
     TrustedParameterView,
-    _planned_dense_2d_layout_proof,
-    _representative_grid_sample,
-    _trusted_2d_sample_plans,
-    _validated_sampled_grid_layout,
 )
 from qplot.datahandling.trusted_work_scheduler import (
     RenderingOptions,
@@ -524,20 +525,27 @@ def test_sampled_layout_rejects_a_grid_over_the_cell_budget() -> None:
 
 
 def test_partial_planned_multi_dependent_layout_requires_a_structural_proof() -> None:
-    proof = _planned_dense_2d_layout_proof(
-        {
-            "setpoint_shape": (4, 4),
-            "setpoint_shape_source": "planned",
-            "result_count": 6,
-            "is_completed": False,
-        },
-        (
-            (("slow", "fast"), "signal_a"),
-            (("slow", "fast"), "signal_b"),
+    original = _observation(dimensions=2)
+    columns = (*original.result_columns, "signal_b")
+    observation = replace(
+        original,
+        result_watermark=6,
+        result_columns=columns,
+        sample_columns=columns,
+        sample_rows=tuple((*row, row[-1]) for row in original.sample_rows[:6]),
+        parameters=(
+            *original.parameters,
+            replace(original.parameters[-1], name="signal_b"),
         ),
+        dependent_parameters=("signal", "signal_b"),
+        validated_2d_layouts=(),
     )
 
-    assert proof is None
+    payload = render_trusted_derived_payload(observation, TrustedWorkKind.PREVIEW)
+
+    assert payload["status"] == "unsupported"
+    assert payload["images"] == ()
+    assert "validated" in str(payload["description"]).lower()
 
 
 def test_incomplete_descending_grid_waits_for_both_axis_directions() -> None:

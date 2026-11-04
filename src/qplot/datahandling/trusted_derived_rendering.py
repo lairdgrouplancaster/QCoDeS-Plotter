@@ -11,7 +11,7 @@ from collections.abc import Callable
 from fractions import Fraction
 from typing import Any, TypeAlias, cast
 
-from qplot.datahandling.trusted_live_queries import (
+from qplot.datahandling.trusted_query_types import (
     Trusted2DGridLayout,
     TrustedDerivedSourceObservation,
 )

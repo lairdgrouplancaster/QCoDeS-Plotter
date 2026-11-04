@@ -12,7 +12,9 @@ from qcodes.dataset import (
 from qcodes.parameters import ManualParameter
 
 from qplot.datahandling.trusted_derived_rendering import render_trusted_derived_payload
-from qplot.datahandling.trusted_live_queries import TrustedSourceRevision
+from qplot.datahandling.trusted_query_types import (
+    TrustedSourceRevision,
+)
 from qplot.datahandling.trusted_work_scheduler import TrustedWorkKind
 from qplot.windows import _trusted_derived_qt as bridge_module
 from qplot.windows._widgets.treeWidgets import RunList, moreInfo

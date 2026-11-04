@@ -174,8 +174,32 @@ path and the pure metadata transformations shared with trusted access. Snapshot
 callers still use its dynamic cursor and QCoDeS-compatible operations; the
 trusted reader is not presented as a DB-API connection.
 
-`src/qplot/datahandling/trusted_live_queries.py` contains Stage 4's parallel
-fixed-query plans and primitive-result materialisation. Basic runs are paged by
+`src/qplot/datahandling/trusted_live_queries.py` coordinates the trusted
+metadata and preview query plans, run cache, and primitive-result publication.
+It delegates to four modules with separate responsibilities:
+
+* `trusted_query_types.py` defines the immutable records, source revisions,
+  shared result budgets, and executor contract used by the broker, cache,
+  rendering, and UI. Those consumers import the types directly instead of
+  importing the metadata adapter. The adapter retains its public re-exports.
+* `_trusted_query_metadata.py` contains pure parameter normalization,
+  dependency/shape interpretation, and presentation limits. Snapshot readers
+  use these functions directly; they do not call private adapter methods.
+* `_trusted_grid_sampling.py` chooses bounded grid samples and validates their
+  axis orientation. It consumes layout proofs and performs no database I/O.
+* `_trusted_result_layout.py` owns the bounded result-table probes and resumable
+  verification state. `ResultLayoutQueries` holds both pending evidence and
+  completed proofs; `observe_run` advances the same finite queries as before.
+
+The adapter owns one `ResultLayoutQueries` instance. Rebinding the broker's
+executor updates both owners without discarding progress. Bootstrap clears all
+layout evidence; a changed run GUID or result table discards only that run's
+evidence. Queries may yield to higher-priority broker work, so the adapter still
+merges results into the newest cached run after the final query boundary.
+Layouts are never inferred from a declared shape alone. The query modules do
+not own SQLite connections, change VFS policy, or extend transaction deadlines.
+
+Basic runs are paged by
 increasing `run_id`; selected-run layouts are paged through a captured
 `layout_id` watermark. The basic page defers large description/parameter
 scalars; per-run and layout values are byte-preflighted, guarded, cumulatively

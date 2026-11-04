@@ -28,18 +28,18 @@ from qplot.datahandling.trusted_live import (
     TrustedLiveDeadlineExceededError,
     TrustedLiveSourceChangedError,
 )
-from qplot.datahandling.trusted_live_queries import (
-    TrustedDerivedSourceObservation,
-    TrustedSelectedRunDetail,
-    TrustedSourceRevision,
-    trusted_derived_source_revision,
-)
 from qplot.datahandling.trusted_live_service import (
     TrustedDerivedReadService,
     TrustedReadQueueFullError,
     TrustedReadRequestCancelledError,
     TrustedReadRequestDeadlineError,
     TrustedReadSessionFailedError,
+)
+from qplot.datahandling.trusted_query_types import (
+    TrustedDerivedSourceObservation,
+    TrustedSelectedRunDetail,
+    TrustedSourceRevision,
+    trusted_derived_source_revision,
 )
 from qplot.datahandling.trusted_work_scheduler import (
     CompletionDisposition,

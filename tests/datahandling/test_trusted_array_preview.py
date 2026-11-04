@@ -15,11 +15,13 @@ from qplot.datahandling.trusted_derived_rendering import (
     render_trusted_derived_payload,
 )
 from qplot.datahandling.trusted_live_queries import (
-    TRUSTED_DERIVED_MAX_ARRAY_BYTES,
     TrustedMetadataQueryAdapter,
-    TrustedSourceRevisionNamespace,
 )
 from qplot.datahandling.trusted_live_service import TrustedLiveReadService
+from qplot.datahandling.trusted_query_types import (
+    TRUSTED_DERIVED_MAX_ARRAY_BYTES,
+    TrustedSourceRevisionNamespace,
+)
 from qplot.datahandling.trusted_work_scheduler import TrustedWorkKind
 from tests.datahandling.test_stage5c_real_qcodes import (
     _load_basic_runs,

@@ -8,7 +8,9 @@ from qplot.datahandling import trusted_live_service as service_module
 from qplot.datahandling.database import DatabaseRefreshWorker
 from qplot.datahandling.file_identity import database_instance
 from qplot.datahandling.trusted_live import TrustedLiveBusyTimeoutError
-from qplot.datahandling.trusted_live_queries import TrustedMetadataQueryAdapter
+from qplot.datahandling.trusted_live_queries import (
+    TrustedMetadataQueryAdapter,
+)
 from qplot.datahandling.trusted_live_service import (
     TrustedLiveReadService,
     TrustedReadRequestDeadlineError,

@@ -20,7 +20,9 @@ from types import MappingProxyType
 from typing import TypeAlias
 
 from qplot.datahandling.file_identity import DatabaseInstance
-from qplot.datahandling.trusted_live_queries import TrustedSourceRevision
+from qplot.datahandling.trusted_query_types import (
+    TrustedSourceRevision,
+)
 
 RenderingOptionValue: TypeAlias = None | bool | int | float | str
 CanonicalRenderingOptionValue: TypeAlias = tuple[str, RenderingOptionValue]

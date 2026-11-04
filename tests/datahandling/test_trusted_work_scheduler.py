@@ -8,7 +8,7 @@ from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 
 import pytest
 
-import qplot.datahandling.trusted_live_queries as query_module
+import qplot.datahandling.trusted_query_types as query_module
 import qplot.datahandling.trusted_work_scheduler as scheduler_module
 from qplot.datahandling.file_identity import DatabaseInstance
 

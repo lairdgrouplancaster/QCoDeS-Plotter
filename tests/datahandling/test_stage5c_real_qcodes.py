@@ -23,13 +23,15 @@ from qplot.datahandling.file_identity import database_instance
 from qplot.datahandling.trusted_derived_rendering import render_trusted_derived_payload
 from qplot.datahandling.trusted_live import TrustedQuery, TrustedQueryResult
 from qplot.datahandling.trusted_live_queries import (
+    TrustedMetadataQueryAdapter,
+)
+from qplot.datahandling.trusted_live_service import TrustedLiveReadService
+from qplot.datahandling.trusted_query_types import (
     TRUSTED_DERIVED_MAX_SAMPLE_CELLS,
     TRUSTED_DERIVED_MAX_SAMPLE_ROWS,
-    TrustedMetadataQueryAdapter,
     TrustedSourceRevisionNamespace,
     trusted_derived_source_revision,
 )
-from qplot.datahandling.trusted_live_service import TrustedLiveReadService
 from qplot.datahandling.trusted_work_scheduler import RenderingOptions, TrustedWorkKind
 from qplot.testdata import (
     AxisSpecification,
@@ -156,7 +158,7 @@ def _drain_expensive_run(
     fields: dict[str, object] = {}
     for _page in range(maximum_pages):
         fields = adapter.expensive_run(run_id).as_dict()
-        if run_id not in adapter._regular_layout_progress:
+        if adapter._layouts.pending_state(run_id) is None:
             return fields
     raise AssertionError("The real progressive layout verifier did not drain.")
 
@@ -761,7 +763,7 @@ def test_real_qcodes_same_tuple_shares_scan_budget_and_preserves_cancellation(
         namespace = TrustedSourceRevisionNamespace(b"same-tuple-progressive")
         for request in range(2):
             if request:
-                previous = adapter._independent_layouts[run_id]
+                previous = adapter._layouts.independent_state(run_id)
                 executor.cancel_next_page = True
                 with pytest.raises(InterruptedError, match="same-tuple layout page"):
                     adapter.derived_source_observation(
@@ -769,7 +771,7 @@ def test_real_qcodes_same_tuple_shares_scan_budget_and_preserves_cancellation(
                         database_instance=database_instance(database_path),
                         namespace=namespace,
                     )
-                assert adapter._independent_layouts[run_id] == previous
+                assert adapter._layouts.independent_state(run_id) == previous
                 assert not executor._connection.in_transaction
             start = len(executor.results)
             observation = adapter.derived_source_observation(
@@ -800,7 +802,7 @@ def test_real_qcodes_same_tuple_shares_scan_budget_and_preserves_cancellation(
                 sum(len(row) for result in samples for row in result.rows)
                 <= TRUSTED_DERIVED_MAX_SAMPLE_CELLS
             )
-            state = adapter._independent_layouts[run_id]
+            state = adapter._layouts.independent_state(run_id)
             assert len(state.states) == 2
             assert len(repr(state)) < 8192
             assert not executor._connection.in_transaction
@@ -879,7 +881,7 @@ def test_real_qcodes_mixed_progressive_scan_shares_read_budget(
         cursors = []
         for request_index in range(5):
             if request_index == 1:
-                previous = adapter._independent_layouts[run_id]
+                previous = adapter._layouts.independent_state(run_id)
                 executor.cancel_next_page = True
                 with pytest.raises(
                     InterruptedError, match="cancelled shared layout page"
@@ -889,7 +891,7 @@ def test_real_qcodes_mixed_progressive_scan_shares_read_budget(
                         database_instance=database_instance(database_path),
                         namespace=TrustedSourceRevisionNamespace(b"mixed-progressive"),
                     )
-                assert adapter._independent_layouts[run_id] == previous
+                assert adapter._layouts.independent_state(run_id) == previous
                 assert not executor._connection.in_transaction
             start = len(executor.results)
             observation = adapter.derived_source_observation(
@@ -1162,7 +1164,7 @@ def test_real_qcodes_progressive_shape_enriches_cached_setpoint_steps(
         assert initial["is_completed"] == 1
         assert initial["result_count"] == 4_900
         assert initial["setpoint_shape"] is None
-        assert adapter._regular_layout_progress[run_id].after_row_id == 4_096
+        assert adapter._layouts.pending_state(run_id).after_row_id == 4_096
         initial_summaries = adapter.selected_run_detail(run_id).setpoint_summaries
         assert {summary.name: summary.steps for summary in initial_summaries} == {
             "x": None,
@@ -1496,7 +1498,7 @@ def test_real_current_qcodes_unfinalized_interleaved_grid_updates_after_append(
                     return fields
                 # An invalid/unsupported prefix has no resumable work.  Stop
                 # immediately so the pre-repair failure remains quick.
-                if run_id not in adapter._regular_layout_progress:
+                if adapter._layouts.pending_state(run_id) is None:
                     return fields
             return fields
 

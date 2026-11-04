@@ -31,13 +31,6 @@ from qplot.datahandling.trusted_live import (
     TrustedQuery,
     TrustedQueryResult,
 )
-from qplot.datahandling.trusted_live_queries import (
-    TrustedBootstrapResult,
-    TrustedRefreshResult,
-    TrustedRunPage,
-    TrustedRunRecord,
-    TrustedSelectedRunDetail,
-)
 from qplot.datahandling.trusted_live_service import (
     TrustedLiveReadService,
     TrustedReadPriority,
@@ -57,6 +50,13 @@ from qplot.datahandling.trusted_live_supervisor import (
     TrustedLiveSupervisorLiveness,
 )
 from qplot.datahandling.trusted_presentation import build_selected_run_presentation
+from qplot.datahandling.trusted_query_types import (
+    TrustedBootstrapResult,
+    TrustedRefreshResult,
+    TrustedRunPage,
+    TrustedRunRecord,
+    TrustedSelectedRunDetail,
+)
 from qplot.datahandling.trusted_snapshot import normalize_trusted_snapshot
 
 

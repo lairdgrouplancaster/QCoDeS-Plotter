@@ -13,12 +13,14 @@ from qplot.datahandling.file_identity import database_instance
 from qplot.datahandling.trusted_live import TrustedLiveReader, TrustedQueryResult
 from qplot.datahandling.trusted_live_queries import (
     TrustedMetadataQueryAdapter,
-    TrustedMetadataQueryError,
-    TrustedSourceRevisionNamespace,
 )
 from qplot.datahandling.trusted_live_service import TrustedLiveReadService
 from qplot.datahandling.trusted_presentation import (
     TRUSTED_PRESENTATION_MAX_FIELD_VALUE_BYTES,
+)
+from qplot.datahandling.trusted_query_types import (
+    TrustedMetadataQueryError,
+    TrustedSourceRevisionNamespace,
 )
 
 

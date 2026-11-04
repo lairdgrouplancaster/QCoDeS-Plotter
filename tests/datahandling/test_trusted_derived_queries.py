@@ -11,9 +11,11 @@ import pytest
 from qplot.datahandling.file_identity import DatabaseInstance
 from qplot.datahandling.trusted_live import TrustedQuery, TrustedQueryResult
 from qplot.datahandling.trusted_live_queries import (
+    TrustedMetadataQueryAdapter,
+)
+from qplot.datahandling.trusted_query_types import (
     TRUSTED_DERIVED_MAX_SAMPLE_ROWS,
     Trusted2DGridLayout,
-    TrustedMetadataQueryAdapter,
     TrustedSourceRevisionNamespace,
     trusted_derived_source_revision,
 )

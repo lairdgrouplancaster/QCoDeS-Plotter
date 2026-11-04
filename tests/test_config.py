@@ -177,7 +177,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         self.assertEqual(config().get("user_preference.bar_colour"), "CET-L1")
 
-    def test_existing_config_is_migrated_with_new_plot_preferences(self):
+    def test_old_plot_preferences_are_backed_up_and_reset(self):
         cfg = config()
         stored_config = deepcopy(cfg.config)
         stored_config["user_preference"]["theme"] = "dark"
@@ -189,17 +189,21 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
         reloaded = config()
 
-        self.assertEqual(reloaded.get("user_preference.theme"), "dark")
+        self.assertEqual(reloaded.get("user_preference.theme"), "light")
         self.assertEqual(reloaded.get("user_preference.colorbar_width"), 15)
         self.assertEqual(reloaded.get("user_preference.axis_major_tick_count"), 3)
-        self.assertFalse(hasattr(reloaded, "invalid_config_backup_file"))
+        self.assertEqual(
+            json.loads(Path(reloaded.invalid_config_backup_file).read_text()),
+            stored_config,
+            )
+        self.assertEqual(reloaded.config, cfg.build_default_config())
         with open(config.default_file) as fp:
             persisted = json.load(fp)
         self.assertEqual(persisted["user_preference"]["colorbar_width"], 15)
         self.assertEqual(persisted["user_preference"]["axis_major_tick_count"], 3)
         self.assertNotIn("axis_tick_density", persisted["user_preference"])
 
-    def test_existing_config_is_migrated_with_heatmap_grid_limits(self):
+    def test_missing_heatmap_limits_are_backed_up_and_reset(self):
         cfg = config()
         stored_config = deepcopy(cfg.config)
         stored_config["user_preference"].update({
@@ -214,17 +218,23 @@ class TemporaryConfigTestCase(unittest.TestCase):
             encoding="utf-8",
             )
 
-        migrated = config()
+        recovered = config()
 
-        self.assertEqual(migrated.get("user_preference.theme"), "dark")
-        self.assertEqual(migrated.get("user_preference.default_refresh_rate"), 4.0)
-        self.assertEqual(migrated.get("file.default_load_path"), "/custom/qcodes/path")
-        self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_cells"), 250_000)
-        self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_side"), 800)
-        self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
+        self.assertEqual(recovered.get("user_preference.theme"), "light")
+        self.assertEqual(
+            recovered.get("user_preference.default_refresh_rate"),
+            cfg.get("user_preference.default_refresh_rate"),
+            )
+        self.assertEqual(recovered.get("file.default_load_path"), "")
+        self.assertEqual(recovered.get("runtime_settings.max_heatmap_grid_cells"), 250_000)
+        self.assertEqual(recovered.get("runtime_settings.max_heatmap_grid_side"), 800)
+        self.assertEqual(
+            json.loads(Path(recovered.invalid_config_backup_file).read_text()),
+            stored_config,
+            )
 
         persisted = json.loads(Path(config.default_file).read_text(encoding="utf-8"))
-        self.assertEqual(persisted["file"]["default_load_path"], "/custom/qcodes/path")
+        self.assertEqual(persisted["file"]["default_load_path"], "")
         self.assertEqual(
             persisted["runtime_settings"]["max_heatmap_grid_cells"],
             250_000,
@@ -234,25 +244,8 @@ class TemporaryConfigTestCase(unittest.TestCase):
             800,
             )
 
-    def test_heatmap_grid_migration_preserves_existing_values(self):
-        cfg = config()
-        stored_config = deepcopy(cfg.config)
-        stored_config["runtime_settings"].update({
-            "max_heatmap_grid_cells": 1234,
-            "max_heatmap_grid_side": 56,
-            })
-        Path(config.default_file).write_text(
-            json.dumps(stored_config),
-            encoding="utf-8",
-            )
 
-        migrated = config()
-
-        self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_cells"), 1234)
-        self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_side"), 56)
-        self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
-
-    def test_heatmap_grid_migration_save_failure_keeps_valid_config_in_memory(self):
+    def test_heatmap_grid_recovery_save_failure_keeps_valid_config_in_memory(self):
         cfg = config()
         stored_config = deepcopy(cfg.config)
         del stored_config["runtime_settings"]["max_heatmap_grid_cells"]
@@ -267,20 +260,23 @@ class TemporaryConfigTestCase(unittest.TestCase):
             patch.object(
                 config,
                 "save_config",
-                side_effect=PermissionError("simulated migration failure"),
+                side_effect=PermissionError("simulated recovery failure"),
                 ) as save_config,
             patch("qplot.configuration.config.log_exception") as logged,
             ):
-            migrated = config()
+            recovered = config()
 
-            self.assertEqual(migrated.get("user_preference.theme"), "light")
-            self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_cells"), 250_000)
-            self.assertEqual(migrated.get("runtime_settings.max_heatmap_grid_side"), 800)
-            self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
-            self.assertIsNotNone(migrated.startup_warning)
+            self.assertEqual(recovered.get("user_preference.theme"), "light")
+            self.assertEqual(recovered.get("runtime_settings.max_heatmap_grid_cells"), 250_000)
+            self.assertEqual(recovered.get("runtime_settings.max_heatmap_grid_side"), 800)
+            self.assertEqual(
+                json.loads(Path(recovered.invalid_config_backup_file).read_text()),
+                stored_config,
+                )
+            self.assertIsNotNone(recovered.startup_warning)
             self.assertEqual(save_config.call_count, 1)
-            logged.assert_called_once_with(
-                f"Could not persist migrated configuration at {config.default_file}",
+            logged.assert_any_call(
+                f"Could not replace invalid configuration at {config.default_file}",
                 ANY,
                 "qplot.configuration.config",
                 )
@@ -290,7 +286,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
             original_contents,
             )
 
-    def test_migration_save_failure_keeps_valid_config_in_memory(self):
+    def test_recovery_save_failure_keeps_valid_config_in_memory(self):
         cfg = config()
         stored_config = deepcopy(cfg.config)
         stored_config["user_preference"].update({
@@ -314,23 +310,29 @@ class TemporaryConfigTestCase(unittest.TestCase):
             patch.object(
                 config,
                 "save_config",
-                side_effect=PermissionError("simulated migration failure"),
+                side_effect=PermissionError("simulated recovery failure"),
                 ) as save_config,
             patch("qplot.configuration.config.log_exception") as logged,
             ):
-            migrated = config()
+            recovered = config()
 
-            self.assertEqual(migrated.get("user_preference.theme"), "dark")
-            self.assertEqual(migrated.get("user_preference.bar_colour"), "CET-L1")
-            self.assertEqual(migrated.get("user_preference.colorbar_width"), 15)
-            self.assertEqual(migrated.get("user_preference.axis_tick_width"), 2.0)
-            self.assertEqual(migrated.get("user_preference.axis_major_tick_count"), 3)
-            self.assertNotIn("axis_tick_density", migrated.config["user_preference"])
-            self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
-            self.assertIsNotNone(migrated.startup_warning)
+            self.assertEqual(recovered.get("user_preference.theme"), "light")
+            self.assertEqual(
+                recovered.get("user_preference.bar_colour"),
+                cfg.get("user_preference.bar_colour"),
+                )
+            self.assertEqual(recovered.get("user_preference.colorbar_width"), 15)
+            self.assertEqual(recovered.get("user_preference.axis_tick_width"), 2.0)
+            self.assertEqual(recovered.get("user_preference.axis_major_tick_count"), 3)
+            self.assertNotIn("axis_tick_density", recovered.config["user_preference"])
+            self.assertEqual(
+                json.loads(Path(recovered.invalid_config_backup_file).read_text()),
+                stored_config,
+                )
+            self.assertIsNotNone(recovered.startup_warning)
             self.assertEqual(save_config.call_count, 1)
-            logged.assert_called_once_with(
-                f"Could not persist migrated configuration at {config.default_file}",
+            logged.assert_any_call(
+                f"Could not replace invalid configuration at {config.default_file}",
                 ANY,
                 "qplot.configuration.config",
                 )
@@ -344,7 +346,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
             [],
             )
 
-    def test_failed_migration_is_retried_and_explicit_saves_still_fail(self):
+    def test_failed_recovery_is_retried_and_explicit_saves_still_fail(self):
         cfg = config()
         stored_config = deepcopy(cfg.config)
         del stored_config["user_preference"]["colorbar_width"]
@@ -371,7 +373,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         self.assertEqual(first_startup.get("user_preference.theme"), "light")
         self.assertEqual(save_config.call_count, 3)
 
-    def test_failed_migration_atomic_save_removes_temporary_file(self):
+    def test_failed_recovery_atomic_save_removes_temporary_file(self):
         cfg = config()
         stored_config = deepcopy(cfg.config)
         del stored_config["user_preference"]["colorbar_width"]
@@ -387,13 +389,33 @@ class TemporaryConfigTestCase(unittest.TestCase):
                 ),
             patch("qplot.configuration.config.log_exception"),
             ):
-            migrated = config()
+            recovered = config()
 
-        self.assertEqual(migrated.get("user_preference.colorbar_width"), 15)
+        self.assertEqual(recovered.get("user_preference.colorbar_width"), 15)
         self.assertEqual(
             list(Path(config.default_path).glob(".config.json.*.tmp")),
             [],
             )
+
+    def test_current_heatmap_limits_preserve_existing_values(self):
+        cfg = config()
+        stored_config = deepcopy(cfg.config)
+        stored_config["runtime_settings"].update({
+            "max_heatmap_grid_cells": 1234,
+            "max_heatmap_grid_side": 56,
+            })
+        Path(config.default_file).write_text(
+            json.dumps(stored_config),
+            encoding="utf-8",
+            )
+
+        with patch.object(config, "save_config") as save_config:
+            reloaded = config()
+        save_config.assert_not_called()
+
+        self.assertEqual(reloaded.get("runtime_settings.max_heatmap_grid_cells"), 1234)
+        self.assertEqual(reloaded.get("runtime_settings.max_heatmap_grid_side"), 56)
+        self.assertFalse(hasattr(reloaded, "invalid_config_backup_file"))
 
     def test_invalid_config_backup_failure_uses_validated_defaults_in_memory(self):
         config()
@@ -537,7 +559,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
         os.name == "posix" and os.geteuid() != 0,
         "directory permissions are not reliable for this test environment",
         )
-    def test_read_only_directory_allows_migration_but_not_later_saves(self):
+    def test_read_only_directory_uses_defaults_and_preserves_incompatible_file(self):
         cfg = config()
         stored_config = deepcopy(cfg.config)
         stored_config["user_preference"]["theme"] = "dark"
@@ -550,17 +572,19 @@ class TemporaryConfigTestCase(unittest.TestCase):
         original_mode = config_directory.stat().st_mode
         config_directory.chmod(0o555)
         try:
-            migrated = config()
+            recovered = config()
 
-            self.assertEqual(migrated.get("user_preference.theme"), "dark")
-            self.assertEqual(migrated.get("user_preference.colorbar_width"), 15)
-            self.assertFalse(hasattr(migrated, "invalid_config_backup_file"))
+            self.assertEqual(recovered.get("user_preference.theme"), "light")
+            self.assertEqual(recovered.get("user_preference.colorbar_width"), 15)
+            self.assertFalse(hasattr(recovered, "invalid_config_backup_file"))
             self.assertEqual(
                 list(config_directory.glob(".config.json.*.tmp")),
                 [],
                 )
+            self.assertEqual(json.loads(Path(config.default_file).read_text()), stored_config)
+            self.assertIsNotNone(recovered.startup_warning)
             with self.assertRaises(PermissionError):
-                migrated.update("user_preference.theme", "light")
+                recovered.update("user_preference.theme", "dark")
         finally:
             config_directory.chmod(original_mode)
 

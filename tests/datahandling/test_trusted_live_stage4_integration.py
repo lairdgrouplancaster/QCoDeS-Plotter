@@ -23,9 +23,7 @@ from qplot.datahandling import trusted_live_service as service_module
 from qplot.datahandling.file_identity import database_instance
 from qplot.datahandling.trusted_live_queries import (
     TRUSTED_RUN_PAGE_SIZE,
-    TrustedBootstrapResult,
     TrustedMetadataQueryAdapter,
-    TrustedRunRecord,
 )
 from qplot.datahandling.trusted_live_service import (
     TrustedLiveReadService,
@@ -33,6 +31,10 @@ from qplot.datahandling.trusted_live_service import (
 )
 from qplot.datahandling.trusted_live_supervisor import (
     TrustedLiveReaderSupervisor,
+)
+from qplot.datahandling.trusted_query_types import (
+    TrustedBootstrapResult,
+    TrustedRunRecord,
 )
 from tests.datahandling.test_trusted_live import (
     _assert_protected_artifacts_unchanged,
@@ -223,15 +225,9 @@ def test_persistent_stage4_service_discovers_later_qcodes_run_without_writes(
 
 def test_large_source_edge_plan_is_accepted_by_the_real_supervisor(
     stage4_wal_writer: _QcodesWalWriter,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     writer = stage4_wal_writer
     accepted = database_instance(writer.database_path)
-    monkeypatch.setattr(
-        TrustedMetadataQueryAdapter,
-        "_bounded_aggregate_prefix",
-        lambda self, result_watermark: False,
-    )
     service = TrustedLiveReadService(
         writer.database_path,
         expected_database_instance=accepted,

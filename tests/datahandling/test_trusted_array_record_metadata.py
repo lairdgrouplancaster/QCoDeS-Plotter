@@ -15,6 +15,8 @@ from qplot.datahandling.file_identity import database_instance
 from qplot.datahandling.trusted_live import TrustedLiveReader
 from qplot.datahandling.trusted_live_queries import (
     TrustedMetadataQueryAdapter,
+)
+from qplot.datahandling.trusted_query_types import (
     TrustedSourceRevisionNamespace,
 )
 from tests.datahandling.test_stage5c_real_qcodes import (

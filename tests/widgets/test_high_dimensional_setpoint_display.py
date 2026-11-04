@@ -2,7 +2,9 @@
 
 import pytest
 
-from qplot.datahandling.trusted_live_queries import TrustedMetadataQueryAdapter
+from qplot.datahandling.trusted_live_queries import (
+    TrustedMetadataQueryAdapter,
+)
 from qplot.windows._widgets.treeWidgets import RunList, moreInfo
 from tests.datahandling.test_high_dimensional_setpoints import (
     _database,

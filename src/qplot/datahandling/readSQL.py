@@ -389,18 +389,20 @@ def get_snapshot_selected_run_detail(
     never materialised; only the existing bounded setpoint aggregates may
     inspect a modest, already-counted result table.
     """
-    from qplot.datahandling.trusted_live_queries import (
-        TrustedRunRecord,
-        TrustedSelectedRunDetail,
-        TrustedSetpointSummary,
+    from qplot.datahandling._trusted_query_metadata import (
         bounded_parameter_presentation,
         bounded_parameter_views_from_run_metadata,
         bounded_setpoint_presentation,
-        freeze_primitive_fields,
     )
     from qplot.datahandling.trusted_presentation import (
         bounded_presentation_names,
         build_selected_run_presentation,
+    )
+    from qplot.datahandling.trusted_query_types import (
+        TrustedRunRecord,
+        TrustedSelectedRunDetail,
+        TrustedSetpointSummary,
+        freeze_primitive_fields,
     )
     from qplot.datahandling.trusted_snapshot import normalize_trusted_snapshot
 
@@ -791,7 +793,7 @@ def _snapshot_selected_summary_values(
     cancelled_callback=None,
     deadline=None,
 ):
-    from qplot.datahandling.trusted_live_queries import TrustedMetadataQueryAdapter
+    from qplot.datahandling._trusted_query_metadata import planned_setpoint_steps
 
     result_count = _snapshot_positive_int(metadata.get("result_count"))
     summaries = {}
@@ -810,7 +812,7 @@ def _snapshot_selected_summary_values(
                 deadline=deadline,
             )
         )
-    planned_steps = TrustedMetadataQueryAdapter._planned_setpoint_steps(
+    planned_steps = planned_setpoint_steps(
         metadata, setpoint_names,
     )
     # The largest run-wide shape cannot describe independent dependent trees.

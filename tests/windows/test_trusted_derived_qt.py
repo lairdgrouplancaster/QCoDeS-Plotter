@@ -16,7 +16,9 @@ import pytest
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from qplot.datahandling.file_identity import DatabaseInstance, database_instance
-from qplot.datahandling.trusted_live_queries import (
+from qplot.datahandling.trusted_live_service import TrustedDerivedReadService
+from qplot.datahandling.trusted_presentation import build_selected_run_presentation
+from qplot.datahandling.trusted_query_types import (
     TrustedParameterView,
     TrustedRunRecord,
     TrustedSelectedRunDetail,
@@ -24,8 +26,6 @@ from qplot.datahandling.trusted_live_queries import (
     TrustedSourceRevision,
     TrustedSourceRevisionNamespace,
 )
-from qplot.datahandling.trusted_live_service import TrustedDerivedReadService
-from qplot.datahandling.trusted_presentation import build_selected_run_presentation
 from qplot.datahandling.trusted_snapshot import (
     TRUSTED_SNAPSHOT_LOAD_MORE_TEXT,
     normalize_trusted_snapshot,

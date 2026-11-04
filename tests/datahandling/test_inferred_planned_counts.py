@@ -12,7 +12,9 @@ from qcodes.dataset import (
 )
 
 from qplot.datahandling import readSQL
-from qplot.datahandling.trusted_live_queries import TrustedMetadataQueryAdapter
+from qplot.datahandling.trusted_live_queries import (
+    TrustedMetadataQueryAdapter,
+)
 from qplot.windows._widgets._run_formatting import progress_percent_value
 from tests.datahandling.test_stage5c_real_qcodes import (
     _load_basic_runs,

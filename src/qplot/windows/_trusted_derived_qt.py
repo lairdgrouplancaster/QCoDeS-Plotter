@@ -31,13 +31,13 @@ from qplot.datahandling.file_identity import (
 from qplot.datahandling.trusted_derived_rendering import (
     TRUSTED_DERIVED_RENDERER_VERSION,
 )
-from qplot.datahandling.trusted_live_queries import (
+from qplot.datahandling.trusted_live_service import TrustedDerivedReadService
+from qplot.datahandling.trusted_query_types import (
     TrustedParameterView,
     TrustedSelectedRunDetail,
     TrustedSetpointSummary,
     TrustedSourceRevision,
 )
-from qplot.datahandling.trusted_live_service import TrustedDerivedReadService
 from qplot.datahandling.trusted_work_coordinator import (
     TrustedDerivedErrorRecord,
     TrustedDerivedRun,

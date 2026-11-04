@@ -101,6 +101,8 @@ def test_real_qcodes_array_previews_preserve_samples_and_database(tmp_path, colu
     from qplot.datahandling.file_identity import database_instance
     from qplot.datahandling.trusted_live_queries import (
         TrustedMetadataQueryAdapter,
+    )
+    from qplot.datahandling.trusted_query_types import (
         TrustedSourceRevisionNamespace,
     )
     from tests.datahandling.test_stage5c_real_qcodes import (
