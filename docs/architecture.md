@@ -201,7 +201,11 @@ sessions receive decoded Stage 5C images from the bridge; retained compatibility
 paths may still use the bounded legacy preview queue.
 
 `src/qplot/windows/_widgets/operations.py` defines the operation panel widgets
-that collect user-selected data operations before refresh processing.
+that collect user-selected data operations before refresh processing. Operation
+identity and heatmap transposition pairs live in `tools/operation_registry.py`;
+promotion copies ordered panel state through `capture_state`/`restore_state`,
+including exact editor text and Apply generation, without using display labels
+as operation identifiers. This state is transient, not a settings format.
 
 `src/qplot/windows/_widgets/dropbox.py` and `toolbar.py` contain smaller
 reusable UI controls used inside plot windows.
