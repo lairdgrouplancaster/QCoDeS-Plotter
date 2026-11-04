@@ -455,6 +455,13 @@ Common plot controls:
 * Right-click inside a marquee selection for zoom and statistics actions.
 * Press `Esc` or double-click the plot to clear a marquee selection.
 * Double-click an X or Y axis to open its scaling dialog.
+* Range controls default to `Min / Max`. Select `Center / Span` to enter an
+  arithmetic midpoint and the full range width (`maximum - minimum`). Switching
+  formats leaves the plotted range and Auto/Manual mode unchanged. The readout
+  underneath shows the equivalent values without units; hover for full precision.
+  Each axis and color scale retains its own format while the plot window is open.
+  Values use data coordinates even on logarithmic axes, where both resulting
+  limits must remain positive.
 * Use `Log Scale` in an axis-scaling tab to switch a line-plot axis between
   linear and base-10 logarithmic scaling. Non-positive values are omitted.
 * Right-drag on the plot, or scroll over an axis, to fast scale an axis.
@@ -507,6 +514,8 @@ Color-scale controls:
 
 * Right-click the plot and choose `Autoscale Color`, or press `C`.
 * Double-click the color scale bar to open the color scaling dialog.
+  Its range controls offer the same `Min / Max` and `Center / Span` formats as
+  the plot axes.
 * Drag one color-scale handle to adjust a limit.
 * Drag between handles to slide the range.
 * Drag outside the handles to widen or narrow the range.

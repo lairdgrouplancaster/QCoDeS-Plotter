@@ -12,6 +12,7 @@ from pyqtgraph.graphicsItems.ViewBox import axisCtrlTemplate_generic
 
 from ._plot_data_viewbox import coordinate_viewbox
 from ._plot_host import PlotHost
+from ._range_entry import RangeEntry
 
 _AxisName = Literal["x", "y", "x2", "y2"]
 _AXIS_MENU_ITEMS: tuple[tuple[_AxisName, str], ...] = (
@@ -578,7 +579,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         widget = qtw.QWidget()
         ui: Any = axisCtrlTemplate_generic.Ui_Form()
         ui.setupUi(widget)
-        widget.setFixedWidth(280)
+        widget.setFixedWidth(340)
 
         ui.mouseCheck.setText("Allow Zoom/Pan")
         ui.mouseCheck.setToolTip(
@@ -630,6 +631,10 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         ui.maximumLabel.setObjectName("axisScaleMaximumLabel")
         ui.minimumLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         ui.maximumLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        ui.rangeEntry = RangeEntry(
+            ui.minText, ui.maxText, ui.minimumLabel, ui.maximumLabel,
+            accessible_prefix=f"{axis.upper()} axis", parent=widget,
+        )
 
         ui.copyAutoLimitsButton = _AutoLimitsButton(
             lambda axis=axis: self._update_axis_scale_auto_limits_tooltip(axis),
@@ -653,23 +658,25 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         ui.linkSeparator.setFrameShape(qtw.QFrame.Shape.HLine)
         ui.linkSeparator.setFrameShadow(qtw.QFrame.Shadow.Sunken)
 
-        ui.gridLayout.addWidget(ui.minimumLabel, 0, 1)
-        ui.gridLayout.addWidget(ui.maximumLabel, 0, 2)
-        ui.gridLayout.addWidget(ui.manualRadio, 1, 0)
-        ui.gridLayout.addWidget(ui.minText, 1, 1)
-        ui.gridLayout.addWidget(ui.maxText, 1, 2)
-        ui.gridLayout.addWidget(ui.copyAutoLimitsButton, 1, 3)
-        ui.gridLayout.addWidget(ui.autoRadio, 2, 0)
-        ui.gridLayout.addWidget(ui.autoPercentSpin, 2, 1, 1, 2)
-        ui.gridLayout.addWidget(ui.visibleOnlyCheck, 3, 1, 1, 3)
-        ui.gridLayout.addWidget(ui.autoPanCheck, 4, 1, 1, 3)
-        ui.gridLayout.addWidget(ui.rangeSeparator, 5, 0, 1, 4)
-        ui.gridLayout.addWidget(ui.logCheck, 6, 0, 1, 4)
-        ui.gridLayout.addWidget(ui.invertCheck, 7, 0, 1, 2)
-        ui.gridLayout.addWidget(ui.mouseCheck, 7, 2, 1, 2)
-        ui.gridLayout.addWidget(ui.linkSeparator, 8, 0, 1, 4)
-        ui.gridLayout.addWidget(ui.label, 9, 0)
-        ui.gridLayout.addWidget(ui.linkCombo, 9, 1, 1, 3)
+        ui.gridLayout.addWidget(ui.rangeEntry, 0, 0, 1, 4)
+        ui.gridLayout.addWidget(ui.minimumLabel, 1, 1)
+        ui.gridLayout.addWidget(ui.maximumLabel, 1, 2)
+        ui.gridLayout.addWidget(ui.manualRadio, 2, 0)
+        ui.gridLayout.addWidget(ui.minText, 2, 1)
+        ui.gridLayout.addWidget(ui.maxText, 2, 2)
+        ui.gridLayout.addWidget(ui.copyAutoLimitsButton, 2, 3)
+        ui.gridLayout.addWidget(ui.rangeEntry.summary, 3, 1, 1, 3)
+        ui.gridLayout.addWidget(ui.autoRadio, 4, 0)
+        ui.gridLayout.addWidget(ui.autoPercentSpin, 4, 1, 1, 2)
+        ui.gridLayout.addWidget(ui.visibleOnlyCheck, 5, 1, 1, 3)
+        ui.gridLayout.addWidget(ui.autoPanCheck, 6, 1, 1, 3)
+        ui.gridLayout.addWidget(ui.rangeSeparator, 7, 0, 1, 4)
+        ui.gridLayout.addWidget(ui.logCheck, 8, 0, 1, 4)
+        ui.gridLayout.addWidget(ui.invertCheck, 9, 0, 1, 2)
+        ui.gridLayout.addWidget(ui.mouseCheck, 9, 2, 1, 2)
+        ui.gridLayout.addWidget(ui.linkSeparator, 10, 0, 1, 4)
+        ui.gridLayout.addWidget(ui.label, 11, 0)
+        ui.gridLayout.addWidget(ui.linkCombo, 11, 1, 1, 3)
         ui.gridLayout.setColumnStretch(1, 1)
         ui.gridLayout.setColumnStretch(2, 1)
         self._axis_scale_controls[axis] = ui
@@ -746,11 +753,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             data_range = self.view_to_data(axis, target_range)
             # Editable limits must round-trip doubles, even for a narrow range
             # at a large offset. Tick-label precision is insufficient here.
-            ui.minText.setText(f"{data_range[0]:.17g}")
-            ui.maxText.setText(f"{data_range[1]:.17g}")
-            self.__dict__.setdefault("_axis_scale_displayed_range_text", {})[axis] = (
-                ui.minText.text(), ui.maxText.text(),
-            )
+            ui.rangeEntry.set_limits(*data_range)
 
             auto_range = (
                 True
@@ -1055,38 +1058,26 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         ui = self._axis_scale_controls[axis]
         axis_number = self._axis_scale_axis_number(axis)
         viewbox = self._axis_scale_viewbox(axis)
-        previous_view_values = list(viewbox.viewRange()[axis_number])
-        previous_values = np.asarray(self.view_to_data(axis, previous_view_values))
-        # Layout changes can alter linked-axis coordinate conversion by a few
-        # ulps. Rejected edits must restore the exact text last shown, and a
-        # duplicate editingFinished must leave the current Auto mode intact.
-        previous_text = self.__dict__.get("_axis_scale_displayed_range_text", {}).get(
-            axis, tuple(f"{value:.17g}" for value in previous_values),
-        )
-        previous_values = np.asarray([float(value) for value in previous_text])
+        # Retain exact view coordinates and Auto mode for unchanged fields,
+        # including duplicate editingFinished after a rejected edit.
+        if ui.rangeEntry.unchanged():
+            return
         try:
-            values = [float(ui.minText.text()), float(ui.maxText.text())]
+            values = ui.rangeEntry.limits_from_fields()
         except ValueError:
-            values = []
-
-        if (
-                len(values) != 2
-                or not all(isfinite(value) for value in values)
-                or values[0] >= values[1]
-                ):
-            ui.minText.setText(previous_text[0])
-            ui.maxText.setText(previous_text[1])
+            ui.rangeEntry.restore()
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status(
+                    "Axis ranges must use finite numbers with a positive span."
+                    if ui.rangeEntry.center_span else
                     "Axis limits must be finite numbers with minimum below maximum.",
                     5000,
                     )
             return
 
         if self._axis_scale_log_mode(axis) and any(value <= 0 for value in values):
-            ui.minText.setText(previous_text[0])
-            ui.maxText.setText(previous_text[1])
+            ui.rangeEntry.restore()
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status(
@@ -1095,15 +1086,9 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                     )
             return
 
-        # Return may emit editingFinished twice. After a rejected edit restores
-        # these fields, the second emission must not switch Auto to Manual.
-        # Unchanged fields also retain their exact original log coordinates.
-        if values == list(previous_values):
-            return
         view_values = [float(value) for value in self.data_to_view(axis, values)]
         if not _manual_axis_view_limits_are_usable(viewbox, axis_number, view_values):
-            ui.minText.setText(previous_text[0])
-            ui.maxText.setText(previous_text[1])
+            ui.rangeEntry.restore()
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status("These axis limits exceed the supported plot range.", 5000)
@@ -1435,7 +1420,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         layout.setSpacing(10)
         tabs = qtw.QTabWidget(dialog)
         tabs.setObjectName("axisScaleTabs")
-        tabs.setFixedWidth(300)
+        tabs.setFixedWidth(360)
         tabs.tabBar().setExpanding(True)
         tabs.tabBar().setUsesScrollButtons(False)
         tabs.setStyleSheet(
