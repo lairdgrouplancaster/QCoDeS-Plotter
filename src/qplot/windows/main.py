@@ -25,7 +25,6 @@ from qplot.datahandling.database import (
 )
 from qplot.diagnostics import get_logger, log_bounded_shutdown, log_user_error
 
-from ._auto_plot import cancel_auto_plot
 from ._commands import create_action
 from ._config_persistence import (
     persist_config_action,
@@ -43,6 +42,7 @@ from ._preferences import (
     create_preferences_action,
 )
 from ._run_controls import AUTO_PLOT_KEY, RunControlsMixin
+from ._shutdown_coordinator import ShutdownCoordinator
 from ._status import StatusLabel
 from ._trusted_derived_qt import TrustedDerivedQtBridge
 from ._window_controls import (
@@ -458,22 +458,51 @@ class MainWindow(
         self.preview_size = self._configured_preview_size()
         self.dataset_holder: dict[DatasetKey, DatasetHandle] = {}
         self.monitor = QtCore.QTimer()
-        self.threadPool = QtCore.QThreadPool()
-        self.threadPool.setMaxThreadCount(self.config.get("runtime_settings.max_threads"))
+        # The process entry point installs and owns the fail-safe. Embedded
+        # windows remain inert at the process boundary.
+        self._shutdown_process_fail_safe = None
+        self._shutdown = ShutdownCoordinator(
+            self,
+            timeout_seconds=_APPLICATION_SHUTDOWN_TIMEOUT_SECONDS,
+            diagnostic_grace_seconds=_APPLICATION_SHUTDOWN_DIAGNOSTIC_GRACE_SECONDS,
+            persist_diagnostics=_persist_shutdown_diagnostics,
+        )
+        resources = self._shutdown.resources
+        self.threadPool = resources.create_pool(
+            "threadPool",
+            max_threads=self.config.get("runtime_settings.max_threads"),
+        )
         self._plot_workers: set[object] = set()
         self.threadPool._qplot_workers = self._plot_workers  # type: ignore[attr-defined]
-        self.databaseLoadThreadPool = QtCore.QThreadPool(self)
-        self.databaseLoadThreadPool.setMaxThreadCount(1)
-        self.databaseDetailThreadPool = QtCore.QThreadPool(self)
-        self.databaseDetailThreadPool.setMaxThreadCount(1)
-        self.databaseExpensiveDetailThreadPool = QtCore.QThreadPool(self)
-        self.databaseExpensiveDetailThreadPool.setMaxThreadCount(1)
-        self.databaseRefreshThreadPool = QtCore.QThreadPool(self)
-        self.databaseRefreshThreadPool.setMaxThreadCount(1)
-        self.databaseSelectedRunThreadPool = QtCore.QThreadPool(self)
-        self.databaseSelectedRunThreadPool.setMaxThreadCount(1)
-        self.testDatabaseGenerationThreadPool = QtCore.QThreadPool(self)
-        self.testDatabaseGenerationThreadPool.setMaxThreadCount(1)
+        self.databaseLoadThreadPool = resources.create_pool(
+            "databaseLoadThreadPool", parent=self,
+            worker_attribute="_database_load_worker",
+        )
+        self.databaseDetailThreadPool = resources.create_pool(
+            "databaseDetailThreadPool", parent=self,
+            worker_attribute="_database_detail_worker",
+        )
+        self.databaseExpensiveDetailThreadPool = resources.create_pool(
+            "databaseExpensiveDetailThreadPool", parent=self,
+            worker_attribute="_database_expensive_detail_worker",
+        )
+        self.databaseRefreshThreadPool = resources.create_pool(
+            "databaseRefreshThreadPool", parent=self,
+            worker_attribute="_database_refresh_worker",
+        )
+        self.databaseSelectedRunThreadPool = resources.create_pool(
+            "databaseSelectedRunThreadPool", parent=self,
+            worker_attribute="_database_selected_run_worker",
+        )
+        # Information jobs share the detail pool but have a separate cancellation
+        # hook that invalidates their own generation before later work is closed.
+        resources.watch_worker(
+            "_database_info_worker", cancel=self._cancel_database_info,
+        )
+        self.testDatabaseGenerationThreadPool = resources.create_pool(
+            "testDatabaseGenerationThreadPool", parent=self,
+            worker_attribute="_test_database_generation_worker",
+        )
         self._database_load_generation = 0
         self._database_load_active = False
         self._database_load_publication_active = False
@@ -521,21 +550,6 @@ class MainWindow(
         self._test_database_generation_worker: TestDatabaseGenerationWorker | None = None
         self._test_database_replacement_state = None
         self._database_view_released_for_generation = False
-        self._shutdown_started = False
-        self._shutdown_ready = False
-        self._shutdown_started_at = None
-        self._shutdown_deadline = None
-        self._shutdown_hard_deadline = None
-        self._shutdown_cleanup_escalated = False
-        self._shutdown_escalation_diagnostics: tuple[str, ...] = ()
-        self._shutdown_liveness_diagnostics: tuple[str, ...] = ()
-        self._shutdown_last_diagnostics: tuple[str, ...] = ()
-        self._shutdown_diagnostics: tuple[str, ...] = ()
-        self._shutdown_deadline_exhausted = False
-        # The process entry point installs and owns the fail-safe.  Keeping an
-        # ordinary embedded/test MainWindow inert avoids an unexpected hard
-        # exit in a host process that owns its own Qt lifecycle.
-        self._shutdown_process_fail_safe = None
         self._shutdown_timer = QtCore.QTimer(self)
         self._shutdown_timer.setInterval(25)
         self._shutdown_timer.timeout.connect(self._finish_deferred_shutdown)
@@ -843,16 +857,11 @@ class MainWindow(
 
     @QtCore.pyqtSlot(bool)
     def closeEvent(self, event):
-        """
-        Event handler for closing Main Window.
-
-        Also handles some closing admin        
-
-        """
-        if getattr(self, "_shutdown_ready", False):
+        """Confirm exit, then delegate bounded shutdown to the coordinator."""
+        if self._shutdown.ready:
             event.accept()
             return
-        if getattr(self, "_shutdown_started", False):
+        if self._shutdown.waiting:
             event.ignore()
             return
 
@@ -868,488 +877,39 @@ class MainWindow(
                 event.ignore()
                 return
 
-        # One monotonic total bound covers cancellation, cleanup escalation,
-        # diagnostic persistence, and hard process termination.  The final
-        # grace is inside that bound, never appended to it.
-        shutdown_started_at = monotonic()
-        total_timeout = max(0.0, _APPLICATION_SHUTDOWN_TIMEOUT_SECONDS)
-        diagnostic_grace = min(
-            _APPLICATION_SHUTDOWN_DIAGNOSTIC_GRACE_SECONDS,
-            total_timeout * 0.25,
-        )
-        hard_deadline = shutdown_started_at + total_timeout
-        self._shutdown_started_at = shutdown_started_at
-        self._shutdown_deadline = hard_deadline - diagnostic_grace
-        self._shutdown_hard_deadline = hard_deadline
-        self._shutdown_cleanup_escalated = False
-        self._shutdown_escalation_diagnostics = ()
-        self._shutdown_liveness_diagnostics = ()
-        self._shutdown_last_diagnostics = ()
-        self._shutdown_diagnostics = ()
-        self._shutdown_deadline_exhausted = False
-        process_fail_safe = getattr(self, "_shutdown_process_fail_safe", None)
-        if process_fail_safe is not None:
-            launch_diagnostic = process_fail_safe.arm(
-                started_at=shutdown_started_at,
-                diagnostic_deadline=self._shutdown_deadline,
-                hard_deadline=hard_deadline,
-            )
-            if launch_diagnostic:
-                self._shutdown_escalation_diagnostics = (launch_diagnostic,)
-                MainWindow._publish_shutdown_diagnostics(self)
+        self._shutdown.begin(event)
 
-        # Mark the refresh lifecycle as shut down before cancelling workers.
-        # This also invalidates a QTimer timeout that was already queued.
-        self._automatic_refresh_shutdown = True
-        stop_refresh_timer = getattr(self, "_stop_automatic_refresh_timer", None)
-        if callable(stop_refresh_timer):
-            stop_refresh_timer()
 
-        derived_bridge = getattr(self, "_trusted_derived_bridge", None)
-        if derived_bridge is not None:
-            derived_bridge.shutdown()
-        preview = getattr(getattr(self, "infoBox", None), "preview", None)
-        if preview is not None:
-            preview.shutdown()
-        self.startupDatabaseTimer.stop()
-        worker = getattr(self, "_database_load_worker", None)
-        if worker is not None:
-            worker.cancel()
-        detail_worker = getattr(self, "_database_detail_worker", None)
-        if detail_worker is not None:
-            detail_worker.cancel()
-        expensive_detail_worker = getattr(
-            self,
-            "_database_expensive_detail_worker",
-            None,
-            )
-        if expensive_detail_worker is not None:
-            expensive_detail_worker.cancel()
-        refresh_worker = getattr(self, "_database_refresh_worker", None)
-        if refresh_worker is not None:
-            refresh_worker.cancel()
-        selected_run_worker = getattr(self, "_database_selected_run_worker", None)
-        if selected_run_worker is not None:
-            selected_run_worker.cancel()
-        DatabaseActionsMixin._cancel_database_info(self)
-        generation_worker = getattr(self, "_test_database_generation_worker", None)
-        if generation_worker is not None:
-            generation_worker.cancel()
-        MainWindow._cancel_plot_work(self)
-        self._database_load_generation += 1
-        self._database_load_active = False
-        self._database_load_state = None
-        self._database_load_worker = None
-        self._database_detail_generation = (
-            getattr(self, "_database_detail_generation", 0) + 1
-            )
-        self._database_detail_active = False
-        self._database_detail_worker = None
-        self._database_detail_instance = None
-        self._database_expensive_detail_generation = (
-            getattr(self, "_database_expensive_detail_generation", 0) + 1
-            )
-        self._database_expensive_detail_active = False
-        self._database_expensive_detail_worker = None
-        self._database_expensive_detail_instance = None
-        self._database_refresh_generation = (
-            getattr(self, "_database_refresh_generation", 0) + 1
-            )
-        self._database_refresh_active = False
-        self._database_refresh_pending = False
-        self._database_refresh_worker = None
-        self._database_refresh_identity = None
-        self._database_refresh_instance = None
-        self._database_selected_run_generation = (
-            getattr(self, "_database_selected_run_generation", 0) + 1
-            )
-        self._database_selected_run_worker = None
-        self._database_selected_run_instance = None
-        self._database_selected_run_mode = None
-        self._restoring_selected_run_publication = False
-        self._selected_run_restore_pending = False
-        self._test_database_generation_active = False
-        self._test_database_generation_worker = None
-        self._test_database_replacement_state = None
-        self._database_view_released_for_generation = False
-        stop_refresh_timer = getattr(self, "_stop_automatic_refresh_timer", None)
-        if callable(stop_refresh_timer):
-            stop_refresh_timer()
-        else:
-            self.monitor.stop()
-        self.close_plot_windows(confirm=False, status=False)
-        self.close_database(status=False)
+    @property
+    def _shutdown_started(self) -> bool:
+        return self._shutdown.waiting
 
-        if MainWindow._shutdown_background_work_active(self):
-            self._shutdown_started = True
-            event.ignore()
-            hide = getattr(self, "hide", None)
-            if callable(hide):
-                hide()
-            shutdown_timer = getattr(self, "_shutdown_timer", None)
-            if shutdown_timer is not None:
-                shutdown_timer.start()
-            else:
-                QtCore.QTimer.singleShot(25, self._finish_deferred_shutdown)
-            return
 
-        self._shutdown_ready = True
-        event.accept()
-        qtw.QApplication.closeAllWindows()
+    @property
+    def _shutdown_ready(self) -> bool:
+        return self._shutdown.ready
+
+
+    @property
+    def _shutdown_deadline_exhausted(self) -> bool:
+        return self._shutdown.state.deadline_exhausted
 
 
     def _cancel_plot_work(self):
-        """Cancel running plot loads and remove work that has not started."""
-
-        cancel_auto_plot(self)
-        workers = set(getattr(self, "_plot_workers", ()))
-        for window in list(getattr(self, "windows", ())):
-            worker = getattr(window, "worker", None)
-            if worker is not None:
-                workers.add(worker)
-
-        for worker in workers:
-            cancel = getattr(worker, "cancel", None)
-            if callable(cancel):
-                cancel()
-
-        pool = getattr(self, "threadPool", None)
-        clear = getattr(pool, "clear", None)
-        if callable(clear):
-            clear()
+        """Cancel plot work during database replacement or application shutdown."""
+        self._shutdown.resources.cancel_plot_work()
 
 
-    def _publish_shutdown_diagnostics(self):
-        """Merge durable escalation errors with the newest liveness scan."""
-
-        diagnostics = tuple(
-            (
-                *getattr(self, "_shutdown_escalation_diagnostics", ()),
-                *getattr(self, "_shutdown_liveness_diagnostics", ()),
-            )
-        )
-        self._shutdown_last_diagnostics = diagnostics
-        process_fail_safe = getattr(self, "_shutdown_process_fail_safe", None)
-        if process_fail_safe is not None:
-            process_fail_safe.update_diagnostics(diagnostics)
-
-
-    def _shutdown_background_work_active(self):
-        """
-        Reports whether a qPlot worker still needs the Qt event loop.
-
-        """
-        diagnostics = []
-        active = False
-        pool_names = (
-            "threadPool",
-            "databaseLoadThreadPool",
-            "databaseDetailThreadPool",
-            "databaseExpensiveDetailThreadPool",
-            "databaseRefreshThreadPool",
-            "databaseSelectedRunThreadPool",
-            "testDatabaseGenerationThreadPool",
-        )
-        for pool_name in pool_names:
-            pool = getattr(self, pool_name, None)
-            if pool is None:
-                continue
-            try:
-                count = pool.activeThreadCount()
-            except BaseException as error:
-                active = True
-                diagnostics.append(
-                    f"pool {pool_name}: liveness raised "
-                    f"{type(error).__name__}: {error}"
-                )
-                continue
-            if count > 0:
-                active = True
-                diagnostics.append(f"pool {pool_name}: active_threads={count}")
-
-        reap_services = getattr(self, "_reap_retired_trusted_read_services", None)
-        if callable(reap_services):
-            try:
-                reap_services()
-            except BaseException as error:
-                active = True
-                diagnostics.append(
-                    "retired-service reaper raised "
-                    f"{type(error).__name__}: {error}"
-                )
-        diagnostics.extend(
-            getattr(self, "_retired_service_reap_diagnostics", {}).values()
-        )
-        services = set(getattr(self, "_retired_trusted_read_services", ()))
-        active_service = getattr(self, "_trusted_read_service", None)
-        if active_service is not None:
-            services.add(active_service)
-        services.update(
-            getattr(self, "_pending_trusted_read_services", {}).values()
-        )
-        for service in services:
-            service_label = (
-                f"{type(service).__module__}.{type(service).__qualname__}"
-                f"@{id(service):x}"
-            )
-            service_errors = []
-            for error_name in ("fatal_error", "close_error"):
-                try:
-                    service_error = getattr(service, error_name, None)
-                except BaseException as error:
-                    active = True
-                    service_errors.append(
-                        f"{error_name} probe raised {type(error).__name__}: {error}"
-                    )
-                    continue
-                if service_error is not None:
-                    service_errors.append(
-                        f"{error_name}={type(service_error).__name__}: {service_error}"
-                    )
-            try:
-                liveness = service.liveness()
-            except BaseException as error:
-                active = True
-                diagnostics.append(
-                    f"service {service_label}: liveness raised "
-                    f"{type(error).__name__}: {error}"
-                    + ("; " + "; ".join(service_errors) if service_errors else "")
-                )
-                continue
-            field_names = (
-                "dispatcher_alive",
-                "control_alive",
-                "helper_alive",
-                "helper_pid",
-                "receiver_alive",
-                "open_supervisor_endpoints",
-                "unreaped_incarnations",
-                "resource_cleanup_pending",
-                "outstanding_requests",
-                "closing",
-                "closed",
-            )
-            values = {
-                field_name: getattr(liveness, field_name, None)
-                for field_name in field_names
-            }
-            service_active = bool(
-                values["dispatcher_alive"]
-                or values["control_alive"]
-                or values["helper_alive"]
-                or values["receiver_alive"]
-                or values["open_supervisor_endpoints"]
-                or values["unreaped_incarnations"]
-                or values["resource_cleanup_pending"]
-                or values["outstanding_requests"]
-                or not values["closed"]
-            )
-            if service_active:
-                active = True
-                diagnostics.append(
-                    f"service {service_label}: "
-                    + ", ".join(
-                        f"{field_name}={values[field_name]!r}"
-                        for field_name in field_names
-                    )
-                    + ("; " + "; ".join(service_errors) if service_errors else "")
-                )
-
-        preview = getattr(getattr(self, "infoBox", None), "preview", None)
-        preview_workers = getattr(preview, "_workers", {})
-        if preview_workers:
-            active = True
-            diagnostics.append(f"preview_workers={len(preview_workers)}")
-        derived_bridge = getattr(self, "_trusted_derived_bridge", None)
-        if derived_bridge is not None:
-            try:
-                if derived_bridge.background_active():
-                    active = True
-                    diagnostic = derived_bridge.shutdown_diagnostic()
-                    if diagnostic:
-                        diagnostics.append(diagnostic)
-            except BaseException as error:
-                active = True
-                diagnostics.append(
-                    "trusted derived bridge liveness raised "
-                    f"{type(error).__name__}: {error}"
-                )
-        if not active and callable(reap_services):
-            # A broker can finish after the initial reap but before its
-            # liveness snapshot. Reap that newly closed reader before the
-            # shutdown path stops the reaper timer and accepts the close.
-            try:
-                reap_services()
-            except BaseException as error:
-                active = True
-                diagnostics.append(
-                    "final retired-service reap raised "
-                    f"{type(error).__name__}: {error}"
-                )
-        self._shutdown_liveness_diagnostics = tuple(diagnostics)
-        MainWindow._publish_shutdown_diagnostics(self)
-        return active
-
-
-    def _escalate_shutdown_cleanup(self):
-        """Repeat cancellation and zero-wait cleanup once during shutdown."""
-
-        if getattr(self, "_shutdown_cleanup_escalated", False):
-            return
-        self._shutdown_cleanup_escalated = True
-        escalation_diagnostics = []
-
-        try:
-            MainWindow._cancel_plot_work(self)
-        except BaseException as error:
-            escalation_diagnostics.append(
-                f"plot cancellation raised {type(error).__name__}: {error}"
-            )
-
-        for pool_name in (
-            "threadPool",
-            "databaseLoadThreadPool",
-            "databaseDetailThreadPool",
-            "databaseExpensiveDetailThreadPool",
-            "databaseRefreshThreadPool",
-            "databaseSelectedRunThreadPool",
-            "testDatabaseGenerationThreadPool",
-        ):
-            pool = getattr(self, pool_name, None)
-            clear = getattr(pool, "clear", None)
-            if not callable(clear):
-                continue
-            try:
-                clear()
-            except BaseException as error:
-                escalation_diagnostics.append(
-                    f"pool {pool_name} clear raised {type(error).__name__}: {error}"
-                )
-
-        preview = getattr(getattr(self, "infoBox", None), "preview", None)
-        shutdown = getattr(preview, "shutdown", None)
-        if callable(shutdown):
-            try:
-                shutdown()
-            except BaseException as error:
-                escalation_diagnostics.append(
-                    f"preview shutdown raised {type(error).__name__}: {error}"
-                )
-
-        derived_bridge = getattr(self, "_trusted_derived_bridge", None)
-        if derived_bridge is not None:
-            try:
-                derived_bridge.escalate_cleanup()
-            except BaseException as error:
-                escalation_diagnostics.append(
-                    "trusted derived cleanup raised "
-                    f"{type(error).__name__}: {error}"
-                )
-
-        services = set(getattr(self, "_retired_trusted_read_services", ()))
-        active_service = getattr(self, "_trusted_read_service", None)
-        if active_service is not None:
-            services.add(active_service)
-        services.update(
-            getattr(self, "_pending_trusted_read_services", {}).values()
-        )
-        for service in services:
-            escalate = getattr(service, "escalate_cleanup_async", None)
-            if not callable(escalate):
-                escalate = getattr(service, "close_async", None)
-            if not callable(escalate):
-                continue
-            try:
-                escalate()
-            except BaseException as error:
-                escalation_diagnostics.append(
-                    "service cleanup escalation raised "
-                    f"{type(error).__name__}: {error}"
-                )
-
-        reap_services = getattr(self, "_reap_retired_trusted_read_services", None)
-        if callable(reap_services):
-            try:
-                reap_services()
-            except BaseException as error:
-                escalation_diagnostics.append(
-                    "retired-service escalation reap raised "
-                    f"{type(error).__name__}: {error}"
-                )
-        if escalation_diagnostics:
-            self._shutdown_escalation_diagnostics = tuple(
-                (
-                    *getattr(self, "_shutdown_escalation_diagnostics", ()),
-                    *escalation_diagnostics,
-                )
-            )
-            MainWindow._publish_shutdown_diagnostics(self)
-
-
-    def _complete_deferred_shutdown(self, *, deadline_exhausted=False):
-        """Stop shutdown polling and make the next close event unconditional."""
-
-        shutdown_timer = getattr(self, "_shutdown_timer", None)
-        if shutdown_timer is not None:
-            shutdown_timer.stop()
-        reaper_timer = getattr(self, "_retired_service_reaper_timer", None)
-        if reaper_timer is not None:
-            reaper_timer.stop()
-
-        if deadline_exhausted:
-            diagnostics = tuple(getattr(self, "_shutdown_last_diagnostics", ()))
-            if not diagnostics:
-                diagnostics = ("background work remained active without diagnostics",)
-            self._shutdown_diagnostics = diagnostics
-            process_fail_safe = getattr(self, "_shutdown_process_fail_safe", None)
-            if process_fail_safe is not None:
-                process_fail_safe.update_diagnostics(diagnostics)
-                process_fail_safe.persist_async()
-            else:
-                started_at = getattr(self, "_shutdown_started_at", None)
-                if started_at is None:
-                    started_at = monotonic()
-                _persist_shutdown_diagnostics(
-                    started_at=started_at,
-                    total_timeout=_APPLICATION_SHUTDOWN_TIMEOUT_SECONDS,
-                    diagnostics=diagnostics,
-                )
-        self._shutdown_deadline_exhausted = bool(deadline_exhausted)
-
-        self._shutdown_started = False
-        self._shutdown_ready = True
-        qtw.QApplication.closeAllWindows()
-        application = qtw.QApplication.instance()
-        if application is not None and isinstance(self, qtw.QWidget):
-            application.quit()
+    def _shutdown_background_work_active(self) -> bool:
+        """Also used by the process entry point before destroying Qt ownership."""
+        return self._shutdown.background_work_active()
 
 
     @QtCore.pyqtSlot()
     def _finish_deferred_shutdown(self):
-        """
-        Finishes Quit after cancelled background workers have returned.
+        self._shutdown.poll()
 
-        """
-        if not getattr(self, "_shutdown_started", False):
-            return
-        active = MainWindow._shutdown_background_work_active(self)
-        if active and not getattr(self, "_shutdown_cleanup_escalated", False):
-            MainWindow._escalate_shutdown_cleanup(self)
-            active = MainWindow._shutdown_background_work_active(self)
 
-        deadline = getattr(self, "_shutdown_deadline", None)
-        if deadline is None:
-            deadline = monotonic() + _APPLICATION_SHUTDOWN_TIMEOUT_SECONDS
-            self._shutdown_deadline = deadline
-        if active and monotonic() < deadline:
-            return
-
-        MainWindow._complete_deferred_shutdown(
-            self,
-            deadline_exhausted=active,
-        )
-    
-   
     @QtCore.pyqtSlot()
     def closeAll(self):
         """

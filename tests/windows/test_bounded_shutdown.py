@@ -17,6 +17,7 @@ import pytest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows import main as main_window
+from tests._shutdown_harness import attach_shutdown
 from tests.test_shutdown_supervisor import _process_is_running
 
 
@@ -45,6 +46,7 @@ _REAL_QTHREADPOOL_SHUTDOWN_PROBE = textwrap.dedent(
     from qplot._shutdown_supervisor import ShutdownSupervisorClient
     from qplot.diagnostics import configure_logging
     from qplot.windows import main as main_window
+    from tests._shutdown_harness import attach_shutdown
 
     mode = sys.argv[1]
     log_path = Path(sys.argv[2])
@@ -99,6 +101,7 @@ _REAL_QTHREADPOOL_SHUTDOWN_PROBE = textwrap.dedent(
             )
 
     class Window(qtw.QMainWindow):
+        _shutdown_deadline_exhausted = main_window.MainWindow._shutdown_deadline_exhausted
         _finish_deferred_shutdown = (
             main_window.MainWindow._finish_deferred_shutdown
         )
@@ -113,17 +116,6 @@ _REAL_QTHREADPOOL_SHUTDOWN_PROBE = textwrap.dedent(
             self.monitor = SimpleNamespace(stop=lambda: None)
             self.startupDatabaseTimer = SimpleNamespace(stop=lambda: None)
             self._database_load_generation = 0
-            self._shutdown_started = False
-            self._shutdown_ready = False
-            self._shutdown_started_at = None
-            self._shutdown_deadline = None
-            self._shutdown_hard_deadline = None
-            self._shutdown_cleanup_escalated = False
-            self._shutdown_escalation_diagnostics = ()
-            self._shutdown_liveness_diagnostics = ()
-            self._shutdown_last_diagnostics = ()
-            self._shutdown_diagnostics = ()
-            self._shutdown_deadline_exhausted = False
             self._shutdown_process_fail_safe = process_fail_safe
             self._retired_trusted_read_services = (
                 {StuckService()} if mode != "graceful" else set()
@@ -138,20 +130,21 @@ _REAL_QTHREADPOOL_SHUTDOWN_PROBE = textwrap.dedent(
             self._shutdown_timer.timeout.connect(
                 self._finish_deferred_shutdown
             )
+            attach_shutdown(self)
             self.armed_hard_deadline = None
 
         def closeEvent(self, event):
             main_window.MainWindow.closeEvent(self, event)
             if (
-                self._shutdown_hard_deadline is not None
+                self._shutdown.state.hard_deadline is not None
                 and self.armed_hard_deadline is None
             ):
-                self.armed_hard_deadline = self._shutdown_hard_deadline
+                self.armed_hard_deadline = self._shutdown.state.hard_deadline
                 print(
                     "SHUTDOWN_ARMED "
-                    f"started={self._shutdown_started_at:.9f} "
-                    f"diagnostic={self._shutdown_deadline:.9f} "
-                    f"hard={self._shutdown_hard_deadline:.9f} "
+                    f"started={self._shutdown.state.started_at:.9f} "
+                    f"diagnostic={self._shutdown.state.diagnostic_deadline:.9f} "
+                    f"hard={self._shutdown.state.hard_deadline:.9f} "
                     f"failsafe_hard={self._shutdown_process_fail_safe._hard_deadline:.9f}",
                     flush=True,
                 )
@@ -191,7 +184,7 @@ _REAL_QTHREADPOOL_SHUTDOWN_PROBE = textwrap.dedent(
         f"deadline_exhausted={window._shutdown_deadline_exhausted} "
         f"at={time.monotonic():.9f} "
         f"deadline_unchanged="
-        f"{window._shutdown_hard_deadline == window.armed_hard_deadline} "
+        f"{window._shutdown.state.hard_deadline == window.armed_hard_deadline} "
         f"failsafe_deadline_unchanged="
         f"{process_fail_safe._hard_deadline == window.armed_hard_deadline}",
         flush=True,
@@ -283,6 +276,7 @@ _CONFIRMATION_REJECTION_PROBE = textwrap.dedent(
     from PyQt6 import QtWidgets as qtw
     from qplot._shutdown_supervisor import ShutdownSupervisorClient
     from qplot.windows import main as main_window
+    from tests._shutdown_harness import attach_shutdown
 
     main_window._APPLICATION_SHUTDOWN_TIMEOUT_SECONDS = 0.12
 
@@ -293,6 +287,7 @@ _CONFIRMATION_REJECTION_PROBE = textwrap.dedent(
             super().__init__()
             self.config = SimpleNamespace(get=lambda _key: True)
             self._shutdown_process_fail_safe = process_fail_safe
+            attach_shutdown(self)
 
     application = qtw.QApplication.instance() or qtw.QApplication([])
     supervisor_client = ShutdownSupervisorClient.from_environment().connect()
@@ -346,10 +341,6 @@ def test_normal_zero_resource_shutdown_finishes_immediately(
             self.stopped = True
 
     harness = SimpleNamespace(
-        _shutdown_started=True,
-        _shutdown_ready=False,
-        _shutdown_cleanup_escalated=False,
-        _shutdown_deadline=None,
         _shutdown_timer=Timer(),
         _retired_trusted_read_services=set(),
         _pending_trusted_read_services={},
@@ -365,11 +356,11 @@ def test_normal_zero_resource_shutdown_finishes_immediately(
         lambda *args, **kwargs: logged.append((args, kwargs)),
     )
 
-    main_window.MainWindow._finish_deferred_shutdown(harness)
+    attach_shutdown(harness, waiting=True).poll()
 
     assert harness._shutdown_timer.stopped
-    assert not harness._shutdown_started
-    assert harness._shutdown_ready
+    assert not harness._shutdown.waiting
+    assert harness._shutdown.ready
     assert closed == [True]
     assert logged == []
 
@@ -402,6 +393,7 @@ def test_cancelled_confirmation_never_arms_process_fail_safe(
     )
     event = Event()
 
+    attach_shutdown(harness)
     main_window.MainWindow.closeEvent(harness, event)
 
     assert event.ignored
@@ -886,6 +878,7 @@ def test_qt_subprocess_exits_at_one_deadline_with_exact_diagnostics(
         from PyQt6 import QtCore
         from PyQt6 import QtWidgets as qtw
         from qplot.windows import main as main_window
+        from tests._shutdown_harness import attach_shutdown
 
         mode = __MODE__
         main_window._APPLICATION_SHUTDOWN_TIMEOUT_SECONDS = 0.12
@@ -940,12 +933,6 @@ def test_qt_subprocess_exits_at_one_deadline_with_exact_diagnostics(
             _shutdown_background_work_active = (
                 main_window.MainWindow._shutdown_background_work_active
             )
-            _escalate_shutdown_cleanup = (
-                main_window.MainWindow._escalate_shutdown_cleanup
-            )
-            _complete_deferred_shutdown = (
-                main_window.MainWindow._complete_deferred_shutdown
-            )
             _finish_deferred_shutdown = (
                 main_window.MainWindow._finish_deferred_shutdown
             )
@@ -959,13 +946,6 @@ def test_qt_subprocess_exits_at_one_deadline_with_exact_diagnostics(
                 self.monitor = SimpleNamespace(stop=lambda: None)
                 self.startupDatabaseTimer = SimpleNamespace(stop=lambda: None)
                 self._database_load_generation = 0
-                self._shutdown_started = False
-                self._shutdown_ready = False
-                self._shutdown_cleanup_escalated = False
-                self._shutdown_started_at = None
-                self._shutdown_deadline = None
-                self._shutdown_last_diagnostics = ()
-                self._shutdown_diagnostics = ()
                 self._retired_trusted_read_services = set()
                 self._pending_trusted_read_services = {}
                 self._trusted_read_service = service
@@ -977,6 +957,7 @@ def test_qt_subprocess_exits_at_one_deadline_with_exact_diagnostics(
                 self._shutdown_timer.timeout.connect(
                     self._finish_deferred_shutdown
                 )
+                attach_shutdown(self)
 
             def close_plot_windows(self, *, confirm, status):
                 return True
@@ -996,7 +977,7 @@ def test_qt_subprocess_exits_at_one_deadline_with_exact_diagnostics(
         QtCore.QTimer.singleShot(2000, lambda: application.exit(91))
         exit_code = application.exec()
         elapsed = monotonic() - started
-        diagnostics = "\\n".join(window._shutdown_diagnostics)
+        diagnostics = "\\n".join(window._shutdown.state.final_diagnostics)
         print(
             f"exit={exit_code} elapsed={elapsed:.3f} "
             f"escalations={service.escalations} diagnostics={diagnostics}",
@@ -1010,7 +991,7 @@ def test_qt_subprocess_exits_at_one_deadline_with_exact_diagnostics(
             raise AssertionError(f"cleanup escalations={service.escalations}")
         if service.close_async_calls != 1:
             raise AssertionError(f"close_async calls={service.close_async_calls}")
-        if window._shutdown_deadline is None:
+        if window._shutdown.state.diagnostic_deadline is None:
             raise AssertionError("closeEvent did not install a shutdown deadline")
         if not records:
             raise AssertionError("deadline exhaustion was not logged")
@@ -1070,6 +1051,6 @@ def test_shutdown_reaps_reader_that_closes_during_liveness_probe():
     window._reap_retired_trusted_read_services = lambda: (
         main_window.MainWindow._reap_retired_trusted_read_services(window)
     )
-    assert not main_window.MainWindow._shutdown_background_work_active(window)
+    assert not attach_shutdown(window).background_work_active()
     assert not window._retired_trusted_read_services
-    assert window._shutdown_last_diagnostics == ()
+    assert window._shutdown.state.diagnostics == ()

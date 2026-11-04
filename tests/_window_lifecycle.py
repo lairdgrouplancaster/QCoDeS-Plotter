@@ -4,25 +4,6 @@ import time
 
 from PyQt6 import QtCore, QtWidgets, sip
 
-_WORKER_NAMES = (
-    "_database_load_worker",
-    "_database_detail_worker",
-    "_database_expensive_detail_worker",
-    "_database_refresh_worker",
-    "_database_selected_run_worker",
-    "_test_database_generation_worker",
-)
-
-_POOL_NAMES = (
-    "threadPool",
-    "databaseLoadThreadPool",
-    "databaseDetailThreadPool",
-    "databaseExpensiveDetailThreadPool",
-    "databaseRefreshThreadPool",
-    "databaseSelectedRunThreadPool",
-    "testDatabaseGenerationThreadPool",
-)
-
 
 def close_main_window(window, timeout_ms=12_000):
     """Cancel and join window work before releasing its database snapshots."""
@@ -45,15 +26,11 @@ def close_main_window(window, timeout_ms=12_000):
         bridge.shutdown()
     window.close_plot_windows(confirm=False, status=False)
 
-    for worker_name in _WORKER_NAMES:
-        worker = getattr(window, worker_name, None)
-        cancel = getattr(worker, "cancel", None)
-        if callable(cancel):
-            cancel()
+    resources = window._shutdown.resources
+    resources.cancel_database_workers()
     window._cancel_plot_work()
 
-    for pool_name in _POOL_NAMES:
-        pool = getattr(window, pool_name)
+    for pool_name, pool in resources.pools:
         if not pool.waitForDone(timeout_ms):
             active_threads = pool.activeThreadCount()
             raise AssertionError(
@@ -71,7 +48,7 @@ def close_main_window(window, timeout_ms=12_000):
     while window._shutdown_background_work_active():
         if time.monotonic() >= deadline:
             raise AssertionError(
-                f"Window background work did not stop: {window._shutdown_last_diagnostics}"
+                f"Window background work did not stop: {window._shutdown.state.diagnostics}"
             )
         if app is not None:
             app.processEvents()

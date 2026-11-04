@@ -2491,17 +2491,21 @@ def exercise_stage5c_mixed_size_wal_priority(temporary):
         state = {}
         try:
             attributes = vars(window) if window is not None else {}
-            state["shutdown"] = {}
-            for name in (
-                "_shutdown_ready", "_shutdown_started",
-                "_shutdown_deadline_exhausted", "_shutdown_cleanup_escalated",
-            ):
-                value = attributes.get(name)
+            coordinator = attributes.get("_shutdown")
+            shutdown_state = vars(coordinator.state) if coordinator is not None else {}
+            state["shutdown"] = {
+                "phase": getattr(shutdown_state.get("phase"), "name", None),
+            }
+            for name in ("deadline_exhausted", "cleanup_escalated"):
+                value = shutdown_state.get(name)
                 state["shutdown"][name] = (
                     value if value is None or type(value) is bool
                     else f"<{type(value).__name__}>"
                 )
-            messages = attributes.get("_shutdown_last_diagnostics", ())
+            messages = (
+                shutdown_state.get("escalation_diagnostics", ())
+                + shutdown_state.get("liveness_diagnostics", ())
+            )
             messages = messages[:8] if type(messages) in (tuple, list) else ()
             state["last_diagnostics"] = [
                 message[:256] if isinstance(message, str) else type(message).__name__
@@ -3188,7 +3192,7 @@ def exercise_stage5c_mixed_size_wal_priority(temporary):
         )
         normal_close_completed = True
         assert not window._shutdown_deadline_exhausted
-        assert window._shutdown_diagnostics == ()
+        assert window._shutdown.state.final_diagnostics == ()
         assert window._trusted_read_service is None
         assert not window._pending_trusted_read_services
         assert not window._retired_trusted_read_services
