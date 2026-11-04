@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
@@ -5,6 +6,7 @@ from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.qcodes_cache import (
+    CacheParameterPublicationState,
     cache_has_no_written_data,
     cache_is_live,
     cache_parameter_is_synchronized,
@@ -65,11 +67,61 @@ def plot_refresh_required(source: Any) -> bool:
     return bool(getattr(dataset, "running", False))
 
 
+@dataclass
+class RefreshPublication:
+    """GUI-owned rollback state for the latest plot publication.
+
+    A reentrant callback replaces this record. An older callback may finish,
+    but must neither restore its fields nor discard the newer record.
+    """
+
+    worker: Any
+    generation: int
+    cache: Any
+    parameter_name: str
+    prior_cache: CacheParameterPublicationState | None
+    fields: dict[str, tuple[bool, Any]]
+    committed_cache: CacheParameterPublicationState | None = None
+
+    def owns(self, worker: Any, generation: int) -> bool:
+        return self.worker is worker and self.generation == generation
+
+    def record_cache(self) -> None:
+        if self.prior_cache is not None:
+            self.committed_cache = snapshot_cache_parameter_publication_state(
+                self.cache, self.parameter_name,
+            )
+
+    def rollback(self, plot_fields: dict[str, Any]) -> None:
+        if self.committed_cache is not None:
+            restore_cache_parameter_publication_state(
+                self.cache, self.parameter_name,
+                self.prior_cache, self.committed_cache,
+            )
+        for name, (present, value) in self.fields.items():
+            if present:
+                plot_fields[name] = value
+            else:
+                plot_fields.pop(name, None)
+
+
 class PlotRefreshMixin(_PlotRefreshBase):
     """
     Worker-backed plot refresh orchestration shared by plot windows.
 
     """
+
+    _refresh_publication: RefreshPublication | None = None
+
+    def _refresh_publication_for(self, worker: Any) -> RefreshPublication | None:
+        publication = self._refresh_publication
+        if publication is not None and publication.worker is worker:
+            return publication
+        return None
+
+    def _discard_refresh_publication(self, worker: Any) -> None:
+        if self._refresh_publication_for(worker) is not None:
+            self._refresh_publication = None
 
     def _can_process_refresh(self) -> bool:
         """Return whether this window still has an active dataset owner."""
@@ -172,63 +224,36 @@ class PlotRefreshMixin(_PlotRefreshBase):
             # status mappings. They cannot receive the shared-cache mutation
             # guarded here, but their plot fields still need rollback state.
             prior_cache = None
-        worker._qplot_publication_snapshot = {
-            "cache": cache,
-            "parameter_name": parameter_name,
-            "prior_cache": prior_cache,
-            "committed_cache": None,
-            "fields": fields,
-            "generation": publication_generation,
-        }
+        self._refresh_publication = RefreshPublication(
+            worker=worker,
+            generation=publication_generation,
+            cache=cache,
+            parameter_name=parameter_name,
+            prior_cache=prior_cache,
+            fields=fields,
+        )
         worker._qplot_source_rejected = False
 
 
-    @staticmethod
-    def _record_refresh_cache_publication(worker: Any) -> None:
-        snapshot = getattr(worker, "_qplot_publication_snapshot", None)
-        if (
-                not isinstance(snapshot, dict)
-                or snapshot.get("prior_cache") is None
-                ):
-            return
-        snapshot["committed_cache"] = snapshot_cache_parameter_publication_state(
-            snapshot["cache"],
-            snapshot["parameter_name"],
-        )
+    def _record_refresh_cache_publication(self, worker: Any) -> None:
+        publication = self._refresh_publication_for(worker)
+        if publication is not None:
+            publication.record_cache()
 
 
     def _rollback_refresh_publication(self, worker: Any) -> None:
         """Remove stale cache/axis state before replacement recovery runs."""
 
-        snapshot = getattr(worker, "_qplot_publication_snapshot", None)
-        if not isinstance(snapshot, dict):
+        publication = self._refresh_publication_for(worker)
+        if publication is None:
             return
-        owns_publication = bool(
-            self.__dict__.get("_qplot_publication_generation")
-            == snapshot.get("generation")
-            and worker is self.__dict__.get("worker")
-        )
-        if not owns_publication:
-            worker._qplot_display_commit_ready = False
-            worker._qplot_source_rejected = True
-            worker._qplot_publication_snapshot = None
-            return
-        committed_cache = snapshot.get("committed_cache")
-        if committed_cache is not None:
-            restore_cache_parameter_publication_state(
-                snapshot["cache"],
-                snapshot["parameter_name"],
-                snapshot["prior_cache"],
-                committed_cache,
-            )
-        for name, (present, value) in snapshot["fields"].items():
-            if present:
-                self.__dict__[name] = value
-            else:
-                self.__dict__.pop(name, None)
+        if publication.owns(
+                self.__dict__.get("worker"), self._qplot_publication_generation,
+                ):
+            publication.rollback(self.__dict__)
         worker._qplot_display_commit_ready = False
         worker._qplot_source_rejected = True
-        worker._qplot_publication_snapshot = None
+        self._discard_refresh_publication(worker)
 
 
     def _refresh_publication_source_is_current(
@@ -239,21 +264,19 @@ class PlotRefreshMixin(_PlotRefreshBase):
             ) -> bool:
         """Guard one cache/display publication boundary and fail closed."""
 
-        snapshot = getattr(worker, "_qplot_publication_snapshot", None)
-        if isinstance(snapshot, dict):
-            owns_publication = bool(
-                self.__dict__.get("_qplot_publication_generation")
-                == snapshot.get("generation")
-                and worker is self.__dict__.get("worker")
-            )
-            if not owns_publication:
+        publication = self._refresh_publication_for(worker)
+        if publication is not None:
+            if not publication.owns(
+                    self.__dict__.get("worker"), self._qplot_publication_generation,
+                    ):
                 # A nested same-source callback already owns the plot.  The
                 # older callback must stop harmlessly: rollback or renderer
                 # clearing here would corrupt the newer accepted publication.
                 worker._qplot_display_commit_ready = False
-                worker._qplot_publication_snapshot = None
+                self._discard_refresh_publication(worker)
                 return False
         elif worker is not self.__dict__.get("worker"):
+            worker._qplot_display_commit_ready = False
             return False
 
         if self._source_database_matches_key():
@@ -270,7 +293,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
             ) -> None:
         """Release rollback state after the concrete display committed."""
 
-        worker._qplot_publication_snapshot = None
+        self._discard_refresh_publication(worker)
         overlay = self.__dict__.get("plot_state_overlay")
         if overlay is not None:
             overlay.finish(worker)
@@ -749,7 +772,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                         ),
                     )
                 if not cache_updated:
-                    worker._qplot_publication_snapshot = None
+                    self._discard_refresh_publication(worker)
                     self._queue_pending_refresh()
                     self.show_status(
                         "A newer refresh finished first; synchronising this plot...",
@@ -882,7 +905,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
             self.show_plot_state("Refresh skipped", str(err), kind="error")
             if not self._refresh_publication_source_is_current(worker):
                 return False
-            worker._qplot_publication_snapshot = None
+            self._discard_refresh_publication(worker)
             return None
 
         except Exception:
@@ -890,10 +913,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
             # publication raises.  Roll back an owned partial publication here;
             # a source mismatch performs the same rollback and recovery inside
             # the guard, while lost ownership leaves the newer callback alone.
-            if isinstance(
-                    getattr(worker, "_qplot_publication_snapshot", None),
-                    dict,
-                    ):
+            if self._refresh_publication_for(worker) is not None:
                 if self._refresh_publication_source_is_current(worker):
                     self._rollback_refresh_publication(worker)
             if worker is self.__dict__.get("worker"):

@@ -572,10 +572,7 @@ class plot2d(
             overlay = self.__dict__.get("plot_state_overlay")
             if overlay is not None:
                 overlay.finish(plot_worker)
-            if isinstance(
-                    getattr(plot_worker, "_qplot_publication_snapshot", None),
-                    dict,
-                    ):
+            if self._refresh_publication_for(plot_worker) is not None:
                 if self._refresh_publication_source_is_current(
                         plot_worker,
                         clear_display=clear_display,

@@ -103,6 +103,14 @@ orchestration: deciding whether to read from the database or cached data,
 starting workers, applying worker results back to plot-window state, and
 surfacing worker failures.
 
+The plot window owns one typed `RefreshPublication` rollback record for the
+latest callback. It captures the prior cache parameter and plot fields, records
+the cache values actually published, and conditionally restores them if the
+source changes before rendering finishes. A nested newer callback replaces the
+record; an older callback cannot restore or discard the newer state. Source
+checks remain at the cache and renderer publication boundaries. Worker result
+data and completion signals remain separate from this GUI-owned rollback state.
+
 `src/qplot/windows/_dataset_handle.py` defines the small `DatasetHandle`
 structure used by the main window and plot windows to track an open dataset,
 its active plot-window user count, and any delayed-release timer.

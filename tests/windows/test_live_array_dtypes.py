@@ -157,7 +157,7 @@ def test_live_planned_array_dtype_change(
                 assert all(getattr(plot, name) is value for name, value in fields.items())
                 assert not plot._qplot_display_synchronized
                 assert not cache_parameter_is_synchronized(cache, "signal")
-                assert not isinstance(getattr(plot.worker, "_qplot_publication_snapshot", None), dict)
+                assert plot._refresh_publication is None
                 # The worker's private merge must reach validation with all
                 # imaginary components intact; failed data stays unpublished.
                 np.testing.assert_array_equal(plot.worker.cache_data["signal"][column], expected[column])

@@ -5,7 +5,7 @@ import numpy as np
 
 from qplot.windows._dataset_handle import DatasetKey
 from qplot.windows._plot_actions import PlotActionsMixin
-from qplot.windows._plot_refresh import PlotRefreshMixin
+from qplot.windows._plot_refresh import PlotRefreshMixin, RefreshPublication
 from qplot.windows._widgets.preview import (
     PreviewTab,
     render_displayed_plot_preview,
@@ -63,20 +63,18 @@ def test_partial_plot_previews_fill_selected_run_then_yield_to_full_result(qappl
 
 def test_completed_plot_publishes_only_unmodified_committed_data():
     published = []
-    plot = SimpleNamespace(
-        _source_database_matches_key=lambda: True,
-    )
+    plot = PlotRefreshMixin()
     # The callback is installed on each plot by MainWindow.
     plot.__dict__["_plot_preview_sink"] = lambda _plot, _worker: published.append(True)
     worker = SimpleNamespace(
-        _qplot_publication_snapshot={"generation": 1},
         dataset_completed=True,
         operations={},
         is_cancelled=lambda: False,
     )
-    PlotRefreshMixin._commit_refresh_publication(plot, worker, preview_ready=True)
+    plot._refresh_publication = RefreshPublication(worker, 1, None, "signal", None, {})
+    plot._commit_refresh_publication(worker, preview_ready=True)
     assert published == [True]
-    assert worker._qplot_publication_snapshot is None
+    assert plot._refresh_publication is None
 
     worker.operations = {"differentiate": object()}
     PlotRefreshMixin._commit_refresh_publication(plot, worker, preview_ready=True)
