@@ -15,7 +15,9 @@ from qcodes.dataset import initialise_or_create_database_at
 from qplot.datahandling.file_identity import (
     SQLITE_SIDECAR_SUFFIXES,
     database_file_identity,
+    database_instance,
 )
+from qplot.windows._database_load_state import DatabaseLoadSession
 from qplot.windows._dataset_handle import DatasetKey
 from qplot.windows._export_paths import (
     UnsafeExportDestinationError,
@@ -26,6 +28,22 @@ from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._plot_export import PlotExportMixin
 
 _DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
+
+
+@pytest.mark.parametrize("suffix", _DATABASE_ARTIFACT_SUFFIXES)
+def test_pending_load_reserves_database_and_sidecar_paths(tmp_path, suffix):
+    # No SQLite header or committed view: protection must come from the session.
+    database_path = tmp_path / "pending.data"
+    owner = SimpleNamespace(
+        _database_load_state=DatabaseLoadSession(
+            abspath=str(database_path),
+            load_instance=database_instance(database_path),
+        ),
+    )
+    target = Path(f"{database_path}{suffix}")
+    with pytest.raises(UnsafeExportDestinationError):
+        prepare_export_destination(owner, str(target))
+    assert not target.exists()
 
 
 @pytest.fixture

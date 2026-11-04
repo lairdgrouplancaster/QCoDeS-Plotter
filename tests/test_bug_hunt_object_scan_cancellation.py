@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import qplot.tools.worker as worker_module
+from tests._plot_worker import make_plot_worker
 from tests.test_worker_array_heatmaps import heatmap_dataset, make_worker
 
 
@@ -68,7 +69,7 @@ def test_real_mixed_records_cancel_during_classification(
 
 @pytest.mark.parametrize("method_name", ["_real_line_values", "_real_heatmap_values"])
 def test_object_complex_validation_cancels_and_retains_late_rejection(monkeypatch, method_name):
-    worker = worker_module.loader.__new__(worker_module.loader)
+    worker = make_plot_worker()
     worker.param = SimpleNamespace(name="signal")
     values = np.arange(4096).astype(object)
     values[-1] = 1j

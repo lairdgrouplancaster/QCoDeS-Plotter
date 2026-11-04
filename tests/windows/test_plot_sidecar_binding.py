@@ -347,7 +347,7 @@ def test_attribute_error_after_swap_rolls_back_before_soft_error(tmp_path):
         path for (path,) in plot.database_replaced.values
     ) == _normalized_paths([database_path])
     assert not any("Refresh skipped" in message for message, *_rest in plot.statuses)
-    assert worker._qplot_publication_snapshot is None
+    assert plot._refresh_publication_for(worker) is None
 
 
 def test_older_callback_rollback_cannot_clobber_reentrant_newer_publication():
@@ -390,12 +390,15 @@ def test_older_callback_rollback_cannot_clobber_reentrant_newer_publication():
     plot.ds.cache._data["signal"] = "newer-cache"
     plot._record_refresh_cache_publication(newer_worker)
 
+    newer_publication = plot._refresh_publication_for(newer_worker)
     plot._rollback_refresh_publication(older_worker)
+    plot._commit_refresh_publication(older_worker)
+    assert plot._refresh_publication_for(newer_worker) is newer_publication
 
     assert plot.axis_data == "newer-axis"
     assert plot.ds.cache._data["signal"] == "newer-cache"
-    assert isinstance(newer_worker._qplot_publication_snapshot, dict)
-    assert older_worker._qplot_publication_snapshot is None
+    assert plot._refresh_publication_for(newer_worker) is not None
+    assert plot._refresh_publication_for(older_worker) is None
 
 
 def test_old_line_callback_cannot_render_after_reentrant_newer_publication(
@@ -503,7 +506,7 @@ def test_old_line_callback_cannot_render_after_reentrant_newer_publication(
     ]
     assert plot.trace_updated.values == []
     assert plot.database_replaced.values == []
-    assert older_worker._qplot_publication_snapshot is None
+    assert plot._refresh_publication_for(older_worker) is None
 
 
 def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
@@ -512,12 +515,14 @@ def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
     older_worker = _RefreshWorker(running=True)
     older_worker.loaded_from_sql_heatmap = False
     older_worker.dataset_completed = False
-    older_worker._qplot_publication_snapshot = {"generation": 1}
     newer_worker = _RefreshWorker(running=True)
 
     plot = plot2d.__new__(plot2d)
     plot.worker = older_worker
     plot._qplot_publication_generation = 1
+    plot._refresh_publication = plot_refresh_module.RefreshPublication(
+        older_worker, 1, None, "signal", None, {},
+    )
     plot.param = type("Param", (), {"name": "signal"})()
     plot.renderer_state = "older geometry"
     plot.statuses = []
@@ -554,7 +559,7 @@ def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
     assert plot.renderer_state == "newer renderer"
     assert plot.statuses == [("newer status", 5000)]
     assert plot.states == [(("Newer plot state",), {})]
-    assert older_worker._qplot_publication_snapshot is None
+    assert plot._refresh_publication_for(older_worker) is None
 
 
 def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path):

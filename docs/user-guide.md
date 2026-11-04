@@ -67,8 +67,8 @@ detail state: row selection starts no selected-detail reader, prepares no
 additional selected-detail snapshot, and creates no QCoDeS `DataSet`. A trusted
 detail error likewise does not trigger an automatic fallback copy. This applies
 only to ordinary selection: fallback metadata and retained preview paths can
-still create private snapshots. Explicit plot and CSV actions still materialise
-their action-owned snapshots.
+still create private snapshots. Fallback plot actions and CSV actions still
+materialise their action-owned snapshots; trusted plots use the broker.
 
 The indexed result `id` watermark counts physical QCoDeS rows, which can exceed
 scientific points when dependents are interleaved or stored in blocks. A valid
@@ -122,9 +122,8 @@ state.
 
 ### Snapshot fallback and deferred actions
 
-The retained snapshot path is used for the narrow fallback above, explicit plot
-or CSV actions that still need a QCoDeS `DataSet`, and the deferred Database
-Information diagnostic. A quiescent
+The retained snapshot path is used for the narrow fallback above, fallback plot
+actions, CSV actions, and the deferred Database Information diagnostic. A quiescent
 rollback-format source can use SQLite's normal read-only locking. A checkpointed
 WAL-format source is copied to a private snapshot before immutable read-only
 mode is used. An observed rollback `-journal` is copied with the main database
@@ -144,8 +143,9 @@ legacy preview or thumbnail snapshot workers during a trusted live session.
 Snapshot fallback sessions may retain their current preview behavior. The
 trusted Stage 5C scheduler instead produces bounded derived thumbnails and
 previews through the persistent helper and version-3 derived cache. Explicit
-plot and CSV actions remain available through their action-owned snapshots and
-the selected GUID and exact database instance.
+trusted plots capture or aggregate the selected run through the broker. CSV
+actions retain their action-owned snapshots. Both address the selected GUID and
+exact database instance.
 
 Generated test databases carry provenance for snapshot consumers that ordinary
 SQLite files lack: a unique generation token and a bounded chain of random,
@@ -455,10 +455,14 @@ Line plots require real-valued measurements and coordinates, including samples
 stored in QCoDeS array parameters. Complex values produce a `Plot Error` naming
 the unsupported parameter. Raw measurement CSV exports preserve complex values.
 
-Plot and CSV requests are the deliberate Stage 4 boundary: the action addresses
-the selected GUID and exact database instance, then acquires an action-owned
-snapshot and materialises the QCoDeS dataset. Merely loading, selecting, or
-scrolling a trusted live database does not do this work or copy the database.
+Trusted plot actions request a connection-free run description, then capture
+that run’s result prefix or aggregate a large numeric heatmap through the broker.
+Private prefix staging contains the selected run, not a whole-database snapshot.
+Trusted plotting needs neither a writer checkpoint nor generation provenance.
+CSV and fallback plot actions still use action-owned snapshots and materialise a
+QCoDeS dataset. All actions remain bound to the selected GUID and exact database
+instance. See [explicit plotting](trusted-live-reader.md#explicit-plotting) for
+capture limits and progress reporting.
 
 Plot windows may appear before their data has finished loading. Check the plot
 window refresh toolbar; unless qPlot stops responding or shows an error, wait for the

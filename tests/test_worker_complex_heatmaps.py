@@ -12,6 +12,7 @@ from qcodes.dataset import (
 
 import qplot.tools.worker as worker_module
 from qplot.datahandling.readonly import load_by_id_read_only
+from tests._plot_worker import make_plot_worker
 
 
 def _run_worker(worker):
@@ -23,7 +24,7 @@ def _run_worker(worker):
 
 
 def _bare_worker():
-    worker = worker_module.loader.__new__(worker_module.loader)
+    worker = make_plot_worker()
     worker.axes_dict = {"x": "fast", "y": "slow"}
     worker.param = type(
         "Param",

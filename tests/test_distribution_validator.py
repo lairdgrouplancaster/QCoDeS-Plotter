@@ -209,6 +209,26 @@ def test_wheel_smoke_exercises_mixed_size_live_wal_priority() -> None:
         assert required_contract in function_source
 
 
+def test_generated_wal_smoke_completes_real_window_shutdown(tmp_path) -> None:
+    # Execute the same scenario used by installed-wheel acceptance. Static
+    # contract checks cannot detect stale attributes after an ownership move.
+    smoke = wheel_smoke_code()
+    prefix, guard, _main_call = smoke.rpartition('if __name__ == "__main__":')
+    assert guard
+    script = tmp_path / "wal_shutdown_smoke.py"
+    script.write_text(
+        prefix + guard + '\n    exercise_stage5c_mixed_size_wal_priority(sys.argv[1])\n',
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [sys.executable, str(script), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_wheel_smoke_exercises_installed_exact_process_supervision() -> None:
     smoke = wheel_smoke_code()
     compile(smoke, "<qplot-wheel-smoke>", "exec")

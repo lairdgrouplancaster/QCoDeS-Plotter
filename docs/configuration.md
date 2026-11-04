@@ -83,6 +83,13 @@ with the exact current schema defaults. If that backup already exists,
 QCoDeS-Plotter uses the next available numbered backup, such as
 `config.invalid.1.json`.
 
+If backup or replacement fails, startup continues with defaults in memory and a
+warning that recovery could not be saved. A failed backup prevents replacement
+of the original. Unreadable settings are also left untouched while defaults are
+used for that session. Check the diagnostic log and access permissions on the
+settings file and directory before retrying; starting successfully does not
+mean recovered settings were persisted.
+
 Config keys use dotted paths in code and in `qplot-cfg`, for example
 `user_preference.default_refresh_rate`.
 
@@ -91,13 +98,23 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | Key | Type | Default | Validation | Purpose |
 | --- | --- | --- | --- | --- |
 | `GUI.plot_frame_fraction` | number | `0.47` | `0 < value < 1` | Fraction of a plot window used for the plot frame. |
-| `GUI.main_frame_size` | integer array | `[780, 700]` | exactly 2 items | Initial main-window width and height. |
+| `GUI.main_frame_size` | integer array | `[780, 700]` | exactly 2 items, each `1 <= value <= 16777215` | Initial main-window width and height. |
 | `GUI.preview_size` | integer | `200` | `50 <= value <= 1000` | Preview thumbnail size in pixels. |
-| `GUI.run_table_column_widths` | integer array | `[]` | empty or exactly 12 items, each at least 32 | Saved run-table column widths in display order; an empty array uses responsive widths. |
+| `GUI.run_table_column_widths` | integer array | `[]` | empty or exactly 12 items, each `32 <= value <= 16777215` | Saved run-table column widths in display order; an empty array uses responsive widths. |
 | `GUI.run_table_visible_columns` | string array | `["run_id", "measurements", "setpoints", "started", "status", "duration", "size"]` | unique run-table column IDs | Columns shown in the run table, in the table's fixed display order. |
 | `file.default_load_path` | string | `""` | any string | Default folder for selecting database files. |
 | `file.last_testdata_csv_directory` | string | `""` | any string | Automatically remembered folder for test-data CSV selection and export. |
 | `file.recent_file_paths` | string array | `[]` | at most 10 unique strings | Recent database files shown by the application, newest first. |
+| `user_preference.csv_filename_format` | string | `"current"` | `current` or `qcodes` | Default CSV filename convention. |
+| `user_preference.show_source_annotation` | boolean | `true` | `true` or `false` | Show source annotations in plot windows. |
+| `user_preference.cursor_significant_figures` | integer | `6` | `1 <= value <= 17` | Significant figures in cursor readouts. |
+| `user_preference.font_size` | integer | `10` | `6 <= value <= 36` | Application font size in points. |
+| `user_preference.plot_tile_rows` | integer | `2` | `1 <= value <= 10` | Rows in the plot tiling grid. |
+| `user_preference.plot_tile_columns` | integer | `3` | `1 <= value <= 10` | Columns in the plot tiling grid. |
+| `user_preference.colorbar_width` | integer | `15` | `1 <= value <= 500` | Heatmap colorbar width in pixels. |
+| `user_preference.axis_tick_width` | number | `2` | `0.5 <= value <= 10` | Plot axis tick width. |
+| `user_preference.axis_major_tick_count` | integer | `3` | `2 <= value <= 10` | Target major tick count for plot axes. |
+| `user_preference.confirm_incompatible_axes` | boolean | `true` | `true` or `false` | Confirm drops with incompatible axis assignments. |
 | `user_preference.theme` | string | `"light"` | `light`, `dark`, or `pyqt` | Active application theme. |
 | `user_preference.bar_colour` | string | `"viridis"` | any string | Default 2D colour map name. |
 | `user_preference.bar_colour_include_cet` | boolean | `true` | `true` or `false` | Show colour maps from `colorcet`. |
@@ -123,8 +140,8 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.auto_plot` | boolean | `false` | `true` or `false` | Automatically open newly detected runs. |
 | `user_preference.mouse_mode` | string | `"pan"` | `pan` or `rect` | Default plot mouse interaction mode. |
 | `user_preference.copy_plot_image_resolution` | string | `"screen"` | `screen`, `dpi_300`, or `svg` | Format/resolution used by plot-window Copy Plot Image. |
-| `user_preference.default_refresh_rate` | number | `1` | `value >= 0` | Default plot refresh interval. |
-| `runtime_settings.max_threads` | integer | `4` | `value >= 1` | Maximum worker threads for background loading. |
+| `user_preference.default_refresh_rate` | number | `1` | `0 <= value <= 10000` | Default main/plot refresh interval in seconds; zero disables automatic refresh. |
+| `runtime_settings.max_threads` | integer | `4` | `1 <= value <= 999` | Maximum worker threads for background loading. |
 | `runtime_settings.max_full_heatmap_points` | integer | `2000000` | `1 <= value <= 2000000000` | Maximum estimated points loaded at full resolution before 2D plot windows use SQL spatial aggregation. |
 | `runtime_settings.max_heatmap_grid_cells` | integer | `250000` | `1 <= value <= 2000000000` | Maximum cells in a downsampled heatmap display grid. |
 | `runtime_settings.max_heatmap_grid_side` | integer | `800` | `1 <= value <= 2000000000` | Maximum bins on either axis of a downsampled heatmap display grid. |

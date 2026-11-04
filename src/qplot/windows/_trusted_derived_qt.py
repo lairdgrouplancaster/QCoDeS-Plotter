@@ -9,13 +9,9 @@ decoding, identity validation, and widget mutation happens on the Qt thread.
 from __future__ import annotations
 
 import hashlib
-import queue
 import threading
-import time
-from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any
 
 from PyQt6 import QtCore, QtGui, sip
 
@@ -34,7 +30,6 @@ from qplot.datahandling.trusted_derived_rendering import (
 from qplot.datahandling.trusted_live_service import TrustedDerivedReadService
 from qplot.datahandling.trusted_query_types import (
     TrustedParameterView,
-    TrustedSelectedRunDetail,
     TrustedSetpointSummary,
     TrustedSourceRevision,
 )
@@ -53,6 +48,11 @@ from qplot.datahandling.trusted_work_scheduler import (
 )
 
 from ._auto_plot import update_auto_plot
+from ._snapshot_session import (
+    SnapshotRequestFence,
+    SnapshotSession,
+    detach_snapshot_source,
+)
 from ._widgets._run_formatting import preview_title
 
 if TYPE_CHECKING:
@@ -60,8 +60,6 @@ if TYPE_CHECKING:
 
 
 _THUMBNAIL_SIZE = 96
-_SNAPSHOT_REQUEST_DEADLINE_SECONDS = 15.0
-_SNAPSHOT_MAX_OUTSTANDING = 2
 _MISSING = object()
 _VIEWPORT_EVENTS = {
     QtCore.QEvent.Type.LayoutRequest,
@@ -70,72 +68,6 @@ _VIEWPORT_EVENTS = {
     QtCore.QEvent.Type.UpdateRequest,
     QtCore.QEvent.Type.Wheel,
 }
-
-
-class _SnapshotSource(Protocol):
-    """The worker-only portion of a retained trusted Snapshot source."""
-
-    session_token: object
-
-    def page(
-        self,
-        parent_handle: object,
-        continuation: object,
-        *,
-        cancel_check: Callable[[], None],
-    ) -> object: ...
-
-    def full_value(
-        self,
-        handle: object,
-        *,
-        cancel_check: Callable[[], None],
-    ) -> object: ...
-
-
-@dataclass(frozen=True, slots=True)
-class _SnapshotRequestFence:
-    """Complete owner-side identity for one selected Snapshot request."""
-
-    database_instance: DatabaseInstance
-    binding_serial: int
-    coordinator_generation: int
-    helper_incarnation: int
-    source_revision: TrustedSourceRevision
-    selection_generation: int
-    run_index: int
-    run_id: int
-    run_guid: str
-    service: TrustedDerivedReadService
-    service_session_generation: int
-    snapshot_token: object
-    session_serial: int
-    parent_handle: object
-    continuation: object
-    request: object
-    kind: str
-    handle: object | None = None
-    path: object | None = None
-
-
-@dataclass(slots=True)
-class _SnapshotWork:
-    """Qt-free arguments captured before a Snapshot worker is submitted."""
-
-    work_id: int
-    fence: _SnapshotRequestFence
-    source: _SnapshotSource | None
-    cancelled: threading.Event
-    deadline: float
-
-
-@dataclass(frozen=True, slots=True)
-class _SnapshotWorkerResult:
-    """Traceback-free worker outcome handed back through the queued Qt signal."""
-
-    work: _SnapshotWork
-    value: object | None
-    accepted: bool
 
 
 class TrustedDerivedQtBridge(QtCore.QObject):
@@ -171,19 +103,10 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             None
         )
         self._detail_display_guid = ""
-        self._snapshot_source: _SnapshotSource | None = None
-        self._snapshot_session_token: object | None = None
-        self._snapshot_session_cancel: threading.Event | None = None
-        self._snapshot_session_serial = 0
-        self._snapshot_executor: ThreadPoolExecutor | None = None
-        self._snapshot_executor_closed = False
-        self._snapshot_work_serial = 0
-        self._snapshot_work_lock = threading.Lock()
-        self._snapshot_slots: dict[int, _SnapshotWork] = {}
-        self._snapshot_futures: dict[int, Future[_SnapshotWorkerResult]] = {}
-        self._snapshot_live_futures: set[Future[_SnapshotWorkerResult]] = set()
-        self._snapshot_results: queue.Queue[_SnapshotWorkerResult] = queue.Queue(
-            maxsize=_SNAPSHOT_MAX_OUTSTANDING
+        self._snapshot_session = SnapshotSession(
+            ready=self._snapshotResultReady.emit,
+            is_current=self._snapshot_publication_is_current,
+            reject=self._reject_snapshot_request,
         )
         self._last_errors: dict[tuple[str, TrustedWorkKind], str] = {}
         self._last_helper_incarnation = 0
@@ -607,22 +530,18 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self._shutting_down = True
         self._priority_timer.stop()
         self.clear_database()
-        self._shutdown_snapshot_executor()
+        self._snapshot_session.shutdown()
         with self._wakeup_lock:
             self._accepting_wakeups = False
 
     def background_active(self) -> bool:
         self._require_owner()
         self._reap_retiring()
-        with self._snapshot_work_lock:
-            snapshot_active = bool(self._snapshot_live_futures or self._snapshot_slots)
-        return bool(self._retiring) or snapshot_active
+        return bool(self._retiring) or any(self._snapshot_session.pending_counts())
 
     def shutdown_diagnostic(self) -> str | None:
         self._require_owner()
-        with self._snapshot_work_lock:
-            snapshot_work = len(self._snapshot_slots)
-            snapshot_futures = len(self._snapshot_live_futures)
+        snapshot_work, snapshot_futures = self._snapshot_session.pending_counts()
         parts: list[str] = []
         if self._retiring:
             parts.append(f"trusted_derived_coordinators_retiring={len(self._retiring)}")
@@ -635,9 +554,9 @@ class TrustedDerivedQtBridge(QtCore.QObject):
 
     def escalate_cleanup(self) -> None:
         self._require_owner()
-        self._cancel_snapshot_session()
+        self._snapshot_session.cancel()
         if self._shutting_down:
-            self._shutdown_snapshot_executor()
+            self._snapshot_session.shutdown()
         if self._coordinator is not None:
             self._coordinator.close_async()
         for coordinator in self._retiring:
@@ -812,7 +731,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             or str(detail.run.as_dict().get("guid") or "") != publication.run_guid
         ):
             return
-        detached = self._detach_snapshot_source(publication)
+        detached = detach_snapshot_source(publication)
         if detached is None:
             return
         publication, detail, snapshot_source, snapshot_token = detached
@@ -827,10 +746,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         # widget can observe the replacement token.
         self._invalidate_selected_detail_viewer()
         if snapshot_source is not None:
-            self._snapshot_session_serial += 1
-            self._snapshot_source = snapshot_source
-            self._snapshot_session_token = snapshot_token
-            self._snapshot_session_cancel = threading.Event()
+            self._snapshot_session.bind(snapshot_source, snapshot_token)
         self._window.RunList.updateRuns({publication.run_id: merged_run})
         update_auto_plot(self._window, {publication.run_id: merged_run})
         self._selected_detail_publication = publication
@@ -1070,55 +986,6 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self._replacement_reload_queued = False
         self._window._reload_replaced_database(path)
 
-    @staticmethod
-    def _detach_snapshot_source(
-        publication: TrustedSelectedDetailPublication,
-    ) -> (
-        tuple[
-            TrustedSelectedDetailPublication,
-            TrustedSelectedRunDetail,
-            _SnapshotSource | None,
-            object | None,
-        ]
-        | None
-    ):
-        """Remove the sole raw source before retaining or publishing a detail."""
-
-        detail = publication.detail
-        snapshot = detail.snapshot
-        source = getattr(snapshot, "source", _MISSING)
-        token = getattr(snapshot, "session_token", _MISSING)
-        if source is _MISSING and token is _MISSING:
-            # Compatibility with bounded pre-pagination views: there is no raw
-            # source to retain, so preserve object identity for those callers.
-            return publication, detail, None, None
-        if source is _MISSING or source is None:
-            if token is _MISSING or token is None or token == "":
-                return publication, detail, None, None
-            return None
-        if token is _MISSING or token is None or token == "":
-            return None
-        source_token = getattr(source, "session_token", _MISSING)
-        if (
-            source_token is _MISSING
-            or not TrustedDerivedQtBridge._safe_equal(source_token, token)
-            or not callable(getattr(source, "page", None))
-            or not callable(getattr(source, "full_value", None))
-        ):
-            return None
-        try:
-            detached_snapshot = replace(snapshot, source=None)
-            detached_detail = replace(detail, snapshot=detached_snapshot)
-            detached_publication = replace(publication, detail=detached_detail)
-        except (TypeError, ValueError):
-            return None
-        return (
-            detached_publication,
-            detached_detail,
-            cast(_SnapshotSource, source),
-            token,
-        )
-
     @QtCore.pyqtSlot(object)
     def _request_snapshot_page(self, request: object) -> None:
         self._submit_snapshot_request(request, kind="page")
@@ -1131,8 +998,6 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         """Fence and submit at most two selected-session Snapshot requests."""
 
         self._require_owner()
-        source = self._snapshot_source
-        session_cancel = self._snapshot_session_cancel
         publication = self._selected_detail_publication
         database = self._database_instance
         service = self._service
@@ -1144,9 +1009,6 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         path = getattr(request, "path", _MISSING) if kind == "value" else None
         if (
             kind not in {"page", "value"}
-            or source is None
-            or session_cancel is None
-            or session_cancel.is_set()
             or publication is None
             or database is None
             or service is None
@@ -1155,7 +1017,6 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             or parent_handle is _MISSING
             or continuation is _MISSING
             or (kind == "value" and (handle is _MISSING or path is _MISSING))
-            or not self._safe_equal(request_token, self._snapshot_session_token)
         ):
             self._reject_snapshot_request(request)
             return
@@ -1167,7 +1028,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         if type(service_generation) is not int or service_generation <= 0:
             self._reject_snapshot_request(request)
             return
-        fence = _SnapshotRequestFence(
+        fence = SnapshotRequestFence(
             database_instance=database,
             binding_serial=self._binding_serial,
             coordinator_generation=generation,
@@ -1180,7 +1041,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             service=service,
             service_session_generation=service_generation,
             snapshot_token=request_token,
-            session_serial=self._snapshot_session_serial,
+            session_serial=self._snapshot_session.serial,
             parent_handle=parent_handle,
             continuation=continuation,
             request=request,
@@ -1188,149 +1049,17 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             handle=handle,
             path=path,
         )
-        if not self._snapshot_fence_is_current(fence, source):
+        if not self._snapshot_session.submit(fence):
             self._reject_snapshot_request(request)
-            return
-        if self._snapshot_executor_closed:
-            self._reject_snapshot_request(request)
-            return
-        executor = self._snapshot_executor
-        if executor is None:
-            executor = ThreadPoolExecutor(
-                max_workers=1,
-                thread_name_prefix="qplot-trusted-snapshot",
-            )
-            self._snapshot_executor = executor
-        self._snapshot_work_serial += 1
-        work = _SnapshotWork(
-            work_id=self._snapshot_work_serial,
-            fence=fence,
-            source=source,
-            cancelled=session_cancel,
-            deadline=time.monotonic() + _SNAPSHOT_REQUEST_DEADLINE_SECONDS,
-        )
-        # This is the final owner-side revalidation immediately before submit.
-        if not self._snapshot_fence_is_current(fence, source):
-            self._reject_snapshot_request(request)
-            return
-        with self._snapshot_work_lock:
-            queue_full = len(self._snapshot_slots) >= _SNAPSHOT_MAX_OUTSTANDING
-            if not queue_full:
-                self._snapshot_slots[work.work_id] = work
-        if queue_full:
-            self._reject_snapshot_request(request)
-            return
-        try:
-            future = executor.submit(self._run_snapshot_work, work)
-        except RuntimeError:
-            with self._snapshot_work_lock:
-                self._snapshot_slots.pop(work.work_id, None)
-            self._reject_snapshot_request(request)
-            return
-        with self._snapshot_work_lock:
-            self._snapshot_futures[work.work_id] = future
-            self._snapshot_live_futures.add(future)
-
-        def publish_when_done(completed: Future[_SnapshotWorkerResult]) -> None:
-            self._snapshot_work_done(work, completed)
-
-        future.add_done_callback(publish_when_done)
-
-    @staticmethod
-    def _run_snapshot_work(work: _SnapshotWork) -> _SnapshotWorkerResult:
-        """Run pure Snapshot source work without reading or mutating Qt state."""
-
-        def cancel_check() -> None:
-            if work.cancelled.is_set():
-                raise InterruptedError("The selected Snapshot session was cancelled.")
-            if time.monotonic() >= work.deadline:
-                raise TimeoutError(
-                    "The selected Snapshot request exceeded its deadline."
-                )
-
-        try:
-            cancel_check()
-            source = work.source
-            if source is None:
-                raise InterruptedError("The selected Snapshot source was released.")
-            if work.fence.kind == "page":
-                value = source.page(
-                    work.fence.parent_handle,
-                    work.fence.continuation,
-                    cancel_check=cancel_check,
-                )
-            else:
-                value = source.full_value(
-                    work.fence.handle,
-                    cancel_check=cancel_check,
-                )
-            cancel_check()
-        except BaseException:  # noqa: BLE001 - only a traceback-free rejection escapes
-            return _SnapshotWorkerResult(work, None, False)
-        return _SnapshotWorkerResult(work, value, value is not None)
-
-    def _snapshot_work_done(
-        self,
-        work: _SnapshotWork,
-        future: Future[_SnapshotWorkerResult],
-    ) -> None:
-        """Thread-safe completion hook; it emits but never mutates a widget."""
-
-        try:
-            outcome = future.result()
-        except BaseException:  # noqa: BLE001 - discard exception/traceback at boundary
-            outcome = _SnapshotWorkerResult(work, None, False)
-        emit = False
-        with self._snapshot_work_lock:
-            self._snapshot_live_futures.discard(future)
-            self._snapshot_futures.pop(work.work_id, None)
-            if self._snapshot_slots.get(work.work_id) is not work:
-                return
-            if work.cancelled.is_set():
-                self._snapshot_slots.pop(work.work_id, None)
-                return
-            try:
-                self._snapshot_results.put_nowait(outcome)
-            except queue.Full:
-                self._snapshot_slots.pop(work.work_id, None)
-                return
-            emit = True
-        if emit:
-            try:
-                self._snapshotResultReady.emit()
-            except RuntimeError:
-                with self._snapshot_work_lock:
-                    self._snapshot_slots.pop(work.work_id, None)
-                    self._drain_snapshot_results_locked(work.work_id)
 
     @QtCore.pyqtSlot()
     def _publish_snapshot_results(self) -> None:
         """Publish worker outcomes only after repeating the complete fence."""
 
         self._require_owner()
-        outcomes: list[_SnapshotWorkerResult] = []
-        while True:
-            try:
-                outcome = self._snapshot_results.get_nowait()
-            except queue.Empty:
-                break
-            with self._snapshot_work_lock:
-                if self._snapshot_slots.get(outcome.work.work_id) is not outcome.work:
-                    continue
-                self._snapshot_slots.pop(outcome.work.work_id, None)
-            outcomes.append(outcome)
-        for outcome in outcomes:
+        for outcome in self._snapshot_session.take_results():
             request = outcome.work.fence.request
-            source = outcome.work.source
-            if (
-                not outcome.accepted
-                or source is None
-                or time.monotonic() >= outcome.work.deadline
-                or not self._snapshot_fence_is_current(
-                    outcome.work.fence,
-                    source,
-                )
-            ):
+            if not self._snapshot_session.accepts(outcome):
                 self._reject_snapshot_request(request)
                 continue
             info_box = self._window.infoBox
@@ -1351,24 +1080,19 @@ class TrustedDerivedQtBridge(QtCore.QObject):
                 else:
                     self._reject_snapshot_request(request)
 
-    def _snapshot_fence_is_current(
-        self,
-        fence: _SnapshotRequestFence,
-        source: _SnapshotSource,
-    ) -> bool:
+    def _snapshot_publication_is_current(self, fence: SnapshotRequestFence) -> bool:
+        """Validate Qt-owned database and selection identity at each boundary."""
+
+        self._require_owner()
         publication = self._selected_detail_publication
         service = self._service
         coordinator = self._coordinator
-        cancel = self._snapshot_session_cancel
         if (
             self._shutting_down
             or not self._accepting_publications
             or publication is None
             or service is None
             or coordinator is None
-            or cancel is None
-            or cancel.is_set()
-            or self._snapshot_source is not source
             or self._database_instance != fence.database_instance
             or self._binding_serial != fence.binding_serial
             or self._coordinator_generation != fence.coordinator_generation
@@ -1382,12 +1106,6 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             or publication.run_guid != fence.run_guid
             or publication.key.run_guid != fence.run_guid
             or service is not fence.service
-            or self._snapshot_session_serial != fence.session_serial
-            or not self._safe_equal(
-                self._snapshot_session_token,
-                fence.snapshot_token,
-            )
-            or not self._snapshot_request_matches_fence(fence)
             or fence.run_index < 0
             or fence.run_index >= len(self._run_ids)
             or self._run_ids[fence.run_index] != fence.run_id
@@ -1414,120 +1132,13 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             )
         )
 
-    @staticmethod
-    def _snapshot_request_matches_fence(fence: _SnapshotRequestFence) -> bool:
-        request = fence.request
-        if (
-            not TrustedDerivedQtBridge._safe_equal(
-                getattr(request, "session_token", _MISSING),
-                fence.snapshot_token,
-            )
-            or not TrustedDerivedQtBridge._safe_equal(
-                getattr(request, "parent_handle", _MISSING),
-                fence.parent_handle,
-            )
-            or not TrustedDerivedQtBridge._safe_equal(
-                getattr(request, "continuation", _MISSING),
-                fence.continuation,
-            )
-        ):
-            return False
-        if fence.kind != "value":
-            return True
-        return TrustedDerivedQtBridge._safe_equal(
-            getattr(request, "handle", _MISSING),
-            fence.handle,
-        ) and TrustedDerivedQtBridge._safe_equal(
-            getattr(request, "path", _MISSING),
-            fence.path,
-        )
-
-    @staticmethod
-    def _safe_equal(left: object, right: object) -> bool:
-        try:
-            result = left == right
-        except BaseException:  # noqa: BLE001 - malformed requests are rejected
-            return False
-        return result if type(result) is bool else False
-
     def _reject_snapshot_request(self, request: object) -> None:
         reject = getattr(self._window.infoBox, "reject_snapshot_request", None)
         if callable(reject):
             reject(request)
 
-    def _cancel_snapshot_session(self) -> None:
-        """Cancel source work and release the raw selected-run Snapshot source."""
-
-        self._require_owner()
-        cancel = self._snapshot_session_cancel
-        self._snapshot_source = None
-        self._snapshot_session_token = None
-        self._snapshot_session_cancel = None
-        self._snapshot_session_serial += 1
-        if cancel is None:
-            return
-        futures: list[Future[_SnapshotWorkerResult]] = []
-        rejected_requests: list[object] = []
-
-        def retain_rejection(request: object) -> None:
-            if all(existing is not request for existing in rejected_requests):
-                rejected_requests.append(request)
-
-        with self._snapshot_work_lock:
-            # Publish cancellation under the same lock used by completion.
-            # A callback can therefore only queue before this point (and be
-            # drained below), or observe cancellation after every retained
-            # work descriptor has released its source and rejection.
-            cancel.set()
-            while True:
-                try:
-                    outcome = self._snapshot_results.get_nowait()
-                except queue.Empty:
-                    break
-                if outcome.work.cancelled is cancel:
-                    retain_rejection(outcome.work.fence.request)
-                outcome.work.source = None
-                self._snapshot_slots.pop(outcome.work.work_id, None)
-            for work_id, work in tuple(self._snapshot_slots.items()):
-                if work.cancelled is not cancel:
-                    continue
-                retain_rejection(work.fence.request)
-                work.source = None
-                future = self._snapshot_futures.get(work_id)
-                if future is None:
-                    self._snapshot_slots.pop(work_id, None)
-                else:
-                    futures.append(future)
-        # Future.cancel() can invoke callbacks synchronously, so it must run
-        # outside the lock those callbacks acquire.
-        for future in futures:
-            future.cancel()
-        for request in rejected_requests:
-            self._reject_snapshot_request(request)
-
-    def _drain_snapshot_results_locked(self, work_id: int) -> None:
-        retained: list[_SnapshotWorkerResult] = []
-        while True:
-            try:
-                outcome = self._snapshot_results.get_nowait()
-            except queue.Empty:
-                break
-            if outcome.work.work_id != work_id:
-                retained.append(outcome)
-        for outcome in retained:
-            self._snapshot_results.put_nowait(outcome)
-
-    def _shutdown_snapshot_executor(self) -> None:
-        if self._snapshot_executor_closed:
-            return
-        self._snapshot_executor_closed = True
-        executor = self._snapshot_executor
-        self._snapshot_executor = None
-        if executor is not None:
-            executor.shutdown(wait=False, cancel_futures=True)
-
     def _invalidate_selected_detail_viewer(self) -> None:
-        self._cancel_snapshot_session()
+        self._snapshot_session.cancel()
         invalidate_snapshot = getattr(
             self._window.infoBox,
             "invalidate_trusted_snapshot",

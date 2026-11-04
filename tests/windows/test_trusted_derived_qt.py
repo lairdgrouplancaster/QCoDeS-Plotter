@@ -43,6 +43,7 @@ from qplot.datahandling.trusted_work_scheduler import (
     WorkPublication,
 )
 from qplot.windows import _database_actions as database_actions
+from qplot.windows import _snapshot_session as snapshot_module
 from qplot.windows import _trusted_derived_qt as bridge_module
 from qplot.windows._trusted_derived_qt import TrustedDerivedQtBridge
 from qplot.windows._widgets.details_tables import (
@@ -1098,37 +1099,15 @@ def _install_snapshot_session(
     return detail, publication
 
 
-@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt, SystemExit])
-def test_snapshot_identity_comparison_errors_are_rejected(error_type) -> None:
-    class RaisingIdentity:
-        def __eq__(self, other):
-            raise error_type("malformed snapshot identity")
-
-    assert not TrustedDerivedQtBridge._safe_equal(RaisingIdentity(), object())
-
-
-def test_snapshot_identity_non_boolean_comparison_is_rejected() -> None:
-    class NonBooleanIdentity:
-        def __eq__(self, other):
-            return object()
-
-    assert not TrustedDerivedQtBridge._safe_equal(NonBooleanIdentity(), object())
-
-
-@pytest.mark.parametrize("left,right,expected", [(1, 1, True), (1, 2, False), (None, None, True)])
-def test_snapshot_identity_boolean_comparison(left, right, expected) -> None:
-    assert TrustedDerivedQtBridge._safe_equal(left, right) is expected
-
-
 def _wait_snapshot_worker_without_qt(
     bridge: TrustedDerivedQtBridge,
     timeout: float = 2.0,
 ) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        with bridge._snapshot_work_lock:
-            if not bridge._snapshot_live_futures:
-                return
+        _work, futures = bridge._snapshot_session.pending_counts()
+        if not futures:
+            return
         time.sleep(0.002)
     raise AssertionError("Snapshot worker did not finish")
 
@@ -1151,7 +1130,7 @@ def test_snapshot_source_is_detached_and_page_and_value_publish_on_owner(
     assert displayed is not None and displayed is not detail
     assert displayed.snapshot.source is None
     assert retained is not None and retained.detail.snapshot.source is None
-    assert bridge._snapshot_source is source
+    assert bridge._snapshot_session.source is source
 
     page_request = SnapshotTreePageRequest(
         source.session_token,
@@ -1213,10 +1192,10 @@ def test_snapshot_result_queued_past_owner_deadline_is_rejected(
     source.release.set()
     assert source.finished.wait(1.0)
     _wait_snapshot_worker_without_qt(bridge)
-    with bridge._snapshot_work_lock:
-        work = next(iter(bridge._snapshot_slots.values()))
+    with bridge._snapshot_session._lock:
+        work = next(iter(bridge._snapshot_session._slots.values()))
 
-    with patch.object(bridge_module.time, "monotonic", return_value=work.deadline):
+    with patch.object(snapshot_module.time, "monotonic", return_value=work.deadline):
         bridge._publish_snapshot_results()
 
     assert not window.infoBox.snapshot_pages
@@ -1274,7 +1253,7 @@ def test_many_snapshot_sessions_retain_only_current_source_and_replace_tree(
                 _selected_detail_publication(bridge, coordinator, detail)
             )
 
-            assert bridge._snapshot_source is snapshot.source
+            assert bridge._snapshot_session.source is snapshot.source
             assert bridge._selected_detail_publication is not None
             assert bridge._selected_detail_publication.detail.snapshot.source is None
             assert info_box.displayed_snapshot_sources[-1] is None
@@ -1298,7 +1277,7 @@ def test_many_snapshot_sessions_retain_only_current_source_and_replace_tree(
             )
 
             if session_index + 1 < session_count:
-                current_cancel = bridge._snapshot_session_cancel
+                current_cancel = bridge._snapshot_session._cancelled
                 assert current_cancel is not None and not current_cancel.is_set()
                 prior_cancel_events.append(current_cancel)
                 snapshot_tree.itemActivated.emit(
@@ -1309,8 +1288,8 @@ def test_many_snapshot_sessions_retain_only_current_source_and_replace_tree(
         _process_until(lambda: not bridge.background_active(), timeout=5.0)
         QtWidgets.QApplication.processEvents()
 
-        assert bridge._snapshot_source is sources[-1]
-        assert all(bridge._snapshot_source is not source for source in sources[:-1])
+        assert bridge._snapshot_session.source is sources[-1]
+        assert all(bridge._snapshot_session.source is not source for source in sources[:-1])
         assert all(cancel.is_set() for cancel in prior_cancel_events)
         assert info_box.displayed_snapshot_sources == [None] * session_count
         assert len(info_box.displayed_snapshot_sessions) == session_count
@@ -1347,7 +1326,7 @@ def test_snapshot_diagnostic_without_source_is_still_accepted(bound_bridge) -> N
     assert window.infoBox.active_detail is detail
     assert detail.snapshot.source is None
     assert detail.snapshot.session_token == ""
-    assert bridge._snapshot_source is None
+    assert bridge._snapshot_session.source is None
 
 
 @pytest.mark.parametrize("request_kind", ["page", "value"])
@@ -1482,9 +1461,9 @@ def test_late_snapshot_result_is_rejected_by_every_fence_component(
     elif stale_component == "service_session_generation":
         window._trusted_read_service._session_generation += 1
     elif stale_component == "snapshot_token":
-        bridge._snapshot_session_token = "new-snapshot-token"
+        bridge._snapshot_session._token = "new-snapshot-token"
     elif stale_component == "source_identity":
-        bridge._snapshot_source = object()
+        bridge._snapshot_session._source = object()
     elif stale_component == "parent_handle":
         request.parent_handle = "parent-2"
     elif stale_component == "continuation":
@@ -1524,8 +1503,43 @@ def test_snapshot_executor_has_one_worker_two_slots_and_cancels_with_session(
 
     bridge.source_changed((1,))
     _process_until(lambda: not bridge.background_active())
-    assert bridge._snapshot_source is None
+    assert bridge._snapshot_session.source is None
     assert not window.infoBox.snapshot_pages
+
+
+def test_snapshot_batch_rechecks_selection_after_each_widget_publication(
+    bound_bridge,
+    monkeypatch,
+) -> None:
+    window, bridge, coordinator, _runs = bound_bridge
+    source = _BlockingSnapshotSource("snapshot-reentrant-selection")
+    _install_snapshot_session(window, bridge, coordinator, source)
+    requests = [
+        SnapshotTreePageRequest(source.session_token, f"parent-{index}", None)
+        for index in range(2)
+    ]
+    for request in requests:
+        window.infoBox.snapshotPageRequested.emit(request)
+    source.release.set()
+    _wait_snapshot_worker_without_qt(bridge)
+
+    accept = window.infoBox.accept_snapshot_page
+
+    def accept_then_change_selection(page):
+        accepted = accept(page)
+        window._selected_run_guid = "guid-2"
+        bridge.select_run("guid-2")
+        return accepted
+
+    monkeypatch.setattr(
+        window.infoBox, "accept_snapshot_page", accept_then_change_selection,
+    )
+    bridge._publish_snapshot_results()
+
+    assert len(window.infoBox.snapshot_pages) == 1
+    assert [request for request, _thread in window.infoBox.snapshot_rejections] == [
+        requests[1]
+    ]
 
 
 def test_replaced_snapshot_session_releases_cancelled_work_source(
@@ -1541,8 +1555,8 @@ def test_replaced_snapshot_session_releases_cancelled_work_source(
     )
     window.infoBox.snapshotPageRequested.emit(request)
     assert first.started.wait(1.0)
-    with bridge._snapshot_work_lock:
-        cancelled_work = next(iter(bridge._snapshot_slots.values()))
+    with bridge._snapshot_session._lock:
+        cancelled_work = next(iter(bridge._snapshot_session._slots.values()))
     assert cancelled_work.source is first
 
     second = _BlockingSnapshotSource("snapshot-replaced-second")
@@ -1551,7 +1565,7 @@ def test_replaced_snapshot_session_releases_cancelled_work_source(
         _selected_detail_publication(bridge, coordinator, detail)
     )
 
-    assert bridge._snapshot_source is second
+    assert bridge._snapshot_session.source is second
     assert cancelled_work.source is None
     assert first.finished.wait(1.0)
     _process_until(lambda: not bridge.background_active())
@@ -1583,12 +1597,12 @@ def test_shutdown_rejects_late_snapshot_page_or_dialog(
         )
         window.infoBox.snapshotFullValueRequested.emit(request)
     assert source.started.wait(1.0)
-    with bridge._snapshot_work_lock:
-        cancelled_work = next(iter(bridge._snapshot_slots.values()))
+    with bridge._snapshot_session._lock:
+        cancelled_work = next(iter(bridge._snapshot_session._slots.values()))
 
     bridge.shutdown()
 
-    assert bridge._snapshot_source is None
+    assert bridge._snapshot_session.source is None
     assert cancelled_work.source is None
     assert source.finished.wait(1.0)
     _process_until(lambda: not bridge.background_active())
@@ -1619,7 +1633,7 @@ def test_selected_metadata_cache_hit_carries_bounded_detail_without_losing_previ
         accepted_detail = window.infoBox.active_detail
         assert accepted_detail is not detail
         assert accepted_detail.snapshot.source is None
-        assert bridge._snapshot_source is detail.snapshot.source
+        assert bridge._snapshot_session.source is detail.snapshot.source
 
         raw_keys = {node.key for node in detail.presentation.raw.nodes}
         assert {
@@ -1708,7 +1722,7 @@ def test_reselection_rejects_stale_selected_detail_and_preserves_newer_tabs(
         assert all(detail is not first for detail, _thread in window.infoBox.details)
         assert accepted_second is not second
         assert accepted_second.snapshot.source is None
-        assert bridge._snapshot_source is second.snapshot.source
+        assert bridge._snapshot_session.source is second.snapshot.source
         assert window.infoBox.preview.current_guid == "guid-2"
 
         bridge._publish(
@@ -1829,7 +1843,7 @@ def test_metadata_revision_change_invalidates_viewer_until_current_detail_arrive
     )
     bridge._publish(replace(metadata, key=replace(metadata.key, source_revision=revision)))
     assert bridge._selected_detail_publication is None
-    assert bridge._snapshot_source is None
+    assert bridge._snapshot_session.source is None
     assert info_box._full_value_dialog is None
     assert not info_box._trusted_full_values
     assert dialog._exact_text is None

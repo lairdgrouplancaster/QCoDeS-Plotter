@@ -35,7 +35,8 @@ from ._plot_appearance import ReorderAppearanceTable, configure_appearance_table
 from ._plot_drop_axes import DroppedAxisMapping, displayed_axis_parameter
 from ._plot_host import PlotHost
 from ._plot_refresh import plot_refresh_required
-from ._refresh_interval import refresh_interval_value, set_refresh_interval
+from ._refresh_interval import refresh_interval_value
+from ._source_consumer import SourceConsumerRegistration
 
 DEFAULT_OVERLAY_OPACITY = 0.65
 _PRIMARY_HEATMAP_KEY = "__qplot_primary_heatmap__"
@@ -215,9 +216,7 @@ class HeatmapLayer:
         self.set_opacity(opacity)
 
         self._renderers_added = False
-        self._source_consumer_registered = False
-        self._source_interval_signal = None
-        self._source_interval_slot = None
+        self._source_consumer = SourceConsumerRegistration(from_win)
         self._source_update_signal = None
         self._source_end_wait_signal = None
         self._source_end_wait_slot = None
@@ -449,35 +448,9 @@ class HeatmapLayer:
         self._source_end_wait_slot = None
 
     def _register_source_consumer(self) -> None:
-        if self._source_consumer_registered:
+        if not self._source_consumer.register(self.parent):
             return
-
         source = self.from_win
-        source._merged_trace_users = (
-            max(
-                int(getattr(source, "_merged_trace_users", 0)),
-                0,
-            )
-            + 1
-        )
-        self._source_consumer_registered = True
-
-        if not getattr(source, "visible", True):
-            parent_spinbox = getattr(self.parent, "spinBox", None)
-            source_spinbox = getattr(source, "spinBox", None)
-            if parent_spinbox is not None and source_spinbox is not None:
-                def sync_interval(interval):
-                    interval = refresh_interval_value(parent_spinbox)
-                    set_refresh_interval(source_spinbox, interval)
-                    source.monitorIntervalChanged(interval)
-
-                sync_interval(refresh_interval_value(parent_spinbox))
-                interval_signal = getattr(parent_spinbox, "valueChanged", None)
-                if interval_signal is not None:
-                    interval_slot = sync_interval
-                    interval_signal.connect(interval_slot)
-                    self._source_interval_signal = interval_signal
-                    self._source_interval_slot = interval_slot
 
         monitor = getattr(source, "monitor", None)
         if (
@@ -489,23 +462,10 @@ class HeatmapLayer:
             source.monitorIntervalChanged(refresh_interval_value(source.spinBox))
 
     def _release_source_consumer(self) -> None:
-        if not self._source_consumer_registered:
+        remaining = self._source_consumer.release()
+        if remaining is None:
             return
-
         source = self.from_win
-        remaining = max(int(getattr(source, "_merged_trace_users", 1)) - 1, 0)
-        source._merged_trace_users = remaining
-        self._source_consumer_registered = False
-
-        if self._source_interval_signal is not None:
-            try:
-                self._source_interval_signal.disconnect(self._source_interval_slot)
-            except (TypeError, RuntimeError):
-                # A deleted sender or already disconnected source needs no further
-                # disconnection.
-                pass
-            self._source_interval_signal = None
-            self._source_interval_slot = None
 
         if (
             remaining == 0

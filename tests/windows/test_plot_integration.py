@@ -55,6 +55,7 @@ from qplot.testdata import (
 from qplot.windows import _database_actions as database_actions_module
 from qplot.windows import _plot_actions as plot_actions_module
 from qplot.windows import main as main_window
+from qplot.windows._database_load_state import DatabaseLoadSession
 from qplot.windows._dataset_handle import database_file_identity
 from tests._window_lifecycle import close_main_window
 
@@ -1790,10 +1791,10 @@ def test_main_window_close_completes_promptly_while_snapshot_copy_is_cancelled(
         window.config.config["user_preference"]["confirm_close"] = False
         window._database_load_generation = 1
         window._database_load_active = True
-        window._database_load_state = {
-            "abspath": str(database_path),
-            "load_instance": accepted_instance,
-        }
+        window._database_load_state = DatabaseLoadSession(
+            abspath=str(database_path),
+            load_instance=accepted_instance,
+        )
         window._database_load_worker = worker
         window.databaseLoadThreadPool.start(worker)
         assert copy_checkpoint.wait(2), "Load never reached a partial snapshot copy"

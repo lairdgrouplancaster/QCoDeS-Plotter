@@ -1,4 +1,5 @@
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Literal, Protocol, TypeAlias, cast, overload
 
@@ -12,6 +13,7 @@ from PyQt6 import (
 
 from qplot.tools.operation_registry import (
     OperationCall,
+    OperationSpec,
     OperationValidationError,
     operation_specs_for,
 )
@@ -21,6 +23,20 @@ from .dropbox import expandingComboBox
 OperationKind: TypeAlias = Literal["plot1d", "plot2d", "sweeper"]
 OperationFunc: TypeAlias = Callable[..., Any]
 OperationInputType: TypeAlias = type | Sequence[str] | None
+
+
+@dataclass(frozen=True)
+class OperationEntry:
+    key: str
+    value: str | bool | None
+
+
+@dataclass(frozen=True)
+class OperationsState:
+    """Ordered enabled operations, preserving exact editor text and Apply identity."""
+
+    entries: tuple[OperationEntry, ...]
+    apply_generation: int
 
 
 class OperationsDock(Protocol):
@@ -138,47 +154,21 @@ class operations_options_base(qtw.QWidget):
         self._apply_generation += 1
         
         
-    def add_option(
-        self,
-        name: str,
-        func: OperationFunc,
-        input_type: OperationInputType,
-        default: object = "",
-        derivative_axis: str | None = None,
-        ) -> None:
-        """
-        Adds an option to the list_options with a tickbox.
-        Creates a row stored within the option, this holds the function and
-        has a widget for the required input type. This data is read by 
-        self.get_data()
-        The secondary row is added or removed when the tickbox is clicked.
-
-        Parameters
-        ----------
-        name : str
-            Display name of the function.
-        func : callable
-            Function to be passed to do_operations in worker.
-        input_type : type | list | tuple
-            The required input type:
-                bool - Makes checkbox
-                str, int, float, Decimal - Makes a line edit with numeric validation
-                None - No input box made
-            or a list/tuple of the options - Makes a dropbox with options
-
-        """
-        row = optionToggleRowItem(name, None, bool) # Option with tick box
+    def add_option(self, spec: OperationSpec) -> None:
+        """Create an enable toggle and editor for one registered operation."""
+        row = optionToggleRowItem(spec.name, None, bool)
         self.list_options.addItem(row)
         self.list_options.setItemWidget(row, row.row_widget)
-    
-        # create item to add to active box. This data is fetched by self.get_data()
-        row.operation_row = rowItem(name, func, input_type, default=default)
-        row.operation_row.derivative_axis = derivative_axis
-        row.input.stateChanged.connect(lambda state: 
-                    self.add_or_remove_operation(state, row.operation_row)
-                    )
-        
-            
+        row.operation_row = rowItem(
+            spec.name, spec.func, cast(OperationInputType, spec.input_type),
+            default=spec.default,
+        )
+        row.operation_row.spec = spec
+        row.operation_row.derivative_axis = spec.derivative_axis
+        row.input.stateChanged.connect(
+            lambda state: self.add_or_remove_operation(state, row.operation_row)
+        )
+
     def add_or_remove_operation(self, add : int, item : "rowItem") -> None:
         """
         Based on add value, adds or removes the item from the active operations
@@ -211,23 +201,42 @@ class operations_options_base(qtw.QWidget):
     
     
     def add_all_options(self) -> None:
-        """
-        Fetches data from dict, self.operation_options, defined in children 
-        classes.
-        Then adds these to available options.
-
-        """
+        """Create the available editors from this panel's operation registry."""
         for spec in operation_specs_for(self.operation_kind):
-            self.add_option(
-                spec.name,
-                spec.func,
-                cast(OperationInputType, spec.input_type),
-                spec.default,
-                spec.derivative_axis,
-                )
+            self.add_option(spec)
         self.list_options.adjustSize()
             
     
+    def capture_state(self, *, transpose: bool = False) -> OperationsState:
+        entries = []
+        for index in range(self.list_order.count()):
+            row = cast(rowItem, self.list_order.item(index))
+            if row.isHidden():
+                continue
+            key = row.spec.transposed_key if transpose else None
+            entries.append(OperationEntry(key or row.spec.key, row.editor_value()))
+        return OperationsState(tuple(entries), self._apply_generation)
+
+    def restore_state(self, state: OperationsState) -> None:
+        """Replace panel contents without parsing or rounding input text."""
+        specs = {spec.key: spec for spec in operation_specs_for(self.operation_kind)}
+        if any(entry.key not in specs for entry in state.entries):
+            raise ValueError("The target plot does not support an operation in this state.")
+        # Rebuild the rows so prior hidden/reordered entries cannot change the
+        # restored execution order. No caller owns the panel's individual rows.
+        self.list_order.clear()
+        self.list_options.clear()
+        self.add_all_options()
+        options = {}
+        for index in range(self.list_options.count()):
+            item = cast(optionToggleRowItem, self.list_options.item(index))
+            options[item.operation_row.spec.key] = item
+        for entry in state.entries:
+            option = options[entry.key]
+            option.input.setChecked(True)
+            option.operation_row.restore_editor_value(entry.value)
+        self._apply_generation = state.apply_generation
+
     @QtCore.pyqtSlot()
     def hide_all(self) -> None:
         for i in range(self.list_options.count()):
@@ -354,6 +363,8 @@ class rowItem(qtw.QListWidgetItem):
         output : callabel - returns current value of input
     """
     
+    spec: OperationSpec
+
     def __init__(
         self,
         label: str,
@@ -434,6 +445,23 @@ class rowItem(qtw.QListWidgetItem):
         # pyqt defaults height of widget to 0, what?
         self.setSizeHint(self.row_widget.sizeHint())
         
+
+    def editor_value(self) -> str | bool | None:
+        if isinstance(self.input, qtw.QLineEdit):
+            return self.input.text()
+        if isinstance(self.input, qtw.QComboBox):
+            return self.input.currentText()
+        if isinstance(self.input, qtw.QCheckBox):
+            return self.input.isChecked()
+        return None
+
+    def restore_editor_value(self, value: str | bool | None) -> None:
+        if isinstance(self.input, qtw.QLineEdit) and isinstance(value, str):
+            self.input.setText(value)
+        elif isinstance(self.input, qtw.QComboBox) and isinstance(value, str):
+            self.input.setCurrentText(value)
+        elif isinstance(self.input, qtw.QCheckBox) and isinstance(value, bool):
+            self.input.setChecked(value)
 
     @property 
     def label(self) -> str:

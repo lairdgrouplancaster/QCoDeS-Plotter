@@ -35,6 +35,21 @@ window actions. It handles:
 * recent database menus
 * database-load progress, cancellation, and restore handling
 
+`_database_load_state.py` defines the pending `DatabaseLoadSession` and immutable
+`DatabaseViewSnapshot`. The snapshot describes the committed view, including its
+reader and database observation; it is separate from the pending worker's state.
+Export protection also includes the pending session's source.
+
+`_database_load_publication.py` owns staging, commit, rollback, and Qt publication
+gates. Run-list insertion may process nested close/shutdown events, so the pending
+reader stays reachable by normal teardown throughout publication. A failed stage
+restores the previous view only after revalidating its source; failed restoration
+closes the view. The action mixin handles result validation, user feedback, retries,
+and restarting progressive work after the transaction has released its gates.
+`_database_observation.py` shares the directional source check: newly created
+WAL/SHM files are allowed, but an already accepted sidecar cannot disappear or be
+replaced. These comparisons use `DatabaseInstance` throughout.
+
 `src/qplot/windows/_plot_actions.py` contains the plot-facing main window
 actions. It handles:
 
@@ -58,6 +73,20 @@ multiple windows, start in `main.py`; put database-specific behavior in
 `_database_actions.py`, plot-opening/export behavior in `_plot_actions.py`, and
 run-selection or refresh-control behavior in `_run_controls.py`.
 
+`_shutdown_coordinator.py` owns confirmed GUI shutdown: one typed state tracks
+the phase, fixed deadlines, cleanup escalation, and diagnostic snapshots.
+`MainWindow` retains exit confirmation and Qt entry points, with read-only status
+properties for existing publication guards. The process fail-safe and launcher
+remain independent owners of termination at the process boundary.
+
+`_shutdown_resources.py` is the background-resource inventory. Pools register
+when created, and cancellation resolves the current worker for each registered
+binding. Liveness and escalation share that inventory. Reader membership is
+observed afresh from active, pending, and retired services on each scan; readers
+that finish during a liveness probe get a final zero-wait reap. Register new
+background resources at creation so shutdown can account for them. Test window
+teardown also uses this inventory instead of maintaining another pool list.
+
 `src/qplot/windows/_commands.py` is the shared command and shortcut registry.
 Use it when adding menu actions, context-menu actions, keyboard shortcuts, or
 shortcut-help rows so labels, status tips, tooltips, and in-app shortcut help
@@ -73,6 +102,14 @@ context menus, plot-area resizing, and operation panels.
 orchestration: deciding whether to read from the database or cached data,
 starting workers, applying worker results back to plot-window state, and
 surfacing worker failures.
+
+The plot window owns one typed `RefreshPublication` rollback record for the
+latest callback. It captures the prior cache parameter and plot fields, records
+the cache values actually published, and conditionally restores them if the
+source changes before rendering finishes. A nested newer callback replaces the
+record; an older callback cannot restore or discard the newer state. Source
+checks remain at the cache and renderer publication boundaries. Worker result
+data and completion signals remain separate from this GUI-owned rollback state.
 
 `src/qplot/windows/_dataset_handle.py` defines the small `DatasetHandle`
 structure used by the main window and plot windows to track an open dataset,
@@ -124,6 +161,11 @@ preview drag-and-drop, including per-layer renderers and opacity controls,
 hidden source-window refresh ownership, shared-colorbar membership, and layer
 cleanup.
 
+`src/qplot/windows/_source_consumer.py` owns each secondary trace or heatmap's
+shared source-consumer registration and hidden-source interval connection.
+Release is idempotent. The line and heatmap owners retain their distinct final
+monitor, reload-timer, and worker-cancellation policies.
+
 `src/qplot/windows/_plot2d_colorbar.py` contains the heatmap colorbar mixin. It
 owns color autoscaling, colorbar interaction handlers, and color-map selection
 state used by `plot2d.py`.
@@ -167,7 +209,11 @@ sessions receive decoded Stage 5C images from the bridge; retained compatibility
 paths may still use the bounded legacy preview queue.
 
 `src/qplot/windows/_widgets/operations.py` defines the operation panel widgets
-that collect user-selected data operations before refresh processing.
+that collect user-selected data operations before refresh processing. Operation
+identity and heatmap transposition pairs live in `tools/operation_registry.py`;
+promotion copies ordered panel state through `capture_state`/`restore_state`,
+including exact editor text and Apply generation, without using display labels
+as operation identifiers. This state is transient, not a settings format.
 
 `src/qplot/windows/_widgets/dropbox.py` and `toolbar.py` contain smaller
 reusable UI controls used inside plot windows.
@@ -384,9 +430,18 @@ reserved for genuine malformed input, source/detail size omission, excessive
 depth or scalar size, changed-during-read, or comparable
 acquisition/validation failure.
 
-One dedicated single-worker executor services lazy Snapshot pages and values,
-with at most two submitted or queued requests in total. Every request and result
-is tied to the exact `DatabaseInstance`, bridge binding, helper incarnation,
+`windows/_snapshot_session.py` owns the retained raw Snapshot source, session
+cancellation, and the dedicated single-worker executor for lazy pages and values.
+It admits at most two submitted or queued requests in total. Its completion
+callback only queues a result and requests a wakeup; the Qt bridge drains those
+results, validates its current database/selection state, and updates widgets.
+The session revalidates each result individually because publishing a previous
+result can reenter the UI and change selection. Shutdown cancels the session
+and closes the executor without waiting; liveness and diagnostics continue to
+account for unfinished futures.
+
+Every request and result is tied to the exact `DatabaseInstance`, bridge binding,
+helper incarnation,
 source revision, coordinator and selection generations, run ID and GUID,
 Snapshot-session token, parent handle and continuation cursor, and deadline.
 Those identities are checked before submission and again before owner-thread
@@ -702,10 +757,11 @@ Cache hits and freshly rendered payloads use the same transactional publication
 path; unsupported runs receive bounded nonfatal unavailable cards. The derived
 lanes use `(run tier, work kind, stable index)`: selected metadata (with
 detail), thumbnail, and preview; then visible metadata/thumbnail/preview lanes;
-then the equivalent remaining lanes. Explicit plot and CSV
-actions remain action-owned snapshot consumers addressed by the selected GUID
-and exact `DatabaseInstance`, and snapshot fallback sessions may keep their
-existing preview behavior. Trusted selection never creates an automatic
+then the equivalent remaining lanes. Explicit trusted plots use connection-free `TrustedPlotDataset` metadata and
+broker-owned prefix capture or numeric aggregation. CSV and fallback plot
+actions remain snapshot consumers. All address the selected GUID and exact
+`DatabaseInstance`; snapshot fallback sessions may keep their existing preview
+behavior. Trusted selection never creates an automatic
 fallback copy.
 
 Database switching disarms publications before the old coordinator is made

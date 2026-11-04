@@ -648,9 +648,11 @@ bounded Raw expansion paths without recursively opening Snapshot.
 
 Snapshot uses a separate bounded lazy scanner. Its complete source is accepted
 only up to 4 MiB and validated iteratively without constructing complete Python
-or Qt trees. The bridge removes that source from the retained selected-detail
-publication and owns at most the exact current selection's source outside Qt;
-it is neither stored in the derived disk cache nor accumulated for other runs.
+or Qt trees. The bridge detaches that source from the retained selected-detail
+publication and binds it to `windows._snapshot_session.SnapshotSession`. The
+session owns at most the exact current selection’s source, its cancellation
+event, executor, and bounded result queue. The source is neither stored in the
+derived disk cache nor accumulated for other runs.
 The initial root and every expanded container materialise one direct-child page.
 A continuing page has at most 127 data children and one `Load more…` child (128
 total), a final page stays within the same 128-child ceiling, and every page
@@ -670,8 +672,12 @@ Lazy pages and full values use one worker and allow at most two submitted or
 queued requests in total. Each request and result carries the exact database
 instance and bridge binding, helper incarnation and source revision, coordinator
 and selection generation, run ID and GUID, Snapshot-session token, parent handle
-and continuation cursor, and deadline. The bridge checks the complete identity
-before submission and before GUI publication. Selection changes, database
+and continuation cursor, and deadline. The session checks request/session
+identity and delegates current database/selection validation to the bridge,
+both before submission and individually before each GUI publication. Worker
+completion only queues a result and requests an owner-thread wakeup. Shutdown
+closes the executor without waiting; unfinished futures remain in liveness
+checks until they finish. Selection changes, database
 switching or same-path replacement, helper restart, revision change, timeout,
 and shutdown therefore reject late pages and dialogs. All widget mutation and
 image or dialog creation remains on the GUI thread.
