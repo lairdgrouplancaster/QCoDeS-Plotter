@@ -41,6 +41,7 @@ from qplot.windows._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_SVG,
 )
+from qplot.windows._range_entry import RangeEntry
 from qplot.windows._widgets import treeWidgets
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot2d import plot2d
@@ -3222,7 +3223,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertTrue(host._axis_scale_tabs.isTabEnabled(1))
             self.assertFalse(host._axis_scale_tabs.isTabEnabled(2))
             self.assertFalse(host._axis_scale_tabs.isTabEnabled(3))
-            self.assertEqual(host._axis_scale_tabs.width(), 300)
+            self.assertEqual(host._axis_scale_tabs.width(), 360)
             x_controls = host._axis_scale_controls["x"]
             self.assertEqual(x_controls.manualRadio.text(), "Manual")
             self.assertEqual(x_controls.autoRadio.text(), "Auto")
@@ -3243,7 +3244,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 )
             self.assertEqual(x_controls.label.text(), "Link Axis:")
             self.assertIsInstance(x_controls.linkCombo, qtw.QComboBox)
-            self.assertEqual(x_controls.manualRadio.parentWidget().width(), 280)
+            self.assertEqual(x_controls.manualRadio.parentWidget().width(), 340)
             tab_bar = host._axis_scale_tabs.tabBar()
             self.assertIn("QTabBar::tab:selected", host._axis_scale_tabs.styleSheet())
             self.assertIn("palette(highlight)", host._axis_scale_tabs.styleSheet())
@@ -3538,6 +3539,12 @@ class RunListParentLookupTestCase(unittest.TestCase):
             [],
             ).append(args)
         window.vb.setXRange(0, 1, padding=0)
+        range_parent = qtw.QWidget()
+        ui.rangeEntry = RangeEntry(
+            minimum, maximum, qtw.QLabel(range_parent), qtw.QLabel(range_parent),
+            accessible_prefix="X axis", parent=range_parent,
+        )
+        minimum.setText("nan")
 
         try:
             before = list(window.vb.viewRange()[0])
@@ -3557,6 +3564,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             minimum.deleteLater()
             maximum.deleteLater()
             manual.deleteLater()
+            range_parent.deleteLater()
             window.vb.deleteLater()
 
     def test_manual_axis_scale_notifies_programmatic_range_change(self):
@@ -3584,6 +3592,13 @@ class RunListParentLookupTestCase(unittest.TestCase):
             }
         range_changes = []
         window._view_range_changed_programmatically = lambda: range_changes.append(True)
+        range_parent = qtw.QWidget()
+        window._axis_scale_controls["x"].rangeEntry = RangeEntry(
+            minimum, maximum, qtw.QLabel(range_parent), qtw.QLabel(range_parent),
+            accessible_prefix="X axis", parent=range_parent,
+        )
+        minimum.setText("2")
+        maximum.setText("4")
 
         try:
             plotWidget._axis_scale_range_text_changed(window, "x")
@@ -3594,6 +3609,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             minimum.deleteLater()
             maximum.deleteLater()
             manual.deleteLater()
+            range_parent.deleteLater()
 
     def test_colorbar_scale_action_opens_dialog_without_nested_menu(self):
         class Bar:

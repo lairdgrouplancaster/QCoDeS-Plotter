@@ -18,6 +18,7 @@ from ._colorbar import (
 )
 from ._config_persistence import persist_config_value
 from ._plot_host import PlotHost
+from ._range_entry import RangeEntry
 
 if TYPE_CHECKING:
     class _ColorbarScaleDialogBase(PlotHost):
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
         colorbar_max_text: qtw.QLineEdit
         colorbar_min_label: qtw.QLabel
         colorbar_min_text: qtw.QLineEdit
+        colorbar_range_entry: RangeEntry
         colorbar_copy_auto_limits_button: qtw.QToolButton
         colorbar_scale_action: QtGui.QAction
         colorbar_scale_controls: qtw.QWidget
@@ -181,6 +183,12 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             line_edit.setToolTip(
                 "Use a decimal point (e.g. 1.5 or 1.5e-3), without grouping separators."
             )
+        self.colorbar_range_entry = RangeEntry(
+            self.colorbar_min_text, self.colorbar_max_text,
+            self.colorbar_min_label, self.colorbar_max_label,
+            accessible_prefix="Color scale", parent=controls,
+        )
+        self.colorbar_range_entry.setMaximumWidth(300)
 
         self.colorbar_button_group = qtw.QButtonGroup(cast(QtCore.QObject, self))
         self.colorbar_button_group.addButton(self.colorbar_manual_radio)
@@ -205,13 +213,15 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             6,
             align_vcenter,
         )
-        range_layout.addWidget(self.colorbar_auto_radio, 1, 0)
+        range_layout.addWidget(self.colorbar_range_entry.summary, 1, 2, 1, 5)
+        range_layout.addWidget(self.colorbar_auto_radio, 2, 0)
 
         filter_controls = self._init_colorbar_filter_controls()
 
         layout.addWidget(qtw.QLabel("Colors"))
         layout.addWidget(filter_controls)
         layout.addWidget(self.colorbar_colormap_table, 1)
+        layout.addWidget(self.colorbar_range_entry, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(range_controls)
 
         self.colorbar_scale_controls = controls
@@ -563,13 +573,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         if "colorbar_min_text" not in self.__dict__:
             return
 
-        for widget, value in (
-                (self.colorbar_min_text, vmin),
-                (self.colorbar_max_text, vmax),
-                ):
-            widget.blockSignals(True)
-            widget.setText(repr(float(value)))
-            widget.blockSignals(False)
+        self.colorbar_range_entry.set_limits(vmin, vmax)
 
     def _colorbar_colormap_row(self, name):
         """
@@ -679,19 +683,18 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         Apply color scale levels entered in the dialog.
 
         """
-        if not all(
-            field.hasAcceptableInput()
-            for field in (self.colorbar_min_text, self.colorbar_max_text)
-        ):
-            self.show_status("Invalid color scale range.", 5000)
-            self._sync_colorbar_scale_controls()
+        entry = self.colorbar_range_entry
+        # Merely leaving a field or changing format must preserve Auto. An
+        # explicit click on Manual still freezes the current exact endpoints.
+        if entry.unchanged() and not self.colorbar_manual_radio.isChecked():
             return
-
         try:
-            vmin = float(self.colorbar_min_text.text())
-            vmax = float(self.colorbar_max_text.text())
+            vmin, vmax = entry.limits_from_fields()
         except ValueError:
-            self.show_status("Invalid color scale range.", 5000)
+            self.show_status(
+                "Color scale ranges must use finite numbers with a positive span."
+                if entry.center_span else "Invalid color scale range.", 5000,
+            )
             self._sync_colorbar_scale_controls()
             return
 

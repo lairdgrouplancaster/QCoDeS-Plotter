@@ -91,6 +91,11 @@ feedback there instead of adding more status or message-box methods to
 mixin and the custom axis item used for power-of-ten unit labels. It owns the
 X/Y axis scaling dialogs opened by double-clicking plot axes.
 
+`src/qplot/windows/_range_entry.py` shares the Min / Max and Center / Span
+input selector between axis and color-scale dialogs. It retains canonical
+endpoints when changing the display format; each dialog continues to validate
+and apply range edits through its existing plotting methods.
+
 `src/qplot/windows/_plot_marquee.py` contains the shared marquee selection
 mixin used by plot windows. It owns marquee drawing, dragging, zooming, stats
 dialogs, and base context-menu actions. Plot-type-specific snapping and stats

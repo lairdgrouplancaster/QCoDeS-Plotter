@@ -171,6 +171,7 @@ files = [
     "src/qplot/windows/_plot2d_layers.py",
     "src/qplot/windows/_plot2d_sweeps.py",
     "src/qplot/windows/_plot_axis_scaling.py",
+    "src/qplot/windows/_range_entry.py",
     "src/qplot/windows/_plot_drop_axes.py",
     "src/qplot/windows/_plot_export.py",
     "src/qplot/windows/_plot_feedback.py",
