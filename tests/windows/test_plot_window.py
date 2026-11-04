@@ -3756,13 +3756,14 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 )
             range_layout = host.colorbar_manual_radio.parentWidget().layout()
             self.assertIsInstance(range_layout, qtw.QGridLayout)
-            self.assertEqual(range_layout.columnMinimumWidth(1), 36)
-            for column in (0, 2, 3, 4, 5, 6):
-                item = range_layout.itemAtPosition(0, column)
+            for column in (0, 2, 3, 4, 5):
+                item = range_layout.itemAtPosition(1, column)
                 self.assertIsNotNone(item)
                 self.assertTrue(
                     item.alignment() & QtCore.Qt.AlignmentFlag.AlignVCenter
                     )
+            self.assertIs(range_layout.itemAtPosition(0, 3).widget(), host.colorbar_min_label)
+            self.assertIs(range_layout.itemAtPosition(0, 4).widget(), host.colorbar_max_label)
             copy_button = host.colorbar_copy_auto_limits_button
             self.assertEqual(
                 copy_button.accessibleName(),

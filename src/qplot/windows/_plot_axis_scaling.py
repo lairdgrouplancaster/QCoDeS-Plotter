@@ -665,7 +665,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         ui.gridLayout.addWidget(ui.minText, 2, 1)
         ui.gridLayout.addWidget(ui.maxText, 2, 2)
         ui.gridLayout.addWidget(ui.copyAutoLimitsButton, 2, 3)
-        ui.gridLayout.addWidget(ui.rangeEntry.summary, 3, 0, 1, 4)
+        ui.gridLayout.addWidget(ui.rangeEntry.summary, 3, 1, 1, 3)
         ui.gridLayout.addWidget(ui.autoRadio, 4, 0)
         ui.gridLayout.addWidget(ui.autoPercentSpin, 4, 1, 1, 2)
         ui.gridLayout.addWidget(ui.visibleOnlyCheck, 5, 1, 1, 3)

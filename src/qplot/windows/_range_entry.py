@@ -2,7 +2,7 @@
 
 from math import isfinite
 
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 
@@ -40,6 +40,13 @@ class RangeEntry(qtw.QWidget):
         self._displayed_values = self._limits
         self.center_span = False
         self.summary = qtw.QLabel(parent)
+        self.summary.setObjectName("rangeEntrySummary")
+        palette = self.summary.palette()
+        palette.setColor(
+            QtGui.QPalette.ColorRole.WindowText,
+            palette.color(QtGui.QPalette.ColorGroup.Disabled, QtGui.QPalette.ColorRole.WindowText),
+        )
+        self.summary.setPalette(palette)
         self.summary.setWordWrap(True)
         font = self.summary.font()
         font.setPointSizeF(max(8.0, font.pointSizeF() - 1))
@@ -59,7 +66,7 @@ class RangeEntry(qtw.QWidget):
             button.setAutoDefault(False)
             button.setAccessibleName(f"{accessible_prefix} {button.text()} input")
             self.group.addButton(button, index)
-            layout.addWidget(button)
+            layout.addWidget(button, 1)
         self.min_max_button.setChecked(True)
         self.setStyleSheet(
             "QPushButton { padding: 5px 8px; border: 1px solid palette(mid); }"
@@ -99,6 +106,7 @@ class RangeEntry(qtw.QWidget):
         ):
             blocker = QtCore.QSignalBlocker(field)
             field.setText(f"{value:.17g}")
+            field.setCursorPosition(0)
             label.setText(name)
             label.setBuddy(field)
             field.setAccessibleName(f"{self._accessible_prefix} {name.lower()}")

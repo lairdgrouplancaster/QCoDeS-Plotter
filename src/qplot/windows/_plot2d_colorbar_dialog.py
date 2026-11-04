@@ -188,7 +188,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             self.colorbar_min_label, self.colorbar_max_label,
             accessible_prefix="Color scale", parent=controls,
         )
-        self.colorbar_range_entry.setMaximumWidth(300)
+        self.colorbar_range_entry.setFixedWidth(200)
 
         self.colorbar_button_group = qtw.QButtonGroup(cast(QtCore.QObject, self))
         self.colorbar_button_group.addButton(self.colorbar_manual_radio)
@@ -198,30 +198,32 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         range_controls = qtw.QWidget()
         range_layout = qtw.QGridLayout(range_controls)
         range_layout.setContentsMargins(0, 0, 0, 0)
-        range_layout.setHorizontalSpacing(4)
-        range_layout.setVerticalSpacing(4)
+        range_layout.setHorizontalSpacing(6)
+        range_layout.setVerticalSpacing(5)
         align_vcenter = QtCore.Qt.AlignmentFlag.AlignVCenter
-        range_layout.addWidget(self.colorbar_manual_radio, 0, 0, align_vcenter)
-        range_layout.setColumnMinimumWidth(1, 36)
-        range_layout.addWidget(self.colorbar_min_label, 0, 2, align_vcenter)
-        range_layout.addWidget(self.colorbar_min_text, 0, 3, align_vcenter)
+        range_layout.addWidget(self.colorbar_range_entry, 1, 0, align_vcenter)
+        range_layout.setColumnMinimumWidth(1, 6)
+        range_layout.addWidget(self.colorbar_manual_radio, 1, 2, align_vcenter)
+        range_layout.addWidget(self.colorbar_min_label, 0, 3, align_vcenter)
+        range_layout.addWidget(self.colorbar_min_text, 1, 3, align_vcenter)
         range_layout.addWidget(self.colorbar_max_label, 0, 4, align_vcenter)
-        range_layout.addWidget(self.colorbar_max_text, 0, 5, align_vcenter)
+        range_layout.addWidget(self.colorbar_max_text, 1, 4, align_vcenter)
         range_layout.addWidget(
             self.colorbar_copy_auto_limits_button,
-            0,
-            6,
+            1,
+            5,
             align_vcenter,
         )
-        range_layout.addWidget(self.colorbar_range_entry.summary, 1, 2, 1, 5)
-        range_layout.addWidget(self.colorbar_auto_radio, 2, 0)
+        range_layout.addWidget(self.colorbar_range_entry.summary, 2, 3, 1, 2)
+        range_layout.addWidget(self.colorbar_auto_radio, 3, 2)
+        range_layout.setColumnStretch(3, 1)
+        range_layout.setColumnStretch(4, 1)
 
         filter_controls = self._init_colorbar_filter_controls()
 
         layout.addWidget(qtw.QLabel("Colors"))
         layout.addWidget(filter_controls)
         layout.addWidget(self.colorbar_colormap_table, 1)
-        layout.addWidget(self.colorbar_range_entry, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(range_controls)
 
         self.colorbar_scale_controls = controls
