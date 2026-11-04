@@ -5,14 +5,14 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from qplot.tools.worker import loader
+from tests._plot_worker import make_plot_worker
 
 
 @pytest.mark.parametrize("swapped", [False, True])
 @pytest.mark.parametrize("complex_name,role", [("x", "coordinate"), ("signal", "measurement data")])
 @pytest.mark.parametrize("imaginary", [0, 10])
 def test_line_rejects_complex_dtype_in_either_axis_order(swapped, complex_name, role, imaginary):
-    worker = loader.__new__(loader)
+    worker = make_plot_worker()
     worker.param = SimpleNamespace(name="signal", depends_on_=("x",))
     worker.param_dict = {
         name: SimpleNamespace(name=name) for name in ("x", "signal")
