@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import ANY, patch
 
 import numpy as np
+from _database_load_fakes import PreviewPublicationGate
 from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 from qcodes.dataset.sqlite.database import get_DB_location
@@ -32,6 +33,7 @@ from qplot.datahandling.trusted_live_supervisor import (
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
 from qplot.windows._commands import command_spec
+from qplot.windows._database_load_state import DatabaseLoadSession
 from qplot.windows._dataset_handle import (
     DatasetHandle,
     DatasetKey,
@@ -2130,7 +2132,10 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self._database_load_worker = Worker()
                 self._database_load_generation = 0
                 self._database_load_active = True
-                self._database_load_state = {"loading": True}
+                self._database_load_state = DatabaseLoadSession(
+                    abspath="pending.db",
+                    load_instance=database_instance("pending.db"),
+                )
                 self.monitor = Timer()
                 self.infoBox = type("InfoBox", (), {"preview": Preview()})()
 
@@ -2630,9 +2635,11 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         class Preview:
             def __init__(self):
+                self.database_path = ""
                 self.database_runs = None
 
             def set_database_runs(self, database_path, runs):
+                self.database_path = database_path
                 self.database_runs = (database_path, runs)
 
         class InfoBox:
@@ -2804,7 +2811,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         def stop(self):
             self.stopped = True
 
-    class RunList:
+    class RunList(PreviewPublicationGate):
         def __init__(self):
             self.runs = {}
             self.signals_blocked = False
@@ -2850,9 +2857,11 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
     class Preview:
         def __init__(self):
+            self.database_path = ""
             self.database_runs = None
 
         def set_database_runs(self, database_path, runs):
+            self.database_path = database_path
             self.database_runs = (database_path, runs)
 
         def has_database(self, database_path):
@@ -2901,32 +2910,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 return 30
             return self.values[key]
 
-    class Harness(QtCore.QObject):
-        load_file = main_window.MainWindow.load_file
-        load_database_path = main_window.MainWindow.load_database_path
-        load_startup_database = main_window.MainWindow.load_startup_database
-        close_database = main_window.MainWindow.close_database
-        cancel_database_load = main_window.MainWindow.cancel_database_load
-        database_load_finished = main_window.MainWindow.database_load_finished
-        database_load_status = main_window.MainWindow.database_load_status
-        _cancel_database_detail_load = (
-            main_window.MainWindow._cancel_database_detail_load
-        )
-        _hide_database_load_panel = main_window.MainWindow._hide_database_load_panel
-        _prepare_database_load_ui = main_window.MainWindow._prepare_database_load_ui
-        _prepare_replaced_database_reload = (
-            main_window.MainWindow._prepare_replaced_database_reload
-        )
-        _prepare_test_database_replacement = (
-            main_window.MainWindow._prepare_test_database_replacement
-        )
-        _release_database_runtime_state = (
-            main_window.MainWindow._release_database_runtime_state
-        )
-        _set_database_load_controls_enabled = (
-            main_window.MainWindow._set_database_load_controls_enabled
-        )
-        _show_database_load_panel = main_window.MainWindow._show_database_load_panel
+    class Harness(database_actions.DatabaseActionsMixin, QtCore.QObject):
         _sync_empty_state = main_window.MainWindow._sync_empty_state
         _sync_no_database_empty_state = (
             main_window.MainWindow._sync_no_database_empty_state
@@ -2939,17 +2923,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             main_window.MainWindow._loaded_empty_database_detail
         )
         _current_refresh_interval = main_window.MainWindow._current_refresh_interval
-        _loaded_empty_database_status = (
-            main_window.MainWindow._loaded_empty_database_status
-        )
-        _empty_database_refresh_status = (
-            main_window.MainWindow._empty_database_refresh_status
-        )
-        _main_refresh_interval = main_window.MainWindow._main_refresh_interval
         _apply_refresh_interval = main_window.MainWindow._apply_refresh_interval
-        _database_detail_priority_run_ids = (
-            main_window.MainWindow._database_detail_priority_run_ids
-        )
 
         def __init__(self):
             super().__init__()
@@ -3066,7 +3040,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.assertEqual(self._database_view(harness), expected_view)
             self.assertEqual(get_DB_location(), "database-a.db")
             self.assertTrue(harness._database_load_active)
-            self.assertEqual(harness._database_load_state["abspath"], "database-b.db")
+            self.assertEqual(harness._database_load_state.abspath, "database-b.db")
             self.assertEqual(len(harness.databaseLoadThreadPool.started), 1)
             self.assertFalse(harness.loadDatabaseButton.enabled)
             self.assertFalse(harness.refreshDatabaseButton.enabled)
@@ -3138,7 +3112,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.assertEqual(len(harness.databaseLoadThreadPool.started), 2)
             self.assertEqual(harness.RunList.runs, {})
             self.assertEqual(
-                harness._database_load_state["load_instance"].resolved_path,
+                harness._database_load_state.load_instance.resolved_path,
                 canonical_database_path(target_b),
             )
 
@@ -3183,7 +3157,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
                 self.assertEqual(harness.fileTextbox.text(), "")
                 self.assertTrue(harness._database_load_active)
-                self.assertEqual(harness._database_load_state["abspath"], database_path)
+                self.assertEqual(harness._database_load_state.abspath, database_path)
                 self.assertEqual(len(harness.databaseLoadThreadPool.started), 1)
             finally:
                 set_qcodes_database_location(active_database)
@@ -3198,7 +3172,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
                 self.assertTrue(harness.load_startup_database())
 
-                self.assertEqual(harness._database_load_state["abspath"], database_path)
+                self.assertEqual(harness._database_load_state.abspath, database_path)
                 self.assertEqual(len(harness.databaseLoadThreadPool.started), 1)
             finally:
                 set_qcodes_database_location(active_database)
@@ -3219,7 +3193,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 self.assertTrue(harness.load_startup_database())
 
                 self.assertEqual(
-                    harness._database_load_state["abspath"],
+                    harness._database_load_state.abspath,
                     str(qcodes_database),
                 )
             finally:
@@ -3244,7 +3218,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                 self.assertTrue(harness.load_startup_database())
 
                 self.assertEqual(
-                    harness._database_load_state["abspath"],
+                    harness._database_load_state.abspath,
                     str(startup_database),
                 )
             finally:
@@ -3443,7 +3417,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
                     len(harness.databaseLoadThreadPool.started),
                     started_workers + 1,
                 )
-                self.assertTrue(harness._database_load_state["reload_same_path"])
+                self.assertTrue(harness._database_load_state.reload_same_path)
                 generation = harness._database_load_generation
                 harness.database_load_finished(
                     generation,
@@ -3671,7 +3645,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             def __init__(self):
                 self._database_detail_generation = 4
                 self._database_detail_active = True
-                self._loaded_database_identity = (1, 1)
+                self._loaded_database_instance = DatabaseInstance(
+                    "loaded.db", "loaded.db", (1, 1),
+                )
                 self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
                 self.RunList = RunList()
                 self.reloads = []
@@ -3684,8 +3660,8 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
         with patch.object(
             database_actions,
-            "_database_file_identity",
-            return_value=(1, 2),
+            "database_instance",
+            return_value=DatabaseInstance("loaded.db", "loaded.db", (1, 2)),
         ):
             harness.database_detail_batch_ready(4, "loaded.db", runs)
 
@@ -3760,9 +3736,10 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         harness.infoBox.preview.set_database_runs("old.db", previous_runs)
         harness._database_load_active = True
         harness._database_load_worker = worker
-        harness._database_load_state = {
-            "abspath": "pending.db",
-        }
+        harness._database_load_state = DatabaseLoadSession(
+            abspath="pending.db",
+            load_instance=database_instance("pending.db"),
+        )
 
         harness.cancel_database_load()
 
@@ -5096,7 +5073,10 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
             harness = DatabaseLoadUiTestCase.Harness()
             harness._database_load_generation = 14
             harness._database_load_active = True
-            harness._database_load_state = {"abspath": "committed.db"}
+            harness._database_load_state = DatabaseLoadSession(
+                abspath="committed.db",
+                load_instance=database_instance("committed.db"),
+            )
             harness.fileTextbox.setText("active.db")
             worker = main_window.DatabaseLoadWorker(14, "committed.db")
             worker.signals.finished.connect(

@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from _database_load_fakes import PreviewPublicationGate
 from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
@@ -37,6 +38,7 @@ from qplot.datahandling.trusted_snapshot import normalize_trusted_snapshot
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import _plot_actions as plot_actions
 from qplot.windows import _run_controls as run_controls
+from qplot.windows._database_load_state import DatabaseLoadSession
 from qplot.windows._widgets import preview as preview_module
 from qplot.windows._widgets import treeWidgets
 
@@ -116,12 +118,14 @@ class _ThreadPool:
 
 class _Preview:
     def __init__(self, database_path: str = "", runs=None) -> None:
+        self.database_path = database_path
         self.database_runs = (database_path, dict(runs or {}))
 
     def has_database(self, database_path: str) -> bool:
         return self.database_runs[0] == database_path
 
     def set_database_runs(self, database_path: str, runs) -> None:
+        self.database_path = database_path
         self.database_runs = (database_path, dict(runs or {}))
 
 
@@ -146,7 +150,7 @@ class _LifecycleInfoBox:
         self.enabled = bool(enabled)
 
 
-class _LifecycleRunList:
+class _LifecycleRunList(PreviewPublicationGate):
     def __init__(self, runs=None) -> None:
         self.runs = {}
         self.watching = []
@@ -2948,7 +2952,7 @@ def test_cancelled_forced_same_instance_load_does_not_mutate_active_adapter():
         assert harness._pending_trusted_read_services == {
             generation: pending_service,
         }
-        assert harness._database_load_state["owns_trusted_service"] is True
+        assert harness._database_load_state.owns_trusted_service is True
 
         # Model the destructive reset performed by submit_bootstrap().  It is
         # safe only because the worker owns an isolated pending adapter.
@@ -3147,7 +3151,8 @@ def test_trusted_same_instance_with_lost_service_starts_a_new_session():
     }
 
 
-def test_failed_b_ui_publication_restores_a_and_retires_only_b():
+@pytest.mark.parametrize("gates_already_held", (False, True))
+def test_failed_b_ui_publication_restores_a_and_retires_only_b(gates_already_held):
     instance_a = _instance("database-a.db", (1, 1))
     instance_b = _instance("database-b.db", (1, 2))
     service_a = _FakeService(instance_a)
@@ -3202,6 +3207,9 @@ def test_failed_b_ui_publication_restores_a_and_retires_only_b():
         assert harness.load_file(instance_b.logical_path)
         generation = harness._database_load_generation
         service_b.accepted = True
+        harness.run_idBox.blockSignals(gates_already_held)
+        harness.RunList.blockSignals(gates_already_held)
+        harness.RunList.set_preview_publication_suspended(gates_already_held)
         harness.database_load_finished(
             generation,
             instance_b.logical_path,
@@ -3230,6 +3238,9 @@ def test_failed_b_ui_publication_restores_a_and_retires_only_b():
         f"Could not publish database {instance_b.logical_path}.",
         "injected B run-list publication failure",
     )
+    assert harness.run_idBox.signals_blocked is gates_already_held
+    assert harness.RunList.signals_blocked is gates_already_held
+    assert harness.RunList.preview_publication_suspended is gates_already_held
 
 
 def test_rollback_failure_retires_b_and_leaves_a_view_safely_closed():
@@ -3428,7 +3439,8 @@ def test_post_commit_selection_failure_still_retires_old_service():
     assert service_b.close_async_calls == 0
 
 
-def test_b_publication_blocks_reentry_and_retires_a_after_full_commit():
+@pytest.mark.parametrize("gates_already_held", (False, True))
+def test_b_publication_blocks_reentry_and_retires_a_after_full_commit(gates_already_held):
     instance_a = _instance("database-a.db", (1, 1))
     instance_b = _instance("database-b.db", (1, 2))
     service_a = _FakeService(instance_a)
@@ -3502,6 +3514,9 @@ def test_b_publication_blocks_reentry_and_retires_a_after_full_commit():
         assert harness.load_file(instance_b.logical_path)
         generation = harness._database_load_generation
         service_b.accepted = True
+        harness.run_idBox.blockSignals(gates_already_held)
+        harness.RunList.blockSignals(gates_already_held)
+        harness.RunList.set_preview_publication_suspended(gates_already_held)
         harness.database_load_finished(
             generation,
             instance_b.logical_path,
@@ -3533,9 +3548,13 @@ def test_b_publication_blocks_reentry_and_retires_a_after_full_commit():
     assert harness._loaded_database_instance == instance_b
     assert service_a.close_async_calls == 1
     assert service_b.close_async_calls == 0
+    assert harness.run_idBox.signals_blocked is gates_already_held
+    assert harness.RunList.signals_blocked is gates_already_held
+    assert harness.RunList.preview_publication_suspended is gates_already_held
 
 
-def test_close_during_b_row_staging_retires_b_and_leaves_closed_view_empty():
+@pytest.mark.parametrize("gates_already_held", (False, True))
+def test_close_during_b_row_staging_retires_b_and_leaves_closed_view_empty(gates_already_held):
     instance_a = _instance("database-a.db", (1, 1))
     instance_b = _instance("database-b.db", (1, 2))
     service_a = _FakeService(instance_a)
@@ -3575,6 +3594,9 @@ def test_close_during_b_row_staging_retires_b_and_leaves_closed_view_empty():
         assert harness.load_file(instance_b.logical_path)
         generation = harness._database_load_generation
         service_b.accepted = True
+        harness.run_idBox.blockSignals(gates_already_held)
+        harness.RunList.blockSignals(gates_already_held)
+        harness.RunList.set_preview_publication_suspended(gates_already_held)
         harness.database_load_finished(
             generation,
             instance_b.logical_path,
@@ -3594,6 +3616,9 @@ def test_close_during_b_row_staging_retires_b_and_leaves_closed_view_empty():
     assert harness.default_selections == 0
     assert harness.detail_loads == []
     assert harness.error_messages == []
+    assert harness.run_idBox.signals_blocked is gates_already_held
+    assert harness.RunList.signals_blocked is gates_already_held
+    assert harness.RunList.preview_publication_suspended is gates_already_held
 
 
 def test_stale_load_callback_retires_only_its_pending_service():
@@ -3606,7 +3631,10 @@ def test_stale_load_callback_retires_only_its_pending_service():
     harness = _LifecycleHarness(instance_a, service_a)
     harness._database_load_generation = 12
     harness._database_load_active = True
-    harness._database_load_state = {"abspath": instance_c.logical_path}
+    harness._database_load_state = DatabaseLoadSession(
+        abspath=instance_c.logical_path,
+        load_instance=instance_c,
+    )
     harness._database_load_worker = _FakeLoadWorker(service_c)
     harness._pending_trusted_read_services = {11: service_b, 12: service_c}
 

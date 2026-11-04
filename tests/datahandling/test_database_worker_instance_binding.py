@@ -30,6 +30,7 @@ from qplot.testdata import (
     generate_database,
 )
 from qplot.windows import _database_actions as database_actions
+from qplot.windows._database_load_state import DatabaseLoadSession
 
 _SQLITE_ARTIFACT_SUFFIXES = ("", "-wal", "-shm", "-journal")
 
@@ -1034,13 +1035,12 @@ def test_load_instance_error_invalidates_generation_and_uses_replacement_reload(
         def __init__(self):
             self._database_load_generation = 90
             self._database_load_active = True
-            self._database_load_state = {
-                "abspath": str(database_path),
-                "load_instance": accepted_instance,
-                "load_identity": accepted_instance.identity,
-                "load_started_at": 123.0,
-                "generation_recovery": False,
-            }
+            self._database_load_state = DatabaseLoadSession(
+                abspath=str(database_path),
+                load_instance=accepted_instance,
+                load_started_at=123.0,
+                generation_recovery=False,
+            )
             self._database_load_worker = object()
             self.reloads = []
             self.statuses = []

@@ -54,10 +54,12 @@ from qplot.testdata import (
 
 from ._auto_plot import cancel_auto_plot, enqueue_auto_plot, update_auto_plot
 from ._config_persistence import persist_config_value
-from ._dataset_handle import (
-    canonical_database_path,
-    database_file_identity,
+from ._database_load_publication import DatabaseLoadPublication
+from ._database_load_state import DatabaseLoadSession, DatabaseViewSnapshot
+from ._database_observation import (
+    database_instances_or_sidecars_differ as _database_instances_or_sidecars_differ,
 )
+from ._dataset_handle import canonical_database_path
 from ._export_paths import (
     choose_export_path,
     prepare_export_destination,
@@ -69,21 +71,11 @@ from ._widgets.details_tables import (
     format_value,
 )
 
-_database_file_identity = database_file_identity
 _TEST_DATABASE_READER_RELEASE_TIMEOUT_SECONDS = 10.0
-
-
-class _DatabaseLoadPublicationAborted(RuntimeError):
-    """A nested Qt event invalidated an in-progress UI publication."""
 
 
 class _DatabaseRefreshPublicationAborted(RuntimeError):
     """A nested Qt event invalidated an in-progress refresh publication."""
-
-
-def _database_instances_differ(first, second):
-    """Return whether two available identities name different file instances."""
-    return first is not None and second is not None and first != second
 
 
 def _database_paths_equal(first, second):
@@ -94,35 +86,6 @@ def _database_paths_equal(first, second):
         return logical_database_path(first) == logical_database_path(second)
     except (TypeError, ValueError, OSError):
         return False
-
-
-def _database_observations_differ(first, second):
-    """Compare saved observations, retaining compatibility with test harnesses."""
-
-    if isinstance(first, DatabaseInstance) and isinstance(second, DatabaseInstance):
-        return database_instances_differ(first, second)
-    first_identity = getattr(first, "identity", first)
-    second_identity = getattr(second, "identity", second)
-    return _database_instances_differ(first_identity, second_identity)
-
-
-def _database_instances_or_sidecars_differ(first, second):
-    """Reject main/sidecar replacement while allowing later sidecar creation.
-
-    Stage 3 permits a writer or SQLite itself to create the exact WAL/SHM
-    sidecars between finite reader operations.  Comparisons are directional:
-    ``first`` is the accepted observation and ``second`` is a later one.  A
-    newly observed identity is therefore compatible, while removal or
-    replacement of any identity already bound to the accepted source is not.
-    """
-    if not isinstance(first, DatabaseInstance) or not isinstance(
-            second,
-            DatabaseInstance,
-            ):
-        return _database_observations_differ(first, second)
-    if database_instances_differ(first, second):
-        return True
-    return not first.sidecar_identities.issubset(second.sidecar_identities)
 
 
 def _selected_run_detail_cache_key(instance, run_id, guid):
@@ -682,8 +645,8 @@ class DatabaseActionsMixin:
     def _pending_database_load_targets_another_path(self, database_path):
         if not getattr(self, "_database_load_active", False):
             return False
-        state = getattr(self, "_database_load_state", None) or {}
-        pending_path = state.get("abspath")
+        state = getattr(self, "_database_load_state", None)
+        pending_path = state.abspath if state is not None else None
         return bool(
             pending_path
             and logical_database_path(pending_path)
@@ -1159,7 +1122,7 @@ class DatabaseActionsMixin:
         instance_changed = False
         if state_matches:
             current_instance = database_instance(database_path)
-            instance_changed = _database_observations_differ(
+            instance_changed = database_instances_differ(
                 replacement_state.original_instance,
                 current_instance,
             )
@@ -1631,7 +1594,6 @@ class DatabaseActionsMixin:
         staged = None
         staged_before_publication = None
         refresh_instance = getattr(self, "_database_refresh_instance", None)
-        loaded_identity = getattr(self, "_loaded_database_identity", None)
         publication_baseline_instance = getattr(
             self,
             "_loaded_database_instance",
@@ -1666,7 +1628,7 @@ class DatabaseActionsMixin:
                         current_instance,
                     )
                     or _database_instances_or_sidecars_differ(
-                        publication_baseline_instance or loaded_identity,
+                        publication_baseline_instance,
                         current_instance,
                     )
                     ):
@@ -1828,18 +1790,16 @@ class DatabaseActionsMixin:
                 DatabaseActionsMixin._cancel_database_refresh(self)
                 self._reload_replaced_database(database_path)
                 return
-            refresh_identity = getattr(self, "_database_refresh_identity", None)
             refresh_instance = getattr(self, "_database_refresh_instance", None)
             current_instance = database_instance(database_path)
-            loaded_identity = getattr(self, "_loaded_database_identity", None)
             loaded_instance = getattr(self, "_loaded_database_instance", None)
             if (
                     _database_instances_or_sidecars_differ(
-                        refresh_instance or refresh_identity,
+                        refresh_instance,
                         current_instance,
                     )
                     or _database_instances_or_sidecars_differ(
-                        loaded_instance or loaded_identity,
+                        loaded_instance,
                         current_instance,
                     )
                     ):
@@ -2200,19 +2160,11 @@ class DatabaseActionsMixin:
                 DatabaseActionsMixin._discard_stale_worker_publication(self)
             return True
 
-        loaded_identity = getattr(self, "_loaded_database_identity", None)
         loaded_instance = getattr(self, "_loaded_database_instance", None)
-        if loaded_instance is None:
-            changed = _database_instances_differ(
-                loaded_identity,
-                _database_file_identity(database_path),
-            )
-        else:
-            current_instance = database_instance(database_path)
-            changed = _database_instances_or_sidecars_differ(
-                loaded_instance,
-                current_instance,
-            )
+        current_instance = database_instance(database_path)
+        changed = _database_instances_or_sidecars_differ(
+            loaded_instance, current_instance,
+        )
         if not changed:
             if loaded_instance is not None:
                 DatabaseActionsMixin._advance_loaded_database_sidecar_baseline(
@@ -2599,7 +2551,6 @@ class DatabaseActionsMixin:
         )
         current_instance = database_instance(abspath)
         current_identity = current_instance.identity
-        loaded_identity = getattr(self, "_loaded_database_identity", None)
         loaded_instance = getattr(self, "_loaded_database_instance", None)
         if current_identity is None and os.path.isfile(abspath):
             if same_loaded_database and loaded_instance is not None:
@@ -2621,7 +2572,7 @@ class DatabaseActionsMixin:
             or (
                 same_loaded_database
                 and _database_instances_or_sidecars_differ(
-                    loaded_instance or loaded_identity,
+                    loaded_instance,
                     current_instance,
                 )
                 )
@@ -2641,8 +2592,9 @@ class DatabaseActionsMixin:
                     "_database_view_released_for_generation",
                     False,
                 )
-                and loaded_identity is not None
-                and current_identity == loaded_identity
+                and loaded_instance is not None
+                and loaded_instance.identity is not None
+                and current_identity == loaded_instance.identity
                 and (
                     getattr(self, "_database_access_mode", None)
                     != TRUSTED_LIVE_MODE
@@ -2703,15 +2655,14 @@ class DatabaseActionsMixin:
         self._database_load_generation += 1
         generation = self._database_load_generation
         self._database_load_active = True
-        self._database_load_state = {
-            "abspath": abspath,
-            "load_started_at": load_started_at,
-            "reload_same_path": force or same_loaded_database,
-            "load_identity": current_identity,
-            "load_instance": current_instance,
-            "replacement_reload": replacement,
-            "generation_recovery": generation_recovery,
-        }
+        self._database_load_state = DatabaseLoadSession(
+            abspath=abspath,
+            load_started_at=load_started_at,
+            reload_same_path=force or same_loaded_database,
+            load_instance=current_instance,
+            replacement_reload=replacement,
+            generation_recovery=generation_recovery,
+        )
         apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
         if callable(apply_refresh_interval):
             apply_refresh_interval(self._main_refresh_interval())
@@ -2753,9 +2704,9 @@ class DatabaseActionsMixin:
                 pending_services = {}
                 self._pending_trusted_read_services = pending_services
             pending_services[generation] = pending_service
-        self._database_load_state["worker"] = worker
-        self._database_load_state["trusted_service"] = pending_service
-        self._database_load_state["owns_trusted_service"] = owns_pending_service
+        self._database_load_state.worker = worker
+        self._database_load_state.trusted_service = pending_service
+        self._database_load_state.owns_trusted_service = owns_pending_service
         worker.signals.status.connect(self.database_load_status)
         worker.signals.finished.connect(
             lambda callback_generation, callback_path, runs, error,
@@ -2948,67 +2899,119 @@ class DatabaseActionsMixin:
             self.fileTextbox.setText(abspath)
 
 
-    def _capture_database_load_publication(self):
+    def _capture_database_load_publication(self) -> DatabaseViewSnapshot:
         """Capture the committed view while a pending database is staged."""
-        preview = self.infoBox.preview
-        preview_path = getattr(preview, "database_path", None)
-        if preview_path is None:
-            database_runs = getattr(preview, "database_runs", ("", {}))
-            preview_path = database_runs[0] if database_runs else ""
-        return {
-            "database_path": self.fileTextbox.text(),
-            "runs": dict(self.RunList.all_run_metadata()),
-            "run_id_text": self.run_idBox.text(),
-            "measurement_text": self.measurementBox.text(),
-            "selected_run_id": getattr(self, "selected_run_id", None),
-            "selected_run_guid": getattr(self, "_selected_run_guid", None),
-            "selected_dataset": getattr(self, "ds", None),
-            "selected_dataset_key": getattr(self, "_selected_dataset_key", None),
-            "local_last_file": getattr(self, "localLastFile", ""),
-            "preview_path": preview_path or "",
-            "trusted_service": getattr(self, "_trusted_read_service", None),
-            "access_mode": getattr(self, "_database_access_mode", None),
-            "fallback_reason": getattr(self, "_database_fallback_reason", None),
-            "database_identity": getattr(self, "_loaded_database_identity", None),
-            "database_instance": getattr(self, "_loaded_database_instance", None),
-            "qcodes_database": get_DB_location(),
-        }
+        return DatabaseViewSnapshot(
+            database_path=self.fileTextbox.text(),
+            runs=dict(self.RunList.all_run_metadata()),
+            run_id_text=self.run_idBox.text(),
+            measurement_text=self.measurementBox.text(),
+            selected_run_id=getattr(self, "selected_run_id", None),
+            selected_run_guid=getattr(self, "_selected_run_guid", None),
+            selected_dataset=getattr(self, "ds", None),
+            selected_dataset_key=getattr(self, "_selected_dataset_key", None),
+            local_last_file=getattr(self, "localLastFile", ""),
+            preview_path=self.infoBox.preview.database_path,
+            trusted_service=getattr(self, "_trusted_read_service", None),
+            access_mode=getattr(self, "_database_access_mode", None),
+            fallback_reason=getattr(self, "_database_fallback_reason", None),
+            database_identity=getattr(self, "_loaded_database_identity", None),
+            database_instance=getattr(self, "_loaded_database_instance", None),
+            qcodes_database=get_DB_location(),
+        )
+
+
+    def _commit_database_load_view(
+            self, snapshot: DatabaseViewSnapshot, abspath, runs, new_service, access_mode,
+            fallback_reason, staged_instance,
+            ):
+        """Publish the staged view without yielding to Qt events."""
+        set_qcodes_database_location(abspath)
+        self._trusted_read_service = new_service
+        self._database_access_mode = access_mode
+        self._database_fallback_reason = fallback_reason
+        self._loaded_database_identity = staged_instance.identity
+        # A WAL/SHM that appeared while B was staged is compatible,
+        # but it is now an accepted identity that later guards must
+        # retain in order to detect replacement or ABA.
+        self._loaded_database_instance = staged_instance
+        prior_path = snapshot.database_path
+        if prior_path and prior_path != self.localLastFile:
+            self.localLastFile = prior_path
+        self.fileTextbox.setText(abspath)
+        if access_mode == TRUSTED_LIVE_MODE:
+            self.infoBox.preview.set_database_runs("", {})
+            show_run_preview_placeholders = getattr(
+                self.RunList,
+                "show_run_preview_placeholders",
+                None,
+            )
+            if callable(show_run_preview_placeholders):
+                show_run_preview_placeholders()
+        else:
+            self.infoBox.preview.set_database_runs(abspath, runs)
+        self.infoBox.clear()
+        clear_summary_cache = getattr(
+            self,
+            "_clear_snapshot_setpoint_summary_cache",
+            None,
+        )
+        if callable(clear_summary_cache):
+            clear_summary_cache()
+        clear_database_cache = getattr(
+            self.infoBox,
+            "clear_database_cache",
+            None,
+        )
+        if callable(clear_database_cache):
+            clear_database_cache()
+        self.infoBox.scrollToTop()
+        release_selected = getattr(
+            self,
+            "_release_selected_dataset",
+            None,
+        )
+        if callable(release_selected):
+            release_selected()
+        else:
+            self.ds = None
+            self._selected_dataset_key = None
 
 
     def _restore_database_load_publication(
             self,
-            snapshot,
+            snapshot: DatabaseViewSnapshot,
             *,
             continue_loading=None,
             ):
         """Restore A after B fails before its publication transaction commits."""
-        self._trusted_read_service = snapshot["trusted_service"]
-        self._database_access_mode = snapshot["access_mode"]
-        self._database_fallback_reason = snapshot["fallback_reason"]
-        self._loaded_database_identity = snapshot["database_identity"]
-        self._loaded_database_instance = snapshot["database_instance"]
-        self.selected_run_id = snapshot["selected_run_id"]
-        self._selected_run_guid = snapshot["selected_run_guid"]
-        self.ds = snapshot["selected_dataset"]
-        self._selected_dataset_key = snapshot["selected_dataset_key"]
-        self.localLastFile = snapshot["local_last_file"]
-        self.run_idBox.setText(snapshot["run_id_text"])
-        self.measurementBox.setText(snapshot["measurement_text"])
+        self._trusted_read_service = snapshot.trusted_service
+        self._database_access_mode = snapshot.access_mode
+        self._database_fallback_reason = snapshot.fallback_reason
+        self._loaded_database_identity = snapshot.database_identity
+        self._loaded_database_instance = snapshot.database_instance
+        self.selected_run_id = snapshot.selected_run_id
+        self._selected_run_guid = snapshot.selected_run_guid
+        self.ds = snapshot.selected_dataset
+        self._selected_dataset_key = snapshot.selected_dataset_key
+        self.localLastFile = snapshot.local_last_file
+        self.run_idBox.setText(snapshot.run_id_text)
+        self.measurementBox.setText(snapshot.measurement_text)
         self.RunList.clearSelection()
         self.RunList.clear()
         self.RunList.watching = []
         restored = self.RunList.addRuns(
-            snapshot["runs"],
+            snapshot.runs,
             continue_loading=continue_loading,
         )
         if restored is False:
             return False
-        self.fileTextbox.setText(snapshot["database_path"])
+        self.fileTextbox.setText(snapshot.database_path)
         self.infoBox.preview.set_database_runs(
-            snapshot["preview_path"],
-            snapshot["runs"],
+            snapshot.preview_path,
+            snapshot.runs,
         )
-        set_qcodes_database_location(snapshot["qcodes_database"])
+        set_qcodes_database_location(snapshot.qcodes_database)
         return True
 
 
@@ -3134,25 +3137,17 @@ class DatabaseActionsMixin:
             )
             return
 
-        state = self._database_load_state or {}
-        if state.get("abspath") != abspath:
+        state = self._database_load_state
+        if state is None or state.abspath != abspath:
             DatabaseActionsMixin._retire_trusted_read_service(
                 self,
                 pending_service,
             )
             return
         if load_worker is None:
-            load_worker = state.get("worker")
+            load_worker = state.worker
         if pending_service is None:
-            pending_service = state.get("trusted_service")
-        owns_pending_service = bool(
-            state.get(
-                "owns_trusted_service",
-                pending_service is not None
-                and pending_service
-                is not getattr(self, "_trusted_read_service", None),
-            )
-        )
+            pending_service = state.trusted_service
         access_mode = getattr(
             load_worker,
             "access_mode",
@@ -3165,427 +3160,141 @@ class DatabaseActionsMixin:
         self._database_load_worker = None
         self._set_database_load_controls_enabled(True)
         self._hide_database_load_panel()
-        load_started_at = state.get("load_started_at") or perf_counter()
-        load_identity = state.get("load_identity")
-        load_instance = state.get("load_instance")
         current_instance = database_instance(abspath)
 
+        if not DatabaseActionsMixin._accept_database_load_result(
+                self, state, current_instance, pending_service, access_mode, error,
+                ):
+            return
+
+        publication = DatabaseLoadPublication(
+            self, generation, state, current_instance, runs or {},
+            pending_service, access_mode, fallback_reason,
+            observe_instance=database_instance,
+        )
+        publication.run()
+        if DatabaseActionsMixin._recover_database_load_publication(self, publication):
+            DatabaseActionsMixin._complete_database_load_publication(self, publication)
+
+
+    def _queue_database_load_retry(self, state: DatabaseLoadSession):
+        """Retry a changed source only if no intervening action supersedes it."""
+        self._database_load_generation += 1
+        retry_generation = self._database_load_generation
+        self.show_status("Database changed while loading; retrying...", 0)
+        QtCore.QTimer.singleShot(
+            0,
+            lambda: DatabaseActionsMixin._retry_replaced_database_if_current(
+                self,
+                retry_generation,
+                state.abspath,
+                generation_recovery=state.generation_recovery,
+                load_started_at=state.load_started_at,
+            ),
+        )
+
+
+    def _accept_database_load_result(
+            self, state: DatabaseLoadSession, current_instance: DatabaseInstance,
+            pending_service, access_mode, error,
+            ) -> bool:
+        """Validate the worker's source and mode while the old view stays committed."""
         if (
                 isinstance(error, DatabaseInstanceChangedError)
                 or _database_instances_or_sidecars_differ(
-                    load_instance or load_identity,
-                    current_instance,
+                    state.load_instance, current_instance,
                 )
                 ):
-            if owns_pending_service:
-                DatabaseActionsMixin._retire_trusted_read_service(
-                    self,
-                    pending_service,
-                )
-            self._database_load_generation += 1
-            retry_generation = self._database_load_generation
-            self.show_status("Database changed while loading; retrying...", 0)
-            generation_recovery = bool(state.get("generation_recovery"))
-            QtCore.QTimer.singleShot(
-                0,
-                lambda: DatabaseActionsMixin._retry_replaced_database_if_current(
-                    self,
-                    retry_generation,
-                    abspath,
-                    generation_recovery=generation_recovery,
-                    load_started_at=load_started_at,
-                ),
-            )
-            return
+            if state.owns_trusted_service:
+                DatabaseActionsMixin._retire_trusted_read_service(self, pending_service)
+            DatabaseActionsMixin._queue_database_load_retry(self, state)
+            return False
 
-        if error is not None:
-            if owns_pending_service:
-                DatabaseActionsMixin._retire_trusted_read_service(
-                    self,
-                    pending_service,
-                )
-            log_exception("Database load failed", error, __name__)
-            if isinstance(error, UnverifiableDatabaseWalError):
-                self.show_error(
-                    "Unverifiable Database WAL",
-                    "qPlot refused to load this database because its WAL "
-                    "cannot be verified. Close every owning QCoDeS/SQLite "
-                    "connection cleanly, or checkpoint with the owning writer, "
-                    "then retry loading the database.",
-                    str(error),
-                )
-                DatabaseActionsMixin._resume_test_database_generation_recovery(self)
-                apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
-                if callable(apply_refresh_interval):
-                    apply_refresh_interval(self._main_refresh_interval())
-                return
-            self.show_error(
-                "Database Load Failed",
-                f"Could not load database {abspath}.",
+        failure = None
+        if isinstance(error, UnverifiableDatabaseWalError):
+            failure = (
+                "Unverifiable Database WAL",
+                "qPlot refused to load this database because its WAL "
+                "cannot be verified. Close every owning QCoDeS/SQLite "
+                "connection cleanly, or checkpoint with the owning writer, "
+                "then retry loading the database.",
                 str(error),
             )
-            DatabaseActionsMixin._resume_test_database_generation_recovery(self)
-            apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
-            if callable(apply_refresh_interval):
-                apply_refresh_interval(self._main_refresh_interval())
-            return
-
-        # This observation is the transaction's publication point.  A failed
-        # or stale B load returns above while A and its service are still
-        # committed.  Only a B instance revalidated here may replace A; any
-        # later source change is a new replacement event caught by the final
-        # post-publication guard below.
-        accepted_instance = current_instance
-        accepted_identity = accepted_instance.identity
-        if access_mode == TRUSTED_LIVE_MODE:
+        elif error is not None:
+            failure = (
+                "Database Load Failed",
+                f"Could not load database {state.abspath}.",
+                str(error),
+            )
+        elif access_mode == TRUSTED_LIVE_MODE:
+            # SQLite may create the permitted exact SHM after the helper accepts
+            # its source. Accept first appearance, never removal or replacement.
             if (
                     pending_service is None
-                    or not getattr(pending_service, "accepted", False)
-                    # The helper accepts its source before SQLite may create the
-                    # permitted exact SHM.  Directional comparison accepts that
-                    # first appearance, but never normalises removal or
-                    # replacement of a sidecar the helper already accepted.
+                    or not pending_service.accepted
                     or _database_instances_or_sidecars_differ(
-                        pending_service.database_instance,
-                        current_instance,
+                        pending_service.database_instance, current_instance,
                     )
                     ):
-                if owns_pending_service:
-                    DatabaseActionsMixin._retire_trusted_read_service(
-                        self,
-                        pending_service,
-                    )
-                self.show_error(
+                failure = (
                     "Trusted Database Load Failed",
                     "The trusted reader did not remain bound to the accepted "
                     "database instance.",
                     "The pending session was retired without changing the "
                     "currently displayed database.",
                 )
-                DatabaseActionsMixin._resume_test_database_generation_recovery(self)
-                apply_refresh_interval = getattr(
-                    self,
-                    "_apply_refresh_interval",
-                    None,
-                )
-                if callable(apply_refresh_interval):
-                    apply_refresh_interval(self._main_refresh_interval())
-                return
         elif access_mode != SNAPSHOT_FALLBACK_MODE:
-            if owns_pending_service:
-                DatabaseActionsMixin._retire_trusted_read_service(
-                    self,
-                    pending_service,
-                )
-            self.show_error(
+            failure = (
                 "Database Load Failed",
                 "The database worker returned an unknown access mode.",
                 str(access_mode),
             )
-            DatabaseActionsMixin._resume_test_database_generation_recovery(self)
-            apply_refresh_interval = getattr(
-                self,
-                "_apply_refresh_interval",
-                None,
-            )
-            if callable(apply_refresh_interval):
-                apply_refresh_interval(self._main_refresh_interval())
-            return
 
-        publication_snapshot = (
-            DatabaseActionsMixin._capture_database_load_publication(self)
-        )
-        old_service = publication_snapshot["trusted_service"]
-        new_service = (
-            pending_service if access_mode == TRUSTED_LIVE_MODE else None
-        )
-        runs = runs or {}
-        publication_error = None
-        publication_source_changed = False
-        publication_aborted = False
-        publication_restored = False
-        publication_committed = False
-        publication_rollback_error = None
-        publication_rollback_source_changed = False
+        if failure is None:
+            return True
+        if state.owns_trusted_service:
+            DatabaseActionsMixin._retire_trusted_read_service(self, pending_service)
+        if error is not None:
+            log_exception("Database load failed", error, __name__)
+        self.show_error(*failure)
+        DatabaseActionsMixin._resume_test_database_generation_recovery(self)
+        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
+        if callable(apply_refresh_interval):
+            apply_refresh_interval(self._main_refresh_interval())
+        return False
 
-        # A nested event yield must not let A's already-running metadata jobs
-        # merge into the staged B model.  Their public cancellation is prompt;
-        # rollback below explicitly restarts A's progressive work.
-        self._cancel_database_detail_load()
-        DatabaseActionsMixin._cancel_selected_run_detail(self)
-        DatabaseActionsMixin._cancel_database_info(self)
+
+    def _recover_database_load_publication(self, publication: DatabaseLoadPublication) -> bool:
+        """Report or retry a failed publication after its gates have been released."""
+        state = publication.session
+        abspath = state.abspath
+        load_started_at = state.load_started_at
+        pending_service = publication.pending_service
+        owns_pending_service = state.owns_trusted_service
+        publication_snapshot = publication.snapshot
+        old_service = publication_snapshot.trusted_service
         derived_bridge = getattr(self, "_trusted_derived_bridge", None)
-        if derived_bridge is not None:
-            derived_bridge.suspend_publications()
 
-        # Keep every owned pending session reachable by close_database()/quit
-        # while addRuns deliberately pumps Qt events.  Snapshot fallback has
-        # already closed its rejected broker, but qPlot must still retain that
-        # object until shutdown completion is observable.
-        if pending_service is not None and owns_pending_service:
-            self._pending_trusted_read_services[generation] = pending_service
-
-        def publication_is_current():
-            return bool(
-                getattr(self, "_database_load_publication_active", False)
-                and generation == getattr(self, "_database_load_generation", 0)
-                and not getattr(self, "_shutdown_started", False)
-                and not getattr(self, "_shutdown_ready", False)
-            )
-
-        self._database_load_publication_active = True
-        DatabaseActionsMixin._sync_database_generation_controls(self)
-        run_id_signals_blocked = self.run_idBox.blockSignals(True)
-        run_list_signals_blocked = self.RunList.blockSignals(True)
-        set_preview_publication_suspended = getattr(
-            self.RunList,
-            "set_preview_publication_suspended",
-            None,
-        )
-        preview_publication_was_suspended = False
-        preview_publication_gate_set = False
-        try:
-            if callable(set_preview_publication_suspended):
-                preview_publication_was_suspended = (
-                    set_preview_publication_suspended(True)
-                )
-                preview_publication_gate_set = True
-            try:
-                # Stage B's run model while every action remains gated and A is
-                # still the committed service/instance.  Only after staging and
-                # one final source observation do the plain controller fields
-                # advance together to B.
-                self._prepare_database_load_ui(
-                    abspath,
-                    release_selected=False,
-                    clear_details=False,
-                    update_path=False,
-                )
-                staged = self.RunList.addRuns(
-                    runs,
-                    continue_loading=publication_is_current,
-                )
-                if staged is False or not publication_is_current():
-                    raise _DatabaseLoadPublicationAborted(
-                        "The database view was closed while B was staged."
-                    )
-                staged_instance = database_instance(abspath)
-                if _database_instances_or_sidecars_differ(
-                        accepted_instance,
-                        staged_instance,
-                        ):
-                    raise DatabaseInstanceChangedError(
-                        "The database changed while its loaded view was staged."
-                    )
-
-                set_qcodes_database_location(abspath)
-                self._trusted_read_service = new_service
-                self._database_access_mode = access_mode
-                self._database_fallback_reason = fallback_reason
-                self._loaded_database_identity = accepted_identity
-                # A WAL/SHM that appeared while B was staged is compatible,
-                # but it is now an accepted identity that later guards must
-                # retain in order to detect replacement or ABA.
-                self._loaded_database_instance = staged_instance
-                prior_path = publication_snapshot["database_path"]
-                if prior_path and prior_path != self.localLastFile:
-                    self.localLastFile = prior_path
-                self.fileTextbox.setText(abspath)
-                if access_mode == TRUSTED_LIVE_MODE:
-                    self.infoBox.preview.set_database_runs("", {})
-                    show_run_preview_placeholders = getattr(
-                        self.RunList,
-                        "show_run_preview_placeholders",
-                        None,
-                    )
-                    if callable(show_run_preview_placeholders):
-                        show_run_preview_placeholders()
-                else:
-                    self.infoBox.preview.set_database_runs(abspath, runs)
-                self.infoBox.clear()
-                clear_summary_cache = getattr(
-                    self,
-                    "_clear_snapshot_setpoint_summary_cache",
-                    None,
-                )
-                if callable(clear_summary_cache):
-                    clear_summary_cache()
-                clear_database_cache = getattr(
-                    self.infoBox,
-                    "clear_database_cache",
-                    None,
-                )
-                if callable(clear_database_cache):
-                    clear_database_cache()
-                self.infoBox.scrollToTop()
-                release_selected = getattr(
-                    self,
-                    "_release_selected_dataset",
-                    None,
-                )
-                if callable(release_selected):
-                    release_selected()
-                else:
-                    self.ds = None
-                    self._selected_dataset_key = None
-                publication_committed = True
-            except _DatabaseLoadPublicationAborted:
-                publication_aborted = True
-            except DatabaseInstanceChangedError as publication_exception:
-                publication_error = publication_exception
-                publication_source_changed = True
-            except Exception as publication_exception:
-                publication_error = publication_exception
-
-            if publication_committed:
-                # The controller fields now name B.  Transfer every remaining
-                # service immediately, before signal restoration or control
-                # synchronisation in the enclosing finally can raise.
-                if old_service is not new_service:
-                    cancel_auto_plot(self)
-                    # The old coordinator may still own a bounded read against
-                    # A.  Retire it at the same commit boundary that transfers
-                    # the trusted service, before the queued Stage 5C bind
-                    # creates B's coordinator.  This keeps stale work harmless
-                    # and promptly releases Windows reader locks.
-                    clear_derived = getattr(
-                        derived_bridge,
-                        "clear_database",
-                        None,
-                    )
-                    if callable(clear_derived):
-                        clear_derived()
-                    DatabaseActionsMixin._retire_trusted_read_service(
-                        self,
-                        old_service,
-                        force=False,
-                    )
-                if access_mode != TRUSTED_LIVE_MODE and owns_pending_service:
-                    DatabaseActionsMixin._retire_trusted_read_service(
-                        self,
-                        pending_service,
-                        force=True,
-                    )
-
-            if publication_error is not None:
-                try:
-                    rollback_path = publication_snapshot["database_path"]
-                    rollback_instance = publication_snapshot["database_instance"]
-                    rollback_current_instance = None
-                    if (
-                            rollback_path
-                            and isinstance(rollback_instance, DatabaseInstance)
-                            ):
-                        rollback_current_instance = database_instance(rollback_path)
-                        if _database_instances_or_sidecars_differ(
-                                rollback_instance,
-                                rollback_current_instance,
-                                ):
-                            publication_rollback_source_changed = True
-                            raise DatabaseInstanceChangedError(
-                                "The previously displayed database changed while "
-                                "the replacement view was staged."
-                            )
-                    restored = (
-                        DatabaseActionsMixin._restore_database_load_publication(
-                            self,
-                            publication_snapshot,
-                            continue_loading=publication_is_current,
-                        )
-                    )
-                    if restored is False or not publication_is_current():
-                        publication_error = None
-                        publication_source_changed = False
-                        publication_aborted = True
-                    else:
-                        if rollback_current_instance is not None:
-                            rollback_final_instance = database_instance(rollback_path)
-                            if _database_instances_or_sidecars_differ(
-                                    rollback_current_instance,
-                                    rollback_final_instance,
-                                    ):
-                                publication_rollback_source_changed = True
-                                raise DatabaseInstanceChangedError(
-                                    "The previously displayed database changed "
-                                    "while its view was restored."
-                                )
-                            DatabaseActionsMixin._advance_loaded_database_sidecar_baseline(
-                                self,
-                                rollback_final_instance,
-                            )
-                        publication_restored = True
-                except Exception as rollback_exception:
-                    publication_rollback_error = rollback_exception
-                    publication_error = None
-                    publication_source_changed = False
-                    publication_aborted = True
-                    # A partially restored controller must not retain either
-                    # reader or publish a mixture of A and B.  This path uses
-                    # only normal controller teardown and filesystem identity
-                    # observations; it performs no database read.
-                    DatabaseActionsMixin._retire_trusted_read_service(
-                        self,
-                        old_service,
-                        force=True,
-                    )
-                    self.close_database(status=False)
-
-            if publication_aborted:
-                # close_database() may have cleared the tree during a nested
-                # event and addRuns may then have appended one final row before
-                # observing cancellation.  Leave the closed view truly empty.
-                self.RunList.clearSelection()
-                self.RunList.clear()
-                self.RunList.watching = []
-                self.RunList.maxRunId = 0
-        finally:
-            owned_pending = getattr(
-                self,
-                "_pending_trusted_read_services",
-                {},
-            ).pop(generation, None)
-            if not publication_committed and owned_pending is not None:
-                DatabaseActionsMixin._retire_trusted_read_service(
-                    self,
-                    owned_pending,
-                    force=True,
-                )
-            try:
-                self.RunList.blockSignals(run_list_signals_blocked)
-                self.run_idBox.blockSignals(run_id_signals_blocked)
-            finally:
-                try:
-                    if (
-                            preview_publication_gate_set
-                            and callable(set_preview_publication_suspended)
-                            ):
-                        set_preview_publication_suspended(
-                            preview_publication_was_suspended,
-                        )
-                finally:
-                    self._database_load_publication_active = False
-                    DatabaseActionsMixin._sync_database_generation_controls(self)
-
-        if publication_aborted:
-            if publication_rollback_error is not None:
+        if publication.aborted:
+            if publication.rollback_error is not None:
                 log_exception(
                     "Database view rollback failed",
-                    publication_rollback_error,
+                    publication.rollback_error,
                     __name__,
                 )
                 self.show_error(
                     "Database Recovery Failed",
                     "qPlot closed the database view because its previous "
                     "state could not be restored safely.",
-                    str(publication_rollback_error),
+                    str(publication.rollback_error),
                 )
-                if publication_rollback_source_changed:
+                if publication.rollback_source_changed:
                     retry_generation = getattr(
                         self,
                         "_database_load_generation",
                         0,
                     )
-                    rollback_path = publication_snapshot["database_path"]
+                    rollback_path = publication_snapshot.database_path
                     self.show_status(
                         "Previously displayed database changed; retrying...",
                         0,
@@ -3602,68 +3311,70 @@ class DatabaseActionsMixin:
                             )
                         ),
                     )
-            return
+            return False
 
-        if publication_restored:
+        if publication.restored:
             if derived_bridge is not None:
                 derived_bridge.resume_publications()
-            rollback_path = publication_snapshot["database_path"]
-            rollback_runs = publication_snapshot["runs"]
+            rollback_path = publication_snapshot.database_path
+            rollback_runs = publication_snapshot.runs
             if rollback_path:
                 self._start_database_detail_load(rollback_path, rollback_runs)
                 if (
-                        publication_snapshot["access_mode"] == TRUSTED_LIVE_MODE
-                        and publication_snapshot["selected_run_guid"]
+                        publication_snapshot.access_mode == TRUSTED_LIVE_MODE
+                        and publication_snapshot.selected_run_guid
                         and callable(
                             getattr(self.RunList, "_item_for_guid", None)
                         )
                         ):
                     self._update_trusted_selected_run(
-                        publication_snapshot["selected_run_guid"]
+                        publication_snapshot.selected_run_guid
                     )
 
-        if publication_error is not None:
+        if publication.error is not None:
             if owns_pending_service and pending_service is not old_service:
                 DatabaseActionsMixin._retire_trusted_read_service(
                     self,
                     pending_service,
                 )
-            if publication_source_changed:
-                self._database_load_generation += 1
-                retry_generation = self._database_load_generation
-                self.show_status("Database changed while loading; retrying...", 0)
-                QtCore.QTimer.singleShot(
-                    0,
-                    lambda: DatabaseActionsMixin._retry_replaced_database_if_current(
-                        self,
-                        retry_generation,
-                        abspath,
-                        generation_recovery=bool(state.get("generation_recovery")),
-                        load_started_at=load_started_at,
-                    ),
-                )
-                return
+            if publication.source_changed:
+                DatabaseActionsMixin._queue_database_load_retry(self, state)
+                return False
             log_exception(
                 "Database view publication failed",
-                publication_error,
+                publication.error,
                 __name__,
             )
             self.show_error(
                 "Database Load Failed",
                 f"Could not publish database {abspath}.",
-                str(publication_error),
+                str(publication.error),
             )
             DatabaseActionsMixin._resume_test_database_generation_recovery(self)
             apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
             if callable(apply_refresh_interval):
                 apply_refresh_interval(self._current_refresh_interval())
-            return
+            return False
 
+        return True
+
+
+    def _complete_database_load_publication(self, publication: DatabaseLoadPublication):
+        """Revalidate the committed source, then resume selection and progressive work."""
+        state = publication.session
+        abspath = state.abspath
+        load_started_at = state.load_started_at
+        generation = publication.generation
+        runs = publication.runs
+        access_mode = publication.access_mode
+        accepted_instance = publication.accepted_instance
+        publication_snapshot = publication.snapshot
+        derived_bridge = publication.derived_bridge
         final_instance = database_instance(abspath)
-        if _database_instances_or_sidecars_differ(staged_instance, final_instance):
+        if _database_instances_or_sidecars_differ(publication.staged_instance, final_instance):
             self._reload_replaced_database(
                 abspath,
-                generation_recovery=bool(state.get("generation_recovery")),
+                generation_recovery=bool(state.generation_recovery),
             )
             return
         DatabaseActionsMixin._advance_loaded_database_sidecar_baseline(
@@ -3673,7 +3384,7 @@ class DatabaseActionsMixin:
 
         self._selected_run_detail_cache = {}
         self._selected_run_partial_detail_keys = set()
-        if state.get("reload_same_path") and not state.get("replacement_reload"):
+        if state.reload_same_path and not state.replacement_reload:
             invalidate_runtime_state = getattr(
                 self,
                 "_invalidate_database_runtime_state",
@@ -3681,7 +3392,7 @@ class DatabaseActionsMixin:
             )
             if callable(invalidate_runtime_state):
                 invalidate_runtime_state(
-                    publication_snapshot["database_instance"] or abspath
+                    publication_snapshot.database_instance or abspath
                 )
         replacement_state = getattr(
             self,
@@ -3696,7 +3407,7 @@ class DatabaseActionsMixin:
         recovering_original = bool(
             transaction_matches
             and replacement_state.outcome == "recovering-original"
-            and not _database_observations_differ(
+            and not database_instances_differ(
                 replacement_state.original_instance,
                 accepted_instance,
             )
@@ -3729,7 +3440,7 @@ class DatabaseActionsMixin:
         elapsed = perf_counter() - load_started_at
         self.remember_loaded_database(abspath)
         run_count = self.RunList.topLevelItemCount()
-        if state.get("replacement_reload"):
+        if state.replacement_reload:
             run_word = "run" if run_count == 1 else "runs"
             status = (
                 f"Database was replaced and reloaded: "
