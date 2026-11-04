@@ -153,6 +153,11 @@ preview drag-and-drop, including per-layer renderers and opacity controls,
 hidden source-window refresh ownership, shared-colorbar membership, and layer
 cleanup.
 
+`src/qplot/windows/_source_consumer.py` owns each secondary trace or heatmap's
+shared source-consumer registration and hidden-source interval connection.
+Release is idempotent. The line and heatmap owners retain their distinct final
+monitor, reload-timer, and worker-cancellation policies.
+
 `src/qplot/windows/_plot2d_colorbar.py` contains the heatmap colorbar mixin. It
 owns color autoscaling, colorbar interaction handlers, and color-map selection
 state used by `plot2d.py`.
