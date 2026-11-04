@@ -740,10 +740,11 @@ Cache hits and freshly rendered payloads use the same transactional publication
 path; unsupported runs receive bounded nonfatal unavailable cards. The derived
 lanes use `(run tier, work kind, stable index)`: selected metadata (with
 detail), thumbnail, and preview; then visible metadata/thumbnail/preview lanes;
-then the equivalent remaining lanes. Explicit plot and CSV
-actions remain action-owned snapshot consumers addressed by the selected GUID
-and exact `DatabaseInstance`, and snapshot fallback sessions may keep their
-existing preview behavior. Trusted selection never creates an automatic
+then the equivalent remaining lanes. Explicit trusted plots use connection-free `TrustedPlotDataset` metadata and
+broker-owned prefix capture or numeric aggregation. CSV and fallback plot
+actions remain snapshot consumers. All address the selected GUID and exact
+`DatabaseInstance`; snapshot fallback sessions may keep their existing preview
+behavior. Trusted selection never creates an automatic
 fallback copy.
 
 Database switching disarms publications before the old coordinator is made

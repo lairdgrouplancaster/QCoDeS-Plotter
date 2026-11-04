@@ -166,7 +166,8 @@ or result-limit failure, helper or protocol failure, forced termination, and
 uncertain cleanup never become fallback and are never silently replayed.
 
 If qPlot reports that a WAL cannot be verified, trusted access was unavailable
-or an explicit plot/CSV action reached the retained snapshot path. SQLite's WAL
+or a CSV, fallback plot, or Database Information action reached the retained
+snapshot path. Trusted plot actions do not use whole-database snapshots. SQLite's WAL
 salts and checksums validate the WAL's own frames; they do not identify the main
 database to which those frames belong. A matching filename or successful SQLite
 open is not enough, so qPlot refuses the snapshot rather than showing unrelated
@@ -376,7 +377,10 @@ qplot-cfg -reset
 If `config.json` is invalid JSON, incomplete, or from an unsupported settings
 format, qPlot backs it up in `~/.qplot` with a name such as
 `config.invalid.json` and creates a fresh config from defaults. This can happen
-after a major-version upgrade.
+after any settings-schema change; older formats are not migrated. If recovery
+cannot back up or save the file, qPlot uses defaults for that session and reports
+a warning. An unreadable original is left untouched. Check the diagnostic log
+and settings-file/directory access before retrying.
 
 ## Diagnostic Logs
 

@@ -168,6 +168,9 @@ Run the scoped type check:
 python -m mypy
 ```
 
+On macOS, prefix Python commands that may import Matplotlib with
+`MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache` and reuse that directory.
+
 Run the automated test suite:
 
 ```console
@@ -301,11 +304,15 @@ get in the way of searches or file listings.
 For changes that affect runtime behavior or the GUI, run:
 
 ```console
-python scripts/manual_run.py
+python -m qplot
 ```
 
-Use this after the automated tests pass. It starts the app through the same
-installed package entry path that users exercise.
+Use the activated project venv after automated tests pass. This exercises the
+command-line launcher and propagates its exit status. On macOS, prefix this and
+every test or other Python command that may import Matplotlib with
+`MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache`; reuse that directory. For a
+visible GUI check, leave `QT_QPA_PLATFORM` unset. For automated startup checks,
+set `QT_QPA_PLATFORM=offscreen` and request shutdown after observing startup.
 
 Other local helper scripts are documented in [scripts/README.md](scripts/README.md).
 Demo-data and screenshot workflow notes live in [docs/demo-data.md](docs/demo-data.md).
@@ -327,7 +334,8 @@ Before committing:
 1. Run `python -m ruff check .`.
 2. Run `python -m mypy`.
 3. Run `python -m pytest`.
-4. Run `python scripts/manual_run.py` for application or GUI changes.
+4. Run `python -m qplot` for application or GUI changes, using the platform
+   environment settings in Manual GUI Check above.
 5. Run `python -m build native --outdir dist`, `python -m build`, `python scripts/validate_distribution.py dist`, and
    `python -m twine check dist/*` for packaging or release changes.
 6. Update `README.md`, `CONTRIBUTING.md`, `docs/architecture.md`, or

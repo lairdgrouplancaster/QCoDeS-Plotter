@@ -6,15 +6,18 @@ project development environment.
 
 ## `manual_run.py`
 
-Starts qPlot for a manual GUI smoke check:
+Legacy public-API launch helper:
 
 ```console
 python scripts/manual_run.py
 ```
 
-Use this after `python -m ruff check .` and `python -m pytest` when a change
-affects runtime behavior or the GUI. If startup fails, the script runs the SQL
-repair helper before re-raising the original exception.
+For a manual GUI smoke check, use `python -m qplot` instead: it propagates the
+launcher’s exit status. `manual_run.py` discards the status returned by the public
+API, so a failed child launch can still leave this script with exit status zero.
+Its repair handler runs only when the API raises an `Exception`, not when it
+returns a failure status. See [contributor checks](../CONTRIBUTING.md#manual-gui-check)
+for the project-venv and macOS Matplotlib cache requirements.
 
 ## `liveplot.py`
 
