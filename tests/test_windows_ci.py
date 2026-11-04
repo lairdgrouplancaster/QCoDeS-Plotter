@@ -100,6 +100,9 @@ def test_windows_source_suite_fits_standard_user_command_line(
     # Require a literal array so future dynamic arguments cannot silently
     # evade this length check.
     assert not re.sub(r'"[^"\n]*"', "", argument_array[1]).strip(" ,\r\n\t")
+    # Measure the expanded environment path, not the short PowerShell token.
+    report_path = r"D:\a\_temp\qplot-standard-user\qplot-test-results.xml"
+    arguments = [arg.replace("$env:QPLOT_CI_TEST_REPORT", report_path) for arg in arguments]
     executable = (
         rf"C:\hostedtoolcache\windows\Python\{python_version}\x64\python.exe"
     )

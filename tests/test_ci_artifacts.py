@@ -33,6 +33,28 @@ def test_application_wheel_is_built_once_and_consumed_by_all_jobs(workflow):
         assert 'run-id:' not in job and 'github-token:' not in job
 
 
+def test_ruff_runs_before_artifact_builds_and_remains_required(workflow):
+    text, _ = workflow
+    lint = text.split('  lint:\n', 1)[1].split('\n  application-artifacts:', 1)[0]
+    assert 'needs:' not in lint
+    assert 'python -m ruff check .' in lint
+    assert 'download-artifact' not in lint
+    required = text.split('  required-checks:\n', 1)[1]
+    assert 'needs: [lint,' in required
+    assert 'needs.lint.result }}" != "success"' in required
+
+
+def test_all_source_suites_publish_portable_timing_reports(workflow):
+    text, _ = workflow
+    checks = text.split('  checks:\n', 1)[1].split('\n  coverage:', 1)[0]
+    for step in ('Run partitioned full test suite', 'Run full test suite as a standard Windows user',
+                 'Run compatibility test suite', 'Run compatibility test suite as a standard Windows user'):
+        command = checks.split(f'      - name: {step}\n', 1)[1].split('      - name:', 1)[0]
+        assert 'junit_family=xunit1' in command and '--junitxml=' in command
+    assert 'path: ${{ env.QPLOT_CI_TEST_REPORT }}' in checks
+    assert 'QPLOT_CI_TEST_REPORT=$(Join-Path $standardTemp' in checks
+
+
 def test_publication_native_builds_are_arch_specific_and_manylinux_repaired(workflow):
     text, _ = workflow
     native = text.split('  native-wheels:\n', 1)[1].split('  static-analysis:\n', 1)[0]

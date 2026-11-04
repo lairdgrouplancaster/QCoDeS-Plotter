@@ -10,6 +10,9 @@ from pathlib import Path
 
 import pytest
 
+from scripts.update_ci_timings import merge_reports
+from tests._ci_scheduling import _file_costs, _file_partitions, read_timings
+
 
 def _create_suite(tmp_path: Path) -> dict[str, list[str]]:
     # Deliberately give the expensive files fewer tests: ordinary loadfile
@@ -35,6 +38,16 @@ def _create_suite(tmp_path: Path) -> dict[str, list[str]]:
         )
         expected_by_file[filename] = [f"{filename}::{name}" for name in names]
 
+    # A fixed profile makes these subprocess checks independent of production
+    # timings while proving that small expensive files receive priority.
+    seconds = [40, 35, 6, 4, 3, 1, 1]
+    (tmp_path / "ci_timings.json").write_text(json.dumps({
+        "version": 1,
+        "files": {
+            filename: {"seconds": duration, "tests": count}
+            for (filename, count), duration in zip(file_sizes.items(), seconds, strict=True)
+        },
+    }))
     (tmp_path / "pytest.ini").write_text("[pytest]\ntestpaths = tests\n")
     (tmp_path / "conftest.py").write_text(
         """import json
@@ -72,6 +85,9 @@ def _run_suite(
         "2",
         "--dist=loadfile",
         "--max-worker-restart=0",
+        f"--qplot-ci-timings={tmp_path / 'ci_timings.json'}",
+        "-o", "junit_family=xunit1",
+        f"--junitxml={tmp_path / 'results.xml'}",
         "-q",
     ]
     if prioritize_slow_files:
@@ -124,6 +140,10 @@ def test_loadfile_preserves_tests_and_starts_the_expected_files(
         observed_by_file.update(worker_files)
     # Every original test runs exactly once, retaining its within-file order.
     assert observed_by_file == expected_by_file
+    profile = merge_reports([tmp_path / "results.xml"])
+    assert {name: record["tests"] for name, record in profile["files"].items()} == {
+        name: len(tests) for name, tests in expected_by_file.items()
+    }
 
 
 @pytest.mark.parametrize("prioritize_slow_files", [False, True])
@@ -184,3 +204,40 @@ def test_invalid_partition_cannot_silently_omit_tests(tmp_path: Path, partition:
     assert result.returncode == pytest.ExitCode.USAGE_ERROR
     assert "invalid choice" in result.stderr
     assert not list(tmp_path.glob("gw*.jsonl"))
+
+
+def test_partitioning_balances_duration_instead_of_test_count() -> None:
+    files = {"many-a": [None] * 20, "many-b": [None] * 20, "few-a": [None], "few-b": [None]}
+    timings = {"many-a": (10, 20), "many-b": (9, 20), "few-a": (5, 1), "few-b": (4, 1)}
+    costs = _file_costs(files, timings)
+    partitions = _file_partitions(costs)
+    assert partitions["many-a"] == partitions["few-b"]
+    assert partitions["many-b"] == partitions["few-a"]
+    assert [sum(costs[name] for name, part in partitions.items() if part == index)
+            for index in range(2)] == [14, 14]
+
+
+def test_new_files_and_growing_files_keep_a_positive_count_estimate() -> None:
+    files = {"known": [None] * 4, "new": [None] * 3, "skipped": [None]}
+    costs = _file_costs(files, {"known": (6, 2), "skipped": (0, 1)})
+    assert costs["known"] == 12
+    assert costs["new"] == 6
+    assert costs["skipped"] > 0
+    assert _file_costs(files, {}) == {name: len(items) for name, items in files.items()}
+
+
+@pytest.mark.parametrize("record", [
+    {"seconds": -1, "tests": 1}, {"seconds": float("nan"), "tests": 1},
+    {"seconds": float("inf"), "tests": 1}, {"seconds": True, "tests": 1},
+    {"seconds": 1, "tests": 0}, {"seconds": 1, "tests": True},
+])
+def test_invalid_profile_cannot_change_partition_membership_silently(tmp_path, record):
+    path = tmp_path / "timings.json"
+    path.write_text(json.dumps({"version": 1, "files": {"tests/test_a.py": record}}))
+    with pytest.raises(ValueError, match="Invalid file timing"):
+        read_timings(path)
+
+
+def test_repository_profile_is_valid() -> None:
+    profile = read_timings(Path(__file__).with_name("ci_timings.json"))
+    assert profile

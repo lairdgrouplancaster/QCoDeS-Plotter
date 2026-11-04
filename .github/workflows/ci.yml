@@ -23,6 +23,20 @@ env:
   PIP_ONLY_BINARY: apsw
 
 jobs:
+  lint:
+    name: Ruff
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Ruff
+        run: python -m pip install "ruff>=0.8"
+      - name: Run Ruff
+        run: python -m ruff check .
+
   application-artifacts:
     name: Pure-Python application artifacts (build once)
     runs-on: ubuntu-latest
@@ -148,9 +162,6 @@ jobs:
           # Keep the workaround local to analysis; runtime tests use latest Qt.
           python -m pip install "PyQt6!=6.12.0"
 
-      - name: Run Ruff
-        run: python -m ruff check .
-
       - name: Run mypy
         run: python -m mypy
 
@@ -240,6 +251,7 @@ jobs:
     env:
       QT_QPA_PLATFORM: offscreen
       QPLOT_CI_WHEEL_AUDIT: ${{ github.workspace }}/dist/wheel-installation-audit.py
+      QPLOT_CI_TEST_REPORT: ${{ runner.temp }}/qplot-test-results.xml
 
     steps:
       - name: Check out repository
@@ -276,6 +288,7 @@ jobs:
           "TMPDIR=$standardTemp" >> $env:GITHUB_ENV
           "PYTEST_ADDOPTS=--basetemp=$pytestTemp" >> $env:GITHUB_ENV
           "QPLOT_CI_PHASE_LOG_PATH=$(Join-Path $standardTemp 'wrapper-phase.txt')" >> $env:GITHUB_ENV
+          "QPLOT_CI_TEST_REPORT=$(Join-Path $standardTemp 'qplot-test-results.xml')" >> $env:GITHUB_ENV
 
       # download-artifact defaults to this workflow run, including PR merge SHA.
       - name: Download application artifacts from this revision
@@ -372,8 +385,8 @@ jobs:
 
       # Keep each Qt/QCoDeS test file in one process, and cap disk and
       # thread-pool contention at two workers across all source suites.
-      # Full suites use the collection order from tests._ci_scheduling so
-      # slow integration files start before the short unit-test files.
+      # Partition membership and file order use the same committed timing
+      # profile in every worker. Unknown files retain a test-count estimate.
       - name: Run partitioned full test suite
         if: matrix.suite == 'full' && runner.os != 'Windows' && matrix.partition
         env:
@@ -383,6 +396,7 @@ jobs:
           --no-loadscope-reorder
           --qplot-ci-partition=${{ matrix.partition }}
           --timeout=90 --timeout-method=thread --durations=20 -v
+          -o junit_family=xunit1 --junitxml="$QPLOT_CI_TEST_REPORT"
 
       # The trusted VFS intentionally rejects the hosted runner's elevated
       # token, so run the Windows suites through a disposable local account
@@ -399,7 +413,8 @@ jobs:
             "-n", "2", "--dist=loadfile",
             "--no-loadscope-reorder",
             "--qplot-ci-partition=${{ matrix.partition }}",
-            "--timeout=90", "--timeout-method=thread", "--durations=20", "-v"
+            "--timeout=90", "--timeout-method=thread", "--durations=20", "-v",
+            "-o", "junit_family=xunit1", "--junitxml=$env:QPLOT_CI_TEST_REPORT"
           )
           # Two disjoint whole-file partitions retain the complete suite while
           # fitting its growing workload into a bounded budget.
@@ -419,6 +434,7 @@ jobs:
         run: >-
           python -m pytest -o pythonpath= --no-cov --maxfail=1 -n 2 --dist=loadfile
           --timeout=90 --timeout-method=thread --durations=20
+          -o junit_family=xunit1 --junitxml="$QPLOT_CI_TEST_REPORT"
           @.github/pytest-compatibility.txt
 
       - name: Run compatibility test suite as a standard Windows user
@@ -432,11 +448,21 @@ jobs:
             "-m", "pytest", "-o", "pythonpath=", "--no-cov", "--maxfail=1",
             "-n", "2", "--dist=loadfile",
             "--timeout=90", "--timeout-method=thread", "--durations=20",
+            "-o", "junit_family=xunit1", "--junitxml=$env:QPLOT_CI_TEST_REPORT",
             "@.github/pytest-compatibility.txt"
           )
           & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
             -FilePath $python `
             -ArgumentList $arguments
+
+      - name: Upload test timings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          # job-index avoids '/' in partition labels and distinguishes every entry.
+          name: qplot-test-timings-${{ strategy.job-index }}-${{ matrix.os }}-${{ matrix.python-version }}-${{ matrix.suite }}
+          path: ${{ env.QPLOT_CI_TEST_REPORT }}
+          if-no-files-found: ignore
 
       - name: Publish bounded Windows source-test diagnostics
         # Successful runs include pytest's duration report in child stdout.
@@ -765,12 +791,16 @@ jobs:
   required-checks:
     name: Required checks
     runs-on: ubuntu-latest
-    needs: [application-artifacts, native-wheels, static-analysis, checks, coverage, package, platform-wheels]
+    needs: [lint, application-artifacts, native-wheels, static-analysis, checks, coverage, package, platform-wheels]
     if: always()
 
     steps:
       - name: Check matrix result
         run: |
+          if [ "${{ needs.lint.result }}" != "success" ]; then
+            echo "Ruff failed."
+            exit 1
+          fi
           if [ "${{ needs.application-artifacts.result }}" != "success" ] || [ "${{ needs.native-wheels.result }}" != "success" ]; then
             echo "Application or native artifact build failed."
             exit 1
