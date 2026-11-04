@@ -26,11 +26,53 @@ At runtime, `qplot.__version__` reads the installed `qplotter` metadata through
 application wheel and sdist. It creates a per-user macOS AppleScript applet or
 Windows Script Host launcher plus Start-menu shortcut, pointing to the Python
 interpreter used at setup. macOS uses the built-in `osacompile` and `codesign`
-tools; Windows uses Windows Script Host and PowerShell's WScript.Shell COM
+tools; Windows uses Windows Script Host and the Unicode IShellLinkW COM
 interface. No extra package, compiler, standalone Python bundle, or separate
 release artifact is required. File registration is opt-in and never sets a
 default handler. Windows uses the documented [OpenWithProgIds registration](https://learn.microsoft.com/en-us/windows/win32/shell/how-to-include-an-application-on-the-open-with-dialog-box).
 See the [user guide](user-guide.md#opening-databases-from-the-file-manager).
+
+Setup adds a desktop shortcut by default: a symbolic link to the macOS app or
+a copy of the Windows shell link. Windows resolves the current user's Desktop
+through `SHGetKnownFolderPath`, including redirected folders. Setup creates
+shortcuts exclusively and records ownership before signing or registering the
+launcher; removal preserves changed or replaced shortcuts. Pass
+`--no-desktop-shortcut` to omit creation.
+
+The application wheel includes prebuilt ICNS, ICO, and PNG versions of the
+program, database, WAL, and SHM icons alongside editable SVG masters in
+`qplot/assets`. Each icon has a dedicated small-size SVG. The database uses a
+red page and white Coulomb peak; the program uses a white tile and red peak.
+White WAL and SHM documents retain grey symbols and small red accents.
+The [branding notes](assets/branding/README.md) identify the source artwork,
+editable family exports and licence.
+Setup copies the platform icon into the launcher before macOS signing or
+Windows shortcut creation. On macOS, it explicitly registers the signed bundle
+with Launch Services; removal unregisters the bundle before deleting it.
+Finder can retain cached icons after an update, so registration alone does not
+guarantee that an already-open Finder window refreshes immediately.
+Icon Services can also retain older artwork across Finder restarts. Setup does
+not clear the shared per-user icon cache, because it also serves other apps.
+Qt also sets the rounded-square program
+icon for launches from a terminal. With `--file-associations`, the database
+registration uses the folded-page icon, while WAL and SHM get icon-only
+declarations. macOS declares imported file types and uses document role/rank
+`None` for the companions, so Finder can select their icons without offering
+qPlot as an opener. Windows
+sets only their per-user extension `DefaultIcon` values and records the previous
+values in `installation.json` for ownership-checked restoration on removal.
+No companion open verb or default application is registered.
+On macOS, desktop setup includes an interpreter copy inside the signed launcher.
+GUI supervision uses this same bundle for desktop launches, so the launcher and
+viewer share a Dock identity. Terminal launches use a cached, ad-hoc-signed
+`qPlot.app` host. The host contains a
+copy of the running interpreter executable and an applet for reopening the
+viewer; CPython's `__PYVENV_LAUNCHER__` preserves the selected virtual environment.
+Cache entries are derived from the interpreter, launcher sources and icon;
+existing entries are verified read-only and never overwritten. Offscreen runs
+use the original interpreter directly.
+The [icon rendering helper](../scripts/README.md#render_iconspy) rebuilds the
+binary assets during development; normal setup only copies the shipped files.
 
 Launcher payloads import only the standard library before configuring the
 per-user Matplotlib cache and logs. They validate the recorded installation

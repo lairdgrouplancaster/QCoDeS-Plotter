@@ -204,29 +204,68 @@ or uncommitted data. Finish the transaction or refresh after the writer pauses.
 
 ### Opening Databases from the File Manager
 
-After installing qPlot, create a desktop launcher once from the same Python
-virtual environment used for installation:
-
-```console
-python -m qplot.desktop setup
-```
-
-No administrator rights are needed. On macOS this creates
-`~/Applications/qPlot.app`; on Windows it creates a **qPlot** shortcut in your
-Start menu. Double-click the app or shortcut to start qPlot. You can pin it to
-the Dock or Start, or copy the Windows shortcut to your desktop. Everyday
-launches need no terminal, environment activation, repository working directory,
-or manual `MPLCONFIGDIR` setting.
-
-To also offer qPlot for **Open With** on `.db` files, opt in during setup:
+**Recommended if you mainly work with QCoDeS databases:** create the desktop
+launcher and register the database, WAL and SHM icons with the command below.
+Run it from the same Python virtual environment used for installation:
 
 ```console
 python -m qplot.desktop setup --file-associations
 ```
 
-If you already created a launcher, remove it first using the command below,
-then run setup again with this option. File associations are per user and do
+The flag also adds qPlot to **Open With** for `.db` files. File registration
+remains opt-in because `.db`, `.db-wal` and `.db-shm` are shared with other
+programs, whose files may receive these icons too. For just the program icon,
+launcher and desktop shortcut, omit the flag: `python -m qplot.desktop setup`.
+
+No administrator rights are needed. On macOS this creates
+`~/Applications/qPlot.app`; on Windows it creates a **qPlot** shortcut in your
+Start menu. Setup also adds a **qPlot** shortcut to your desktop, using Windows'
+configured Desktop location even when it is redirected to OneDrive. Use
+`--no-desktop-shortcut` to omit it. Existing desktop files and shortcuts are
+never overwritten; if the name is already in use, move that item or use the
+option to omit the shortcut.
+Both use qPlot's rounded-square red Coulomb-peak icon, which also appears on the
+running application's windows where supported by the desktop. On macOS the
+running application's Dock label is **qPlot**, including when started from a
+terminal. Desktop launches run inside the installed `qPlot.app`, sharing the
+shortcut's Dock identity. The first graphical terminal launch prepares a small signed `qPlot.app` host
+in `~/Library/Caches/qPlot/launchers`; it uses the same Python environment and
+does not modify the installed Python application. Double-click the
+app or shortcut to start qPlot. You can pin it to
+the Dock or Start. Everyday
+launches need no terminal, environment activation, repository working directory,
+or manual `MPLCONFIGDIR` setting.
+
+If you already created a launcher, recreate it to add the file icons or update
+older icons:
+
+```console
+python -m qplot.desktop remove
+python -m qplot.desktop setup --file-associations
+```
+
+For a custom launcher location, pass the same `--destination` to both commands.
+File associations are per user and do
 not make qPlot the default: `.db` is also used by other applications.
+The `.db` icon is a red folded page with a white Coulomb peak, making the main
+database stand out among its companion files. It shares the program icon's
+peak and palette, with the colours reversed. The `.db-wal` and `.db-shm`
+companions use white pages with grey log-line and connected-block symbols and
+WAL and SHM badges, simplified at small sizes. A red first log line and red
+upper-left block outline link them to the other icons; both accents remain at
+small sizes.
+Neither companion is registered for opening
+in qPlot. These are SQLite companion extensions, so the icons also apply to
+matching files produced outside QCoDeS.
+
+The icon shown on `.db` files depends on the operating system's selected file
+association. macOS also declares the companion descriptions **SQLite write-ahead
+log** and **SQLite shared-memory index**. Windows preserves existing file-type
+descriptions and opener choices, and changes only the companion icons. Finder
+or Explorer may need to refresh before displaying new icons.
+If Finder shows the correct icon in **Get Info** but a generic icon in the
+folder, press **Command–J** in that folder and turn off **Show icon preview**.
+Finder's previews can cover the assigned file-type icons.
 
 On macOS, right-click a QCoDeS database in Finder and choose
 **Open With → Other…**, then select `~/Applications/qPlot.app`. On Windows,
@@ -268,7 +307,11 @@ python -m qplot.desktop remove
 
 Removal leaves Python, qPlot, settings, caches, logs, and databases alone. It
 refuses to delete a launcher folder containing a database or its sidecars.
-Delete any copied shortcuts and unpin Dock/Start items yourself. If Python is
+On Windows it restores previous companion icons if qPlot's overrides are still
+in place, preserving any icon changes made by another application since setup.
+Removal also deletes the desktop shortcut created by setup, provided it still
+matches the recorded link. Replaced or edited shortcuts are preserved.
+Delete any additional copied shortcuts and unpin Dock/Start items yourself. If Python is
 already gone, delete the macOS app in Finder or the Windows launcher folder
 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\qPlot` in Explorer.
 To clean a remaining Windows Open With entry, recreate an installed environment
@@ -278,8 +321,9 @@ Any default file choice you made yourself can be changed in the OS settings.
 Use `--destination "/your/path/qPlot.app"` on macOS or
 `--destination "C:\your\path\qPlot"` on Windows to choose a different location;
 pass the same option for removal. Existing destinations are never overwritten.
-The macOS app can subsequently be moved; recreate a Windows launcher after
-moving its folder. A copied Windows shortcut still refers to the original folder.
+The desktop shortcuts refer to the original launcher location. On macOS the
+desktop shortcut is a symbolic link to the app. Recreate the launcher and its
+shortcut when changing the installation location.
 
 Desktop launches set Matplotlib's cache to `~/Library/Caches/qPlot/matplotlib`
 on macOS or `%LOCALAPPDATA%\qPlot\matplotlib` on Windows, overriding an inherited

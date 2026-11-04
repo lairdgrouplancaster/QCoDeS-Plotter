@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="16" height="16" viewBox="0 0 16 16"
+     role="img" aria-labelledby="title description">
+  <title id="title">qPlot database document icon, small size</title>
+  <desc id="description">An optically simplified 16-pixel version of the qPlot document icon, with a blue Ashton Memorial skyline trace. The dome, shoulders, and top cap are retained while fine detail is omitted.</desc>
+  <g id="Document">
+    <path id="Paper" fill="#F7FAFF" stroke="#263D5A" stroke-width="1"
+          stroke-linejoin="round"
+          d="M4 1.5 H10.5 L13.5 4.5 V14
+             Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2
+             Q3.5 1.5 4 1.5 Z"/>
+    <path id="Fold" fill="#DCE7F5" stroke="#263D5A" stroke-width="1"
+          stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z"/>
+  </g>
+  <g id="Plot">
+    <path id="Axes" fill="none" stroke="#A0B1C6" stroke-width="1"
+          stroke-linecap="round" stroke-linejoin="round"
+          d="M5.5 7 V12.5 H11.5"/>
+    <path id="Ashton-Memorial-trace" fill="none" stroke="#3064AD"
+          stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+          d="M6.5 10.5 H7 V9.5 H7.5 V8.8
+             C7.5 7.8 8 7.2 8.7 7 V6.5 H9.3 V7
+             C10 7.2 10.5 7.8 10.5 8.8
+             V9.5 H11 V10.5 H11.5"/>
+  </g>
+</svg>

@@ -1105,6 +1105,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
     def test_application_identity_uses_qplot_name(self):
         app = qtw.QApplication.instance()
         old_name = app.applicationName()
+        old_icon = app.windowIcon()
         old_display_name = (
             app.applicationDisplayName()
             if hasattr(app, "applicationDisplayName")
@@ -1115,10 +1116,19 @@ class TemporaryConfigTestCase(unittest.TestCase):
             qplot_main._configure_application_identity(app)
 
             self.assertEqual(app.applicationName(), "qPlot")
+            self.assertFalse(app.windowIcon().isNull())
+            for size in (16, 32, 256, 512, 1024):
+                self.assertFalse(app.windowIcon().pixmap(size, size).isNull())
+            window = qtw.QWidget()
+            try:
+                self.assertEqual(window.windowIcon().cacheKey(), app.windowIcon().cacheKey())
+            finally:
+                window.close()
             if hasattr(app, "applicationDisplayName"):
                 self.assertEqual(app.applicationDisplayName(), "")
         finally:
             app.setApplicationName(old_name)
+            app.setWindowIcon(old_icon)
             if old_display_name is not None and hasattr(app, "setApplicationDisplayName"):
                 app.setApplicationDisplayName(old_display_name)
 

@@ -35,6 +35,11 @@ def main() -> int:
         record = json.loads(Path(__file__).with_name("installation.json").read_text(encoding="utf-8"))
         if os.path.normcase(sys.prefix) != os.path.normcase(record["prefix"]):
             raise RuntimeError("The recorded Python environment has moved or changed.")
+        if sys.platform == "darwin":
+            os.environ.pop("QPLOT_DESKTOP_BUNDLE", None)
+            bundle = Path(__file__).absolute().parents[2]
+            if record.get("marker") == "qplot-desktop-launcher-v1" and (bundle / "Contents/MacOS/qPlot").is_file():
+                os.environ["QPLOT_DESKTOP_BUNDLE"] = str(bundle)
         # Child supervisors must also discover this installation independently
         # of shell import overrides.
         os.environ.pop("PYTHONPATH", None)

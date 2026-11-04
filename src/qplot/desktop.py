@@ -15,9 +15,29 @@ from pathlib import Path
 
 import qplot._desktop_bootstrap
 from qplot._auxiliary_paths import ensure_safe_auxiliary_path
+from qplot._desktop_shortcut import create_desktop_shortcut, remove_desktop_shortcut
+from qplot._desktop_sidecars import (
+    install_sidecar_icons,
+    prepare_sidecar_icons,
+    remove_sidecar_icons,
+)
+from qplot._icons import icon_path
 
 _MARKER = "qplot-desktop-launcher-v1"
 _PROGID = "qPlot.Database"
+_DOCUMENT_ICONS = ("qplot-database", "sqlite-wal", "sqlite-shm")
+_LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks/"
+               "LaunchServices.framework/Support/lsregister")
+
+
+def _mac_registration(destination: Path, *, remove: bool = False) -> None:
+    """Publish the completed bundle, or retire its declarations before deletion."""
+    subprocess.run([_LSREGISTER, "-u" if remove else "-f", str(destination)],
+                   check=True, timeout=30)
+
+
+class WindowsAssociationRollbackError(OSError):
+    """Registry restoration failed; retain the launcher for a later removal."""
 
 
 def default_destination() -> Path:
@@ -28,7 +48,8 @@ def default_destination() -> Path:
     raise ValueError("Desktop launcher setup supports macOS and Windows only.")
 
 
-def _mac_launcher(destination: Path, python: Path, associations: bool) -> Path:
+def _mac_launcher(destination: Path, python: Path, associations: bool, *,
+                  compile_timeout: float | None = None) -> Path:
     script = destination / "Contents/Resources/launch.sh"
     # AppleScript receives Finder Open Documents events, including on an already
     # running applet. Each file gets its own supervised qPlot process tree.
@@ -51,8 +72,13 @@ end open
     with tempfile.TemporaryDirectory(prefix="qplot-applet-") as temporary:
         source_path = Path(temporary) / "launcher.applescript"
         source_path.write_text(source, encoding="utf-8")
-        subprocess.run(["/usr/bin/osacompile", "-o", str(destination), str(source_path)], check=True)
+        subprocess.run(["/usr/bin/osacompile", "-o", str(destination), str(source_path)],
+                       check=True, timeout=compile_timeout)
     resources = script.parent
+    shutil.copyfile(icon_path("qplot.icns"), resources / "qplot.icns")
+    if associations:
+        for name in _DOCUMENT_ICONS:
+            shutil.copyfile(icon_path(f"{name}.icns"), resources / f"{name}.icns")
     error = "Python could not start. Check the diagnostic below. If the installation has moved or is missing, remove the launcher and run python -m qplot.desktop setup from the repaired environment."
     access_error = "Access to the Python installation was denied. If it is inside OneDrive or another protected folder, check qPlot in System Settings > Privacy & Security > Files and Folders, or create a fresh installation in a local folder outside OneDrive, Documents, and Desktop. Recreating the same launcher does not fix denied access."
     script.write_text(
@@ -82,15 +108,42 @@ end open
     info = destination / "Contents/Info.plist"
     with info.open("rb") as stream:
         properties = plistlib.load(stream)
-    properties.update(CFBundleIdentifier="uk.ac.lancaster.qplot.launcher", CFBundleName="qPlot")
+    properties.update(CFBundleIdentifier="uk.ac.lancaster.qplot.launcher", CFBundleName="qPlot",
+                      CFBundleIconFile="qplot.icns")
+    # An asset-catalog name takes precedence over the standalone icon file.
+    properties.pop("CFBundleIconName", None)
     # osacompile droplets default to accepting every file type. Remove that
     # template declaration even when registration was not requested.
     properties.pop("CFBundleDocumentTypes", None)
+    properties.pop("UTImportedTypeDeclarations", None)
     if associations:
         properties["CFBundleDocumentTypes"] = [{
             "CFBundleTypeName": "QCoDeS database", "CFBundleTypeExtensions": ["db"],
             "CFBundleTypeRole": "Viewer", "LSHandlerRank": "Alternate",
+            "CFBundleTypeIconFile": "qplot-database.icns",
         }]
+        # Imported UTIs let Finder discover these icons. Role/rank None publish
+        # type information without offering qPlot as an opener for sidecars.
+        properties["UTImportedTypeDeclarations"] = []
+        for extension, name, description in (
+            ("db-wal", "sqlite-wal", "SQLite write-ahead log"),
+            ("db-shm", "sqlite-shm", "SQLite shared-memory index"),
+        ):
+            identifier = f"uk.ac.lancaster.qplot.{name}"
+            properties["UTImportedTypeDeclarations"].append({
+                "UTTypeIdentifier": identifier,
+                "UTTypeConformsTo": ["public.data"],
+                "UTTypeDescription": description,
+                "UTTypeIconFile": f"{name}.icns",
+                "UTTypeTagSpecification": {"public.filename-extension": [extension]},
+            })
+            properties["CFBundleDocumentTypes"].append({
+                "CFBundleTypeName": description,
+                "CFBundleTypeExtensions": [extension],
+                "LSItemContentTypes": [identifier],
+                "CFBundleTypeRole": "None", "LSHandlerRank": "None",
+                "CFBundleTypeIconFile": f"{name}.icns",
+            })
     with info.open("wb") as stream:
         plistlib.dump(properties, stream)
     return resources
@@ -125,6 +178,7 @@ End If
 '''
     # Windows Script Host requires a BOM for Unicode source text.
     (destination / "launch.vbs").write_text(script, encoding="utf-16")
+    shutil.copyfile(icon_path("qplot.ico"), destination / "qplot.ico")
     _windows_shortcut(destination)
     return destination
 
@@ -179,6 +233,10 @@ def _windows_shortcut(destination: Path) -> None:
             (7, "qPlot QCoDeS viewer"),
         ):
             check(method(link, slot, hresult, ctypes.c_wchar_p)(link, value))
+        # IShellLinkW::SetIconLocation takes a UTF-16 path and resource index.
+        check(method(link, 17, hresult, ctypes.c_wchar_p, ctypes.c_int)(
+            link, str(destination / "qplot.ico"), 0,
+        ))
         check(method(link, 0, hresult, pointer, ctypes.POINTER(pointer))(
             link, guid("0000010b-0000-0000-c000-000000000046"), ctypes.byref(persist),
         ))
@@ -224,8 +282,17 @@ def _windows_associations(destination: Path, *, remove: bool = False) -> None:
         except FileNotFoundError:
             # Removing an already absent per-user association is idempotent.
             pass
-        for suffix in (r"\shell\open\command", r"\shell\open", r"\shell", r"\Application", ""):
-            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, application + suffix)
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, application + r"\DefaultIcon")
+        except FileNotFoundError:
+            # Launchers created before icon support have no DefaultIcon key.
+            pass
+        for suffix in (r"\Application", r"\shell\open\command", r"\shell\open", r"\shell", ""):
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, application + suffix)
+            except FileNotFoundError:
+                # A failed setup can retain an owned but incomplete ProgID.
+                pass
     else:
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, command_key) as key:
@@ -235,22 +302,87 @@ def _windows_associations(destination: Path, *, remove: bool = False) -> None:
             # No existing registry command means this launcher can create its own
             # association.
             pass
-        for path, name, value in (
+        # Write ownership first and restore it last, so a failed rollback can
+        # still be recognized by remove() without touching another launcher.
+        updates = (
+            (command_key, "", _windows_command(destination)),
             (application, "", "qPlot QCoDeS viewer"),
+            (application + r"\DefaultIcon", "", f'"{destination / "qplot-database.ico"}",0'),
             (application + r"\Application", "ApplicationName", "qPlot"),
             (application + r"\Application", "ApplicationDescription", "QCoDeS database viewer"),
-            (command_key, "", _windows_command(destination)),
+            (application + r"\Application", "ApplicationIcon", f'"{destination / "qplot.ico"}",0'),
             (open_with, _PROGID, ""),
-        ):
-            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as key:
-                winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
-    # Notify Explorer of the per-user association change, without setting a default.
+        )
+
+        def read_value(path, name):
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+                    return winreg.QueryValueEx(key, name)
+            except FileNotFoundError:
+                return None
+
+        # Complete every read before the first mutation. Backups remain in
+        # native registry types, including binary and expandable-string values.
+        previous = {(path, name): read_value(path, name) for path, name, _value in updates}
+        created_keys = set()
+        for path, _name, _value in updates:
+            while path != base:
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path):
+                        pass
+                except FileNotFoundError:
+                    created_keys.add(path)
+                path = path.rsplit("\\", 1)[0]
+        attempted = []
+        try:
+            for path, name, value in updates:
+                attempted.append((path, name, value))
+                with winreg.CreateKey(winreg.HKEY_CURRENT_USER, path) as key:
+                    winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
+        except OSError as install_error:
+            errors = []
+            for path, name, value in reversed(attempted):
+                if path == command_key and errors:
+                    continue  # Retain ownership until failed restoration is repaired.
+                try:
+                    if read_value(path, name) != (value, winreg.REG_SZ):
+                        continue  # A subsequent writer owns the value now.
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
+                        saved = previous[path, name]
+                        if saved is None:
+                            winreg.DeleteValue(key, name)
+                        else:
+                            data, kind = saved
+                            winreg.SetValueEx(key, name, 0, kind, data)
+                except OSError as error:
+                    errors.append(error)
+            for path in sorted(created_keys, key=lambda item: item.count("\\"), reverse=True):
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as key:
+                        children, values, _modified = winreg.QueryInfoKey(key)
+                    if children == 0 and values == 0:
+                        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, path)
+                except FileNotFoundError:
+                    pass
+                except OSError as error:
+                    errors.append(error)
+            if errors:
+                raise WindowsAssociationRollbackError(
+                    "Could not restore qPlot's file registration; keep the launcher and retry removal."
+                ) from install_error
+            raise
+
+
+def _notify_windows_shell() -> None:
+    """Refresh Explorer after the complete set of per-user icon changes."""
+    if sys.platform != "win32":
+        raise ValueError("Windows icon refresh requires Windows.")
     import ctypes
 
     ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
 
 
-def setup(destination: Path, *, associations: bool = False) -> None:
+def setup(destination: Path, *, associations: bool = False, desktop_shortcut: bool = True) -> None:
     destination = destination.expanduser().absolute()
     if sys.platform not in {"darwin", "win32"}:
         raise ValueError("Desktop launcher setup supports macOS and Windows only.")
@@ -261,25 +393,65 @@ def setup(destination: Path, *, associations: bool = False) -> None:
     # Do not resolve the venv executable symlink to the base interpreter.
     python = Path(sys.executable).absolute()
     destination.parent.mkdir(parents=True, exist_ok=True)
+    sidecar_icons: list[dict] = []
+    icons_attempted = False
+    registered = False
+    mac_registration_attempted = False
+    shortcut_record = None
     try:
         if sys.platform == "darwin":
             resources = _mac_launcher(destination, python, associations)
+            from qplot._macos_identity import install_interpreter
+
+            install_interpreter(destination)
         else:
             destination.mkdir()
             resources = _windows_launcher(destination, python)
+            if associations:
+                for name in _DOCUMENT_ICONS:
+                    shutil.copyfile(icon_path(f"{name}.ico"), resources / f"{name}.ico")
         shutil.copyfile(qplot._desktop_bootstrap.__file__, resources / "bootstrap.py")
         record = {"marker": _MARKER, "python": str(python), "prefix": sys.prefix,
                   "package": str(Path(qplot.__file__).absolute()), "associations": associations}
+        if desktop_shortcut:
+            shortcut_record = create_desktop_shortcut(destination)
+            if shortcut_record is not None:
+                record["desktop_shortcut"] = shortcut_record
+        if associations and sys.platform == "win32":
+            sidecar_icons = prepare_sidecar_icons(destination)
+            record["sidecar_icons"] = sidecar_icons
+        # Save prior icon values before changing the registry, so a failed
+        # rollback still leaves a removable launcher with its recovery record.
         (resources / "installation.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
         if sys.platform == "darwin":
             subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(destination)], check=True)
-        if associations and sys.platform == "win32":
+            mac_registration_attempted = True
+            _mac_registration(destination)
+        elif associations:
             _windows_associations(destination)
-    except Exception:
+            registered = True
+            icons_attempted = True
+            install_sidecar_icons(destination, records=sidecar_icons)
+            _notify_windows_shell()
+    except Exception as error:
+        # If restoration fails, retain the launcher and its record for removal.
+        if mac_registration_attempted:
+            _mac_registration(destination, remove=True)
+        if icons_attempted:
+            remove_sidecar_icons(sidecar_icons)
+        if registered:
+            _windows_associations(destination, remove=True)
+        if icons_attempted or registered:
+            _notify_windows_shell()
+        remove_desktop_shortcut(shortcut_record)
+        if isinstance(error, WindowsAssociationRollbackError):
+            raise
         if destination.exists():
             shutil.rmtree(destination)
         raise
     print(f"Created {destination}")
+    if shortcut_record is not None:
+        print(f"Created desktop shortcut {shortcut_record['path']}")
 
 
 def remove(destination: Path) -> None:
@@ -299,8 +471,13 @@ def remove(destination: Path) -> None:
             raise ValueError("Refusing to remove a launcher containing a database sidecar.")
         if entry.is_file():
             ensure_safe_auxiliary_path(entry)
+    if sys.platform == "darwin":
+        _mac_registration(destination, remove=True)
+    remove_desktop_shortcut(record.get("desktop_shortcut"))
     if sys.platform == "win32" and record["associations"]:
+        remove_sidecar_icons(record.get("sidecar_icons", []))
         _windows_associations(destination, remove=True)
+        _notify_windows_shell()
     shutil.rmtree(destination)
     print(f"Removed {destination}")
 
@@ -309,12 +486,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["setup", "remove"])
     parser.add_argument("--destination", type=Path, help="Custom .app path (macOS) or launcher directory (Windows)")
-    parser.add_argument("--file-associations", action="store_true", help="Offer qPlot in Open With for .db files; never change the default")
+    parser.add_argument("--file-associations", action="store_true", help="Offer qPlot in Open With for .db files and add database/WAL/SHM icons; never change the default opener")
+    parser.add_argument("--no-desktop-shortcut", action="store_true", help="Create the launcher without adding a desktop shortcut")
     options = parser.parse_args(argv)
     try:
         destination = options.destination or default_destination()
         if options.action == "setup":
-            setup(destination, associations=options.file_associations)
+            setup(destination, associations=options.file_associations,
+                  desktop_shortcut=not options.no_desktop_shortcut)
         else:
             remove(destination)
     except (OSError, ValueError, subprocess.SubprocessError) as error:

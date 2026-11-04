@@ -426,6 +426,43 @@ def test_validator_accepts_both_split_wheels(tmp_path):
     }
 
 
+DESKTOP_ICON_RUNTIME_FILES = {
+    "qplot/_icons.py",
+    *(
+        f"qplot/assets/{stem}{suffix}"
+        for stem in ("qplot", "qplot-database", "sqlite-wal", "sqlite-shm")
+        for suffix in (".svg", "-small.svg", ".png", ".ico", ".icns")
+    ),
+}
+
+
+@pytest.mark.parametrize("missing", [
+    None,
+    "qplot/_icons.py",
+    "qplot/assets/qplot.svg",
+    "qplot/assets/qplot-small.svg",
+    "qplot/assets/qplot.png",
+    "qplot/assets/qplot-database.ico",
+    "qplot/assets/sqlite-wal.icns",
+    "qplot/assets/sqlite-shm.ico",
+])
+def test_validator_requires_complete_desktop_icon_inventory(tmp_path, missing):
+    """Native shell icons must ship alongside the editable and Qt artwork."""
+    source = PACKAGING_SOURCE | {f"src/{path}" for path in DESKTOP_ICON_RUNTIME_FILES}
+    app = _split_wheel(
+        tmp_path,
+        extra_files=DESKTOP_ICON_RUNTIME_FILES - {missing},
+    )
+    if missing is None:
+        assert validate_wheel(app, source) == {
+            "qplot/__init__.py", *DESKTOP_ICON_RUNTIME_FILES,
+        }
+    else:
+        with pytest.raises(AssertionError, match="runtime mismatch") as error:
+            validate_wheel(app, source)
+        assert missing in str(error.value)
+
+
 @pytest.mark.parametrize("override", [
     {}, {"version": "wrong"}, {"commit": "invalid"}, {"dirty": True},
     {"released": "false"}, {"pull_request": "invalid"},

@@ -57,10 +57,13 @@ def _database_path_from_arguments(args):
 
 def _configure_application_identity(app):
     """
-    Sets the application name used by native desktop menus.
+    Set the application name and icon used by windows and native desktops.
 
     """
+    from qplot._icons import application_icon
+
     app.setApplicationName("qPlot")
+    app.setWindowIcon(application_icon())
     if hasattr(app, "setApplicationDisplayName"):
         # Window titles already identify qPlot; suppress Qt's automatic suffix.
         app.setApplicationDisplayName("")
