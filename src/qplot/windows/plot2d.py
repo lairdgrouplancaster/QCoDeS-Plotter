@@ -6,7 +6,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from qplot.datahandling.parameter_data import numeric_isfinite
+from qplot.datahandling.numeric_samples import numeric_isfinite
 from qplot.tools.heatmap_geometry import (
     AxisGeometry,
     HeatmapGeometry,
@@ -362,8 +362,8 @@ class plot2d(
             return
 
         full_sql_refresh = bool(
-            getattr(plot_worker, "loaded_from_sql_heatmap", False)
-            and getattr(plot_worker, "heatmap_axis_ranges", None) is None
+            plot_worker.result.loaded_from_sql_heatmap
+            and plot_worker.result.heatmap_axis_ranges is None
         )
 
         try:
@@ -379,7 +379,7 @@ class plot2d(
                     clear_display=clear_display,
                     ):
                 return
-            self._update_large_heatmap_state(plot_worker)
+            self._update_large_heatmap_state(plot_worker.result)
             self.refresh_secondary_heatmaps()
             self.refresh_secondary_lines()
             if not self._refresh_publication_source_is_current(
@@ -413,7 +413,7 @@ class plot2d(
                     plot_worker,
                 )
                 if (
-                    getattr(plot_worker, "dataset_completed", None) is True
+                    plot_worker.result.dataset_completed is True
                     and not display_synchronized
                 ):
                     return
@@ -736,7 +736,9 @@ class plot2d(
             self,
             worker: Any,
             ) -> dict[str, Any] | None:
-        data_grid = getattr(worker, "dataGrid", self.__dict__.get("dataGrid", None))
+        data_grid = getattr(worker, "dataGrid", None)
+        if data_grid is None:
+            data_grid = self.__dict__.get("dataGrid")
         if data_grid is None:
             return None
         try:
@@ -787,12 +789,11 @@ class plot2d(
                 # downsampling description.
                 pass
 
+        source_row_count = getattr(worker, "total_point_count_estimate", None)
+        if source_row_count is None:
+            source_row_count = source_cell_count
         return {
-            "source_row_count": getattr(
-                worker,
-                "total_point_count_estimate",
-                source_cell_count,
-                ),
+            "source_row_count": source_row_count,
             "estimated_range_rows": getattr(
                 worker,
                 "_heatmap_estimated_range_rows",
@@ -939,6 +940,8 @@ class plot2d(
         try:
             configured_limit = worker.max_full_heatmap_points
         except AttributeError:
+            configured_limit = None
+        if configured_limit is None:
             configured_limit = self.config.get(
                 "runtime_settings.max_full_heatmap_points"
                 )

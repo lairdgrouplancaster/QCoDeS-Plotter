@@ -181,6 +181,23 @@ def test_prerelease_preference_and_source_checkout_instructions(updates):
     assert not dialog.findChild(qtw.QPushButton, "copyUpdateCommandButton").isVisible()
 
 
+def test_rechecking_clears_the_previous_copyable_upgrade_command(updates):
+    checker, cfg, window = updates
+    dialog = checker.show_manual(window)
+    checker._manager.replies[-1].deliver(body())
+    command = dialog.property("qplotUpgradeCommand")
+    assert command in text(dialog)
+    assert "qplotter==2.0" in command
+
+    checker.show_manual(window)
+    button = dialog.findChild(qtw.QPushButton, "copyUpdateCommandButton")
+    assert not button.isVisible()
+    assert dialog.property("qplotUpgradeCommand") == ""
+    checker._manager.replies[-1].deliver(b"", status=503)
+    assert not button.isVisible()
+    assert dialog.property("qplotUpgradeCommand") == ""
+
+
 def test_unpublished_project_and_deleted_window_are_handled(updates):
     checker, cfg, window = updates
     dialog = checker.show_manual(window)

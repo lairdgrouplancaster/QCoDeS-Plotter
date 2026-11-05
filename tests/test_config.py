@@ -807,6 +807,27 @@ class TemporaryConfigTestCase(unittest.TestCase):
             [],
             )
 
+    def test_failed_initial_reset_does_not_install_unpersisted_settings(self):
+        cfg = config.__new__(config)
+        cfg.schema = config().schema
+        previous_contents = Path(config.default_file).read_bytes()
+
+        with (
+            patch(
+                "qplot.configuration.config.os.replace",
+                side_effect=OSError("simulated initial reset failure"),
+            ),
+            self.assertRaisesRegex(OSError, "simulated initial reset failure"),
+        ):
+            cfg.reset_to_defaults()
+
+        self.assertFalse(hasattr(cfg, "config"))
+        self.assertEqual(Path(config.default_file).read_bytes(), previous_contents)
+        self.assertEqual(list(Path(config.default_path).glob(".config.json.*.tmp")), [])
+
+        cfg.reset_to_defaults()
+        self.assertEqual(cfg.config, config().config)
+
     def test_config_cli_set_value_converts_values(self):
         with redirect_stdout(io.StringIO()):
             sysHandle("-set_value", "user_preference.theme", "dark")

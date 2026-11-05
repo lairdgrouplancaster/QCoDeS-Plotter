@@ -30,6 +30,7 @@ from qplot.testdata import (
     generate_database,
 )
 from qplot.windows import _database_actions as database_actions
+from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._database_load_state import DatabaseLoadSession
 
 _SQLITE_ARTIFACT_SUFFIXES = ("", "-wal", "-shm", "-journal")
@@ -1005,10 +1006,10 @@ def test_stale_detail_callbacks_cannot_publish_partial_batches():
         )
 
         def __init__(self):
-            self._database_detail_generation = 5
-            self._database_detail_active = True
-            self._database_expensive_detail_generation = 7
-            self._database_expensive_detail_active = True
+            detail_channel(self).generation = 5
+            detail_channel(self).active = True
+            detail_channel(self, True).generation = 7
+            detail_channel(self, True).active = True
             self.fileTextbox = Field()
             self.RunList = RunList()
 
@@ -1183,16 +1184,16 @@ def test_detail_instance_error_invalidates_both_workers_and_reloads(
 
         def __init__(self):
             self.fileTextbox = Field()
-            self._database_detail_generation = 110
-            self._database_detail_active = True
-            self._database_detail_worker = Worker()
-            self._database_detail_instance = None
-            self._database_expensive_detail_generation = 120
-            self._database_expensive_detail_active = True
-            self._database_expensive_detail_worker = Worker()
-            self._database_expensive_detail_instance = None
-            self.detail_worker = self._database_detail_worker
-            self.expensive_worker = self._database_expensive_detail_worker
+            detail_channel(self).generation = 110
+            detail_channel(self).active = True
+            detail_channel(self).worker = Worker()
+            detail_channel(self).instance = None
+            detail_channel(self, True).generation = 120
+            detail_channel(self, True).active = True
+            detail_channel(self, True).worker = Worker()
+            detail_channel(self, True).instance = None
+            self.detail_worker = detail_channel(self).worker
+            self.expensive_worker = detail_channel(self, True).worker
             self.reloads = []
 
         def _reload_replaced_database(self, path):
@@ -1211,12 +1212,12 @@ def test_detail_instance_error_invalidates_both_workers_and_reloads(
         DatabaseInstanceChangedError("injected detail ABA mismatch"),
     )
 
-    assert harness._database_detail_generation > 110
-    assert harness._database_expensive_detail_generation > 120
-    assert not harness._database_detail_active
-    assert not harness._database_expensive_detail_active
-    assert harness._database_detail_worker is None
-    assert harness._database_expensive_detail_worker is None
+    assert detail_channel(harness).generation > 110
+    assert detail_channel(harness, True).generation > 120
+    assert not detail_channel(harness).active
+    assert not detail_channel(harness, True).active
+    assert detail_channel(harness).worker is None
+    assert detail_channel(harness, True).worker is None
     assert harness.reloads == ["details.db"]
     if generation_attribute == "_database_detail_generation":
         assert harness.expensive_worker.cancelled

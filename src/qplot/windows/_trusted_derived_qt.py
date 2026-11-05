@@ -103,6 +103,8 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             None
         )
         self._detail_display_guid = ""
+        self._selected_detail_attempt: object | None = None
+        self._restoring_selected_detail = False
         self._snapshot_session = SnapshotSession(
             ready=self._snapshotResultReady.emit,
             is_current=self._snapshot_publication_is_current,
@@ -390,6 +392,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         exact_guid = str(guid or "")
         selection_changed = exact_guid != self._selected_guid
         if selection_changed:
+            self._selected_detail_attempt = None
             self._selected_guid = exact_guid
             self._selected_detail_publication = None
             self._detail_display_guid = ""
@@ -697,11 +700,9 @@ class TrustedDerivedQtBridge(QtCore.QObject):
                 previews,
             )
 
-    def _publish_selected_detail(
-        self,
-        publication: TrustedSelectedDetailPublication,
-    ) -> None:
-        self._require_owner()
+    def _selected_detail_is_current(
+        self, publication: TrustedSelectedDetailPublication,
+    ) -> bool:
         coordinator = self._coordinator
         if (
             coordinator is None
@@ -715,7 +716,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             != str(getattr(self._window, "_selected_run_guid", "") or "")
             or coordinator.snapshot().selected_index != publication.run_index
         ):
-            return
+            return False
         if not self._publication_is_current(
             WorkPublication(
                 publication.generation,
@@ -724,6 +725,15 @@ class TrustedDerivedQtBridge(QtCore.QObject):
                 True,
             )
         ):
+            return False
+        return True
+
+    def _publish_selected_detail(
+        self,
+        publication: TrustedSelectedDetailPublication,
+    ) -> None:
+        self._require_owner()
+        if not self._selected_detail_is_current(publication):
             return
         detail = publication.detail
         if (
@@ -735,6 +745,24 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         if detached is None:
             return
         publication, detail, snapshot_source, snapshot_token = detached
+        attempt = object()
+        self._selected_detail_attempt = attempt
+
+        def current() -> bool:
+            if (
+                self._selected_detail_attempt is attempt
+                and self._selected_detail_is_current(publication)
+            ):
+                return True
+            # A newer nested callback owns its publication and snapshot source.
+            # Only discard state still owned by this failed attempt.
+            if self._selected_detail_attempt is attempt:
+                self._selected_detail_publication = None
+                self._detail_display_guid = ""
+                self._invalidate_selected_detail_viewer()
+            self._restore_selected_detail_after_reentry()
+            return False
+
         item = self._window.RunList._item_for_guid(publication.run_guid)
         current_run = dict(getattr(item, "run_metadata", {}) or {})
         detail_run = detail.run.as_dict()
@@ -745,13 +773,21 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         # new request session.  Cancel and forget the prior source before any
         # widget can observe the replacement token.
         self._invalidate_selected_detail_viewer()
+        if not current():
+            return
         if snapshot_source is not None:
             self._snapshot_session.bind(snapshot_source, snapshot_token)
         self._window.RunList.updateRuns({publication.run_id: merged_run})
+        if not current():
+            return
         update_auto_plot(self._window, {publication.run_id: merged_run})
+        if not current():
+            return
         self._selected_detail_publication = publication
         self._detail_display_guid = publication.run_guid
         self._window.infoBox.set_snapshot_run_detail(detail)
+        if not current():
+            return
         update_live = getattr(
             self._window.infoBox,
             "update_live_run_details",
@@ -759,9 +795,80 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         )
         if callable(update_live):
             update_live(merged_run)
+        if not current():
+            return
         # Detail rendering and later overview patches must never detach the
         # independently retained Stage 5C preview selection.
         self._window.infoBox.preview.set_current_guid(publication.run_guid)
+        if not current():
+            return
+
+    def _restore_selected_detail_after_reentry(self) -> None:
+        """Boundedly repair a setter that resumed after a newer publication."""
+        if self._restoring_selected_detail:
+            return
+        self._restoring_selected_detail = True
+        try:
+            for _ in range(4):
+                if self._shutting_down or not self._accepting_publications:
+                    return
+                attempt = self._selected_detail_attempt
+                guid = self._selected_guid
+                publication = self._selected_detail_publication
+
+                def current(
+                    attempt=attempt, guid=guid, publication=publication,
+                ) -> bool:
+                    if attempt is not self._selected_detail_attempt or guid != self._selected_guid:
+                        return False
+                    if publication is not None and not self._selected_detail_is_current(publication):
+                        if self._selected_detail_publication is publication:
+                            self._selected_detail_publication = None
+                            self._detail_display_guid = ""
+                            self._invalidate_selected_detail_viewer()
+                        return False
+                    return True
+
+                if publication is not None and current():
+                    item = self._window.RunList._item_for_guid(guid)
+                    observed = dict(getattr(item, "run_metadata", {}) or {})
+                    run = publication.detail.run.as_dict()
+                    run["run_id"] = publication.run_id
+                    run["guid"] = publication.run_guid
+                    self._window.RunList.updateRuns({
+                        publication.run_id: self._preserve_newer_live_facts(observed, run),
+                    })
+                    if not current():
+                        continue
+                    self._window.infoBox.set_snapshot_run_detail(publication.detail)
+                    if not current():
+                        continue
+                    item = self._window.RunList._item_for_guid(guid)
+                    metadata = dict(getattr(item, "run_metadata", {}) or {})
+                    update_live = getattr(self._window.infoBox, "update_live_run_details", None)
+                    if callable(update_live):
+                        update_live(metadata)
+                    if not current():
+                        continue
+                    self._window.infoBox.preview.set_current_guid(guid)
+                    if not current():
+                        continue
+                else:
+                    if not self._accepting_publications:
+                        return
+                    self._detail_display_guid = ""
+                    self.select_run(guid)
+                    if not current():
+                        continue
+                return
+            # Pathological repeated reentry must not leave the last stale setter
+            # visible. A newer snapshot session remains owned by its publication.
+            self._detail_display_guid = ""
+            clear = getattr(self._window.infoBox, "clear", None)
+            if callable(clear):
+                clear()
+        finally:
+            self._restoring_selected_detail = False
 
     def _request_completed_work(
         self,

@@ -207,8 +207,8 @@ def _drain(coordinator: coordinator_module.TrustedWorkCoordinator, timeout: floa
         if (
             snapshot.pending_count == 0
             and not coordinator.active
-            and coordinator._progressive_active_count == 0
-            and not coordinator._progressive_restart_deferred
+            and coordinator._continuations.active_count == 0
+            and not coordinator._continuations.restart_deferred
         ):
             return
         time.sleep(0.005)
@@ -852,8 +852,8 @@ def test_remaining_append_stream_cannot_starve_same_tier_progressive_page(
         assert service.submissions == [1]
         assert coordinator.poll() == 1
         assert not coordinator.active
-        assert coordinator._progressive_restart_deferred
-        deadline = coordinator._progressive_not_before
+        assert coordinator._continuations.restart_deferred
+        deadline = coordinator._continuations.not_before
         assert deadline == pytest.approx(now[0] + interval)
 
         # B wins the same-tier ordinary quantum and drains its complete M/T/P
@@ -883,7 +883,7 @@ def test_remaining_append_stream_cannot_starve_same_tier_progressive_page(
             TrustedWorkKind
         )
         assert len(ordinary_claims) == claim_bound
-        assert coordinator._ordinary_claims_since_progressive_page == claim_bound
+        assert coordinator._continuations.ordinary_claims_since_page == claim_bound
         assert not coordinator.active
 
         # Even an append at the idle paced boundary cannot reset the quantum
@@ -945,7 +945,7 @@ def test_newly_progressive_selected_guid_enters_existing_round_next(
         )
         assert coordinator._next_progressive_run_index(snapshot) == 2
         assert coordinator._progressive_is_unserved(1)
-        assert coordinator._progressive_active_count == 3
+        assert coordinator._continuations.active_count == 3
     finally:
         coordinator.close()
 
@@ -1000,7 +1000,7 @@ def test_newly_visible_active_progressive_run_is_next_at_page_boundary(
         # that page is already in flight; B is otherwise the next unserved
         # remaining run, so the following boundary exposes whether viewport
         # promotion was adopted or merely recorded for a later full round.
-        first_deadline = coordinator._progressive_not_before
+        first_deadline = coordinator._continuations.not_before
         assert first_deadline == pytest.approx(now[0] + interval)
         now[0] = first_deadline
         assert coordinator.poll() == 0
@@ -1010,7 +1010,7 @@ def test_newly_visible_active_progressive_run_is_next_at_page_boundary(
         assert coordinator.poll() == 1
         assert not coordinator.active
 
-        second_deadline = coordinator._progressive_not_before
+        second_deadline = coordinator._continuations.not_before
         assert second_deadline == pytest.approx(now[0] + interval)
         now[0] = second_deadline
         assert coordinator.poll() == 0
@@ -1214,7 +1214,7 @@ def test_aged_progressive_and_ordinary_background_metadata_rotate_under_churn(
         coordinator._selected_index = 2
 
         # The first aged quantum is A's bounded continuation.
-        coordinator._foreground_claims_since_background_metadata = (
+        coordinator._continuations.foreground_claims_since_background_metadata = (
             coordinator_module.TRUSTED_DERIVED_BACKGROUND_AGING_CLAIM_BOUND
         )
         coordinator.start()
@@ -1244,7 +1244,7 @@ def test_aged_progressive_and_ordinary_background_metadata_rotate_under_churn(
         assert service.progressive_pages == 1
         assert coordinator.snapshot().running[0].run_index == 1
         assert coordinator.snapshot().running[0].key.kind is TrustedWorkKind.METADATA
-        assert coordinator._foreground_claims_since_background_metadata == 0
+        assert coordinator._continuations.foreground_claims_since_background_metadata == 0
 
         # Complete B's sole metadata quantum, then sustain the same foreground
         # pressure for one more bound.  A must become the next aged source, so
@@ -1259,7 +1259,7 @@ def test_aged_progressive_and_ordinary_background_metadata_rotate_under_churn(
             if completed_claims < claim_bound:
                 assert coordinator.snapshot().running[0].run_index == 2
         assert not coordinator.active
-        assert coordinator._progressive_restart_deferred
+        assert coordinator._continuations.restart_deferred
         now[0] += coordinator_module.TRUSTED_DERIVED_PROGRESSIVE_MIN_INTERVAL_SECONDS
         assert coordinator.poll() == 0
         assert service.submissions == [1, 2, 1]
@@ -1330,7 +1330,7 @@ def test_selected_metadata_replay_and_images_precede_aged_background_metadata(
             generation=coordinator.scheduler.generation,
             run_guid="guid-2",
         )
-        coordinator._foreground_claims_since_background_metadata = (
+        coordinator._continuations.foreground_claims_since_background_metadata = (
             coordinator_module.TRUSTED_DERIVED_BACKGROUND_AGING_CLAIM_BOUND
         )
 
@@ -1409,8 +1409,8 @@ def test_selected_progressive_continuation_survives_aging_bound_without_backgrou
         for completed_claims in range(1, claim_bound + 1):
             assert coordinator.poll() == 1
             assert not coordinator.active
-            assert coordinator._progressive_restart_deferred
-            deadline = coordinator._progressive_not_before
+            assert coordinator._continuations.restart_deferred
+            deadline = coordinator._continuations.not_before
             assert deadline == pytest.approx(now[0] + interval)
             assert notifier.deadline == deadline
 
@@ -1426,7 +1426,7 @@ def test_selected_progressive_continuation_survives_aging_bound_without_backgrou
             assert coordinator.active
 
         assert service.page_count == claim_bound + 1
-        assert coordinator._foreground_claims_since_background_metadata == claim_bound
+        assert coordinator._continuations.foreground_claims_since_background_metadata == claim_bound
     finally:
         coordinator.close()
 
@@ -1484,7 +1484,7 @@ def test_selected_progressive_yields_remaining_metadata_by_aging_bound(
                 admitted_after = completed_claims
                 break
             assert not coordinator.active
-            deadline = coordinator._progressive_not_before
+            deadline = coordinator._continuations.not_before
             assert deadline == pytest.approx(now[0] + interval)
             now[0] = deadline
             assert coordinator.poll() == 0
@@ -1558,7 +1558,7 @@ def test_retry_blocked_remaining_metadata_does_not_hide_ordinary_aging_peer(
         coordinator.start()
         assert service.submissions == [1]
         coordinator.select_run(2)
-        coordinator._foreground_claims_since_background_metadata = (
+        coordinator._continuations.foreground_claims_since_background_metadata = (
             coordinator_module.TRUSTED_DERIVED_BACKGROUND_AGING_CLAIM_BOUND
         )
 
@@ -1652,7 +1652,7 @@ def test_retry_blocked_remaining_metadata_does_not_hide_progressive_aging_peer(
         coordinator.start()
         assert service.submissions == [1]
         coordinator.select_run(2)
-        coordinator._foreground_claims_since_background_metadata = (
+        coordinator._continuations.foreground_claims_since_background_metadata = (
             coordinator_module.TRUSTED_DERIVED_BACKGROUND_AGING_CLAIM_BOUND
         )
 
@@ -1765,10 +1765,10 @@ def test_ordinary_aging_skips_served_stale_progressive_slot_for_unserved_peer(
             run_guid="guid-3",
         )
         coordinator._selected_index = 2
-        coordinator._foreground_claims_since_background_metadata = (
+        coordinator._continuations.foreground_claims_since_background_metadata = (
             coordinator_module.TRUSTED_DERIVED_BACKGROUND_AGING_CLAIM_BOUND
         )
-        coordinator._age_progressive_background_next = False
+        coordinator._continuations.age_background_next = False
 
         coordinator.start()
         assert service.submissions == [2]
@@ -1945,8 +1945,8 @@ def test_deferred_changes_between_progressive_pages_remain_paced(
             assert coordinator.runs[0].source_revision != stale_revision
             assert len(service.submissions) == completed_pages
             assert not coordinator.active
-            assert coordinator._progressive_restart_deferred
-            deadline = coordinator._progressive_not_before
+            assert coordinator._continuations.restart_deferred
+            deadline = coordinator._continuations.not_before
             assert deadline == pytest.approx(now[0] + interval)
             assert notifier.deadline == deadline
 
@@ -1957,8 +1957,8 @@ def test_deferred_changes_between_progressive_pages_remain_paced(
                 assert coordinator.runs[0].source_revision != revision_before
                 assert len(service.submissions) == completed_pages
                 assert not coordinator.active
-                assert coordinator._progressive_restart_deferred
-                assert coordinator._progressive_not_before == deadline
+                assert coordinator._continuations.restart_deferred
+                assert coordinator._continuations.not_before == deadline
                 assert notifier.deadline == deadline
                 assert tuple(notifier.created_deadlines) == scheduled
 
@@ -2053,7 +2053,7 @@ def test_warm_cached_selected_metadata_without_observation_protects_images(
             run_guid="guid-2",
         )
         assert coordinator._reused_observations == {}
-        coordinator._foreground_claims_since_background_metadata = (
+        coordinator._continuations.foreground_claims_since_background_metadata = (
             coordinator_module.TRUSTED_DERIVED_BACKGROUND_AGING_CLAIM_BOUND
         )
 
@@ -2385,7 +2385,7 @@ def test_immediate_progressive_worker_yields_one_owner_turn_before_restart(
     assert publications == []
     assert coordinator.snapshot().pending_count == 0
     assert not coordinator.active
-    assert coordinator._progressive_restart_deferred
+    assert coordinator._continuations.restart_deferred
     assert wakeups
 
     # A priority change is a separate owner turn and therefore wins before the
@@ -2403,8 +2403,8 @@ def test_immediate_progressive_worker_yields_one_owner_turn_before_restart(
         if (
             snapshot.pending_count == 0
             and not coordinator.active
-            and coordinator._progressive_active_count == 0
-            and not coordinator._progressive_restart_deferred
+            and coordinator._continuations.active_count == 0
+            and not coordinator._continuations.restart_deferred
         ):
             break
     else:
@@ -2528,8 +2528,8 @@ def test_progressive_metadata_pages_are_tier_fair_and_owner_preemptible(
         if (
             snapshot.pending_count == 0
             and not coordinator.active
-            and coordinator._progressive_active_count == 0
-            and not coordinator._progressive_restart_deferred
+            and coordinator._continuations.active_count == 0
+            and not coordinator._continuations.restart_deferred
         ):
             break
     else:
@@ -2824,7 +2824,7 @@ def test_conclusive_reopen_unparks_after_permanent_progressive_failure(
     _drain(coordinator)
 
     assert service.submissions == [1, 1]
-    assert coordinator._progressive_active_count == 0
+    assert coordinator._continuations.active_count == 0
     assert rendered == []
     assert cache_writes == []
     publications.clear()
@@ -3043,7 +3043,7 @@ def test_immediate_progressive_pages_have_bounded_owner_work_and_wakeups(
         notifier = _RecordingProgressiveNotifier.instances[0]
         expected_deadline = now[0] + minimum_interval
         assert notifier.created_deadlines == [expected_deadline]
-        assert coordinator._progressive_not_before == expected_deadline
+        assert coordinator._continuations.not_before == expected_deadline
 
         for _owner_turn in range(48):
             submissions_before = len(service.submissions)
@@ -3053,8 +3053,8 @@ def test_immediate_progressive_pages_have_bounded_owner_work_and_wakeups(
             assert coordinator.scheduler.allocated_work_count <= 1
             assert coordinator._completions.maxsize == 1
             assert coordinator._completions.qsize() <= 1
-            assert len(coordinator._progressive_state) == len(first_pages)
-            assert coordinator._progressive_active_count <= len(first_pages)
+            assert len(coordinator._continuations.ready) == len(first_pages)
+            assert coordinator._continuations.active_count <= len(first_pages)
             assert coordinator.snapshot().pending_count <= 3 * len(first_pages)
 
         assert notifier.created_deadlines == [expected_deadline]
@@ -3114,7 +3114,7 @@ def test_repeated_stale_progressive_outcomes_keep_one_paced_notifier(
         notifier = notifiers[0]
 
         for stale_attempt in range(1, 4):
-            deadline = coordinator._progressive_not_before
+            deadline = coordinator._continuations.not_before
             assert deadline == pytest.approx(now[0] + interval)
             assert notifier.deadline == deadline
             scheduled = tuple(notifier.created_deadlines)
@@ -3132,7 +3132,7 @@ def test_repeated_stale_progressive_outcomes_keep_one_paced_notifier(
             assert coordinator.active
             assert coordinator.poll() == 1
             assert not coordinator.active
-            assert coordinator._progressive_restart_deferred
+            assert coordinator._continuations.restart_deferred
 
         assert len(notifiers) == 1
         assert service.submission_times == pytest.approx(
@@ -3157,7 +3157,7 @@ def test_progressive_ready_state_is_exactly_one_byte_per_run(
         cache=TrustedDerivedDiskCache(tmp_path / "disabled", enabled=False),
     )
     try:
-        state = memoryview(coordinator._progressive_state)
+        state = memoryview(coordinator._continuations.ready)
         assert state.itemsize == 1
         assert state.nbytes == len(observations)
         assert state.format == "B"
@@ -3169,19 +3169,21 @@ def test_progressive_ready_state_is_exactly_one_byte_per_run(
                 trusted_derived_source_revision(observation),
                 coordinator._observation_size(observation),
             )
-        assert coordinator._progressive_active_count == 3
-        assert sum(bool(value) for value in coordinator._progressive_state) == 3
+        assert coordinator._continuations.active_count == 3
+        assert sum(bool(value) for value in coordinator._continuations.ready) == 3
 
         # Progressive readiness has one and only one run-sized container.  In
         # particular, the former GUID registry and materialised round deque
         # must not coexist with the byte state and double O(run-count) memory.
         progressive_containers = {
             name: type(value)
-            for name, value in vars(coordinator).items()
-            if name.startswith("_progressive_")
-            and isinstance(value, (bytearray, dict, set, list, tuple, deque))
+            for name in coordinator._continuations.__slots__
+            if isinstance(
+                value := getattr(coordinator._continuations, name),
+                (bytearray, dict, set, list, tuple, deque),
+            )
         }
-        assert progressive_containers == {"_progressive_state": bytearray}
+        assert progressive_containers == {"ready": bytearray}
         assert not hasattr(coordinator, "_progressive_observation_guids")
         assert not hasattr(coordinator, "_progressive_round_guids")
     finally:
@@ -4520,7 +4522,7 @@ def test_background_aging_skips_exact_retry_delayed_slot_for_foreground_work(
         coordinator.start()
         assert service.submissions == [1]
         coordinator.select_run(1)
-        coordinator._foreground_claims_since_background_metadata = (
+        coordinator._continuations.foreground_claims_since_background_metadata = (
             coordinator_module.TRUSTED_DERIVED_BACKGROUND_AGING_CLAIM_BOUND
         )
 

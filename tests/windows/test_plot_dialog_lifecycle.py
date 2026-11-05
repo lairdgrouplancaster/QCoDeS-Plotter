@@ -10,6 +10,7 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.plot_progress import PlotProgress
 from qplot.diagnostics import configure_logging
+from qplot.windows._database_detail_state import detail_channel
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_heatmap_layer_integration import (
@@ -65,7 +66,7 @@ def dialog_plot(tmp_path, monkeypatch, request, qapplication):
             window.config.config["runtime_settings"]["max_heatmap_grid_side"] = 2
         window.close_database(status=False)
         assert window.load_file(str(database))
-        wait_for(lambda: not window._database_load_active and not window._database_detail_active)
+        wait_for(lambda: not window._database_load_active and not detail_channel(window).active)
         if mode == "line":
             window.openPlot(guid=guids[0])
         else:

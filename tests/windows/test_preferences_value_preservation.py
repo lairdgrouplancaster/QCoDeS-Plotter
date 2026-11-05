@@ -9,6 +9,11 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.configuration.config import config
 from qplot.windows._preferences import PreferencesDialog
+from qplot.windows._window_controls import (
+    CONFIRM_CLOSE_ALL_KEY,
+    CONFIRM_INCOMPATIBLE_AXES_KEY,
+    CONFIRM_QUIT_KEY,
+)
 
 
 @pytest.fixture
@@ -23,6 +28,26 @@ def precise_config(tmp_path, monkeypatch):
         "runtime_settings.cloud_sync_timeout": 120.125,
     })
     return cfg
+
+
+@pytest.mark.parametrize("control_name, key", [
+    ("confirmCloseAllCheck", CONFIRM_CLOSE_ALL_KEY),
+    ("confirmQuitCheck", CONFIRM_QUIT_KEY),
+    ("confirmIncompatibleAxesCheck", CONFIRM_INCOMPATIBLE_AXES_KEY),
+])
+def test_confirmation_edits_are_recorded_for_their_own_key(precise_config, control_name, key):
+    dialog = PreferencesDialog(precise_config)
+    try:
+        control = getattr(dialog, control_name)
+        control.setChecked(not control.isChecked())
+        assert dialog._edited_preference_keys == {key}
+        assert dialog.apply_preferences()
+        assert precise_config.get(key) == control.isChecked()
+        assert dialog._edited_preference_keys == set()
+        dialog.load_from_config()
+        assert dialog._edited_preference_keys == set()
+    finally:
+        dialog.close()
 
 
 @pytest.mark.parametrize("button", ["Apply", "Ok"])

@@ -1,5 +1,6 @@
 import json
 import sys
+from collections.abc import Callable
 
 from jsonschema import ValidationError
 
@@ -9,29 +10,26 @@ from .config import config
 
 
 class sysHandle:
-    """
-    Entry point for terminal/console based commands. Called through scripts, 
-    which is set up in pyproject.toml.
-    
-    This is somewhat Jerry-Rigged, fetching string following qplot-cfg and 
-    converts them to command matching functions here.
-    """
-    def __init__(self, command, *args):
-        
-        # Find valid commands by checking against class attributes which are callable
-        self.valid_args = [f"-{str(method_name)}" for method_name in dir(sysHandle)
-                      if callable(getattr(sysHandle, method_name))
-                      and method_name[0] != "_"]
+    """Dispatch the explicitly supported ``qplot-cfg`` commands."""
 
-        # Convert command str to callable
-        if command in self.valid_args:
-            func = getattr(self, command[1:])
-        else:
+    def __init__(self, command, *args):
+        # Dispatch and help share this registry. Public helper methods do not
+        # become commands unless they are deliberately registered here.
+        self._commands: dict[str, Callable[..., None]] = {
+            "-dump": self.dump,
+            "-find": self.find,
+            "-info": self.info,
+            "-reset": self.reset,
+            "-set_value": self.set_value,
+            "-version": self.version,
+        }
+        self.valid_args = sorted(self._commands)
+        if command not in self._commands:
             key = f"Command: ({command}), not found. Valid options: {self.valid_args}"
             raise KeyError(key)
-        
+
         self._config = None
-        func(*args) # Pass other arguments to func
+        self._commands[command](*args)
 
     @property
     def config(self):
@@ -135,15 +133,15 @@ class sysHandle:
         """
         -info
         -----
-        Gets infomation about callable functions.
+        Gets information about supported commands.
         
-        'qplot-cfg -info' lists all callable functions
+        'qplot-cfg -info' lists all supported commands
         'qplot-cfg -info <attr>' produces the docstring of the function
-            Note: the '-' before <attr> can be ommited
+            Note: the '-' before <attr> can be omitted
 
         Parameters
         ----------
-        attr : callable, optional
+        attr : str, optional
             Produces the docstring of command attr. If none are given, prints 
             all commands
 
@@ -156,14 +154,12 @@ class sysHandle:
         if not attr:
             print(f"Valid Commands:\n\t{self.valid_args}\nUse 'qplot-cfg -info <command>' for more info")
             return
-        elif attr in self.valid_args:
-            func = getattr(self, attr[1:])
-        elif ("-"+attr) in self.valid_args: 
-            func = getattr(self, attr)
-        else:
+
+        command = attr if attr.startswith("-") else f"-{attr}"
+        if command not in self._commands:
             raise KeyError(f"Command: ({attr}), not found. Valid options: {self.valid_args}, '-' may be ommited")
-        
-        print(func.__doc__)
+
+        print(self._commands[command].__doc__)
 
 
     def version(self):

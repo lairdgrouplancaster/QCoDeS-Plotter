@@ -16,6 +16,7 @@ from qcodes.dataset import (
 
 from qplot.windows import _plot_actions as actions
 from qplot.windows import main as main_window
+from qplot.windows._database_detail_state import detail_channel
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_complex_line_data import database_state
 from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
@@ -103,7 +104,7 @@ def test_actual_run_csv_preserves_mixed_integers(tmp_path, monkeypatch, layout, 
         monkeypatch.setattr(window, "show_error", lambda *args: errors.append(args))
         window.close_database(status=False)
         assert window.load_file(str(path))
-        wait_for(lambda: not window._database_load_active and not window._database_detail_active)
+        wait_for(lambda: not window._database_load_active and not detail_channel(window).active)
         window.monitor.stop()
         assert window.selected_run_id == run_id
 

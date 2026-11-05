@@ -9,7 +9,7 @@ from qcodes import Station
 from qcodes.parameters import ManualParameter
 from qcodes.utils.json_utils import NumpyJSONEncoder
 
-from qplot.datahandling import readSQL
+from qplot.datahandling import readSQL, run_metadata
 from qplot.datahandling.trusted_presentation import (
     TRUSTED_PRESENTATION_MAX_FIELD_VALUE_BYTES,
     TRUSTED_PRESENTATION_MAX_PARAMETER_DEPENDENCIES,
@@ -1323,7 +1323,7 @@ class RunSizeTestCase(unittest.TestCase):
 
     def test_point_shape_uses_largest_measured_parameter_shape(self):
         self.assertEqual(
-            readSQL._point_shape(
+            run_metadata._point_shape(
                 {
                     "shapes": {
                         "dmm_v1": [10, 100],
@@ -1337,7 +1337,7 @@ class RunSizeTestCase(unittest.TestCase):
 
     def test_expected_results_sums_all_measured_parameter_shapes(self):
         self.assertEqual(
-            readSQL._expected_results_from_shapes(
+            run_metadata._expected_results_from_shapes(
                 {
                     "shapes": {
                         "dmm_v1": [10, 100],
@@ -1351,7 +1351,7 @@ class RunSizeTestCase(unittest.TestCase):
 
     def test_expected_results_handles_different_measured_shapes(self):
         self.assertEqual(
-            readSQL._expected_results_from_shapes(
+            run_metadata._expected_results_from_shapes(
                 {
                     "shapes": {
                         "dmm_v1": [10, 100],
@@ -1371,7 +1371,7 @@ class RunSizeTestCase(unittest.TestCase):
             },
         }
 
-        measure_parameters, sweep_parameters = readSQL._parameter_roles(
+        measure_parameters, sweep_parameters = run_metadata._parameter_roles(
             run_description,
             "x,signal,temperature",
         )
@@ -1406,7 +1406,7 @@ class RunSizeTestCase(unittest.TestCase):
                 return super().split(separator, maxsplit)
 
         dependencies = GuardedDependencies({"present": ["axis"]})
-        bounded, truncated = readSQL._bounded_parameter_dependencies(
+        bounded, truncated = run_metadata._bounded_parameter_dependencies(
             {"interdependencies_": {"dependencies": dependencies}}
         )
         self.assertTrue(truncated)
@@ -1417,7 +1417,7 @@ class RunSizeTestCase(unittest.TestCase):
         self.assertEqual(len(bounded), TRUSTED_PRESENTATION_MAX_PARAMETERS)
 
         axes = GuardedAxes(["present"])
-        bounded, truncated = readSQL._bounded_parameter_dependencies(
+        bounded, truncated = run_metadata._bounded_parameter_dependencies(
             {"interdependencies_": {"dependencies": {"signal": axes}}}
         )
         self.assertTrue(truncated)
@@ -1431,7 +1431,7 @@ class RunSizeTestCase(unittest.TestCase):
         )
 
         parameter_text = RecordingParameterText("x,signal,temperature")
-        readSQL._bounded_parameter_roles({}, parameter_text)
+        run_metadata._bounded_parameter_roles({}, parameter_text)
         self.assertEqual(
             parameter_text.split_limits,
             [(",", TRUSTED_PRESENTATION_MAX_PARAMETERS)],

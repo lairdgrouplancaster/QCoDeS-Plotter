@@ -21,6 +21,7 @@ from qplot.datahandling.readonly import load_by_id_read_only
 from qplot.testdata import enable_generation_provenance_for_writer
 from qplot.tools.worker import loader
 from qplot.windows import main as main_window
+from qplot.windows._database_detail_state import detail_channel
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_complex_line_data import database_state
 from tests.windows.test_plot_integration import (
@@ -83,7 +84,7 @@ def test_live_planned_array_dtype_change(
             monkeypatch.setattr(window, "show_error", lambda *args: errors.append(args))
             window.close_database(status=False)
             assert window.load_file(str(path))
-            wait_for(lambda: not window._database_load_active and not window._database_detail_active)
+            wait_for(lambda: not window._database_load_active and not detail_channel(window).active)
             assert window._database_access_mode == (
                 "trusted_live" if journal_mode == "WAL" else "snapshot_fallback"
             )

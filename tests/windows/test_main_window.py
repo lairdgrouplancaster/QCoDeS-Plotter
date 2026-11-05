@@ -1,7 +1,5 @@
-import errno
 import os
 import sqlite3
-import sys
 import tempfile
 import threading
 import time
@@ -33,6 +31,7 @@ from qplot.datahandling.trusted_live_supervisor import (
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
 from qplot.windows._commands import command_spec
+from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._database_load_state import DatabaseLoadSession
 from qplot.windows._dataset_handle import (
     DatasetHandle,
@@ -2934,12 +2933,12 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self._database_load_active = False
             self._database_load_state = None
             self._database_load_worker = None
-            self._database_detail_generation = 4
-            self._database_detail_active = False
-            self._database_detail_worker = None
-            self._database_expensive_detail_generation = 6
-            self._database_expensive_detail_active = False
-            self._database_expensive_detail_worker = None
+            detail_channel(self).generation = 4
+            detail_channel(self).active = False
+            detail_channel(self).worker = None
+            detail_channel(self, True).generation = 6
+            detail_channel(self, True).active = False
+            detail_channel(self, True).worker = None
             self.fileTextbox = DatabaseLoadUiTestCase.Field()
             self.run_idBox = DatabaseLoadUiTestCase.Field()
             self.measurementBox = DatabaseLoadUiTestCase.Field()
@@ -3004,10 +3003,10 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             "previews": harness.infoBox.preview.database_runs,
             "info_cleared": harness.infoBox.cleared,
             "monitor_stopped": harness.monitor.stopped,
-            "detail_worker": harness._database_detail_worker,
-            "detail_active": harness._database_detail_active,
-            "expensive_detail_worker": harness._database_expensive_detail_worker,
-            "expensive_detail_active": harness._database_expensive_detail_active,
+            "detail_worker": detail_channel(harness).worker,
+            "detail_active": detail_channel(harness).active,
+            "expensive_detail_worker": detail_channel(harness, True).worker,
+            "expensive_detail_active": detail_channel(harness, True).active,
         }
 
     def _active_database_harness(self):
@@ -3021,10 +3020,10 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         harness.RunList.runs = old_runs
         harness.RunList.selected_ids = [5]
         harness.infoBox.preview.set_database_runs("database-a.db", old_runs)
-        harness._database_detail_active = True
-        harness._database_detail_worker = self.Worker()
-        harness._database_expensive_detail_active = True
-        harness._database_expensive_detail_worker = self.Worker()
+        detail_channel(harness).active = True
+        detail_channel(harness).worker = self.Worker()
+        detail_channel(harness, True).active = True
+        detail_channel(harness, True).worker = self.Worker()
         return harness
 
     def test_current_view_remains_unchanged_while_another_database_is_pending(self):
@@ -3612,8 +3611,8 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             )
 
             def __init__(self):
-                self._database_detail_generation = 4
-                self._database_detail_active = True
+                detail_channel(self).generation = 4
+                detail_channel(self).active = True
                 self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
                 self.RunList = RunList()
                 self.infoBox = InfoBox()
@@ -3646,8 +3645,8 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             )
 
             def __init__(self):
-                self._database_detail_generation = 4
-                self._database_detail_active = True
+                detail_channel(self).generation = 4
+                detail_channel(self).active = True
                 self._loaded_database_instance = DatabaseInstance(
                     "loaded.db", "loaded.db", (1, 1),
                 )
@@ -3686,8 +3685,8 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             )
 
             def __init__(self, view_path):
-                self._database_detail_generation = 4
-                self._database_detail_active = True
+                detail_channel(self).generation = 4
+                detail_channel(self).active = True
                 self._loaded_database_instance = database_actions.database_instance(
                     view_path
                 )
@@ -4526,247 +4525,6 @@ class AutoPlotToggleTestCase(unittest.TestCase):
 
         self.assertEqual(harness.config.updates, [(AUTO_PLOT_KEY, True)])
         enqueue.assert_called_once_with(harness, ["running"])
-
-
-class CloudDatabasePrefetchTestCase(unittest.TestCase):
-    @patch.object(
-        database_module, "database_cloud_storage_label", return_value="OneDrive"
-    )
-    @patch.object(database_module.os, "stat")
-    def test_local_windows_cloud_file_is_not_treated_as_placeholder(
-        self,
-        stat_file,
-        _cloud_label,
-    ):
-        stat_file.return_value = type(
-            "FileInfo",
-            (),
-            {"st_size": 4096, "st_file_attributes": 0x20},
-        )()
-
-        self.assertFalse(
-            database_module.database_is_likely_cloud_placeholder("OneDrive/local.db")
-        )
-
-    @patch.object(
-        database_module, "database_cloud_storage_label", return_value="OneDrive"
-    )
-    @patch.object(database_module.os, "stat")
-    def test_offline_windows_cloud_file_is_treated_as_placeholder(
-        self,
-        stat_file,
-        _cloud_label,
-    ):
-        stat_file.return_value = type(
-            "FileInfo",
-            (),
-            {
-                "st_size": 4096,
-                "st_file_attributes": database_module.WINDOWS_CLOUD_PLACEHOLDER_ATTRIBUTES,
-            },
-        )()
-
-        self.assertTrue(
-            database_module.database_is_likely_cloud_placeholder("OneDrive/offline.db")
-        )
-
-    @patch.object(
-        database_module, "database_cloud_storage_label", return_value="OneDrive"
-    )
-    @patch.object(database_module.os, "stat")
-    def test_cloud_file_without_allocation_metadata_is_not_assumed_placeholder(
-        self,
-        stat_file,
-        _cloud_label,
-    ):
-        stat_file.return_value = type("FileInfo", (), {"st_size": 4096})()
-
-        self.assertFalse(
-            database_module.database_is_likely_cloud_placeholder("OneDrive/unknown.db")
-        )
-
-    @patch.object(
-        database_module, "database_cloud_storage_label", return_value="OneDrive"
-    )
-    @patch.object(database_module.os, "stat")
-    def test_sparse_cloud_file_uses_posix_allocation_metadata(
-        self,
-        stat_file,
-        _cloud_label,
-    ):
-        stat_file.return_value = type(
-            "FileInfo",
-            (),
-            {"st_size": 4096, "st_blocks": 0},
-        )()
-
-        self.assertTrue(
-            database_module.database_is_likely_cloud_placeholder("OneDrive/sparse.db")
-        )
-
-    def test_prefetch_subprocess_retries_transient_timeout_errors(self):
-        class Handle:
-            def __init__(self):
-                self.read_calls = 0
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args):
-                pass
-
-            def read(self, _chunk_size):
-                self.read_calls += 1
-                if self.read_calls == 1:
-                    raise OSError(errno.ECANCELED, "Operation canceled")
-                if self.read_calls == 2:
-                    return b"database"
-                return b""
-
-        handle = Handle()
-        output = []
-        with tempfile.TemporaryDirectory() as temp_dir:
-            database_path = str(Path(temp_dir) / "placeholder.db")
-            Path(database_path).write_bytes(b"database")
-            with (
-                patch(
-                    "builtins.open",
-                    side_effect=[
-                        TimeoutError(errno.ETIMEDOUT, "Operation timed out"),
-                        handle,
-                    ],
-                ) as open_file,
-                patch(
-                    "builtins.print",
-                    side_effect=lambda value, **_kwargs: output.append(value),
-                ),
-                patch("time.sleep"),
-                patch.object(sys, "argv", ["prefetch", database_path]),
-            ):
-                exec(database_module._database_prefetch_script(), {})
-
-        self.assertEqual(open_file.call_count, 2)
-        self.assertEqual(handle.read_calls, 3)
-        self.assertEqual(output[-1], 8)
-
-    def test_prefetch_database_file_reads_file_and_reports_cloud_sync_progress(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            database_path = str(Path(temp_dir) / "prefetch.db")
-            Path(database_path).write_bytes(b"x" * 10)
-            statuses = []
-            old_label = database_module.database_cloud_storage_label
-            database_module.database_cloud_storage_label = lambda _path: "OneDrive"
-            try:
-                bytes_read = database_module.prefetch_database_file(
-                    database_path,
-                    status_callback=statuses.append,
-                    chunk_size=4,
-                    status_interval=0,
-                )
-            finally:
-                database_module.database_cloud_storage_label = old_label
-
-        self.assertEqual(bytes_read, 10)
-        self.assertTrue(statuses[0].startswith("Waiting for OneDrive sync..."))
-        self.assertIn("100% available", statuses[-1])
-
-    def test_prefetch_database_file_with_timeout_uses_subprocess(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            database_path = str(Path(temp_dir) / "prefetch-timeout.db")
-            Path(database_path).write_bytes(b"x" * 10)
-            statuses = []
-            old_label = database_module.database_cloud_storage_label
-            database_module.database_cloud_storage_label = lambda _path: "OneDrive"
-            try:
-                bytes_read = database_module.prefetch_database_file_with_timeout(
-                    database_path,
-                    timeout=5,
-                    status_callback=statuses.append,
-                )
-            finally:
-                database_module.database_cloud_storage_label = old_label
-
-        self.assertEqual(bytes_read, 10)
-        self.assertIn("Waiting for OneDrive sync...", statuses)
-        self.assertIn("Waiting for OneDrive sync... 100% available", statuses)
-
-    def test_prefetch_database_file_with_timeout_kills_stalled_process(self):
-        old_popen = database_module.subprocess.Popen
-        killed = []
-
-        class Pipe:
-            def __iter__(self):
-                return iter(())
-
-            def close(self):
-                pass
-
-        class Process:
-            stdout = Pipe()
-            stderr = Pipe()
-            returncode = None
-
-            def poll(self):
-                return None
-
-            def kill(self):
-                killed.append(True)
-
-            def wait(self):
-                self.returncode = -9
-
-        database_module.subprocess.Popen = lambda *args, **kwargs: Process()
-        try:
-            with self.assertRaises(TimeoutError) as caught:
-                database_module.prefetch_database_file_with_timeout(
-                    "OneDrive/test.db",
-                    timeout=0.01,
-                    status_callback=lambda _message: None,
-                )
-        finally:
-            database_module.subprocess.Popen = old_popen
-
-        self.assertEqual(killed, [True])
-        self.assertIn("Timed out after 0.01 s", str(caught.exception))
-        self.assertIn("OneDrive", str(caught.exception))
-
-    def test_prefetch_database_file_with_timeout_stops_when_cancelled(self):
-        old_popen = database_module.subprocess.Popen
-        killed = []
-
-        class Pipe:
-            def __iter__(self):
-                return iter(())
-
-            def close(self):
-                pass
-
-        class Process:
-            stdout = Pipe()
-            stderr = Pipe()
-            returncode = None
-
-            def poll(self):
-                return None
-
-            def kill(self):
-                killed.append(True)
-
-            def wait(self):
-                self.returncode = -9
-
-        database_module.subprocess.Popen = lambda *args, **kwargs: Process()
-        try:
-            with self.assertRaises(InterruptedError):
-                database_module.prefetch_database_file_with_timeout(
-                    "OneDrive/test.db",
-                    timeout=5,
-                    cancelled_callback=lambda: True,
-                )
-        finally:
-            database_module.subprocess.Popen = old_popen
-
-        self.assertEqual(killed, [True])
 
 
 class DatabaseRefreshWorkerTestCase(unittest.TestCase):

@@ -9,7 +9,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore
 from pyqtgraph.graphicsItems.PlotDataItem import PlotDataset
 
-from qplot.datahandling.parameter_data import numeric_isfinite
+from qplot.datahandling.numeric_samples import numeric_isfinite
 from qplot.tools.plot_tools import (
     _center_float_samples,
     _fraction_as_extended_float,

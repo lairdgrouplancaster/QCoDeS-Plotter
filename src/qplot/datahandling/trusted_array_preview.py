@@ -1,7 +1,6 @@
 """Bounded QCoDeS array previews using stored coordinates within each record."""
 
 import io
-import math
 import sys
 from bisect import bisect_left
 from dataclasses import replace
@@ -11,6 +10,7 @@ import numpy as np
 
 from qplot.tools.sample_statistics import finite_mean
 
+from ._numeric_arrays import read_npy_header
 from .trusted_live_queries import TRUSTED_DERIVED_MAX_SAMPLE_ROWS
 
 MAX_SAMPLES = 131_072
@@ -26,24 +26,15 @@ def _decode(value):
         return np.asarray([value])
     try:
         stream = io.BytesIO(value)
-        version = np.lib.format.read_magic(stream)
-        if version not in {(1, 0), (2, 0), (3, 0)}:
-            raise ValueError("Unsupported NPY version")
-        # Numeric headers are ASCII in both v2 and QCoDeS' v3; the latter
-        # changes only the encoding of structured dtype field names, which
-        # this renderer rejects below.
-        reader = (np.lib.format.read_array_header_1_0 if version == (1, 0)
-                  else np.lib.format.read_array_header_2_0)
-        shape, fortran, dtype = reader(stream)
-        count = math.prod(shape)
-        if dtype.kind not in "biuf" or not 0 <= count <= MAX_SAMPLES:
+        header = read_npy_header(stream)
+        if header.dtype.kind not in "biuf" or not 0 <= header.size <= MAX_SAMPLES:
             raise ValueError("Unsupported array dtype or size")
-        if len(value) - stream.tell() != count * dtype.itemsize:
+        if header.total_bytes != len(value):
             raise ValueError("Invalid array payload size")
         # Validate the header and exact payload length before allocating. Never
         # load pickled object arrays or allocate from an unchecked NPY shape.
-        return np.frombuffer(value, dtype=dtype, offset=stream.tell()).reshape(
-            shape, order="F" if fortran else "C",
+        return np.frombuffer(value, dtype=header.dtype, offset=header.offset).reshape(
+            header.shape, order="F" if header.fortran_order else "C",
         ).ravel()
     except (ValueError, KeyError, EOFError, OverflowError) as error:
         raise _UnsupportedNumericData("The array sample cannot be decoded safely.") from error

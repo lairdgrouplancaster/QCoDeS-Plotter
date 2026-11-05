@@ -1,10 +1,12 @@
 """
-The functions in this file are addapted from qcodes to allow for thread safe
+The functions in this file are adapted from QCoDeS to allow for thread-safe
 and single parameter loading. See:
     qcodes.dataset.data_set_cache
     qcodes.dataset.sqlite.queries
 for the original functions of similar names as well as typing.
 """
+from collections.abc import Callable
+from dataclasses import dataclass
 from math import prod
 from typing import TYPE_CHECKING
 
@@ -12,11 +14,11 @@ import numpy.typing as npt
 from qcodes.dataset.data_set_cache import _merge_data
 from qcodes.dataset.sqlite.queries import completed
 
+from qplot.datahandling.numeric_samples import integer_preserving_dtype
 from qplot.datahandling.parameter_data import (
     _check_noop,
     flatten_record_columns,
     get_parameter_data_for_one_paramtree,
-    integer_preserving_dtype,
 )
 from qplot.datahandling.qcodes_cache import (
     cache_data,
@@ -34,131 +36,152 @@ if TYPE_CHECKING:
     from qcodes.dataset.descriptions.param_spec import ParamSpec
 
 
+@dataclass(frozen=True)
+class _PreparedMerge:
+    """Columns ready for QCoDeS insertion and any planned-overflow extent.
+
+    A shaped merge owns private arrays because QCoDeS inserts in place. The
+    frozen record keeps those arrays and their shape/status policy together;
+    it does not make the arrays themselves immutable.
+    """
+
+    existing: dict[str, npt.NDArray]
+    incoming: dict[str, npt.NDArray]
+    shape: tuple[int, ...] | None
+    acquired_count: int | None = None
+
+
+def _prepare_unshaped_merge(
+    existing: dict[str, npt.NDArray],
+    incoming: dict[str, npt.NDArray],
+    check_cancelled: Callable[[], None],
+    *,
+    acquired_count: int | None = None,
+) -> _PreparedMerge:
+    """Protect recorded integers before QCoDeS concatenates dense columns."""
+    # QCoDeS appends dense record columns with NumPy's usual promotion.
+    # Promote both sides first when signed/unsigned (or integer/float)
+    # records need object cells to retain every acquired integer.
+    existing = dict(existing)
+    incoming = dict(incoming)
+    for name, values in incoming.items():
+        check_cancelled()
+        previous = existing.get(name)
+        if previous is None or not previous.size or not values.size:
+            continue
+        dtype = integer_preserving_dtype((previous.dtype, values.dtype))
+        if dtype.kind == "O":
+            existing[name] = previous.astype(dtype, copy=False)
+            incoming[name] = values.astype(dtype, copy=False)
+    return _PreparedMerge(existing, incoming, None, acquired_count)
+
+
+def _prepare_shaped_merge(
+    existing: dict[str, npt.NDArray],
+    incoming: dict[str, npt.NDArray],
+    shape: tuple[int, ...],
+    written_count: int | None,
+    meas_parameter: str,
+    check_cancelled: Callable[[], None],
+) -> _PreparedMerge:
+    """Prepare private insertion buffers, or acquired-only overflow columns."""
+    # Object cells count records; shaped cache offsets count samples.
+    # Flatten only the new records so QCoDeS' usual padding and offsets
+    # still apply, including the same missing-value handling.
+    if (any(values.dtype.kind == "O" for values in incoming.values())
+            or len({values.shape for values in incoming.values()}) > 1):
+        incoming = flatten_record_columns(incoming, check_cancelled)
+    private_data = {}
+    for name, values in existing.items():
+        check_cancelled()
+        new_values = incoming.get(name)
+        dtype = values.dtype
+        if (
+            values.size and new_values is not None and new_values.size
+            and values.dtype.kind in "biufcO" and new_values.dtype.kind in "biufcO"
+        ):
+            # Promote every numeric column before insertion, including
+            # coordinates and complex values that plot validation rejects.
+            # Empty cache placeholders must not dictate the first dtype.
+            dtype = integer_preserving_dtype((values.dtype, new_values.dtype))
+        # Shaped insertion writes through ravel(), so preserve C-contiguous
+        # working arrays and never let it mutate the shared cache directly.
+        private_data[name] = values.astype(dtype, order="C", copy=True)
+    check_cancelled()
+    acquired_before = written_count or 0
+    new_values = incoming.get(meas_parameter)
+    acquired_after = acquired_before + (new_values.size if new_values is not None else 0)
+    if acquired_after <= prod(shape):
+        return _PreparedMerge(private_data, incoming, shape)
+
+    # Scans exceeding their plan append to acquired samples, never to unused
+    # cache padding. The unshaped merge must retain their acquired extent.
+    acquired_data = {
+        name: values.ravel()[:acquired_before]
+        for name, values in private_data.items()
+    }
+    incoming = {name: values.reshape(-1) for name, values in incoming.items()}
+    return _prepare_unshaped_merge(
+        acquired_data, incoming, check_cancelled, acquired_count=acquired_after,
+    )
+
+
 def append_shaped_parameter_data_to_existing_arrays(
     rundescriber,
-    meas_parameter : str,
+    meas_parameter: str,
     write_status,
     existing_data,
     new_data,
     check_cancelled=_check_noop,
 ):
+    """Append one parameter tree without changing its shared cache arrays.
+
+    ``existing_data`` contains the cached columns; ``new_data`` contains newly
+    read columns. Both are indexed first by measured parameter, then by column.
+    ``write_status`` tracks QCoDeS insertion offsets, counting acquired samples
+    for planned shapes. Read status counts database rows and is managed by the
+    caller independently of these sample offsets.
+
+    Return a copied write-status mapping and the merged measured-parameter tree.
+    Preparation preserves numeric precision and gives shaped insertion private
+    arrays so a cancelled or superseded worker cannot modify the shared cache.
     """
-    Append datadict to an already existing datadict and return the merged
-    data.
-
-    Args:
-        rundescriber: The rundescriber that describes the run
-        write_status: Mapping from dependent parameter name to number of rows
-          written to the cache previously.
-        new_data: Mapping from dependent parameter name to mapping
-          from parameter name to numpy arrays that the data should be
-          appended to.
-        existing_data: Mapping from dependent parameter name to mapping
-          from parameter name to numpy arrays of new data.
-
-    Returns:
-        Updated write and read status, and the updated ``data``
-
-    """
-    merged_data = {}
-
     updated_write_status = dict(write_status)
+    existing = existing_data.get(meas_parameter, {})
+    incoming = new_data.get(meas_parameter, {})
 
-    existing_data_1_tree = existing_data.get(meas_parameter, {})
-
-    new_data_1_tree = new_data.get(meas_parameter, {})
-
-    if new_data_1_tree and not new_data_1_tree[meas_parameter].size:
+    if incoming and not incoming[meas_parameter].size:
         # QCoDeS skips an empty column independently when merging unshaped
         # caches. Empty array outputs can retain singleton setpoints, which
         # would then be appended without their measurement and misalign the
         # next refresh. Validate those records and retain zero samples in
         # every field; the separate read status still counts acquired rows.
-        new_data_1_tree = flatten_record_columns(new_data_1_tree, check_cancelled)
+        incoming = flatten_record_columns(incoming, check_cancelled)
 
     shapes = rundescriber.shapes
-    if shapes is not None:
-        shape = shapes.get(meas_parameter, None)
-    else:
-        shape = None
-
-    overflow_count = None
-    # QCoDeS inserts shaped refreshes into existing arrays in place. Work on
-    # private copies so a concurrent worker cannot mutate the shared cache
-    # before qPlot's monotonic commit check.
-    if shape is not None:
-        # Object cells count records; shaped cache offsets count samples.
-        # Flatten only the new records so QCoDeS' usual padding and offsets
-        # still apply, including the same missing-value handling.
-        if (any(values.dtype.kind == "O" for values in new_data_1_tree.values())
-                or len({values.shape for values in new_data_1_tree.values()}) > 1):
-            new_data_1_tree = flatten_record_columns(new_data_1_tree, check_cancelled)
-        private_data = {}
-        for name, values in existing_data_1_tree.items():
-            check_cancelled()
-            incoming = new_data_1_tree.get(name)
-            dtype = values.dtype
-            if (
-                values.size and incoming is not None and incoming.size
-                and values.dtype.kind in "biufcO" and incoming.dtype.kind in "biufcO"
-            ):
-                # QCoDeS' shaped insertion assigns into the cached dtype.
-                # Promote every numeric column before insertion, including
-                # coordinates and complex values that plot validation rejects.
-                # Empty cache placeholders must not dictate the first dtype.
-                dtype = integer_preserving_dtype((values.dtype, incoming.dtype))
-            # Shaped insertion writes through ravel(), so retain the old
-            # copy() behavior of making C-contiguous working arrays.
-            private_data[name] = values.astype(dtype, order="C", copy=True)
-        existing_data_1_tree = private_data
-        check_cancelled()
-        acquired_before = write_status.get(meas_parameter) or 0
-        incoming = new_data_1_tree.get(meas_parameter)
-        acquired_after = acquired_before + (incoming.size if incoming is not None else 0)
-        if acquired_after > prod(shape):
-            # Retain the flattened fallback for scans exceeding their plan,
-            # but append to acquired samples, never to unused cache padding.
-            existing_data_1_tree = {
-                name: values.ravel()[:acquired_before]
-                for name, values in existing_data_1_tree.items()
-            }
-            new_data_1_tree = {
-                name: values.reshape(-1) for name, values in new_data_1_tree.items()
-            }
-            shape = None
-            overflow_count = acquired_after
-
+    shape = shapes.get(meas_parameter) if shapes is not None else None
+    written_count = write_status.get(meas_parameter)
     if shape is None:
-        # QCoDeS appends dense record columns with NumPy's usual promotion.
-        # Promote both sides first when signed/unsigned (or integer/float)
-        # records need object cells to retain every acquired integer.
-        existing_data_1_tree = dict(existing_data_1_tree)
-        new_data_1_tree = dict(new_data_1_tree)
-        for name, incoming in new_data_1_tree.items():
-            check_cancelled()
-            previous = existing_data_1_tree.get(name)
-            if previous is None or not previous.size or not incoming.size:
-                continue
-            dtype = integer_preserving_dtype((previous.dtype, incoming.dtype))
-            if dtype.kind == "O":
-                existing_data_1_tree[name] = previous.astype(dtype, copy=False)
-                new_data_1_tree[name] = incoming.astype(dtype, copy=False)
-
-    (merged_data[meas_parameter], updated_write_status[meas_parameter]) = (
-        _merge_data(
-            existing_data_1_tree,
-            new_data_1_tree,
-            shape,
-            single_tree_write_status=write_status.get(meas_parameter),
-            meas_parameter=meas_parameter,
+        prepared = _prepare_unshaped_merge(existing, incoming, check_cancelled)
+    else:
+        prepared = _prepare_shaped_merge(
+            existing, incoming, shape, written_count, meas_parameter, check_cancelled,
         )
+
+    merged, updated_count = _merge_data(
+        prepared.existing,
+        prepared.incoming,
+        prepared.shape,
+        single_tree_write_status=written_count,
+        meas_parameter=meas_parameter,
     )
-    if overflow_count is not None:
+    if prepared.acquired_count is not None:
         # Unshaped QCoDeS appends reset this status; planned trees still need
         # their acquired sample extent for subsequent reads and processing.
-        updated_write_status[meas_parameter] = overflow_count
+        updated_count = prepared.acquired_count
+    updated_write_status[meas_parameter] = updated_count
     check_cancelled()
-    return updated_write_status, merged_data
+    return updated_write_status, {meas_parameter: merged}
 
 
 def load_param_data_from_db_prep(

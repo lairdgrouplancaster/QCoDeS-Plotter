@@ -321,6 +321,55 @@ def test_shaped_dtype_promotion_cancellation_keeps_cache_and_offsets_private(can
         np.testing.assert_array_equal(values, [30.5, 40.5])
 
 
+@pytest.mark.parametrize("cancel_at", [None, 4, 6], ids=["success", "overflow-promotion", "after-merge"])
+def test_planned_overflow_preserves_acquired_extent_and_shared_inputs(cancel_at):
+    class RunDescriber:
+        shapes = {"signal": (2, 2)}
+
+    first = 2**63 + 1
+    existing = {"signal": {
+        "signal": np.array([[first, first + 2], [0, 0]], dtype=np.uint64),
+        "x": np.array([[0, 1], [-99, -99]]),
+    }}
+    incoming = {"signal": {
+        "signal": np.array([-1, -2, -3]),
+        "x": np.array([2, 3, 4]),
+    }}
+    saved = {name: values.copy() for name, values in existing["signal"].items()}
+    new_saved = {name: values.copy() for name, values in incoming["signal"].items()}
+    write_status = {"signal": 2, "other": 17}
+    calls = 0
+
+    def check_cancelled():
+        nonlocal calls
+        calls += 1
+        if calls == cancel_at:
+            raise InterruptedError("cancelled")
+
+    def merge():
+        return load_from_db.append_shaped_parameter_data_to_existing_arrays(
+            RunDescriber(), "signal", write_status, existing, incoming,
+            check_cancelled=check_cancelled,
+        )
+
+    if cancel_at is not None:
+        with pytest.raises(InterruptedError, match="cancelled"):
+            merge()
+    else:
+        updated, merged = merge()
+        assert updated == {"signal": 5, "other": 17}
+        assert merged["signal"]["signal"].tolist() == [first, first + 2, -1, -2, -3]
+        assert merged["signal"]["signal"].dtype == np.dtype(object)
+        np.testing.assert_array_equal(merged["signal"]["x"], [0, 1, 2, 3, 4])
+        assert calls == 6
+
+    assert write_status == {"signal": 2, "other": 17}
+    for name, values in existing["signal"].items():
+        np.testing.assert_array_equal(values, saved[name])
+    for name, values in incoming["signal"].items():
+        np.testing.assert_array_equal(values, new_saved[name])
+
+
 def test_load_param_data_from_db_prep_defers_parameter_completion_until_commit(monkeypatch):
     cache = Cache()
     cache._data = {}

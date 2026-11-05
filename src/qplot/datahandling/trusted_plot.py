@@ -16,6 +16,8 @@ from qcodes.dataset.descriptions.versioning.converters import new_to_old
 from qcodes.dataset.descriptions.versioning.serialization import from_json_to_current
 from qcodes.dataset.sqlite.connection import AtomicConnection
 
+from qplot.datahandling._sqlite_identifiers import quote_identifier_text as identifier
+
 from .readonly import SEPARATE_RAW_DATA_STORAGE_MESSAGE
 from .trusted_live import TrustedLiveQueryError, TrustedQuery
 
@@ -31,10 +33,6 @@ class PlotMetadataUnavailableError(TrustedLiveQueryError):
     This is an operation-local data condition, not a fatal reader failure.
     The broker session must remain usable for other runs and later attempts.
     """
-
-
-def identifier(name):
-    return '"' + str(name).replace('"', '""') + '"'
 
 
 def _report_array_progress(executor, phase, row_id, watermark, copied_bytes, record_bytes):

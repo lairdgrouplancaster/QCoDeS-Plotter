@@ -22,6 +22,9 @@ from qplot.datahandling.file_identity import (
     logical_database_path,
 )
 
+from ._export_names import ExportSuffixPolicy
+from ._export_names import normalize_export_path as normalize_export_path
+
 _DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
 _SQLITE_HEADER = b"SQLite format 3\x00"
 _SQLITE_ARTIFACT_HEADERS = (
@@ -112,15 +115,6 @@ class ExportDestinationTransaction:
         _run_existing_target_validator(self, current_signature)
 
 
-def normalize_export_path(filename: str, required_suffix: str) -> str:
-    """Return an absolute export path with ``required_suffix`` exactly once."""
-    if not required_suffix.startswith("."):
-        required_suffix = f".{required_suffix}"
-    if not filename.casefold().endswith(required_suffix.casefold()):
-        filename = f"{filename}{required_suffix}"
-    return os.path.abspath(filename)
-
-
 def choose_export_path(
     parent: qtw.QWidget,
     *,
@@ -174,19 +168,7 @@ def choose_export_path_with_suffixes(
     When matching the filter, replace a conflicting allowed suffix before
     approval. An absent/unrecognized filter leaves an allowed suffix intact.
     """
-    suffixes = tuple(
-        suffix.casefold() if suffix.startswith(".") else f".{suffix.casefold()}"
-        for suffix in allowed_suffixes
-    )
-    if not suffixes:
-        raise ValueError("At least one export suffix must be allowed.")
-    default_suffix = (
-        default_suffix.casefold()
-        if default_suffix.startswith(".")
-        else f".{default_suffix.casefold()}"
-    )
-    if default_suffix not in suffixes:
-        raise ValueError("The default export suffix must also be allowed.")
+    policy = ExportSuffixPolicy(tuple(allowed_suffixes), default_suffix)
 
     dialog_options = (
         qtw.QFileDialog.Option.DontConfirmOverwrite
@@ -202,29 +184,9 @@ def choose_export_path_with_suffixes(
     if not filename:
         return None
 
-    selected_suffix = os.path.splitext(filename)[1].casefold()
-    selected_match = re.search(r"\*\.([A-Za-z0-9]+)\b", selected_filter)
-    filtered_suffix = (
-        f".{selected_match.group(1).casefold()}"
-        if selected_match is not None else None
-    )
-    if match_selected_filter and filtered_suffix in suffixes:
-        if selected_suffix in suffixes and selected_suffix != filtered_suffix:
-            filename = f"{os.path.splitext(filename)[0]}{filtered_suffix}"
-            selected_suffix = filtered_suffix
-        elif selected_suffix not in suffixes:
-            selected_suffix = filtered_suffix
-            filename = f"{filename}{selected_suffix}"
-    if selected_suffix not in suffixes:
-        if filtered_suffix in suffixes:
-            selected_suffix = filtered_suffix
-        if selected_suffix not in suffixes:
-            selected_suffix = default_suffix
-        filename = f"{filename}{selected_suffix}"
-
     return approve_export_path(
         parent,
-        os.path.abspath(filename),
+        policy.resolve(filename, selected_filter, match_selected_filter=match_selected_filter),
         replace_title=replace_title,
         file_description=file_description,
     )
@@ -530,8 +492,6 @@ def _collect_owner_database_sources(
         "_database_refresh_instance",
         "_database_load_worker",
         "_database_refresh_worker",
-        "_database_detail_worker",
-        "_database_expensive_detail_worker",
         "_test_database_generation_worker",
         "worker",
     ):
@@ -541,6 +501,15 @@ def _collect_owner_database_sources(
             # Deleted Qt owners cannot supply more paths; continue collecting the
             # remaining independent source attributes.
             pass
+
+    try:
+        channels = getattr(owner, "_database_detail_channels", None)
+        if channels is not None:
+            for channel in (channels.basic, channels.expensive):
+                add_source(channel.worker)
+                add_source(channel.instance)
+    except RuntimeError:
+        pass
 
     for holder_name in ("_dataset_holder", "dataset_holder"):
         try:

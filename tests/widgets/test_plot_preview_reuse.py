@@ -3,6 +3,7 @@ from unittest.mock import patch
 
 import numpy as np
 
+from qplot.tools.plot_result import capture_plot_result
 from qplot.windows._dataset_handle import DatasetKey
 from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._plot_refresh import PlotRefreshMixin, RefreshPublication
@@ -68,9 +69,13 @@ def test_completed_plot_publishes_only_unmodified_committed_data():
     plot.__dict__["_plot_preview_sink"] = lambda _plot, _worker: published.append(True)
     worker = SimpleNamespace(
         dataset_completed=True,
+        axis_data={"x": np.array([0, 1]), "y": np.array([2, 3])},
+        axis_param={"x": object(), "y": object()},
+        read_data=False,
         operations={},
         is_cancelled=lambda: False,
     )
+    worker.result = capture_plot_result(worker)
     plot._refresh_publication = RefreshPublication(worker, 1, None, "signal", None, {})
     plot._commit_refresh_publication(worker, preview_ready=True)
     assert published == [True]

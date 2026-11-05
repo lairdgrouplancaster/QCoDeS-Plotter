@@ -272,9 +272,7 @@ def add_config_checkbox_action(window, menu, text, key, status_tip):
     action.setStatusTip(status_tip)
 
     def sync_checked():
-        action.blockSignals(True)
-        action.setChecked(window.config.get(key))
-        action.blockSignals(False)
+        set_widget_value_without_signals(action, action.setChecked, window.config.get(key))
 
     sync_checked()
 

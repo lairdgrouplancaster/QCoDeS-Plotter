@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 from PyQt6 import QtGui, QtWidgets
 
+from qplot.datahandling import database as database_workers
 from qplot.datahandling import trusted_work_coordinator as coordinator_module
 from qplot.datahandling.trusted_derived_cache import TrustedDerivedDiskCache
 from qplot.windows import _database_actions as database_actions
@@ -195,9 +196,9 @@ def test_real_wal_partial_two_dependent_grid_populates_detail_before_images(
                 wraps=database_actions.DatabaseExpensiveDetailWorker,
             ) as legacy_expensive,
             patch.object(
-                database_actions,
-                "DatabaseSelectedRunWorker",
-                wraps=database_actions.DatabaseSelectedRunWorker,
+                database_workers.DatabaseSelectedRunWorker,
+                "__init__",
+                side_effect=AssertionError("trusted browsing started a legacy selected-run worker"),
             ) as legacy_selected,
             patch.object(
                 preview_module,

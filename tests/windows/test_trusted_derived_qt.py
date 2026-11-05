@@ -786,6 +786,7 @@ class _InfoBox:
         self.errors.append((str(message), threading.get_ident()))
 
     def set_trusted_run_loading(self, run) -> None:
+        self.active_detail = None
         self.loading.append((dict(run), threading.get_ident()))
         self.preview.set_current_guid(str(run["guid"]))
 
@@ -2566,3 +2567,177 @@ def test_selecting_evicted_preview_requests_one_preview_only_replay(
     assert window.infoBox.preview.displayed is not None
     assert window.infoBox.preview.threads[-1] == owner
     assert not window.infoBox.preview.__dict__.get("_workers", {})
+
+
+@pytest.mark.parametrize("boundary", ["rows", "details"])
+def test_selected_detail_publication_restores_reentrant_selection(bound_bridge, monkeypatch, boundary):
+    window, bridge, coordinator, _runs = bound_bridge
+    window._selected_run_guid = "guid-1"
+    bridge.select_run("guid-1")
+    publication = _selected_detail_publication(
+        bridge, coordinator, _rich_selected_detail(1, "guid-1"),
+    )
+    target = window.RunList if boundary == "rows" else window.infoBox
+    method = "updateRuns" if boundary == "rows" else "set_snapshot_run_detail"
+    original = getattr(target, method)
+    nested = False
+
+    def publish_then_reselect(value):
+        nonlocal nested
+        if not nested:
+            nested = True
+            window._selected_run_guid = "guid-2"
+            bridge.select_run("guid-2")
+        return original(value)
+
+    monkeypatch.setattr(target, method, publish_then_reselect)
+    bridge._publish_selected_detail(publication)
+
+    assert window._selected_run_guid == "guid-2"
+    assert window.infoBox.preview.current_guid == "guid-2"
+    assert window.infoBox.active_detail is None
+    assert bridge._selected_detail_publication is None
+
+
+@pytest.mark.parametrize("boundary", ["rows", "details"])
+def test_selected_detail_publication_rechecks_source_after_widgets(bound_bridge, monkeypatch, tmp_path, boundary):
+    window, bridge, coordinator, _runs = bound_bridge
+    window._selected_run_guid = "guid-1"
+    bridge.select_run("guid-1")
+    publication = _selected_detail_publication(
+        bridge, coordinator, _rich_selected_detail(1, "guid-1"),
+    )
+    target = window.RunList if boundary == "rows" else window.infoBox
+    method = "updateRuns" if boundary == "rows" else "set_snapshot_run_detail"
+    original = getattr(target, method)
+    replacement = tmp_path / "replacement.db"
+    replacement.write_bytes(b"changed source")
+
+    def publish_then_replace(value):
+        result = original(value)
+        if replacement.exists():
+            replacement.replace(window._loaded_database_instance.logical_path)
+        return result
+
+    monkeypatch.setattr(target, method, publish_then_replace)
+    bridge._publish_selected_detail(publication)
+    _process_until(lambda: bool(window.reloads))
+
+    assert bridge._selected_detail_publication is None
+    assert bridge._snapshot_session.source is None
+
+
+@pytest.mark.parametrize("boundary", ["rows", "details"])
+def test_nested_newer_detail_for_same_guid_keeps_new_snapshot_session(bound_bridge, monkeypatch, boundary):
+    window, bridge, coordinator, _runs = bound_bridge
+    window._selected_run_guid = "guid-1"
+    bridge.select_run("guid-1")
+    first_source = _BlockingSnapshotSource("first-session")
+    second_source = _BlockingSnapshotSource("second-session")
+    first = _selected_detail_publication(
+        bridge, coordinator, _with_snapshot_source(_rich_selected_detail(1, "guid-1"), first_source),
+    )
+    newer = _rich_selected_detail(1, "guid-1")
+    newer = replace(newer, run=TrustedRunRecord(1, (
+        ("guid", "guid-1"), ("name", "newer publication"), ("result_count", 999),
+    )))
+    second = _selected_detail_publication(
+        bridge, coordinator, _with_snapshot_source(newer, second_source),
+        selection_generation=8,
+    )
+    target = window.RunList if boundary == "rows" else window.infoBox
+    method = "updateRuns" if boundary == "rows" else "set_snapshot_run_detail"
+    original = getattr(target, method)
+    nested = False
+
+    def publish_newer_then_resume(value):
+        nonlocal nested
+        if not nested:
+            nested = True
+            bridge._publish_selected_detail(second)
+        return original(value)
+
+    monkeypatch.setattr(target, method, publish_newer_then_resume)
+    bridge._publish_selected_detail(first)
+
+    retained = bridge._selected_detail_publication
+    assert retained is not None
+    assert retained.selection_generation == 8
+    assert bridge._snapshot_session.source is second_source
+    assert window.infoBox.active_detail is retained.detail
+    assert window.infoBox.preview.current_guid == "guid-1"
+    row = window.RunList._item_for_guid("guid-1").run_metadata
+    assert row["result_count"] == 999
+    assert row["name"] == "newer publication"
+
+
+def test_detail_restoration_rechecks_source_and_preserves_newer_live_facts(bound_bridge, monkeypatch, tmp_path):
+    window, bridge, coordinator, _runs = bound_bridge
+    window._selected_run_guid = "guid-1"
+    bridge.select_run("guid-1")
+    first = _selected_detail_publication(bridge, coordinator, _rich_selected_detail(1, "guid-1"))
+    second = replace(first, selection_generation=8)
+    original = window.infoBox.set_snapshot_run_detail
+    calls = 0
+    live_facts = []
+    monkeypatch.setattr(window.infoBox, "update_live_run_details", lambda fields: live_facts.append(dict(fields)), raising=False)
+
+    def reentrant_setter(detail):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            bridge._publish_selected_detail(second)
+            window.RunList.updateRuns({1: {"guid": "guid-1", "result_count": 999}})
+        original(detail)
+
+    monkeypatch.setattr(window.infoBox, "set_snapshot_run_detail", reentrant_setter)
+    bridge._publish_selected_detail(first)
+    assert live_facts[-1]["result_count"] == 999
+    assert bridge._selected_detail_publication.selection_generation == 8
+
+    replacement = tmp_path / "replace-during-restore.db"
+    replacement.write_bytes(b"new database")
+
+    def source_replacing_setter(detail):
+        original(detail)
+        if replacement.exists():
+            replacement.replace(window._loaded_database_instance.logical_path)
+
+    monkeypatch.setattr(window.infoBox, "set_snapshot_run_detail", source_replacing_setter)
+    bridge._restore_selected_detail_after_reentry()
+    _process_until(lambda: bool(window.reloads))
+    assert bridge._selected_detail_publication is None
+    assert bridge._snapshot_session.source is None
+
+
+def test_repeated_detail_reentry_is_bounded_and_clears_stale_display(bound_bridge, monkeypatch):
+    window, bridge, coordinator, _runs = bound_bridge
+    window._selected_run_guid = "guid-1"
+    bridge.select_run("guid-1")
+    publication = _selected_detail_publication(bridge, coordinator, _rich_selected_detail(1, "guid-1"))
+    original = window.infoBox.set_snapshot_run_detail
+    nested = False
+    nested_count = 0
+    cleared = []
+
+    def clear():
+        cleared.append(True)
+        window.infoBox.active_detail = None
+
+    def always_reenter(detail):
+        nonlocal nested, nested_count
+        if not nested:
+            nested = True
+            nested_count += 1
+            bridge._publish_selected_detail(replace(publication, selection_generation=10 + nested_count))
+            nested = False
+        original(detail)
+
+    monkeypatch.setattr(window.infoBox, "clear", clear, raising=False)
+    monkeypatch.setattr(window.infoBox, "set_snapshot_run_detail", always_reenter)
+    bridge._publish_selected_detail(publication)
+
+    assert nested_count == 5  # Original publication plus four restoration attempts.
+    assert cleared == [True]
+    assert window.infoBox.active_detail is None
+    assert bridge._selected_detail_publication.selection_generation == 15

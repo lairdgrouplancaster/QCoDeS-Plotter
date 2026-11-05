@@ -134,15 +134,20 @@ def save_widget(app, widget, filename):
 
 
 def select_run(app, main_window, guid):
-    """Select a run through Stage 4's DataSet-free detail path."""
+    """Wait for the selected run's current detail publication without a DataSet."""
+    from qplot.datahandling.trusted_live_service import TRUSTED_LIVE_MODE
+
+    def selection_ready():
+        if main_window._selected_run_guid != guid:
+            return False
+        if main_window._database_access_mode != TRUSTED_LIVE_MODE:
+            # Snapshot fallback publishes cached basics synchronously.
+            return True
+        publication = main_window._trusted_derived_bridge._selected_detail_publication
+        return publication is not None and publication.run_guid == guid
+
     main_window.updateSelected(guid)
-    wait_for(
-        app,
-        lambda: (
-            main_window._selected_run_guid == guid
-            and main_window._database_selected_run_worker is None
-        ),
-    )
+    wait_for(app, selection_ready)
     if main_window._selected_run_guid != guid or main_window.ds is not None:
         raise RuntimeError(f"Could not select run with GUID {guid}")
 

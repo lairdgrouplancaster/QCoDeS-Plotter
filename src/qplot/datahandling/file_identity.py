@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TypeAlias
 
+from qplot.datahandling._sqlite_identifiers import (
+    quote_identifier as _quote_sqlite_identifier,
+)
+
 DatabaseFileIdentity: TypeAlias = (
     tuple[int, int] | tuple[str, int, int] | tuple[str, str, int]
 )
@@ -28,10 +32,6 @@ QPLOT_GENERATION_PROVENANCE_TRIGGER_PREFIX = "qplot_provenance_v2_"
 _SQLITE_APPLICATION_ID_OFFSET = 68
 SQLITE_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 MAX_DATABASE_SIDECAR_IDENTITIES = 2 * len(SQLITE_SIDECAR_SUFFIXES)
-
-
-def _quote_sqlite_identifier(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
 
 
 def generation_lineage_transition_statements() -> tuple[str, str, str]:

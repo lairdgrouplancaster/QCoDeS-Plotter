@@ -214,9 +214,9 @@ def recorded_statistics_columns(tmp_path):
         load_or_create_experiment,
     )
 
+    from qplot.datahandling.export_data import csv_scalar_columns
     from qplot.datahandling.parameter_data import parameter_data_for_export
     from qplot.datahandling.readonly import load_by_id_read_only
-    from qplot.windows._plot_actions import _csv_scalar_columns
     from tests.windows.test_complex_line_data import database_state
 
     @contextmanager
@@ -242,7 +242,7 @@ def recorded_statistics_columns(tmp_path):
         before = database_state(path)
         dataset = load_by_id_read_only(run_id, str(path))
         try:
-            yield _csv_scalar_columns(parameter_data_for_export(dataset, 'signal'), 'signal')
+            yield csv_scalar_columns(parameter_data_for_export(dataset, 'signal'), 'signal')
         finally:
             dataset.conn.close()
             assert database_state(path) == before

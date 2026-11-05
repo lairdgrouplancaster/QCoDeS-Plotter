@@ -461,6 +461,9 @@ jobs:
 
       - name: Upload test timings
         if: ${{ !cancelled() }}
+        # Timing profiles help balance future runs; their upload must not turn
+        # passing tests into a failed check during an artifact-service outage.
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           # job-index avoids '/' in partition labels and distinguishes every entry.

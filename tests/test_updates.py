@@ -11,6 +11,8 @@ from qplot.updates import (
     latest_release,
 )
 
+pytestmark = pytest.mark.pure
+
 
 def release_file(version, **fields):
     return {"filename": f"qplotter-{version}-py3-none-any.whl", "yanked": False, **fields}

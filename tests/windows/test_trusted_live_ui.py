@@ -1,8 +1,7 @@
-"""DB-free UI integration tests for the Stage 4 trusted read service."""
+"""Database lifecycle, selection routing, and explicit trusted-action tests."""
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 from types import SimpleNamespace
@@ -14,6 +13,7 @@ from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling import database as database_module
+from qplot.datahandling import database as database_workers
 from qplot.datahandling import readonly as readonly_module
 from qplot.datahandling import readSQL as read_sql_module
 from qplot.datahandling import trusted_live_service as trusted_service_module
@@ -24,22 +24,18 @@ from qplot.datahandling.file_identity import (
 )
 from qplot.datahandling.trusted_live import (
     TrustedLiveCancelledError,
-    TrustedLiveQueryError,
     TrustedQueryResult,
 )
 from qplot.datahandling.trusted_live_service import TrustedLiveReadService
-from qplot.datahandling.trusted_presentation import build_selected_run_presentation
 from qplot.datahandling.trusted_query_types import (
     TrustedBootstrapResult,
-    TrustedRunRecord,
-    TrustedSelectedRunDetail,
 )
-from qplot.datahandling.trusted_snapshot import normalize_trusted_snapshot
 from qplot.windows import _database_actions as database_actions
+from qplot.windows import _dataset_registry as dataset_registry_module
 from qplot.windows import _plot_actions as plot_actions
 from qplot.windows import _run_controls as run_controls
+from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._database_load_state import DatabaseLoadSession
-from qplot.windows._widgets import preview as preview_module
 from qplot.windows._widgets import treeWidgets
 
 
@@ -245,8 +241,6 @@ class _LifecycleHarness(database_actions.DatabaseActionsMixin):
         self._database_refresh_pending = False
         self._database_refresh_worker = None
         self._database_selected_run_generation = 2
-        self._database_selected_run_worker = None
-        self._database_selected_run_instance = None
         self._trusted_read_service = service
         self._pending_trusted_read_services = {}
         self._retired_trusted_read_services = set()
@@ -276,7 +270,6 @@ class _LifecycleHarness(database_actions.DatabaseActionsMixin):
 
         self.selected_run_id = 1
         self._selected_run_guid = "guid-a"
-        self._selected_run_detail_cache = {}
         self.ds = object()
         self._selected_dataset_key = object()
         self.dataset_holder = {}
@@ -709,9 +702,6 @@ def test_trusted_refresh_updates_selected_completed_row_and_reloads_detail():
             self._test_database_replacement_state = None
             self._database_access_mode = database_actions.TRUSTED_LIVE_MODE
             self._selected_run_guid = "selected-guid"
-            self._selected_run_detail_cache = {
-                ("instance", 7, "selected-guid"): object(),
-            }
             self.RunList = treeWidgets.RunList()
             self.RunList.addRuns(
                 {
@@ -757,7 +747,6 @@ def test_trusted_refresh_updates_selected_completed_row_and_reloads_detail():
         item = harness.RunList._item_for_guid("selected-guid")
         assert item is not None
         assert item.run_metadata["result_count"] == 15
-        assert harness._selected_run_detail_cache == {}
         assert harness.reselected == ["selected-guid"]
     finally:
         harness.RunList.deleteLater()
@@ -855,29 +844,26 @@ class _DiscardableRunList:
         self.visible = {}
 
 
-class _FakeSelectedWorker:
-    def __init__(self, args, kwargs) -> None:
-        self.args = args
-        self.kwargs = kwargs
-        self.cancelled = False
-        self.signals = SimpleNamespace(progress=_Signal(), finished=_Signal())
+class _SelectionBridge:
+    def __init__(self):
+        self.selections = []
 
-    def cancel(self) -> None:
-        self.cancelled = True
+    def select_run(self, guid):
+        self.selections.append(guid)
+
+    def request_priority_update(self):
+        pass
 
 
 class _SelectionHarness(database_actions.DatabaseActionsMixin):
     def __init__(self, instance: DatabaseInstance, service: _FakeService) -> None:
+        self._trusted_derived_bridge = _SelectionBridge()
         self._loaded_database_instance = instance
         self._loaded_database_identity = instance.identity
         self._trusted_read_service = service
         self._database_access_mode = database_actions.TRUSTED_LIVE_MODE
         self._database_selected_run_generation = 8
-        self._database_selected_run_worker = None
-        self._database_selected_run_instance = None
-        self._database_selected_run_mode = database_actions.TRUSTED_LIVE_MODE
         self._selected_run_guid = None
-        self._selected_run_detail_cache = {}
         self._snapshot_setpoint_summary_cache = {"guid-7": object()}
         self._selected_dataset_key = object()
         self.selected_run_id = None
@@ -931,6 +917,47 @@ class _SelectionHarness(database_actions.DatabaseActionsMixin):
         raise AssertionError("trusted selection must not load a QCoDeS DataSet")
 
 
+@pytest.mark.parametrize("bridge_available", [False, True])
+def test_trusted_selection_uses_only_current_bridge(bridge_available):
+    instance = _instance("selection-bridge.db", (1, 7))
+    harness = _SelectionHarness(instance, _FakeService(instance))
+    bridge = harness._trusted_derived_bridge
+    if not bridge_available:
+        del harness._trusted_derived_bridge
+    with (
+        patch.object(database_actions, "database_instance", return_value=instance),
+        patch.object(database_workers, "DatabaseSelectedRunWorker") as old_worker,
+        patch.object(plot_actions, "load_by_guid_read_only") as dataset_loader,
+    ):
+        assert harness._update_trusted_selected_run("guid-7")
+    old_worker.assert_not_called()
+    dataset_loader.assert_not_called()
+    assert harness.ds is None
+    assert not harness.databaseDetailThreadPool.started
+    assert bridge.selections == (["guid-7"] if bridge_available else [])
+    if not bridge_available:
+        assert any("coordinator is unavailable" in str(event) for event in harness.infoBox.events)
+
+
+@pytest.mark.parametrize("sidecar", ["", "-wal", "-shm"])
+def test_trusted_selection_checks_source_before_bridge_handoff(tmp_path, sidecar):
+    database_path = tmp_path / "selected.db"
+    database_path.write_bytes(b"original source")
+    artifact = database_path if not sidecar else database_path.with_name(database_path.name + sidecar)
+    if sidecar:
+        artifact.write_bytes(b"original sidecar")
+    accepted = database_instance(database_path)
+    harness = _SelectionHarness(accepted, _FakeService(accepted))
+    replacement = tmp_path / "replacement"
+    replacement.write_bytes(b"different source")
+    replacement.replace(artifact)
+
+    assert harness._update_trusted_selected_run("guid-7")
+
+    assert harness.reloads == [logical_database_path(database_path)]
+    assert harness._trusted_derived_bridge.selections == []
+
+
 class _TrustedPreviewBoundaryHarness(
     _LifecycleHarness,
     plot_actions.PlotActionsMixin,
@@ -957,15 +984,14 @@ class _TrustedPreviewBoundaryHarness(
             lambda _value: self._run_table_view_changed()
         )
         self.databaseDetailThreadPool = _ThreadPool()
-        self.databaseSelectedRunThreadPool = self.databaseDetailThreadPool
-        self._database_detail_generation = 0
-        self._database_detail_active = False
-        self._database_detail_worker = None
-        self._database_detail_instance = None
-        self._database_expensive_detail_generation = 0
-        self._database_expensive_detail_active = False
-        self._database_expensive_detail_worker = None
-        self._database_expensive_detail_instance = None
+        detail_channel(self).generation = 0
+        detail_channel(self).active = False
+        detail_channel(self).worker = None
+        detail_channel(self).instance = None
+        detail_channel(self, True).generation = 0
+        detail_channel(self, True).active = False
+        detail_channel(self, True).worker = None
+        detail_channel(self, True).instance = None
         self.ds = None
         self._selected_dataset_key = None
         self.selected_run_id = None
@@ -1192,267 +1218,6 @@ def _sidecar_swap_fixture(tmp_path, name: str):
     return database_path, wal_path, replacement_wal, database_instance(database_path)
 
 
-def _selected_detail(*, run_id=7, count=12, completed=None) -> TrustedSelectedRunDetail:
-    fields = {
-        "guid": f"guid-{run_id}",
-        "name": "trusted run",
-        "result_count": count,
-    }
-    if completed is not None:
-        fields["is_completed"] = completed
-    return TrustedSelectedRunDetail(
-        run=TrustedRunRecord(
-            run_id,
-            tuple(fields.items()),
-        ),
-        parameters=(),
-        metadata=(),
-        snapshot=normalize_trusted_snapshot(None),
-        setpoint_summaries=(),
-        presentation=build_selected_run_presentation(
-            run_fields={"run_id": run_id, **fields},
-            metadata_fields={},
-            parameters=(),
-            snapshot_summary={"Status": "empty"},
-            setpoint_summaries=(),
-            unavailable_fields=(),
-        ),
-    )
-
-
-@pytest.fixture
-def live_detail_refresh(monkeypatch):
-    class Harness(_SelectionHarness):
-        updateSelected = plot_actions.PlotActionsMixin.updateSelected
-
-        def _sync_empty_state(self):
-            pass
-
-    instance = _instance("detail-refresh.db", (1, 7))
-    harness = Harness(instance, _FakeService(instance))
-    harness.RunList = treeWidgets.RunList()
-    harness.RunList.addRuns({
-        run_id: {
-            **_selected_detail(run_id=run_id, completed=False).run.as_dict(),
-            "sweep_parameters": [],
-            "measure_parameters": ["signal"],
-        }
-        for run_id in (7, 8)
-    })
-    monkeypatch.setattr(database_actions, "database_instance", lambda path: instance)
-    monkeypatch.setattr(
-        database_actions, "DatabaseSelectedRunWorker",
-        lambda *args, **kwargs: _FakeSelectedWorker(args, kwargs),
-    )
-    yield harness, instance
-    harness._cancel_selected_run_detail()
-    harness.RunList.deleteLater()
-    qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
-    qtw.QApplication.processEvents()
-
-
-def _finish_selected_detail(harness, instance, detail, *, partial=False):
-    args = (
-        harness._database_selected_run_generation,
-        instance.logical_path,
-        detail.run.as_dict()["guid"],
-        detail,
-    )
-    if partial:
-        harness.database_selected_run_progress(*args)
-    else:
-        harness.database_selected_run_finished(*args, None)
-
-
-@pytest.mark.parametrize("selection", ["guid-8", None])
-@pytest.mark.parametrize("partial", [False, True])
-def test_refresh_invalidates_unselected_live_details(live_detail_refresh, selection, partial):
-    harness, instance = live_detail_refresh
-    # Retain B's cache as well as A's, to check refresh is selective.
-    harness.updateSelected("guid-8")
-    detail_b = _selected_detail(run_id=8, completed=False)
-    _finish_selected_detail(harness, instance, detail_b, partial=partial)
-    harness.updateSelected("guid-7")
-    _finish_selected_detail(
-        harness, instance, _selected_detail(completed=False), partial=partial,
-    )
-    if selection is None:
-        harness._cancel_selected_run_detail()
-        harness._selected_run_guid = None
-        harness.selected_run_id = None
-        harness.infoBox.clear()
-    else:
-        harness.updateSelected(selection)
-    key_a = database_actions._selected_run_detail_cache_key(instance, 7, "guid-7")
-    key_b = database_actions._selected_run_detail_cache_key(instance, 8, "guid-8")
-    # An orphan partial key from an earlier sidecar baseline must also go.
-    orphan_key = (*key_a[:3], frozenset({("old-sidecar", (1, 2))}), *key_a[4:])
-    harness._selected_run_partial_detail_keys.add(orphan_key)
-    worker = harness._database_selected_run_worker
-    started = len(harness.databaseDetailThreadPool.started)
-
-    harness._apply_database_refresh_result({}, {
-        "guid-7": {"result_count": 30, "is_completed": True},
-    })
-
-    assert harness._selected_run_detail_cache == {key_b: detail_b}
-    assert harness._selected_run_partial_detail_keys == ({key_b} if partial else set())
-    assert harness._database_selected_run_worker is worker
-    assert len(harness.databaseDetailThreadPool.started) == started
-    if worker is not None:
-        assert not worker.cancelled
-    harness.infoBox.events.clear()
-    harness.updateSelected("guid-7")
-    assert len(harness.databaseDetailThreadPool.started) == started + 1
-    assert [event[0] for event in harness.infoBox.events] == ["loading"]
-    assert harness.infoBox.visible[1]["result_count"] == 30
-    assert harness.infoBox.visible[1]["is_completed"] is True
-    assert harness._run_metadata_for_guid("guid-7")["result_count"] == 30
-    fresh = _selected_detail(count=30, completed=True)
-    _finish_selected_detail(harness, instance, fresh)
-    assert harness.infoBox.visible == ("detail", fresh)
-
-
-@pytest.mark.parametrize("count,completed", [(12, True), (30, False), (None, True)])
-@pytest.mark.parametrize("partial", [False, True])
-def test_selection_rejects_stale_cached_live_detail_before_display(
-        live_detail_refresh, count, completed, partial):
-    harness, instance = live_detail_refresh
-    harness.RunList.updateRuns({
-        7: {"guid": "guid-7", "result_count": 30, "is_completed": True},
-    })
-    key = database_actions._selected_run_detail_cache_key(instance, 7, "guid-7")
-    harness._selected_run_detail_cache[key] = _selected_detail(count=count, completed=completed)
-    harness._selected_run_partial_detail_keys = {key} if partial else set()
-
-    harness.updateSelected("guid-7")
-
-    assert [event[0] for event in harness.infoBox.events] == ["loading"]
-    assert harness.infoBox.visible[1]["result_count"] == 30
-    assert harness.infoBox.visible[1]["is_completed"] is True
-    assert harness._selected_run_detail_cache == {}
-    assert harness._selected_run_partial_detail_keys == set()
-    assert len(harness.databaseDetailThreadPool.started) == 1
-
-
-@pytest.mark.parametrize("partial", [False, True])
-@pytest.mark.parametrize("current_generation", [False, True])
-@pytest.mark.parametrize("count,completed", [(12, True), (30, False)])
-def test_delayed_live_detail_cannot_revert_refreshed_metadata(
-        live_detail_refresh, partial, current_generation, count, completed):
-    harness, instance = live_detail_refresh
-    harness.updateSelected("guid-7")
-    old_generation = harness._database_selected_run_generation
-    old_worker = harness._database_selected_run_worker
-    harness._apply_database_refresh_result({}, {
-        "guid-7": {"result_count": 30, "is_completed": True},
-    })
-    assert old_worker.cancelled
-    assert harness._database_selected_run_generation > old_generation
-    new_worker = harness._database_selected_run_worker
-    harness.infoBox.events.clear()
-    metadata = harness._run_metadata_for_guid("guid-7")
-    generation = (
-        harness._database_selected_run_generation if current_generation else old_generation
-    )
-    args = (
-        generation, instance.logical_path, "guid-7",
-        _selected_detail(count=count, completed=completed),
-    )
-    if partial:
-        harness.database_selected_run_progress(*args)
-    else:
-        harness.database_selected_run_finished(*args, None)
-
-    assert harness._run_metadata_for_guid("guid-7") == metadata
-    assert harness.infoBox.events == []
-    assert harness.infoBox.visible[0] == "loading"
-    assert harness.infoBox.visible[1]["result_count"] == 30
-    assert harness.infoBox.visible[1]["is_completed"] is True
-    assert harness._selected_run_detail_cache == {}
-    assert getattr(harness, "_selected_run_partial_detail_keys", set()) == set()
-    if not current_generation:
-        assert harness._database_selected_run_worker is new_worker
-        fresh = _selected_detail(count=30, completed=True)
-        _finish_selected_detail(harness, instance, fresh)
-        assert harness.infoBox.visible == ("detail", fresh)
-
-
-def test_trusted_selection_publishes_loading_then_plain_detail_without_db_io():
-    instance = _instance("selected.db", (1, 7))
-    service = _FakeService(instance)
-    harness = _SelectionHarness(instance, service)
-    workers = []
-
-    def worker_factory(*args, **kwargs):
-        worker = _FakeSelectedWorker(args, kwargs)
-        workers.append(worker)
-        return worker
-
-    with (
-        patch.object(
-            database_actions,
-            "DatabaseSelectedRunWorker",
-            side_effect=worker_factory,
-        ),
-        patch.object(
-            database_actions,
-            "database_instance",
-            return_value=instance,
-        ),
-    ):
-        assert harness._update_trusted_selected_run("guid-7")
-        generation = harness._database_selected_run_generation
-        detail = _selected_detail()
-        active_worker = harness._database_selected_run_worker
-        harness.database_selected_run_progress(
-            generation,
-            instance.logical_path,
-            "guid-7",
-            detail,
-        )
-        assert harness._database_selected_run_worker is active_worker
-        assert harness._selected_run_detail_cache == {
-            database_actions._selected_run_detail_cache_key(
-                instance, 7, "guid-7"
-            ): detail,
-        }
-        assert harness._selected_run_partial_detail_keys == {
-            database_actions._selected_run_detail_cache_key(instance, 7, "guid-7"),
-        }
-        harness.database_selected_run_finished(
-            generation,
-            instance.logical_path,
-            "guid-7",
-            detail,
-            None,
-        )
-
-    assert harness.infoBox.events[0][0] == "loading"
-    assert harness.infoBox.events[1] == ("detail", detail)
-    assert harness.infoBox.events[2] == ("detail", detail)
-    assert harness.ds is None
-    assert harness.released_datasets == 1
-    assert harness.prioritized == [[7]]
-    assert len(workers) == 1
-    assert workers[0].args[2:5] == (7, "guid-7", service)
-    assert harness.databaseDetailThreadPool.started == workers
-    assert harness.RunList.updated == 2 * [
-        {
-            7: {
-                "guid": "guid-7",
-                "name": "trusted run",
-                "result_count": 12,
-            }
-        }
-    ]
-    assert harness._selected_run_detail_cache == {
-        database_actions._selected_run_detail_cache_key(instance, 7, "guid-7"): detail,
-    }
-    assert harness._selected_run_partial_detail_keys == set()
-    assert harness.status_messages[-1][0] == "Selected run 7 with 12 points."
-
-
 def test_snapshot_selection_is_basic_only_and_starts_no_detail_snapshot(tmp_path):
     database_path = tmp_path / "snapshot-selection.db"
     database_path.write_bytes(b"snapshot selection identity")
@@ -1460,19 +1225,11 @@ def test_snapshot_selection_is_basic_only_and_starts_no_detail_snapshot(tmp_path
     harness = _SelectionHarness(instance, _FakeService(instance))
     harness._database_access_mode = database_actions.SNAPSHOT_FALLBACK_MODE
     harness._trusted_read_service = None
-    detail = _selected_detail()
-    harness._selected_run_detail_cache[
-        database_actions._selected_run_detail_cache_key(
-            instance,
-            7,
-            "guid-7",
-        )
-    ] = detail
 
     forbidden = AssertionError("selection dispatch performed eager database I/O")
     with (
         patch.object(
-            database_actions,
+            database_workers,
             "DatabaseSelectedRunWorker",
             side_effect=forbidden,
         ) as selected_worker,
@@ -1534,9 +1291,6 @@ def test_snapshot_selection_is_basic_only_and_starts_no_detail_snapshot(tmp_path
         ]
         assert harness.ds is None
         assert harness._selected_dataset_key is None
-        assert harness._database_selected_run_worker is None
-        assert harness._database_selected_run_instance is None
-        assert harness._database_selected_run_mode is None
         assert harness.prioritized == [[7]]
         selected_worker.assert_not_called()
         detail_pool_start.assert_not_called()
@@ -1607,7 +1361,7 @@ def test_snapshot_basic_only_publication_restores_reentrant_selection():
     with (
         patch.object(database_actions, "database_instance", return_value=instance),
         patch.object(
-            database_actions,
+            database_workers,
             "DatabaseSelectedRunWorker",
             side_effect=AssertionError("fallback selection started detail work"),
         ) as selected_worker,
@@ -1627,162 +1381,7 @@ def test_snapshot_basic_only_publication_restores_reentrant_selection():
     assert harness.infoBox.visible == ("snapshot-unavailable", "guid-8")
 
 
-@pytest.mark.parametrize("publication_kind", ("cached", "async"))
-@pytest.mark.parametrize("restore_reentry", (False, True))
-def test_selected_detail_reentrancy_restores_newer_selection(
-    publication_kind,
-    restore_reentry,
-):
-    instance = _instance("reentrant-selected.db", (4, 7))
-
-    class TwoRunList:
-        def __init__(self):
-            self.items = {
-                7: SimpleNamespace(
-                    run_metadata={
-                        "run_id": 7,
-                        "guid": "guid-7",
-                        "result_count": 12,
-                    }
-                ),
-                8: SimpleNamespace(
-                    run_metadata={
-                        "run_id": 8,
-                        "guid": "guid-8",
-                        "result_count": 3,
-                    }
-                ),
-                9: SimpleNamespace(
-                    run_metadata={
-                        "run_id": 9,
-                        "guid": "guid-9",
-                        "result_count": 5,
-                    }
-                ),
-            }
-            self.updated = []
-
-        def _item_for_guid(self, guid):
-            return next(
-                (
-                    item
-                    for item in self.items.values()
-                    if item.run_metadata["guid"] == guid
-                ),
-                None,
-            )
-
-        def run_id_for_guid(self, guid):
-            item = self._item_for_guid(guid)
-            return item.run_metadata["run_id"] if item is not None else None
-
-        def updateRuns(self, runs):
-            self.updated.append(dict(runs))
-            for run_id, metadata in runs.items():
-                self.items[run_id].run_metadata.update(metadata)
-
-    class ReentrantInfoBox:
-        def __init__(self):
-            self.events = []
-            self.visible = None
-            self.reentered = False
-            self.restore_reentered = False
-            self.loading_counts = {}
-            self.harness = None
-
-        def _loading(self, run):
-            guid = str(run["guid"])
-            event = ("loading", guid)
-            self.events.append(event)
-            self.loading_counts[guid] = self.loading_counts.get(guid, 0) + 1
-            if (
-                restore_reentry
-                and guid == "guid-8"
-                and self.loading_counts[guid] == 2
-                and not self.restore_reentered
-            ):
-                self.restore_reentered = True
-                plot_actions.PlotActionsMixin.updateSelected(
-                    self.harness,
-                    "guid-9",
-                )
-            # A restore setter can likewise resume after the nested selection.
-            self.visible = event
-
-        def _detail(self, detail):
-            guid = str(detail.run.as_dict()["guid"])
-            self.events.append(("detail", guid))
-            if guid == "guid-7" and not self.reentered:
-                self.reentered = True
-                plot_actions.PlotActionsMixin.updateSelected(
-                    self.harness,
-                    "guid-8",
-                )
-            # Simulate a real setter that resumes and finishes rendering A
-            # after nested selection B has already rendered its placeholder.
-            self.visible = ("detail", guid)
-
-        set_trusted_run_loading = _loading
-        set_snapshot_run_loading = _loading
-        set_trusted_run_detail = _detail
-        set_snapshot_run_detail = _detail
-
-        def clear(self):
-            self.visible = None
-
-    harness = _SelectionHarness(instance, _FakeService(instance))
-    harness._database_access_mode = database_actions.TRUSTED_LIVE_MODE
-    harness.RunList = TwoRunList()
-    harness.infoBox = ReentrantInfoBox()
-    harness.infoBox.harness = harness
-    workers = []
-
-    def worker_factory(*args, **kwargs):
-        worker = _FakeSelectedWorker(args, kwargs)
-        workers.append(worker)
-        return worker
-
-    detail = _selected_detail()
-    stale_key = database_actions._selected_run_detail_cache_key(
-        instance,
-        7,
-        "guid-7",
-    )
-    if publication_kind == "cached":
-        harness._selected_run_detail_cache[stale_key] = detail
-
-    with (
-        patch.object(
-            database_actions,
-            "DatabaseSelectedRunWorker",
-            side_effect=worker_factory,
-        ),
-        patch.object(database_actions, "database_instance", return_value=instance),
-    ):
-        plot_actions.PlotActionsMixin.updateSelected(harness, "guid-7")
-        if publication_kind == "async":
-            generation = harness._database_selected_run_generation
-            harness.database_selected_run_finished(
-                generation,
-                instance.logical_path,
-                "guid-7",
-                detail,
-                None,
-            )
-
-    assert harness.infoBox.reentered
-    expected_run_id = 9 if restore_reentry else 8
-    expected_guid = f"guid-{expected_run_id}"
-    assert harness.infoBox.restore_reentered is restore_reentry
-    assert harness._selected_run_guid == expected_guid
-    assert harness.selected_run_id == expected_run_id
-    assert harness.infoBox.visible == ("loading", expected_guid)
-    assert stale_key not in harness._selected_run_detail_cache
-    assert workers[-1] is harness._database_selected_run_worker
-    assert workers[-1].args[3] == expected_guid
-
-
-def test_typed_run_id_clears_guid_and_cancels_stale_selected_detail():
+def test_typed_run_id_clears_guid_and_invalidates_selected_publication():
     class Worker:
         def __init__(self) -> None:
             self.cancelled = False
@@ -1822,9 +1421,6 @@ def test_typed_run_id_clears_guid_and_cancels_stale_selected_detail():
         _cancel_selected_run_detail = (
             database_actions.DatabaseActionsMixin._cancel_selected_run_detail
         )
-        database_selected_run_finished = (
-            database_actions.DatabaseActionsMixin.database_selected_run_finished
-        )
 
         def __init__(self) -> None:
             self.RunList = RunList()
@@ -1834,8 +1430,6 @@ def test_typed_run_id_clears_guid_and_cancels_stale_selected_detail():
             self._selected_run_guid = "guid-a"
             self.selected_run_id = 1
             self._database_selected_run_generation = 8
-            self._database_selected_run_worker = Worker()
-            self._database_selected_run_instance = _instance("typed.db", (1, 7))
             self.fileTextbox = _Field("typed.db")
             self.opened = []
             self.status_messages = []
@@ -1847,23 +1441,11 @@ def test_typed_run_id_clears_guid_and_cancels_stale_selected_detail():
             self.status_messages.append((message, timeout))
 
     harness = Harness()
-    stale_worker = harness._database_selected_run_worker
-    stale_generation = harness._database_selected_run_generation
 
     harness.update_run_id("2")
     harness.open_selected_run_all()
-    harness.database_selected_run_finished(
-        stale_generation,
-        "typed.db",
-        "guid-a",
-        None,
-        RuntimeError("stale selected-run error"),
-    )
 
-    assert stale_worker.cancelled
-    assert harness._database_selected_run_generation == stale_generation + 1
-    assert harness._database_selected_run_worker is None
-    assert harness._database_selected_run_instance is None
+    assert harness._database_selected_run_generation == 9
     assert harness._selected_run_guid is None
     assert harness.selected_run_id == 2
     assert harness.ds is None
@@ -1872,190 +1454,6 @@ def test_typed_run_id_clears_guid_and_cancels_stale_selected_detail():
     assert harness.infoBox.events == ["clear"]
     assert harness.opened == []
     assert "Select a run" in harness.status_messages[-1][0]
-
-
-def test_reusable_selected_summary_error_retains_and_retries_cheap_detail():
-    instance = _instance("selected.db", (1, 7))
-    service = _FakeService(instance)
-    harness = _SelectionHarness(instance, service)
-    workers = []
-
-    def worker_factory(*args, **kwargs):
-        worker = _FakeSelectedWorker(args, kwargs)
-        workers.append(worker)
-        return worker
-
-    with (
-        patch.object(
-            database_actions,
-            "DatabaseSelectedRunWorker",
-            side_effect=worker_factory,
-        ),
-        patch.object(
-            database_actions,
-            "database_instance",
-            return_value=instance,
-        ),
-        patch.object(database_actions, "log_exception"),
-    ):
-        assert harness._update_trusted_selected_run("guid-7")
-        generation = harness._database_selected_run_generation
-        detail = _selected_detail()
-        harness.database_selected_run_progress(
-            generation,
-            instance.logical_path,
-            "guid-7",
-            detail,
-        )
-        error = TrustedLiveQueryError("injected summary scan failure")
-        harness.database_selected_run_finished(
-            generation,
-            instance.logical_path,
-            "guid-7",
-            None,
-            error,
-        )
-
-        assert all(event[0] != "error" for event in harness.infoBox.events)
-        assert harness.infoBox.events[-1] == ("detail", detail)
-        assert harness._selected_run_detail_cache == {
-            database_actions._selected_run_detail_cache_key(
-                instance, 7, "guid-7"
-            ): detail,
-        }
-        assert harness._selected_run_partial_detail_keys == {
-            database_actions._selected_run_detail_cache_key(instance, 7, "guid-7"),
-        }
-        assert "basic details remain" in harness.status_messages[-1][0]
-
-        assert harness._update_trusted_selected_run("guid-7")
-
-    assert len(workers) == 2
-    assert harness.databaseDetailThreadPool.started == workers
-    assert harness.infoBox.events[-1] == ("detail", detail)
-
-
-def test_trusted_selection_rejects_cached_detail_after_main_replacement():
-    instance = _instance("selected.db", (1, 7))
-    replacement = _instance("selected.db", (1, 8))
-    harness = _SelectionHarness(instance, _FakeService(instance))
-    detail = _selected_detail()
-    harness._selected_run_detail_cache[
-        database_actions._selected_run_detail_cache_key(instance, 7, "guid-7")
-    ] = detail
-
-    with (
-        patch.object(
-            database_actions,
-            "database_instance",
-            return_value=replacement,
-        ),
-        patch.object(
-            database_actions,
-            "DatabaseSelectedRunWorker",
-            side_effect=AssertionError("stale selection started a worker"),
-        ),
-    ):
-        assert harness._update_trusted_selected_run("guid-7")
-
-    assert harness.reloads == [instance.logical_path]
-    assert harness.infoBox.events == []
-    assert harness.databaseDetailThreadPool.started == []
-    assert harness._selected_run_guid is None
-    assert harness.selected_run_id is None
-
-
-def test_trusted_selection_rejects_cached_detail_after_sidecar_aba():
-    path = logical_database_path("selected.db")
-    instance = DatabaseInstance(
-        path,
-        path,
-        (1, 7),
-        sidecar_identities=frozenset({(2, 11)}),
-    )
-    sidecar_replacement = DatabaseInstance(
-        path,
-        path,
-        (1, 7),
-        sidecar_identities=frozenset({(2, 12)}),
-    )
-    harness = _SelectionHarness(instance, _FakeService(instance))
-    detail = _selected_detail()
-    harness._selected_run_detail_cache[
-        database_actions._selected_run_detail_cache_key(instance, 7, "guid-7")
-    ] = detail
-
-    with (
-        patch.object(
-            database_actions,
-            "database_instance",
-            return_value=sidecar_replacement,
-        ),
-        patch.object(
-            database_actions,
-            "DatabaseSelectedRunWorker",
-            side_effect=AssertionError("stale selection started a worker"),
-        ),
-    ):
-        assert harness._update_trusted_selected_run("guid-7")
-
-    assert harness.reloads == [instance.logical_path]
-    assert harness.infoBox.events == []
-    assert harness.databaseDetailThreadPool.started == []
-    assert harness._selected_run_guid is None
-    assert harness.selected_run_id is None
-
-
-def test_trusted_selection_accepts_wal_and_shm_appearing_after_acceptance():
-    path = logical_database_path("selected.db")
-    accepted = DatabaseInstance(path, path, (1, 7))
-    with_new_sidecars = DatabaseInstance(
-        path,
-        path,
-        (1, 7),
-        sidecar_identities=frozenset({(2, 11), (2, 12)}),
-    )
-    harness = _SelectionHarness(accepted, _FakeService(accepted))
-    detail = _selected_detail()
-    harness._selected_run_detail_cache[
-        database_actions._selected_run_detail_cache_key(accepted, 7, "guid-7")
-    ] = detail
-    workers = []
-
-    def worker_factory(*args, **kwargs):
-        worker = _FakeSelectedWorker(args, kwargs)
-        workers.append(worker)
-        return worker
-
-    with (
-        patch.object(
-            database_actions,
-            "database_instance",
-            return_value=with_new_sidecars,
-        ),
-        patch.object(
-            database_actions,
-            "DatabaseSelectedRunWorker",
-            side_effect=worker_factory,
-        ),
-    ):
-        assert harness._update_trusted_selected_run("guid-7")
-        assert not (
-            database_actions.DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-                harness,
-                accepted.logical_path,
-                accepted,
-            )
-        )
-
-    assert harness.reloads == []
-    assert harness._loaded_database_instance == with_new_sidecars
-    assert harness.infoBox.events[-1][0] == "loading"
-    assert harness.databaseDetailThreadPool.started == workers
-    assert len(workers) == 1
-    assert database_actions._selected_run_detail_cache_key(
-        accepted, 7, "guid-7"
-    ) != database_actions._selected_run_detail_cache_key(with_new_sidecars, 7, "guid-7")
 
 
 @pytest.mark.parametrize(
@@ -2101,134 +1499,15 @@ def test_new_sidecar_baseline_rejects_its_later_replacement_or_removal(
     assert harness.reloads == [path]
 
 
-@pytest.mark.parametrize("callback_phase", ["progress", "finished"])
-@pytest.mark.parametrize("replacement_kind", ["main", "sidecar"])
-def test_trusted_selected_callback_rejects_post_query_source_aba(
-    callback_phase,
-    replacement_kind,
-):
-    path = logical_database_path("selected-callback.db")
-    accepted = DatabaseInstance(
-        path,
-        path,
-        (1, 7),
-        sidecar_identities=frozenset({(2, 11)}),
-    )
-    replacement = DatabaseInstance(
-        path,
-        path,
-        (1, 8) if replacement_kind == "main" else (1, 7),
-        sidecar_identities=(
-            accepted.sidecar_identities
-            if replacement_kind == "main"
-            else frozenset({(2, 12)})
-        ),
-    )
-
-    class CallbackHarness(_SelectionHarness):
-        _reload_if_worker_database_instance_changed = database_actions.DatabaseActionsMixin._reload_if_worker_database_instance_changed
-
-    harness = CallbackHarness(accepted, _FakeService(accepted))
-    harness._selected_run_guid = "guid-7"
-    harness.selected_run_id = 7
-    harness._database_selected_run_instance = accepted
-
-    with patch.object(
-        database_actions,
-        "database_instance",
-        return_value=replacement,
-    ):
-        if callback_phase == "progress":
-            harness.database_selected_run_progress(
-                harness._database_selected_run_generation,
-                accepted.logical_path,
-                "guid-7",
-                _selected_detail(),
-            )
-        else:
-            harness.database_selected_run_finished(
-                harness._database_selected_run_generation,
-                accepted.logical_path,
-                "guid-7",
-                _selected_detail(),
-                None,
-            )
-
-    assert harness.reloads == [accepted.logical_path]
-    assert harness.infoBox.events == []
-    assert harness.RunList.updated == []
-    assert harness._selected_run_detail_cache == {}
-
-
-def test_trusted_selected_callback_rechecks_after_widget_publication(tmp_path):
-    database_path, wal_path, replacement_wal, accepted = _sidecar_swap_fixture(
-        tmp_path,
-        "selected-widget-callback",
-    )
-    harness = _SelectionHarness(accepted, _FakeService(accepted))
-    harness._selected_run_guid = "guid-7"
-    harness.selected_run_id = 7
-    harness._database_selected_run_instance = accepted
-    harness.fileTextbox.value = os.path.join(
-        os.fspath(tmp_path),
-        "equivalent-spelling",
-        os.pardir,
-        database_path.name,
-    )
-
-    original_set_detail = harness.infoBox.set_trusted_run_detail
-
-    def set_detail_and_replace(detail):
-        original_set_detail(detail)
-        replacement_wal.replace(wal_path)
-
-    harness.infoBox.set_trusted_run_detail = set_detail_and_replace
-
-    harness.database_selected_run_progress(
-        harness._database_selected_run_generation,
-        accepted.logical_path,
-        "guid-7",
-        _selected_detail(),
-    )
-
-    assert harness.reloads == [accepted.logical_path]
-    assert harness.infoBox.visible is None
-    assert harness.RunList.updated
-    assert harness.RunList.all_run_metadata() == {}
-    assert harness.selected_run_id is None
-    assert harness._selected_run_guid is None
-    assert harness._selected_run_detail_cache == {}
-    assert harness._selected_run_partial_detail_keys == set()
-    assert harness._snapshot_setpoint_summary_cache == {}
-    assert not any(
-        message.startswith("Selected run") for message, _ in harness.status_messages
-    )
-
-
 @pytest.mark.parametrize(
-    ("callback_name", "generation_name", "active_name", "instance_name"),
-    [
-        (
-            "database_detail_batch_ready",
-            "_database_detail_generation",
-            "_database_detail_active",
-            "_database_detail_instance",
-        ),
-        (
-            "database_expensive_detail_batch_ready",
-            "_database_expensive_detail_generation",
-            "_database_expensive_detail_active",
-            "_database_expensive_detail_instance",
-        ),
-    ],
+    ("callback_name", "expensive"),
+    [("database_detail_batch_ready", False), ("database_expensive_detail_batch_ready", True)],
 )
 @pytest.mark.parametrize("worker_instance_bound", [True, False])
 def test_trusted_detail_callback_rechecks_after_row_publication(
     tmp_path,
     callback_name,
-    generation_name,
-    active_name,
-    instance_name,
+    expensive,
     worker_instance_bound,
 ):
     database_path, wal_path, replacement_wal, accepted = _sidecar_swap_fixture(
@@ -2245,13 +1524,10 @@ def test_trusted_detail_callback_rechecks_after_row_publication(
             self.RunList = _DiscardableRunList()
             self.applied = []
             self.reloads = []
-            setattr(self, generation_name, 19)
-            setattr(self, active_name, True)
-            setattr(
-                self,
-                instance_name,
-                accepted if worker_instance_bound else None,
-            )
+            channel = detail_channel(self, expensive)
+            channel.generation = 19
+            channel.active = True
+            channel.instance = accepted if worker_instance_bound else None
 
         def _apply_database_detail_batch(self, runs) -> None:
             self.applied.append(dict(runs))
@@ -2327,64 +1603,6 @@ def test_trusted_refresh_callback_rechecks_after_final_view_publication(tmp_path
     assert not harness._database_refresh_active
 
 
-def test_trusted_selection_ignores_stale_detail_then_renders_current_error():
-    instance = _instance("selected.db", (1, 7))
-    service = _FakeService(instance)
-    harness = _SelectionHarness(instance, service)
-
-    with (
-        patch.object(
-            database_actions,
-            "DatabaseSelectedRunWorker",
-            side_effect=lambda *args, **kwargs: _FakeSelectedWorker(args, kwargs),
-        ),
-        patch.object(
-            database_actions,
-            "database_instance",
-            return_value=instance,
-        ),
-        patch.object(database_actions, "log_exception"),
-    ):
-        assert harness._update_trusted_selected_run("guid-7")
-        generation = harness._database_selected_run_generation
-        active_worker = harness._database_selected_run_worker
-
-        harness.database_selected_run_progress(
-            generation - 1,
-            instance.logical_path,
-            "guid-7",
-            _selected_detail(),
-        )
-        harness.database_selected_run_finished(
-            generation - 1,
-            instance.logical_path,
-            "guid-7",
-            _selected_detail(),
-            None,
-        )
-        assert harness.infoBox.events[0][0] == "loading"
-        assert len(harness.infoBox.events) == 1
-        assert harness._database_selected_run_worker is active_worker
-
-        error = RuntimeError("bounded trusted detail failure")
-        harness.database_selected_run_finished(
-            generation,
-            instance.logical_path,
-            "guid-7",
-            None,
-            error,
-        )
-
-    assert harness.infoBox.events[-1][0:2] == (
-        "error",
-        "bounded trusted detail failure",
-    )
-    assert harness.RunList.updated == []
-    assert harness._selected_run_detail_cache == {}
-    assert harness._database_selected_run_worker is None
-    assert harness.status_messages[-1][0].startswith("Selected-run details failed:")
-
-
 def test_trusted_selection_never_falls_through_for_missing_or_malformed_rows():
     instance = _instance("selected.db", (1, 7))
     harness = _SelectionHarness(instance, _FakeService(instance))
@@ -2415,14 +1633,14 @@ def test_lost_trusted_service_cannot_start_snapshot_detail_workers(unusable_stat
             self._database_access_mode = database_actions.TRUSTED_LIVE_MODE
             self._loaded_database_instance = instance
             self._trusted_read_service = service
-            self._database_detail_generation = 4
-            self._database_detail_active = False
-            self._database_detail_worker = None
-            self._database_detail_instance = None
-            self._database_expensive_detail_generation = 5
-            self._database_expensive_detail_active = False
-            self._database_expensive_detail_worker = None
-            self._database_expensive_detail_instance = None
+            detail_channel(self).generation = 4
+            detail_channel(self).active = False
+            detail_channel(self).worker = None
+            detail_channel(self).instance = None
+            detail_channel(self, True).generation = 5
+            detail_channel(self, True).active = False
+            detail_channel(self, True).worker = None
+            detail_channel(self, True).instance = None
             self.error_messages = []
 
         def show_error(self, title: str, message: str, details=None) -> None:
@@ -2456,16 +1674,11 @@ def test_lost_trusted_service_cannot_start_snapshot_detail_workers(unusable_stat
 
     cheap_worker.assert_not_called()
     expensive_worker.assert_not_called()
-    assert not harness._database_detail_active
-    assert not harness._database_expensive_detail_active
-    assert harness.error_messages == [
-        (
-            "Trusted Details Unavailable",
-            "The accepted trusted live-reader session is no longer usable.",
-            "Reload the database to start a new trusted session. qPlot did not "
-            "fall back to snapshot metadata after the accepted-session failure.",
-        )
-    ]
+    assert not detail_channel(harness).active
+    assert not detail_channel(harness, True).active
+    # Trusted enrichment belongs to the bridge; these snapshot worker entry
+    # points stay inert even when the accepted service is unavailable.
+    assert harness.error_messages == []
 
 
 def test_retired_service_is_owned_until_broker_threads_really_exit():
@@ -3688,125 +2901,6 @@ def test_close_database_asynchronously_retires_active_and_pending_services():
     assert harness.monitor.stopped
 
 
-def test_trusted_load_selection_scroll_and_detail_completion_start_no_previews():
-    instance_a = _instance("preview-a.db", (2, 1))
-    instance_b = _instance("preview-b.db", (2, 2))
-    service_a = _FakeService(instance_a)
-    service_b = _FakeService(instance_b, accepted=False)
-    worker_b = _FakeLoadWorker(service_b)
-    harness = _TrustedPreviewBoundaryHarness(instance_a, service_a)
-    selected_workers = []
-    new_runs = {
-        7: {
-            "guid": "guid-7",
-            "name": "trusted run",
-            "run_timestamp": 7.0,
-            "result_count": 12,
-            "measure_parameters": ("signal",),
-            "sweep_parameters": ("gate",),
-        }
-    }
-
-    def selected_worker_factory(*args, **kwargs):
-        worker = _FakeSelectedWorker(args, kwargs)
-        selected_workers.append(worker)
-        return worker
-
-    instances = {
-        instance_a.logical_path: instance_a,
-        instance_b.logical_path: instance_b,
-    }
-
-    try:
-        with (
-            patch.object(
-                database_actions,
-                "get_DB_location",
-                return_value=instance_a.logical_path,
-            ),
-            patch.object(
-                database_actions,
-                "database_instance",
-                side_effect=lambda path: instances[logical_database_path(path)],
-            ),
-            patch.object(
-                database_actions,
-                "DatabaseLoadWorker",
-                return_value=worker_b,
-            ),
-            patch.object(
-                database_actions,
-                "DatabaseSelectedRunWorker",
-                side_effect=selected_worker_factory,
-            ),
-            patch.object(database_actions, "set_qcodes_database_location"),
-            patch.object(database_actions, "log_event"),
-            patch.object(preview_module, "PreviewWorker") as legacy_preview_worker,
-        ):
-            assert harness.load_file(instance_b.logical_path)
-            generation = harness._database_load_generation
-            service_b.accepted = True
-            harness.database_load_finished(
-                generation,
-                instance_b.logical_path,
-                new_runs,
-                None,
-                worker_b,
-            )
-
-            assert harness._selected_run_guid == "guid-7"
-            assert harness.selected_run_id == 7
-            assert len(selected_workers) == 1
-            assert harness.databaseSelectedRunThreadPool.started == selected_workers
-
-            # A real viewport-priority pass is the path used by scrolling.
-            harness._run_table_view_changed()
-
-            harness._database_detail_generation = 31
-            harness._database_detail_active = True
-            harness._database_detail_instance = instance_b
-            harness.database_detail_batch_ready(
-                31,
-                instance_b.logical_path,
-                {7: {"guid": "guid-7", "result_count": 13}},
-            )
-            harness.database_detail_finished(31, instance_b.logical_path, None)
-
-            harness._database_expensive_detail_generation = 32
-            harness._database_expensive_detail_active = True
-            harness._database_expensive_detail_instance = instance_b
-            harness.database_expensive_detail_batch_ready(
-                32,
-                instance_b.logical_path,
-                {7: {"guid": "guid-7", "storage_bytes": 4096}},
-            )
-            harness.database_expensive_detail_finished(
-                32,
-                instance_b.logical_path,
-                None,
-            )
-
-            selected_generation = harness._database_selected_run_generation
-            harness.database_selected_run_finished(
-                selected_generation,
-                instance_b.logical_path,
-                "guid-7",
-                _selected_detail(),
-                None,
-            )
-            harness._run_table_view_changed()
-
-        legacy_preview_worker.assert_not_called()
-        assert harness.infoBox.preview.database_path == ""
-        assert harness.infoBox.preview.queue == {}
-        assert harness.infoBox.preview._workers == {}
-        assert harness.infoBox.preview.current_guid is None
-        assert harness.ds is None
-        assert harness.RunList.all_run_metadata()[7]["storage_bytes"] == 4096
-    finally:
-        harness.dispose()
-
-
 @pytest.mark.parametrize(
     "publication_fails",
     (False, True),
@@ -4130,9 +3224,7 @@ def test_trusted_failed_explicit_plot_leaves_selection_with_no_dataset_cleanup(
             self.run_idBox = _Field("7")
             self.databaseDetailThreadPool = _ThreadPool()
             self._database_selected_run_generation = 0
-            self._database_selected_run_worker = None
-            self._database_selected_run_instance = None
-            self._selected_run_detail_cache = {}
+            self._trusted_derived_bridge = _SelectionBridge()
 
     class NoPlottableDataset(_ActionDataset):
         @staticmethod
@@ -4164,7 +3256,7 @@ def test_trusted_failed_explicit_plot_leaves_selection_with_no_dataset_cleanup(
             return_value=dataset,
         ) as load_by_guid,
         patch.object(
-            plot_actions,
+            dataset_registry_module,
             "close_dataset_connection",
             side_effect=close_action_dataset,
         ) as close_dataset,
@@ -4174,9 +3266,8 @@ def test_trusted_failed_explicit_plot_leaves_selection_with_no_dataset_cleanup(
             return_value=instance,
         ),
         patch.object(
-            database_actions,
+            database_workers,
             "DatabaseSelectedRunWorker",
-            side_effect=lambda *args, **kwargs: _FakeSelectedWorker(args, kwargs),
         ),
     ):
         if action_outcome == "plot-error":
@@ -4191,9 +3282,8 @@ def test_trusted_failed_explicit_plot_leaves_selection_with_no_dataset_cleanup(
         assert closed_datasets == [dataset]
         assert not hasattr(dataset, "conn")
 
-        # This is the ordinary Stage 4 selection path. It may schedule a plain
-        # trusted detail worker, but it must not load, snapshot, or close any
-        # QCoDeS/SQLite DataSet handle.
+        # Ordinary selection delegates to the current bridge without touching
+        # the explicit action's already-released dataset.
         harness.updateSelected(guid)
 
     load_by_guid.assert_not_called()
@@ -4201,7 +3291,8 @@ def test_trusted_failed_explicit_plot_leaves_selection_with_no_dataset_cleanup(
     assert closed_datasets == [dataset]
     assert not hasattr(dataset, "conn")
     assert harness.ds is None
-    assert harness.databaseDetailThreadPool.started
+    assert not harness.databaseDetailThreadPool.started
+    assert harness._trusted_derived_bridge.selections == [guid]
 
 
 def test_delayed_trusted_open_query_cancel_and_close_keep_gui_responsive():

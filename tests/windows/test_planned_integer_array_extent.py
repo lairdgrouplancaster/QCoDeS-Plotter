@@ -15,6 +15,7 @@ from qplot.datahandling.qcodes_cache import (
 from qplot.datahandling.readonly import load_by_id_read_only
 from qplot.tools.worker import loader
 from qplot.windows import main as main_window
+from qplot.windows._database_detail_state import detail_channel
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_complex_line_data import database_state
 from tests.windows.test_plot_integration import (
@@ -192,7 +193,7 @@ def test_actual_planned_integer_array_acquisition_extent(
                     monkeypatch.setattr(window, "show_error", lambda *args, errors=errors: errors.append(args))
                     window.close_database(status=False)
                     assert window.load_file(str(path))
-                    wait_for(lambda window=window: not window._database_load_active and not window._database_detail_active)
+                    wait_for(lambda window=window: not window._database_load_active and not detail_channel(window).active)
                     window.monitor.stop()
                     prior_plot_count = len(window.windows)
                     window.openPlot(guid=dataset.guid, params=[params["signal"]], show=False)

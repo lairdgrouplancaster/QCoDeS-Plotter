@@ -55,6 +55,7 @@ from qplot.testdata import (
 from qplot.windows import _database_actions as database_actions_module
 from qplot.windows import _plot_actions as plot_actions_module
 from qplot.windows import main as main_window
+from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._database_load_state import DatabaseLoadSession
 from qplot.windows._dataset_handle import database_file_identity
 from tests._window_lifecycle import close_main_window
@@ -267,8 +268,8 @@ def test_mixed_run_csv_is_identical_before_and_after_opening_plot(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -683,7 +684,6 @@ def select_nondefault_run_and_finish_previews(window):
             window.selected_run_id == target_run_id
             and window._selected_run_guid == target_guid
             and window.ds is None
-            and window._database_selected_run_worker is None
         )
     )
     wait_for(
@@ -829,8 +829,8 @@ def assert_same_path_generation_consumers_released(window):
     assert window.databaseRefreshThreadPool.activeThreadCount() == 0
     assert window.threadPool.activeThreadCount() == 0
     assert window._database_load_worker is None
-    assert window._database_detail_worker is None
-    assert window._database_expensive_detail_worker is None
+    assert detail_channel(window).worker is None
+    assert detail_channel(window, True).worker is None
     assert window._database_refresh_worker is None
     assert not window._plot_workers
     assert window.dataset_holder == {}
@@ -1665,8 +1665,8 @@ def test_main_window_close_releases_private_wal_snapshot_before_qt_cleanup(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -1863,8 +1863,8 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -1943,8 +1943,8 @@ def test_atomic_replacement_reloads_every_real_qcodes_runtime_object(
             lambda: (
                 not window._database_load_active
                 and not window._database_refresh_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
                 and window._loaded_database_identity
                 == database_file_identity(database_path)
             )
@@ -2055,8 +2055,8 @@ def test_symlinked_database_replacement_retires_the_accepted_instance(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -2096,8 +2096,8 @@ def test_symlinked_database_replacement_retires_the_accepted_instance(
             lambda: (
                 not window._database_load_active
                 and not window._database_refresh_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -2166,8 +2166,8 @@ def test_atomic_replacement_of_live_wal_uses_new_main_without_source_writes(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -2239,8 +2239,8 @@ def test_atomic_replacement_of_live_wal_uses_new_main_without_source_writes(
             lambda: (
                 not window._database_load_active
                 and not window._database_refresh_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
                 and any(
                     run.get("result_count") == 4 and run.get("guid") != old_guid
                     for run in window.RunList.all_run_metadata().values()
@@ -2294,8 +2294,8 @@ def test_existing_live_plot_refresh_quarantines_replaced_wal_before_worker_read(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -2352,8 +2352,8 @@ def test_existing_live_plot_refresh_quarantines_replaced_wal_before_worker_read(
             lambda: (
                 not window._database_load_active
                 and not window._database_refresh_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -2407,8 +2407,8 @@ def test_replaced_background_plot_does_not_switch_current_database(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -2424,8 +2424,8 @@ def test_replaced_background_plot_does_not_switch_current_database(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -2534,8 +2534,8 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
             wait_for(
                 lambda: (
                     not window._database_load_active
-                    and not window._database_detail_active
-                    and not window._database_expensive_detail_active
+                    and not detail_channel(window).active
+                    and not detail_channel(window, True).active
                 )
             )
             window.monitor.stop()
@@ -2644,8 +2644,8 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
             wait_for(
                 lambda: (
                     not window._database_load_active
-                    and not window._database_detail_active
-                    and not window._database_expensive_detail_active
+                    and not detail_channel(window).active
+                    and not detail_channel(window, True).active
                 )
             )
             window.monitor.stop()
@@ -2778,8 +2778,8 @@ def test_preview_export_dialog_replacement_precedes_fresh_dataset_acquisition(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -2843,8 +2843,8 @@ def test_preview_export_dialog_replacement_precedes_fresh_dataset_acquisition(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
                 and window._loaded_database_identity
                 == database_file_identity(database_path)
             )
@@ -2914,8 +2914,8 @@ def test_preview_export_extraction_replacement_preserves_existing_csv(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -2991,8 +2991,8 @@ def test_preview_export_extraction_replacement_preserves_existing_csv(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
                 and window._loaded_database_identity
                 == database_file_identity(database_path)
             )
@@ -3063,8 +3063,8 @@ def test_preview_export_rejects_database_replacement_during_fresh_load(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -3213,8 +3213,8 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
                 and not window.infoBox.preview._workers
                 and not window._plot_workers
             )
@@ -3280,12 +3280,12 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
             None,
         )
         window.database_detail_batch_ready(
-            window._database_detail_generation,
+            detail_channel(window).generation,
             str(database_path),
             {99: {"guid": "stale-detail-guid"}},
         )
         window.database_expensive_detail_batch_ready(
-            window._database_expensive_detail_generation,
+            detail_channel(window, True).generation,
             str(database_path),
             {99: {"guid": "stale-expensive-detail-guid"}},
         )
@@ -3321,8 +3321,8 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
 
@@ -3419,8 +3419,8 @@ def test_unrelated_database_load_is_not_overwritten_by_generation_callback(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
 
@@ -3449,8 +3449,8 @@ def test_unrelated_database_load_is_not_overwritten_by_generation_callback(
             lambda: (
                 window.fileTextbox.text() == str(unrelated_path)
                 and not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         unrelated_instance = database_instance(unrelated_path)
@@ -3527,8 +3527,8 @@ def test_same_path_generation_prepublication_failure_restores_static_view(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.spinBox.setValue(2.4)
@@ -3567,8 +3567,8 @@ def test_same_path_generation_prepublication_failure_restores_static_view(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         wait_for_trusted_derived_work(window)
@@ -3665,8 +3665,8 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.spinBox.setValue(2.4)
@@ -3706,8 +3706,8 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         wait_for_trusted_derived_work(window)
@@ -3768,8 +3768,8 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.spinBox.setValue(2.4)
@@ -3793,8 +3793,8 @@ def test_loaded_path_test_database_generation_uses_full_gui_worker_lifecycle(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
 
@@ -3889,8 +3889,8 @@ def test_loaded_path_test_database_generation_uses_replacement_reload(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -3918,8 +3918,8 @@ def test_loaded_path_test_database_generation_uses_replacement_reload(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -4039,8 +4039,8 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()
@@ -4453,8 +4453,8 @@ def test_threaded_wal_direct_sql_heatmap_completes_without_source_writes(
         wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()

@@ -9,6 +9,7 @@ import json
 from itertools import islice
 from typing import Any, cast
 
+from qplot.datahandling._sqlite_identifiers import quote_identifier
 from qplot.datahandling.trusted_live import (
     TrustedQueryResult,
 )
@@ -117,7 +118,7 @@ def quote_sqlite_identifier(identifier: object) -> str:
         raise TrustedMetadataQueryError(
             "A database-derived table or column identifier is invalid."
         )
-    return '"' + identifier.replace('"', '""') + '"'
+    return quote_identifier(identifier)
 
 
 def parameter_views_from_run_metadata(

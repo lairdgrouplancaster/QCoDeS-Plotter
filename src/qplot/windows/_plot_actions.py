@@ -2,19 +2,21 @@ import os
 from functools import wraps
 from inspect import signature
 
-import numpy as np
 from PyQt6 import QtCore
 
 from qplot.datahandling.dimensions import (
     MAX_SUPPORTED_PLOT_DIMENSIONS,
     unsupported_plot_message,
 )
+from qplot.datahandling.export_data import (
+    csv_scalar_columns,
+    exportable_measurement_params,
+)
 from qplot.datahandling.file_identity import (
     DatabaseInstance,
     logical_database_path,
 )
 from qplot.datahandling.parameter_data import (
-    concatenate_record_samples,
     parameter_data_for_export,
 )
 from qplot.datahandling.readonly import (
@@ -36,6 +38,7 @@ from ._dataset_handle import (
     close_dataset_connection,
     dataset_key_matches_current_source,
 )
+from ._dataset_registry import dataset_registry
 from ._export_paths import choose_export_path, write_export_atomically
 from ._plot2d_layers import _heatmap_layer_compatibility, _window_display_unit
 from ._plot_drop_axes import plan_drop_axes
@@ -93,78 +96,6 @@ def _combo_index_for_data(combo, value):
         if item_data(index) == value:
             return index
     return -1
-
-
-def _exportable_measurement_params(dataset):
-    """Return dependent values, then standalone values, in run order."""
-    parameters = dataset.get_parameters()
-    setpoint_names = {
-        name
-        for param in parameters
-        for name in param.depends_on_
-    }
-    dependent = [param for param in parameters if param.depends_on_]
-    standalone = [
-        param for param in parameters
-        if not param.depends_on_ and param.name not in setpoint_names
-    ]
-    return dependent + standalone
-
-
-def _csv_scalar_samples(values):
-    """Flatten a record, including arrays held in NumPy object cells."""
-    array = np.asarray(values)
-    if not array.dtype.hasobject:
-        return array.ravel()
-    samples = []
-    for value in array.ravel():
-        if isinstance(value, (np.ndarray, list, tuple)):
-            samples.extend(_csv_scalar_samples(value))
-        else:
-            samples.append(value)
-    # These cells can mix signed/unsigned integers (or integers and floats).
-    # Inferring a dtype again would undo extraction's precision protection.
-    return np.asarray(samples, dtype=object)
-
-
-def _csv_scalar_columns(param_data, output_param=None):
-    """Align samples within each QCoDeS record before joining records."""
-    arrays = {name: np.asarray(values) for name, values in param_data.items()}
-    if not arrays:
-        return {}
-    # QCoDeS trees are output-first; export callers also supply the selected
-    # output explicitly so column presentation order cannot define acquisition.
-    if output_param is None:
-        output_param = next(iter(arrays))
-    # Regular, already aligned columns need no record-by-record expansion.
-    if (
-            len({values.shape for values in arrays.values()}) == 1
-            and all(not values.dtype.hasobject for values in arrays.values())
-            ):
-        return {name: values.ravel() for name, values in arrays.items()}
-
-    chunks = {name: [] for name in arrays}
-    for record in zip(*arrays.values(), strict=True):
-        samples = {
-            name: _csv_scalar_samples(values)
-            for name, values in zip(arrays, record, strict=True)
-        }
-        sample_count = (max(values.size for values in samples.values())
-                        if samples[output_param].size else 0)
-        for name, values in samples.items():
-            if values.size == sample_count:
-                chunks[name].append(values)
-            elif values.size == 1:
-                chunks[name].append(np.repeat(values, sample_count))
-            else:
-                raise ValueError(
-                    f"Cannot align CSV record column {name}: "
-                    f"{values.size} samples instead of {sample_count}."
-                )
-    return {
-        name: concatenate_record_samples(parts) if parts else np.array([], dtype=arrays[name].dtype)
-        for name, parts in chunks.items()
-    }
 
 
 class PlotActionsMixin:
@@ -433,16 +364,11 @@ class PlotActionsMixin:
 
     def _discard_dataset_handle(self, dataset_key, handle):
         """Remove and close one handle that cannot represent its key safely."""
-        if self.dataset_holder.get(dataset_key) is handle:
-            self.dataset_holder.pop(dataset_key, None)
         if handle.dataset is getattr(self, "ds", None):
             self.ds = None
             self._selected_dataset_key = None
             self.selected_run_id = None
-        try:
-            handle.close()
-        except Exception as err:
-            log_exception("Stale plot dataset cleanup failed", err, __name__)
+        dataset_registry(self).discard(dataset_key, handle)
 
 
     def _dataset_handle_for_key(self, dataset_key):
@@ -488,22 +414,11 @@ class PlotActionsMixin:
         return handle
 
     def _dataset_is_held(self, dataset):
-        return dataset is not None and any(
-            handle.dataset is dataset
-            for handle in self.dataset_holder.values()
-            )
+        return dataset_registry(self).holds(dataset)
 
 
     def _close_dataset_if_unowned(self, dataset, context="Dataset cleanup failed"):
-        if dataset is None or dataset is getattr(self, "ds", None):
-            return False
-        if self._dataset_is_held(dataset):
-            return False
-        try:
-            return close_dataset_connection(dataset)
-        except Exception as err:
-            log_exception(context, err, __name__)
-            return False
+        return dataset_registry(self).close_unowned(dataset, context=context)
 
 
     def _replace_selected_dataset(self, dataset, dataset_key):
@@ -593,28 +508,11 @@ class PlotActionsMixin:
 
 
     def _evict_dataset_handle(self, dataset_key):
-        handle = self.dataset_holder.pop(dataset_key, None)
-        if handle is None:
-            return False
-
-        handle.cancel_delete_timer()
-        if handle.dataset is getattr(self, "ds", None):
-            return True
-        try:
-            handle.close()
-        except Exception as err:
-            log_exception("Plot dataset cleanup failed", err, __name__)
-        return True
+        return dataset_registry(self).evict(dataset_key)
 
 
     def _close_all_dataset_handles(self):
-        handles = list(self.dataset_holder.values())
-        self.dataset_holder.clear()
-        for handle in handles:
-            try:
-                handle.close()
-            except Exception as err:
-                log_exception("Plot dataset cleanup failed", err, __name__)
+        dataset_registry(self).close_all()
 
 
     @staticmethod
@@ -794,7 +692,7 @@ class PlotActionsMixin:
         del win
 
 
-    def _publish_displayed_plot_preview(self, plot, worker):
+    def _publish_displayed_plot_preview(self, plot, result):
         """Show one displayed measurement while run previews are queued."""
 
         preview = getattr(getattr(self, "infoBox", None), "preview", None)
@@ -803,12 +701,12 @@ class PlotActionsMixin:
         key = getattr(plot, "_dataset_key", None)
         if not isinstance(key, DatasetKey) or key.guid not in preview.run_metadata:
             return
-        if getattr(worker, "dataset_completed", None) is not True:
+        if getattr(result, "dataset_completed", None) is not True:
             # For an active run, reuse only the same row prefix currently
             # advertised by the run list. Its next metadata update will
             # discard the provisional image and request fresh derived work.
             try:
-                displayed_count = int(worker.dataset_length_at_start)
+                displayed_count = int(result.dataset_length_at_start)
                 listed_count = int(
                     preview.run_metadata[key.guid]["result_count"]
                 )
@@ -837,7 +735,7 @@ class PlotActionsMixin:
         from ._widgets.preview import render_displayed_plot_preview
 
         plot_preview = render_displayed_plot_preview(
-            worker,
+            result,
             getattr(plot, "param", None),
             preview.preview_size,
         )
@@ -1225,7 +1123,7 @@ class PlotActionsMixin:
             dataset_key = self._bind_one_shot_dataset_key(dataset_key)
             dataset = self._load_run_csv_dataset(dataset_key)
             data = parameter_data_for_export(dataset, parameter_name)
-            columns = _csv_scalar_columns(data, parameter_name)
+            columns = csv_scalar_columns(data, parameter_name)
             stats_text = dataset_statistics_text(
                 columns, parameter_name,
                 setpoint_names=dataset.paramspecs[parameter_name].depends_on_,
@@ -2364,7 +2262,7 @@ class PlotActionsMixin:
             try:
                 parameter_names = tuple(
                     param.name
-                    for param in _exportable_measurement_params(selected_dataset)
+                    for param in exportable_measurement_params(selected_dataset)
                 )
             except Exception as error:
                 log_exception("Run parameter enumeration failed", error, __name__)
@@ -2403,7 +2301,7 @@ class PlotActionsMixin:
                     dataset = self._load_run_csv_dataset(dataset_key)
                     parameter_names = tuple(
                         param.name
-                        for param in _exportable_measurement_params(dataset)
+                        for param in exportable_measurement_params(dataset)
                     )
                     self._require_run_csv_source_current(dataset_key)
                 except DatabaseInstanceChangedError:
@@ -2453,7 +2351,7 @@ class PlotActionsMixin:
     def _measurement_params_by_names(self, dataset, parameter_names):
         """Resolve captured measurement names against a freshly loaded run."""
         parameters = {
-            param.name: param for param in _exportable_measurement_params(dataset)
+            param.name: param for param in exportable_measurement_params(dataset)
         }
         resolved = []
         for name in parameter_names:
@@ -2576,7 +2474,7 @@ class PlotActionsMixin:
         for param in params:
             param_data = parameter_data_for_export(dataset, param.name)
             columns = {}
-            for name, values in _csv_scalar_columns(param_data, param.name).items():
+            for name, values in csv_scalar_columns(param_data, param.name).items():
                 column_name = f"{param.name}.{name}" if prefix_columns else name
                 # Object samples may need both uint64 and negative int64, or
                 # exact integers alongside floats. Disable pandas' inference.
@@ -2695,11 +2593,7 @@ class PlotActionsMixin:
                 raise RuntimeError(
                     "The database was replaced while its dataset was being acquired."
                 )
-            self.dataset_holder[dataset_key] = DatasetHandle(
-                dataset=ds,
-                database_identity=dataset_key.database_identity,
-                sidecar_identities=dataset_key.sidecar_identities,
-            )
+            dataset_registry(self).add(dataset_key, ds)
         else:
             handle.retain()
 
@@ -2710,27 +2604,10 @@ class PlotActionsMixin:
         Decreases the user count for a cached plot dataset.
 
         """
-        handle = self.dataset_holder.get(dataset_key)
-        if handle is None:
+        if not dataset_registry(self).release(
+            dataset_key, lambda: self.config.get("runtime_settings.del_grace_period"),
+        ):
             self.show_status("Trying to remove dataset that does not exist.", 5000)
-            return
-
-        handle.release()
-
-        if handle.users <= 0:
-            del_time = self.config.get("runtime_settings.del_grace_period")
-
-            if del_time == 0:
-                self._evict_dataset_handle(dataset_key)
-
-            elif handle.delete_timer is None:
-                del_timer = QtCore.QTimer()
-                del_timer.setSingleShot(True)
-                handle.delete_timer = del_timer
-                del_timer.timeout.connect(
-                    lambda key=dataset_key: self._evict_dataset_handle(key)
-                )
-                del_timer.start(int(del_time * 1000))
 
 
     def _current_dataset_key(self, guid: str) -> DatasetKey:

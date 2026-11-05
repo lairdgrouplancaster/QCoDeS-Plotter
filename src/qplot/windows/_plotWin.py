@@ -1,16 +1,21 @@
-from math import ceil, floor, isclose, isfinite, isnan, log10, ulp
+from math import isfinite
 from os import path
-from types import MethodType
 from typing import TYPE_CHECKING, cast, final
 
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot._number_formatting import (
+    cursor_field_width,
+    format_cursor_number,
+    format_number,
+)
 from qplot.tools import (
     unpack_param,
 )
 
+from ._axis_ticks import _configure_major_ticks
 from ._commands import (
     command_spec,
     command_with_status,
@@ -73,8 +78,6 @@ if TYPE_CHECKING:
     import qplot
 
 
-_MAX_TICK_POSITIONS = 2048
-
 _A4_LANDSCAPE_PLOT_AREA_SIZE = QtCore.QSize(1123, 794)
 _A4_PORTRAIT_PLOT_AREA_SIZE = QtCore.QSize(794, 1123)
 _POWERPOINT_STANDARD_PLOT_AREA_SIZE = QtCore.QSize(960, 720)
@@ -107,271 +110,6 @@ _PLOT_AREA_RESIZE_PRESETS = (
         _SQUARE_PLOT_AREA_SIZE,
         ),
     )
-
-
-def _tick_positions(min_val, max_val, spacing, offset):
-    """Return the positions on one regular tick lattice inside a range."""
-
-    min_val, max_val = sorted((min_val, max_val))
-    if (
-            not all(isfinite(value) for value in (min_val, max_val, spacing, offset))
-            or spacing <= 0
-            ):
-        return []
-
-    data_range = max_val - min_val
-    span_tolerance = data_range * 1e-12 if isfinite(data_range) else 0.0
-    coordinate_precision = max(ulp(min_val), ulp(max_val))
-    if spacing < coordinate_precision:
-        return []
-    tolerance = max(
-        span_tolerance,
-        spacing * 1e-12,
-        coordinate_precision,
-        ulp(offset),
-        )
-    ratio_tolerance = tolerance / spacing
-    if not isfinite(ratio_tolerance):
-        return []
-
-    if isfinite(data_range):
-        estimated_count = (data_range / spacing) + (2.0 * ratio_tolerance) + 2.0
-    else:
-        estimated_count = (
-            (max_val / spacing)
-            - (min_val / spacing)
-            + (2.0 * ratio_tolerance)
-            + 2.0
-            )
-    if not isfinite(estimated_count) or estimated_count > _MAX_TICK_POSITIONS:
-        return []
-
-    lower_ratio = (min_val - offset) / spacing
-    upper_ratio = (max_val - offset) / spacing
-    if not isfinite(lower_ratio) or not isfinite(upper_ratio):
-        return []
-    first_index = ceil(lower_ratio - ratio_tolerance)
-    last_index = floor(upper_ratio + ratio_tolerance)
-    count = last_index - first_index + 1
-    if count <= 0 or count > _MAX_TICK_POSITIONS:
-        return []
-
-    positions = []
-    for index in range(first_index, last_index + 1):
-        try:
-            position = (index * spacing) + offset
-        except OverflowError:
-            continue
-        if not isfinite(position):
-            continue
-        if position < min_val and min_val - position > tolerance:
-            continue
-        if position > max_val and position - max_val > tolerance:
-            continue
-        if not positions or position != positions[-1]:
-            positions.append(position)
-    return positions
-
-
-def _visible_horizontal_tick_positions(axis, positions, min_val, max_val, size,
-                                       spacing):
-    """Return ticks whose labels fit completely within a horizontal axis."""
-
-    if getattr(axis, "orientation", None) not in ("bottom", "top") or size <= 0:
-        return positions
-
-    scale = axis.autoSIPrefixScale * axis.scale
-    strings = _clean_tick_strings(axis, positions, scale, spacing)
-    font = axis.style.get("tickFont") or qtw.QApplication.font()
-    metrics = QtGui.QFontMetricsF(font)
-    data_range = max_val - min_val
-    visible = []
-    for position, string in zip(positions, strings, strict=True):
-        pixel = ((position - min_val) / data_range) * size
-        half_width = metrics.boundingRect(string).width() / 2.0
-        if half_width <= pixel <= size - half_width:
-            visible.append(position)
-    return visible
-
-
-def _major_tick_spacing(axis, min_val, max_val, size):
-    """Choose a zero-aligned 1-2-5 interval nearest the requested tick count."""
-
-    min_val, max_val = sorted((min_val, max_val))
-    if not isfinite(min_val) or not isfinite(max_val):
-        return []
-    data_range = max_val - min_val
-    if data_range == 0:
-        return []
-
-    target = axis._qplot_major_tick_count
-    divisor = max(1, target - 1)
-    raw_spacing = (max_val / divisor) - (min_val / divisor)
-    if not isfinite(raw_spacing):
-        raw_spacing = max(abs(min_val), abs(max_val))
-    if raw_spacing == 0.0 and isfinite(data_range):
-        raw_spacing = data_range
-    if not isfinite(raw_spacing) or raw_spacing <= 0.0:
-        return []
-
-    base_exponent = floor(log10(raw_spacing))
-    visible_candidates = []
-    fallback_candidates = []
-    for exponent in range(base_exponent - 2, base_exponent + 3):
-        try:
-            decade = 10.0 ** exponent
-        except OverflowError:
-            continue
-        if not isfinite(decade) or decade <= 0.0:
-            continue
-        for factor in (1.0, 2.0, 5.0):
-            spacing = factor * decade
-            if not isfinite(spacing) or spacing <= 0.0:
-                continue
-            for offset in (0.0,):
-                positions = _tick_positions(min_val, max_val, spacing, offset)
-                if not positions:
-                    continue
-                fallback_candidates.append((
-                    abs(len(positions) - target),
-                    len(positions) < 2,
-                    abs(log10(spacing) - log10(raw_spacing)),
-                    spacing,
-                    offset,
-                    factor,
-                    ))
-                scored_positions = _visible_horizontal_tick_positions(
-                    axis,
-                    positions,
-                    min_val,
-                    max_val,
-                    size,
-                    spacing,
-                    )
-                count = len(scored_positions)
-                if count == 0:
-                    continue
-                if isfinite(data_range):
-                    coverage = (
-                        (scored_positions[-1] - scored_positions[0]) / data_range
-                        if count > 1
-                        else 0.0
-                        )
-                    centre_error = abs(
-                        (
-                            (scored_positions[0] - min_val)
-                            + (scored_positions[-1] - max_val)
-                        ) / 2.0
-                        ) / data_range
-                else:
-                    scale = max(abs(min_val), abs(max_val))
-                    scaled_range = (max_val / scale) - (min_val / scale)
-                    coverage = (
-                        (
-                            (scored_positions[-1] / scale)
-                            - (scored_positions[0] / scale)
-                        ) / scaled_range
-                        if count > 1
-                        else 0.0
-                        )
-                    tick_centre = (
-                        (scored_positions[0] / scale) / 2.0
-                        + (scored_positions[-1] / scale) / 2.0
-                        )
-                    range_centre = (
-                        (min_val / scale) / 2.0
-                        + (max_val / scale) / 2.0
-                        )
-                    centre_error = abs(tick_centre - range_centre) / scaled_range
-                visible_candidates.append((
-                    abs(count - target),
-                    count < 2,
-                    -coverage,
-                    centre_error,
-                    abs(log10(spacing) - log10(raw_spacing)),
-                    spacing,
-                    offset,
-                    factor,
-                    ))
-
-    if visible_candidates:
-        _, _, _, _, _, major_spacing, offset, factor = min(visible_candidates)
-    elif fallback_candidates:
-        _, _, _, major_spacing, offset, factor = min(fallback_candidates)
-    else:
-        major_spacing = raw_spacing
-        offset = 0.0
-        factor = 1.0
-    subdivisions = {
-        1.0: 5,
-        2.0: 4,
-        5.0: 5,
-        }[factor]
-    levels = [(major_spacing, offset)]
-    minor_spacing = major_spacing / subdivisions
-    if isfinite(minor_spacing) and 0.0 < minor_spacing < major_spacing:
-        levels.append((minor_spacing, offset))
-    return levels
-
-
-def _clean_tick_strings(axis, values, scale, spacing):
-    """Format nice intervals accurately and round-off near zero as zero."""
-
-    if axis.logMode and spacing is None:
-        return axis._qplot_original_tick_strings(
-            values,
-            scale,
-            spacing,
-            )
-
-    # Work in tick coordinates: an absolute floor erases small measurements
-    # before SI scaling. Allow floating-point round-off, but never a meaningful
-    # fraction of a tick interval, even if distant ticks have coarse precision.
-    interval = abs(spacing)
-    precision = max((ulp(value) for value in values), default=ulp(interval))
-    tolerance = min(interval * 1e-6, max(interval * 1e-10, precision * 4))
-    clean_values = [0.0 if abs(value) <= tolerance else value for value in values]
-    if axis.logMode:
-        return axis._qplot_original_tick_strings(
-            clean_values,
-            scale,
-            spacing,
-            )
-
-    scaled_spacing = abs(spacing * scale)
-    places = max(0, ceil(-log10(scaled_spacing)))
-    while places < 12 and not isclose(
-            scaled_spacing,
-            round(scaled_spacing, places),
-            rel_tol=1e-12,
-            abs_tol=10.0 ** (-places - 12),
-            ):
-        places += 1
-
-    strings = []
-    for value in clean_values:
-        scaled_value = value * scale
-        if abs(scaled_value) < 0.001 or abs(scaled_value) >= 10_000:
-            strings.append(f"{scaled_value:g}")
-        else:
-            strings.append(f"{scaled_value:.{places}f}")
-    return strings
-
-
-def _configure_major_ticks(axis, count):
-    """Make an AxisItem use qPlot's sparse, range-aware major ticks."""
-
-    axis._qplot_major_tick_count = count
-    if not hasattr(axis, "_qplot_major_tick_spacing"):
-        axis._qplot_major_tick_spacing = axis.tickSpacing
-        axis.tickSpacing = MethodType(_major_tick_spacing, axis)
-    current_tick_strings = axis.tickStrings
-    if getattr(current_tick_strings, "__func__", None) is not _clean_tick_strings:
-        axis._qplot_original_tick_strings = current_tick_strings
-        axis.tickStrings = MethodType(_clean_tick_strings, axis)
-    axis.setStyle(maxTickLevel=1, maxTextLevel=0)
-    axis.picture = None
-    axis.update()
 
 
 def _plot_area_size_icon(size):
@@ -1476,60 +1214,20 @@ class plotWidget(
 #Other Methods  
         
     @staticmethod
-    def formatNum(num : float, sf : int=3) -> str:
-        """
-        Formats cursor point value to clean str display for user.
-
-        Parameters
-        ----------
-        num : float
-            Value at cursor point.
-        sf : int, optional
-            Number of significant figures to display. The default is 3.
-            If this is changed, recomand increase labelWidth in initLables.
-
-        Returns
-        -------
-        str
-            Formated string for display.
-
-        """
-        if not isfinite(num):
-            if isnan(num):
-                return "nan"
-            return "-inf" if num < 0 else "inf"
-
-        try: # Get number of leading/following zeros
-            exponent = floor(log10(abs(num)))
-        except ValueError:
-            return f"{0:.{sf}f}"
-
-        precision = max(sf - 1, 0)
-        if exponent >= sf or exponent < 0:
-            return f"{num:.{precision}e}"
-
-        formatted = f"{num:.{max(sf - exponent - 1, 0)}f}"
-        rounded_exponent = floor(log10(abs(float(formatted))))
-        if rounded_exponent != exponent:
-            return f"{num:.{precision}e}"
-        return formatted
-
+    def formatNum(num: float, sf: int = 3) -> str:
+        """Format summary values with the shared measurement presentation."""
+        return format_number(num, sf)
 
     def format_cursor_number(self, value: float) -> str:
         """Format a coordinate using the current cursor precision preference."""
         figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
-        mantissa_width = figures + 2 if figures > 1 else 2
-        if not isfinite(value):
-            return f"{value:>{mantissa_width + 4}}"
-        mantissa, exponent = f"{value:.{figures - 1}e}".split("e")
-        return f"{mantissa:>{mantissa_width}}e{int(exponent):+03d}"
+        return format_cursor_number(value, figures)
 
 
     def apply_cursor_label_widths(self) -> None:
         """Keep monospaced fields stable across signs, values and exponents."""
         labels = self.__dict__.get("pos_labels", {})
         figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
-        mantissa_width = figures + 2 if figures > 1 else 2
         for axis, label in labels.items():
             if axis == "index":
                 characters = 17 if "z" in labels else 9
@@ -1537,7 +1235,7 @@ class plotWidget(
             else:
                 # Two exponent digits are enough for ordinary measurements.
                 # Qt can grow a field for an exceptional three-digit exponent.
-                label.setMinimumWidth(label.fontMetrics().horizontalAdvance("0" * (mantissa_width + 4)))
+                label.setMinimumWidth(label.fontMetrics().horizontalAdvance("0" * cursor_field_width(figures)))
 
 
     def _set_cursor_index_label(self, text: str) -> None:

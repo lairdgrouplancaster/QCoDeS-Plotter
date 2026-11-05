@@ -2,6 +2,7 @@
 
 from time import monotonic
 
+from qplot import _process_shutdown as process_shutdown
 from qplot.windows import main as main_window
 from qplot.windows._shutdown_coordinator import (
     ShutdownCoordinator,
@@ -17,7 +18,7 @@ def attach_shutdown(window, *, waiting=False):
             window,
             timeout_seconds=main_window._APPLICATION_SHUTDOWN_TIMEOUT_SECONDS,
             diagnostic_grace_seconds=main_window._APPLICATION_SHUTDOWN_DIAGNOSTIC_GRACE_SECONDS,
-            persist_diagnostics=main_window._persist_shutdown_diagnostics,
+            persist_diagnostics=process_shutdown.persist_shutdown_diagnostics,
         )
         resources = window._shutdown.resources
         for name in dir(window):

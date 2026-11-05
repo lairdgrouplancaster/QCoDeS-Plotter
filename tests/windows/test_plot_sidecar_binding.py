@@ -8,6 +8,7 @@ import pytest
 
 from qplot.datahandling.file_identity import database_sidecar_identities
 from qplot.tools import worker as worker_module
+from qplot.tools.plot_result import capture_plot_result
 from qplot.tools.worker import loader
 from qplot.windows import _plot_actions as plot_actions_module
 from qplot.windows import _plot_refresh as plot_refresh_module
@@ -248,6 +249,7 @@ def test_callback_swap_rolls_back_shared_cache_and_axis_state(
     worker.display_param = "new-display"
     worker.dataset_length_at_start = 2
     worker.started_at = 0.0
+    worker.result = capture_plot_result(worker)
     plot.worker = worker
 
     real_update = plot_refresh_module.update_cache_parameter_data
@@ -333,6 +335,7 @@ def test_attribute_error_after_swap_rolls_back_before_soft_error(tmp_path):
     worker.display_param = "new-display"
     worker.dataset_length_at_start = 2
     worker.started_at = 0.0
+    worker.result = capture_plot_result(worker)
     plot.worker = worker
 
     assert not plotWidget.refreshPlot(plot, True, worker=worker)
@@ -470,6 +473,7 @@ def test_old_line_callback_cannot_render_after_reentrant_newer_publication(
     older_worker.display_param = "older-display"
     older_worker.dataset_length_at_start = 2
     older_worker.started_at = 0.0
+    older_worker.result = capture_plot_result(older_worker)
     plot.worker = older_worker
 
     newer_worker = _RefreshWorker()
@@ -518,6 +522,9 @@ def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
     newer_worker = _RefreshWorker(running=True)
 
     plot = plot2d.__new__(plot2d)
+    older_worker.result = capture_plot_result(SimpleNamespace(
+        read_data=False, axis_data={}, axis_param={}, dataset_completed=False,
+    ))
     plot.worker = older_worker
     plot._qplot_publication_generation = 1
     plot._refresh_publication = plot_refresh_module.RefreshPublication(
@@ -632,6 +639,7 @@ def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path):
     worker.display_param = "new-display"
     worker.dataset_length_at_start = 2
     worker.started_at = 0.0
+    worker.result = capture_plot_result(worker)
     plot.worker = worker
 
     plot1d.refreshPlot(plot, True, worker=worker)

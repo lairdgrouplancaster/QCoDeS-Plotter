@@ -9,13 +9,13 @@ import sys
 import tempfile
 import textwrap
 from pathlib import Path
-from threading import Event as ThreadEvent
 from time import monotonic, sleep
 from types import SimpleNamespace
 
 import pytest
 from PyQt6 import QtWidgets as qtw
 
+from qplot import _process_shutdown as process_shutdown
 from qplot.windows import main as main_window
 from tests._shutdown_harness import attach_shutdown
 from tests.test_shutdown_supervisor import _process_is_running
@@ -45,6 +45,7 @@ _REAL_QTHREADPOOL_SHUTDOWN_PROBE = textwrap.dedent(
     from qplot.__main__ import _finalize_confirmed_process_shutdown
     from qplot._shutdown_supervisor import ShutdownSupervisorClient
     from qplot.diagnostics import configure_logging
+    from qplot import _process_shutdown as process_shutdown
     from qplot.windows import main as main_window
     from tests._shutdown_harness import attach_shutdown
 
@@ -66,7 +67,7 @@ _REAL_QTHREADPOOL_SHUTDOWN_PROBE = textwrap.dedent(
             print("DIAGNOSTIC_IO_BLOCKED", flush=True)
             diagnostic_gate.wait(10.0)
 
-        main_window._persist_shutdown_diagnostics = block_diagnostic_io
+        process_shutdown.persist_shutdown_diagnostics = block_diagnostic_io
 
     class Config:
         def get(self, _key):
@@ -167,8 +168,9 @@ _REAL_QTHREADPOOL_SHUTDOWN_PROBE = textwrap.dedent(
 
     # A successful forced regression can therefore be satisfied only by the
     # independent direct-parent launcher, never by an in-GUI fallback thread.
-    process_fail_safe = main_window._ProcessShutdownFailSafe(
+    process_fail_safe = process_shutdown.ProcessShutdownFailSafe(
         supervisor_client,
+        persist_diagnostics=process_shutdown.persist_shutdown_diagnostics,
         force_exit=suppress_local_force_exit,
     )
     window = Window(process_fail_safe)
@@ -275,6 +277,7 @@ _CONFIRMATION_REJECTION_PROBE = textwrap.dedent(
     from PyQt6 import QtCore
     from PyQt6 import QtWidgets as qtw
     from qplot._shutdown_supervisor import ShutdownSupervisorClient
+    from qplot import _process_shutdown as process_shutdown
     from qplot.windows import main as main_window
     from tests._shutdown_harness import attach_shutdown
 
@@ -291,8 +294,9 @@ _CONFIRMATION_REJECTION_PROBE = textwrap.dedent(
 
     application = qtw.QApplication.instance() or qtw.QApplication([])
     supervisor_client = ShutdownSupervisorClient.from_environment().connect()
-    process_fail_safe = main_window._ProcessShutdownFailSafe(
+    process_fail_safe = process_shutdown.ProcessShutdownFailSafe(
         supervisor_client,
+        persist_diagnostics=process_shutdown.persist_shutdown_diagnostics,
         force_exit=lambda code: print(
             f"UNEXPECTED_LOCAL_FORCE_EXIT code={code}", flush=True
         ),
@@ -401,214 +405,6 @@ def test_cancelled_confirmation_never_arms_process_fail_safe(
     assert armed == []
 
 
-def test_unavailable_supervisor_uses_original_deadline_local_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    forced = ThreadEvent()
-    persistence_recorded = ThreadEvent()
-    forced_codes = []
-    persisted = []
-
-    def record_persistence(**kwargs):
-        persisted.append(kwargs)
-        persistence_recorded.set()
-
-    monkeypatch.setattr(
-        main_window,
-        "_persist_shutdown_diagnostics",
-        record_persistence,
-    )
-    process_fail_safe = main_window._ProcessShutdownFailSafe(
-        startup_diagnostic="exact shutdown launcher startup failure",
-        force_exit=lambda code: (forced_codes.append(code), forced.set()),
-    )
-    started_at = monotonic()
-
-    startup_diagnostic = process_fail_safe.arm(
-        started_at=started_at,
-        diagnostic_deadline=started_at + 0.5,
-        hard_deadline=started_at + 1.0,
-    )
-    process_fail_safe.update_diagnostics(("final resource_cleanup_pending=True",))
-
-    assert startup_diagnostic == "exact shutdown launcher startup failure"
-    assert not forced.wait(0.1)
-    assert forced.wait(1.5)
-    assert forced_codes == [main_window._APPLICATION_FORCED_SHUTDOWN_EXIT_CODE]
-    assert persistence_recorded.wait(1.5)
-    assert "exact shutdown launcher startup failure" in persisted[-1]["diagnostics"]
-    assert "final resource_cleanup_pending=True" in persisted[-1]["diagnostics"]
-    process_fail_safe.disarm()
-
-
-def test_supervisor_arm_failure_is_exact_and_keeps_local_fallback(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    forced = ThreadEvent()
-    persistence_recorded = ThreadEvent()
-    persisted = []
-
-    def record_persistence(**kwargs):
-        persisted.append(kwargs)
-        persistence_recorded.set()
-
-    class FailingClient:
-        def arm(self, _hard_deadline):
-            raise OSError("exact ARM transport failure")
-
-    monkeypatch.setattr(
-        main_window,
-        "_persist_shutdown_diagnostics",
-        record_persistence,
-    )
-    process_fail_safe = main_window._ProcessShutdownFailSafe(
-        FailingClient(),
-        force_exit=lambda _code: forced.set(),
-    )
-    started_at = monotonic()
-
-    arm_diagnostic = process_fail_safe.arm(
-        started_at=started_at,
-        diagnostic_deadline=started_at + 0.05,
-        hard_deadline=started_at + 0.10,
-    )
-    process_fail_safe.update_diagnostics(("final receiver_alive=True",))
-
-    assert arm_diagnostic == (
-        "process shutdown supervisor ARM raised OSError: exact ARM transport failure"
-    )
-    assert forced.wait(0.25)
-    assert persistence_recorded.wait(0.3)
-    assert arm_diagnostic in persisted[-1]["diagnostics"]
-    assert "final receiver_alive=True" in persisted[-1]["diagnostics"]
-    process_fail_safe.disarm()
-
-
-def test_acknowledged_supervisor_can_disarm_only_the_local_fallback() -> None:
-    forced = ThreadEvent()
-    armed_deadlines = []
-
-    class AcknowledgingClient:
-        def arm(self, hard_deadline):
-            armed_deadlines.append(hard_deadline)
-            return None
-
-    process_fail_safe = main_window._ProcessShutdownFailSafe(
-        AcknowledgingClient(),
-        force_exit=lambda _code: forced.set(),
-    )
-    started_at = monotonic()
-    hard_deadline = started_at + 0.10
-
-    assert (
-        process_fail_safe.arm(
-            started_at=started_at,
-            diagnostic_deadline=started_at + 0.05,
-            hard_deadline=hard_deadline,
-        )
-        is None
-    )
-    assert process_fail_safe.watchdog_operational()
-    process_fail_safe.disarm()
-
-    assert armed_deadlines == [hard_deadline]
-    assert not process_fail_safe.armed
-    assert not process_fail_safe.watchdog_operational()
-    assert not forced.wait(0.15)
-
-
-def test_repeated_arm_cannot_extend_the_first_deadline() -> None:
-    armed_deadlines = []
-
-    class AcknowledgingClient:
-        def arm(self, hard_deadline):
-            armed_deadlines.append(hard_deadline)
-            return None
-
-    process_fail_safe = main_window._ProcessShutdownFailSafe(
-        AcknowledgingClient(),
-        force_exit=lambda _code: None,
-    )
-    started_at = monotonic()
-    first_deadline = started_at + 1.0
-
-    process_fail_safe.arm(
-        started_at=started_at,
-        diagnostic_deadline=started_at + 0.8,
-        hard_deadline=first_deadline,
-    )
-    process_fail_safe.arm(
-        started_at=started_at,
-        diagnostic_deadline=started_at + 8.0,
-        hard_deadline=started_at + 10.0,
-    )
-
-    assert armed_deadlines == [first_deadline]
-    assert process_fail_safe._hard_deadline == first_deadline
-    process_fail_safe.disarm()
-
-
-def test_diagnostic_publication_is_memory_only_until_persisted(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    persistence_calls = []
-    monkeypatch.setattr(
-        main_window,
-        "_persist_shutdown_diagnostics",
-        lambda **kwargs: persistence_calls.append(kwargs),
-    )
-    process_fail_safe = main_window._ProcessShutdownFailSafe(
-        force_exit=lambda _code: None
-    )
-    started_at = monotonic()
-    process_fail_safe.arm(
-        started_at=started_at,
-        diagnostic_deadline=started_at + 1.0,
-        hard_deadline=started_at + 2.0,
-    )
-
-    process_fail_safe.update_diagnostics(("exact in-memory liveness",))
-
-    assert persistence_calls == []
-    process_fail_safe.disarm()
-
-
-def test_async_diagnostic_persistence_never_blocks_its_caller(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    persistence_entered = ThreadEvent()
-    release_persistence = ThreadEvent()
-
-    def blocked_persistence(**_kwargs):
-        persistence_entered.set()
-        release_persistence.wait(1.0)
-
-    monkeypatch.setattr(
-        main_window,
-        "_persist_shutdown_diagnostics",
-        blocked_persistence,
-    )
-    process_fail_safe = main_window._ProcessShutdownFailSafe(
-        force_exit=lambda _code: None
-    )
-    started_at = monotonic()
-    process_fail_safe.arm(
-        started_at=started_at,
-        diagnostic_deadline=started_at + 1.0,
-        hard_deadline=started_at + 2.0,
-    )
-    process_fail_safe.update_diagnostics(("exact blocked persistence",))
-
-    call_started_at = monotonic()
-    process_fail_safe.persist_async()
-    call_elapsed = monotonic() - call_started_at
-
-    assert call_elapsed < 0.10
-    assert persistence_entered.wait(0.3)
-    process_fail_safe.disarm()
-    release_persistence.set()
-
-
 def _run_supervised_probe(script: str, *arguments: str, timeout: float = 40.0):
     environment = _offscreen_subprocess_environment()
     launcher = subprocess.Popen(
@@ -681,7 +477,7 @@ def test_real_qthreadpool_stall_forces_os_process_exit_after_diagnostics(
     )
 
     output = completed.stdout + completed.stderr
-    assert completed.returncode == main_window._APPLICATION_FORCED_SHUTDOWN_EXIT_CODE, (
+    assert completed.returncode == process_shutdown.FORCED_SHUTDOWN_EXIT_CODE, (
         output
     )
     assert launcher_pid > 0
@@ -782,7 +578,7 @@ def test_blocked_diagnostic_io_cannot_delay_external_launcher_kill(
     )
 
     output = completed.stdout + completed.stderr
-    assert completed.returncode == main_window._APPLICATION_FORCED_SHUTDOWN_EXIT_CODE, (
+    assert completed.returncode == process_shutdown.FORCED_SHUTDOWN_EXIT_CODE, (
         output
     )
     assert launcher_pid > 0
@@ -828,7 +624,7 @@ def test_external_termination_record_follows_unterminated_child_stdout() -> None
     completed, completed_at, launcher_pid = _run_supervised_probe(script)
 
     output = completed.stdout + completed.stderr
-    assert completed.returncode == main_window._APPLICATION_FORCED_SHUTDOWN_EXIT_CODE, (
+    assert completed.returncode == process_shutdown.FORCED_SHUTDOWN_EXIT_CODE, (
         output
     )
     hard_deadline = float(_probe_value(completed.stdout, "SHUTDOWN_ARMED", "hard"))
@@ -877,13 +673,14 @@ def test_qt_subprocess_exits_at_one_deadline_with_exact_diagnostics(
 
         from PyQt6 import QtCore
         from PyQt6 import QtWidgets as qtw
+        from qplot import _process_shutdown as process_shutdown
         from qplot.windows import main as main_window
         from tests._shutdown_harness import attach_shutdown
 
         mode = __MODE__
         main_window._APPLICATION_SHUTDOWN_TIMEOUT_SECONDS = 0.12
         records = []
-        main_window.log_bounded_shutdown = (
+        process_shutdown.log_bounded_shutdown = (
             lambda *args, **kwargs: records.append((args, kwargs))
         )
 

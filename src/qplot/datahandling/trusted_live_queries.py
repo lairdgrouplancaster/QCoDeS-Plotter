@@ -34,7 +34,7 @@ from qplot.datahandling._trusted_result_layout import (
 )
 from qplot.datahandling.file_identity import DatabaseInstance
 from qplot.datahandling.readonly import SEPARATE_RAW_DATA_STORAGE_MESSAGE
-from qplot.datahandling.readSQL import (
+from qplot.datahandling.run_metadata import (
     materialize_run_basic_fields,
     materialize_run_observation,
 )

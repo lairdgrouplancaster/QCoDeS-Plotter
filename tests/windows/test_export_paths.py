@@ -17,6 +17,7 @@ from qplot.datahandling.file_identity import (
     database_file_identity,
     database_instance,
 )
+from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._database_load_state import DatabaseLoadSession
 from qplot.windows._dataset_handle import DatasetKey
 from qplot.windows._export_paths import (
@@ -28,6 +29,20 @@ from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._plot_export import PlotExportMixin
 
 _DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
+
+
+@pytest.mark.parametrize("expensive", [False, True])
+@pytest.mark.parametrize("suffix", _DATABASE_ARTIFACT_SUFFIXES)
+def test_detail_channels_reserve_worker_database_paths(tmp_path, expensive, suffix):
+    database_path = tmp_path / "detail-source.data"
+    owner = SimpleNamespace()
+    channel = detail_channel(owner, expensive)
+    channel.worker = SimpleNamespace(database_path=str(database_path))
+    target = Path(f"{database_path}{suffix}")
+
+    with pytest.raises(UnsafeExportDestinationError):
+        prepare_export_destination(owner, str(target))
+    assert not target.exists()
 
 
 @pytest.mark.parametrize("suffix", _DATABASE_ARTIFACT_SUFFIXES)

@@ -262,47 +262,12 @@ class operations_options_base(qtw.QWidget):
             if item.isHidden():
                 continue
 
-            input_widget = item.input
-            if (
-                    isinstance(input_widget, qtw.QLineEdit)
-                    and input_widget.text()
-                    and not input_widget.hasAcceptableInput()
-                    ):
-                raise OperationValidationError(
-                    f'{item.label}: enter a valid value.'
-                    )
-
-            try:
-                output = item.output()
-            except (TypeError, ValueError, OverflowError) as error:
-                raise OperationValidationError(
-                    f'{item.label}: enter a valid value.'
-                    ) from error
-
-            if output == "": # Data not entered
-                if hasattr(input_widget, "placeholderText"):
-                    output = cast(Any, input_widget).placeholderText()
-                    if output == "": # still blank
-                        raise OperationValidationError(
-                            f'{item.label}: a value is required.'
-                            )
-                    
-                    if isinstance(item.input_type, type):
-                        try:
-                            output = item.input_type(output)
-                        except (TypeError, ValueError, OverflowError) as error:
-                            raise OperationValidationError(
-                                f'{item.label}: enter a valid value.'
-                                ) from error
-                else:
-                    raise OperationValidationError(
-                        f'{item.label}: a value is required.'
-                        )
+            output = item.validated_output()
             
             if output is None: # No input requried
                 func = item.func
             else: # Add input
-                # Some weird internal python stuff causes issues with lambda in loops
+                # Bind this row's value independently of later loop iterations.
                 func = func_with_input(item.func, output) 
                 
             operations.append(OperationCall(
@@ -355,12 +320,12 @@ class rowItem(qtw.QListWidgetItem):
     """
     A QListWidgetItem which can have different input boxes based on input_type.
     
-    Has 5 key attributes
+    Each row owns its editor and its read/reset/validation behavior.
+
+    Key attributes:
         label : str - Display name of item
         func : callable - copy of function to be used in do_operations
         input : QWidget - The input widget
-        reset : callable - resets input to default
-        output : callabel - returns current value of input
     """
     
     spec: OperationSpec
@@ -384,8 +349,6 @@ class rowItem(qtw.QListWidgetItem):
         self._label = qtw.QLabel(label)
         self.input_type = input_type
         self.input: qtw.QCheckBox | qtw.QLineEdit | expandingComboBox | None
-        self.reset: Callable[[], None]
-        self.output: Callable[[], object]
         
         self.row_widget = qtw.QWidget()
         row_layout = qtw.QHBoxLayout()
@@ -398,16 +361,10 @@ class rowItem(qtw.QListWidgetItem):
             checkbox = qtw.QCheckBox()
             self.input = checkbox
             checkbox.setToolTip(f"Enable or disable {label}")
-            self.reset = lambda: checkbox.setChecked(False)
-            self.output = lambda: bool(checkbox.isChecked())
         
         elif input_type in [int, float, Decimal, str]: # Textbox input
             line_edit = qtw.QLineEdit()
             self.input = line_edit
-            self.reset = lambda: line_edit.setText("")
-            scalar_type = cast(type, input_type)
-            self.output = lambda: (scalar_type(line_edit.text()) 
-                                   if line_edit.text() else "")
             # Restrict user input to reduce errors
             if input_type is int:
                 line_edit.setValidator(QtGui.QIntValidator())
@@ -419,15 +376,11 @@ class rowItem(qtw.QListWidgetItem):
         
         elif input_type is None: # No input needed
             self.input = None
-            self.reset = lambda: None
-            self.output = lambda: None
             
         elif isinstance(input_type, (list, tuple)): # Select from options
             combo_box = expandingComboBox()
             self.input = combo_box
             combo_box.addItems(list(input_type))
-            self.reset = lambda: combo_box.setCurrentIndex(-1)
-            self.output = lambda: combo_box.currentText()
             
         else:
             raise TypeError(
@@ -445,6 +398,59 @@ class rowItem(qtw.QListWidgetItem):
         # pyqt defaults height of widget to 0, what?
         self.setSizeHint(self.row_widget.sizeHint())
         
+
+    def reset(self) -> None:
+        """Clear the editor while retaining its configured placeholder default."""
+        if isinstance(self.input, qtw.QCheckBox):
+            self.input.setChecked(False)
+        elif isinstance(self.input, qtw.QLineEdit):
+            self.input.setText("")
+        elif isinstance(self.input, qtw.QComboBox):
+            self.input.setCurrentIndex(-1)
+
+    def output(self) -> object:
+        """Read the current editor value without applying a placeholder default."""
+        if isinstance(self.input, qtw.QCheckBox):
+            return bool(self.input.isChecked())
+        if isinstance(self.input, qtw.QLineEdit):
+            text = self.input.text()
+            return cast(type, self.input_type)(text) if text else ""
+        if isinstance(self.input, qtw.QComboBox):
+            return self.input.currentText()
+        return None
+
+    def validated_output(self) -> object:
+        """Resolve an enabled operation's input or report a labelled error."""
+        if (
+            isinstance(self.input, qtw.QLineEdit)
+            and self.input.text()
+            and not self.input.hasAcceptableInput()
+        ):
+            raise OperationValidationError(f"{self.label}: enter a valid value.")
+
+        try:
+            value = self.output()
+        except (TypeError, ValueError, OverflowError) as error:
+            raise OperationValidationError(
+                f"{self.label}: enter a valid value."
+            ) from error
+
+        if value != "":
+            return value
+        if not isinstance(self.input, (qtw.QLineEdit, qtw.QComboBox)):
+            raise OperationValidationError(f"{self.label}: a value is required.")
+        placeholder = self.input.placeholderText()
+        if not placeholder:
+            raise OperationValidationError(f"{self.label}: a value is required.")
+        if not isinstance(self.input_type, type):
+            return placeholder
+        try:
+            return self.input_type(placeholder)
+        except (TypeError, ValueError, OverflowError) as error:
+            raise OperationValidationError(
+                f"{self.label}: enter a valid value."
+            ) from error
+
 
     def editor_value(self) -> str | bool | None:
         if isinstance(self.input, qtw.QLineEdit):

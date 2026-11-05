@@ -26,6 +26,7 @@ from qplot.testdata import (
 )
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
+from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._error_dialog import ErrorDialog
 from tests._window_lifecycle import close_main_window
 
@@ -151,8 +152,8 @@ def _wait_published_metadata(window):
 def _wait_idle(window):
     _process_until(lambda: (
         not window._database_load_active
-        and not window._database_detail_active
-        and not window._database_expensive_detail_active
+        and not detail_channel(window).active
+        and not detail_channel(window, True).active
         and not window._database_refresh_active
         and window.databaseLoadThreadPool.activeThreadCount() == 0
         and window.databaseDetailThreadPool.activeThreadCount() == 0
@@ -401,16 +402,16 @@ def test_refresh_and_detail_workers_present_sanitized_errors(
                 original_show_status(message, timeout)
             monkeypatch.setattr(window, "show_status", record_status)
             window._start_database_detail_load(str(path), runs)
-            cheap = window._database_detail_worker._test_finished_spy
-            expensive = window._database_expensive_detail_worker._test_finished_spy
+            cheap = detail_channel(window).worker._test_finished_spy
+            expensive = detail_channel(window, True).worker._test_finished_spy
             _wait_idle(window)
             assert not uncaught
             assert isinstance(cheap[0][-1], str)
             assert isinstance(expensive[0][-1], str)
             assert any("Run detail loading failed:" in message for message in statuses)
             assert any("Setpoint and size loading failed:" in message for message in statuses)
-            assert window._database_detail_worker is None
-            assert window._database_expensive_detail_worker is None
+            assert detail_channel(window).worker is None
+            assert detail_channel(window, True).worker is None
         assert window.RunList.all_run_metadata() == runs
         assert _artifacts(path) == before
     finally:

@@ -17,6 +17,7 @@ from qcodes.dataset import (
 from qcodes.dataset.sqlite.database import connect
 
 from qplot.diagnostics import configure_logging
+from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._export_paths import prepare_export_destination
 from qplot.windows._widgets.preview import PreviewImageLabel
 from qplot.windows.main import MainWindow
@@ -73,7 +74,7 @@ def preview_window(tmp_path, monkeypatch, qapplication):
             window.config.config["runtime_settings"]["del_grace_period"] = 0
             window.spinBox.setValue(0)
             assert window.load_file(str(database))
-            wait_for(lambda: not window._database_load_active and not window._database_detail_active)
+            wait_for(lambda: not window._database_load_active and not detail_channel(window).active)
             service = window._trusted_read_service
             window.show()
             wait_for(lambda: all(window.RunList.run_preview_is_ready(guid) for guid in guids))

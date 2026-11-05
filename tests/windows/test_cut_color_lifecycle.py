@@ -2,6 +2,7 @@
 
 import sys
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -115,12 +116,16 @@ def test_cut_color_before_first_data_and_after_initial_failure_or_empty_result(
             # path; the following retry reads the unchanged QCoDeS recording.
             original_finish = worker._emit_finished
 
-            def empty_result(finished):
+            def empty_result(finished, result=None):
                 if finished:
-                    worker.axis_data = {"x": np.asarray([]), "y": np.asarray([])}
-                    worker.dataGrid = np.empty((0, 0))
-                    worker.loaded_point_count = 0
-                original_finish(finished)
+                    assert result is not None
+                    result = replace(
+                        result,
+                        axis_data={"x": np.asarray([]), "y": np.asarray([])},
+                        dataGrid=np.empty((0, 0)),
+                        loaded_point_count=0,
+                    )
+                original_finish(finished, result)
 
             monkeypatch.setattr(worker, "_emit_finished", empty_result)
 

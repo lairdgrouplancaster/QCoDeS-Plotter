@@ -19,6 +19,7 @@ from qcodes.parameters import ManualParameter
 from qcodes.station import Station
 
 from qplot.diagnostics import configure_logging
+from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._widgets.details_tables import CopyableTableWidget, infoTree
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
@@ -74,7 +75,7 @@ def details_window(tmp_path, monkeypatch, qapplication):
             window.spinBox.setValue(0)
             window.show()
             assert window.load_file(str(database))
-            wait_for(lambda: not window._database_load_active and not window._database_detail_active)
+            wait_for(lambda: not window._database_load_active and not detail_channel(window).active)
             service = window._trusted_read_service
             assert service is not None
             window.RunList.setCurrentItem(window.RunList._item_for_guid(saver.dataset.guid))

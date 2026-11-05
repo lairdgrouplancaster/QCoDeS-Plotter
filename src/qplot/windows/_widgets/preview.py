@@ -8,6 +8,9 @@ import numpy as np
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.datahandling._sqlite_identifiers import (
+    quote_identifier_text as _sqlite_identifier,
+)
 from qplot.datahandling.dimensions import (
     MAX_SUPPORTED_PLOT_DIMENSIONS,
     unsupported_plot_message,
@@ -3020,10 +3023,6 @@ def _signature_value(value):
 def _table_columns(cursor, table_name):
     cursor.execute(f"PRAGMA table_info({_sqlite_identifier(table_name)})")
     return {row[1] for row in cursor.fetchall()}
-
-
-def _sqlite_identifier(name):
-    return f'"{str(name).replace(chr(34), chr(34) * 2)}"'
 
 
 def _finite_range(values):
