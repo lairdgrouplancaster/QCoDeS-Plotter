@@ -21,6 +21,15 @@ the `QApplication`, opens `MainWindow`, and starts the Qt event loop.
 `src/qplot/__init__.py` exposes the public package imports used by scripts and
 interactive users.
 
+`_shutdown_supervisor.py` owns process containment and the launcher lifecycle.
+`_shutdown_protocol.py` owns its authenticated byte layouts, frame validation,
+and immutable outcomes, without sockets, threads, or Qt. Keep protocol changes
+there so both endpoints use the same rules.
+
+`_process_shutdown.py` owns the GUI process's deadline fail-safe and diagnostic
+persistence. The entry point supplies the persistence callback explicitly;
+the controller can run and be tested without importing the main window.
+
 ## Main Window
 
 `src/qplot/windows/main.py` owns the top-level application window. It handles
@@ -97,6 +106,10 @@ stay in sync.
 `src/qplot/windows/_plotWin.py` is the shared base for plot windows. It owns
 common plotting behavior such as refresh timers, axis selection controls,
 context menus, plot-area resizing, and operation panels.
+
+`_axis_ticks.py` owns bounded tick placement, label formatting, and installation
+on plot and colorbar axes. Named candidate records make the priority of count,
+coverage, centring, and spacing explicit while preserving deterministic ties.
 
 `src/qplot/windows/_plot_refresh.py` contains shared worker-backed plot refresh
 orchestration: deciding whether to read from the database or cached data,
@@ -219,6 +232,16 @@ as operation identifiers. This state is transient, not a settings format.
 reusable UI controls used inside plot windows.
 
 ## Data Loading
+
+`datahandling/database.py` owns background database workers and reports.
+`cloud_files.py` owns cloud-placeholder detection and cancellable hydration;
+it runs the standard-library-only `_cloud_prefetch.py` helper in a subprocess
+so a stalled OS read cannot block the GUI. The helper opens files only as `rb`.
+
+`_sqlite_identifiers.py` shares literal identifier escaping. The trusted
+metadata boundary retains its stricter validation, while snapshot callers
+retain their existing conversion to text. This helper neither opens databases
+nor determines what a reader may query.
 
 `src/qplot/datahandling/readSQL.py` contains the cursor-based snapshot query
 path and the pure metadata transformations shared with trusted access. Snapshot

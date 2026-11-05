@@ -29,6 +29,9 @@ from qcodes.parameters import ManualParameter
 from qcodes.station import Station
 
 from qplot._auxiliary_paths import ensure_safe_auxiliary_path
+from qplot.datahandling._sqlite_identifiers import (
+    quote_identifier as _quote_sqlite_identifier,
+)
 from qplot.datahandling.file_identity import (
     QPLOT_GENERATED_DATABASE_APPLICATION_ID,
     QPLOT_GENERATION_LINEAGE_FORMAT_VERSION,
@@ -528,10 +531,6 @@ def _qcodes_uri_name(database_path):
 def _connect_writable_exact_path(database_path):
     """Open an exact generator-owned path with QCoDeS' writable connector."""
     return connect(_qcodes_uri_name(database_path))
-
-
-def _quote_sqlite_identifier(identifier):
-    return '"' + identifier.replace('"', '""') + '"'
 
 
 def _generation_provenance_trigger(table_name, operation):

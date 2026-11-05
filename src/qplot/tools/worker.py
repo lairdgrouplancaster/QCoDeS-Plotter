@@ -9,6 +9,9 @@ import numpy as np
 from PyQt6 import QtCore
 
 from qplot.datahandling import load_param_data_from_db, load_param_data_from_db_prep
+from qplot.datahandling._sqlite_identifiers import (
+    quote_identifier_text as _sqlite_identifier,
+)
 from qplot.datahandling.dimensions import ensure_supported_plot_dimensions
 from qplot.datahandling.file_identity import (
     canonical_database_path,
@@ -61,10 +64,6 @@ MAX_TRUSTED_FULL_PLOT_DECODE_BYTES = 1024 * 1024 * 1024
 
 class PlotWorkCancelled(InterruptedError):
     """Internal control flow used to unwind cancelled plot work safely."""
-
-
-def _sqlite_identifier(name):
-    return '"' + str(name).replace('"', '""') + '"'
 
 
 class _HeatmapArrayReader:

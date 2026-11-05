@@ -9,6 +9,9 @@ from typing import Literal, NamedTuple
 
 from qcodes.dataset.sqlite.database import get_DB_location
 
+from qplot.datahandling._sqlite_identifiers import (
+    quote_identifier_text as _sqlite_identifier,
+)
 from qplot.datahandling.readonly import (
     qcodes_read_only_connection,
     sqlite_read_only_connection,
@@ -2122,10 +2125,6 @@ def _result_count(cursor, table_name):
         if _sql_was_interrupted(error):
             raise
         return None
-
-
-def _sqlite_identifier(name):
-    return f'"{str(name).replace(chr(34), chr(34) * 2)}"'
 
 
 def _table_storage_bytes(cursor, table_name, result_count=None):

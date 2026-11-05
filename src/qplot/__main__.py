@@ -132,8 +132,11 @@ def _run_gui(
 
     from PyQt6 import QtWidgets as qtw
 
+    from qplot._process_shutdown import (
+        ProcessShutdownFailSafe,
+        persist_shutdown_diagnostics,
+    )
     from qplot.windows import MainWindow
-    from qplot.windows.main import _ProcessShutdownFailSafe
 
     configure_logging()
     install_excepthook()
@@ -148,8 +151,9 @@ def _run_gui(
         w = MainWindow(startup_database_path=database_path)
         process_fail_safe = None
         if hasattr(w, "_shutdown_process_fail_safe"):
-            process_fail_safe = _ProcessShutdownFailSafe(
+            process_fail_safe = ProcessShutdownFailSafe(
                 shutdown_supervisor_client,
+                persist_diagnostics=persist_shutdown_diagnostics,
                 startup_diagnostic=shutdown_supervisor_diagnostic,
             )
             w._shutdown_process_fail_safe = process_fail_safe

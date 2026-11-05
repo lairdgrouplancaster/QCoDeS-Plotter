@@ -13,16 +13,18 @@ from PyQt6 import QtWidgets as qtw
 from PyQt6.QtGui import QDesktopServices
 from qcodes.dataset.sqlite.database import get_DB_location
 
-from qplot.datahandling.database import (
+from qplot.datahandling.cloud_files import (
     DATABASE_CLOUD_SYNC_TIMEOUT_SECONDS,
+    database_is_likely_cloud_placeholder,
+    prefetch_database_file_with_timeout,
+)
+from qplot.datahandling.database import (
     DatabaseDetailWorker,
     DatabaseExpensiveDetailWorker,
     DatabaseInfoWorker,
     DatabaseLoadWorker,
     DatabaseRefreshWorker,
     DatabaseSelectedRunWorker,
-    database_is_likely_cloud_placeholder,
-    prefetch_database_file_with_timeout,
 )
 from qplot.datahandling.file_identity import (
     DatabaseInstance,

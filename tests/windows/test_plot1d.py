@@ -8,6 +8,7 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.windows import _axis_ticks as ticks_module
 from qplot.windows import _plotWin as plotwin_module
 from qplot.windows._dataset_handle import DatasetKey, TraceKey
 from qplot.windows._plot1d_snap import _nearest_trace_sample
@@ -113,35 +114,35 @@ class SnapToTraceTestCase(unittest.TestCase):
         axis = type("Axis", (), {"_qplot_major_tick_count": 3})()
 
         self.assertEqual(
-            plotwin_module._major_tick_spacing(axis, -201, 201, 600),
+            ticks_module._major_tick_spacing(axis, -201, 201, 600),
             [(200.0, 0.0), (50.0, 0.0)],
             )
         self.assertEqual(
-            plotwin_module._major_tick_spacing(axis, -9.33, 9.33, 600),
+            ticks_module._major_tick_spacing(axis, -9.33, 9.33, 600),
             [(5.0, 0.0), (1.0, 0.0)],
             )
 
         axis._qplot_major_tick_count = 2
         self.assertEqual(
-            plotwin_module._major_tick_spacing(axis, -201, 201, 600),
+            ticks_module._major_tick_spacing(axis, -201, 201, 600),
             [(200.0, 0.0), (50.0, 0.0)],
             )
 
         axis._qplot_major_tick_count = 5
         self.assertEqual(
-            plotwin_module._major_tick_spacing(axis, -9.33, 9.33, 600),
+            ticks_module._major_tick_spacing(axis, -9.33, 9.33, 600),
             [(5.0, 0.0), (1.0, 0.0)],
             )
 
         axis._qplot_major_tick_count = 4
         self.assertEqual(
-            plotwin_module._major_tick_spacing(axis, -1.5, 1.5, 600),
+            ticks_module._major_tick_spacing(axis, -1.5, 1.5, 600),
             [(1.0, 0.0), (0.2, 0.0)],
             )
 
         axis._qplot_major_tick_count = 7
         self.assertEqual(
-            plotwin_module._major_tick_spacing(axis, -9.33, 9.33, 600),
+            ticks_module._major_tick_spacing(axis, -9.33, 9.33, 600),
             [(2.0, 0.0), (0.5, 0.0)],
             )
 
@@ -151,21 +152,21 @@ class SnapToTraceTestCase(unittest.TestCase):
         axis = type("Axis", (), {"_qplot_major_tick_count": 3})()
 
         self.assertEqual(
-            plotwin_module._major_tick_spacing(axis, lower, upper, 600),
+            ticks_module._major_tick_spacing(axis, lower, upper, 600),
             [(10.0, 0.0), (2.0, 0.0)],
             )
         self.assertEqual(
-            plotwin_module._tick_positions(lower, upper, 10.0, 0.0),
+            ticks_module._tick_positions(lower, upper, 10.0, 0.0),
             [-10.0, 0.0, 10.0],
             )
         self.assertEqual(
-            plotwin_module._tick_positions(-9.999999, 9.999999, 10.0, 0.0),
+            ticks_module._tick_positions(-9.999999, 9.999999, 10.0, 0.0),
             [0.0],
             )
 
         axis._qplot_major_tick_count = 4
         self.assertEqual(
-            plotwin_module._major_tick_spacing(axis, lower, upper, 600),
+            ticks_module._major_tick_spacing(axis, lower, upper, 600),
             [(5.0, 0.0), (1.0, 0.0)],
             )
 
@@ -192,7 +193,7 @@ class SnapToTraceTestCase(unittest.TestCase):
                 (3, ["-5", "0", "5"]),
                 (4, ["-5", "0", "5"]),
                 ):
-            plotwin_module._configure_major_ticks(axis, target)
+            ticks_module._configure_major_ticks(axis, target)
             qtw.QApplication.processEvents()
             specs = axis.generateDrawSpecs(painter)
             self.assertEqual([spec[2] for spec in specs[2]], expected)
@@ -201,15 +202,15 @@ class SnapToTraceTestCase(unittest.TestCase):
 
     def test_tick_positions_are_bounded_and_precision_aware(self):
         self.assertEqual(
-            plotwin_module._tick_positions(0.0, 1.0, 0.5, 0.0),
+            ticks_module._tick_positions(0.0, 1.0, 0.5, 0.0),
             [0.0, 0.5, 1.0],
             )
         self.assertEqual(
-            plotwin_module._tick_positions(1.0, -1.0, 1.0, 0.0),
+            ticks_module._tick_positions(1.0, -1.0, 1.0, 0.0),
             [-1.0, 0.0, 1.0],
             )
         self.assertEqual(
-            plotwin_module._tick_positions(-9.0, -1.0, 2.0, 0.0),
+            ticks_module._tick_positions(-9.0, -1.0, 2.0, 0.0),
             [-8.0, -6.0, -4.0, -2.0],
             )
 
@@ -219,7 +220,7 @@ class SnapToTraceTestCase(unittest.TestCase):
                 (1e-9, 1e-9 + 1e-12, 5e-13),
                 ):
             with self.subTest(lower=lower, upper=upper):
-                positions = plotwin_module._tick_positions(
+                positions = ticks_module._tick_positions(
                     lower,
                     upper,
                     spacing,
@@ -228,14 +229,14 @@ class SnapToTraceTestCase(unittest.TestCase):
                 self.assertGreaterEqual(len(positions), 2)
                 self.assertLessEqual(
                     len(positions),
-                    plotwin_module._MAX_TICK_POSITIONS,
+                    ticks_module._MAX_TICK_POSITIONS,
                     )
 
         # This lattice would previously allocate around two billion entries
         # because the endpoint tolerance was based on 1e15 rather than the span.
         with patch("builtins.range", side_effect=AssertionError("range allocated")):
             self.assertEqual(
-                plotwin_module._tick_positions(
+                ticks_module._tick_positions(
                     1e15,
                     1e15 + 1.0,
                     1e-6,
@@ -262,7 +263,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         for lower, upper in ranges:
             with self.subTest(lower=lower, upper=upper):
-                levels = plotwin_module._major_tick_spacing(
+                levels = ticks_module._major_tick_spacing(
                     axis,
                     lower,
                     upper,
@@ -274,14 +275,14 @@ class SnapToTraceTestCase(unittest.TestCase):
                     self.assertTrue(math.isfinite(spacing))
                     self.assertGreater(spacing, 0.0)
                     self.assertTrue(math.isfinite(offset))
-                positions = plotwin_module._tick_positions(
+                positions = ticks_module._tick_positions(
                     lower,
                     upper,
                     *levels[0],
                     )
                 self.assertLessEqual(
                     len(positions),
-                    plotwin_module._MAX_TICK_POSITIONS,
+                    ticks_module._MAX_TICK_POSITIONS,
                     )
 
         for lower, upper in (
@@ -292,7 +293,7 @@ class SnapToTraceTestCase(unittest.TestCase):
                 ):
             with self.subTest(lower=lower, upper=upper):
                 self.assertEqual(
-                    plotwin_module._major_tick_spacing(
+                    ticks_module._major_tick_spacing(
                         axis,
                         lower,
                         upper,
@@ -305,24 +306,24 @@ class SnapToTraceTestCase(unittest.TestCase):
         axis = type("Axis", (), {"_qplot_major_tick_count": 3})()
 
         with patch.object(
-                plotwin_module,
+                ticks_module,
                 "_visible_horizontal_tick_positions",
                 return_value=[],
                 ):
-            levels = plotwin_module._major_tick_spacing(axis, 0.0, 1.0, 1)
+            levels = ticks_module._major_tick_spacing(axis, 0.0, 1.0, 1)
 
         self.assertEqual(levels, [(0.5, 0.0), (0.1, 0.0)])
 
     def test_real_axes_handle_narrow_vertical_reversed_and_log_ranges(self):
         for size in (1, 5, 10, 20):
             axis = pg.AxisItem("bottom")
-            plotwin_module._configure_major_ticks(axis, 3)
+            ticks_module._configure_major_ticks(axis, 3)
             with self.subTest(size=size):
                 levels = axis.tickSpacing(0.0, 1.0, size)
                 self.assertGreater(levels[0][0], 0.0)
 
         vertical_axis = pg.AxisItem("left")
-        plotwin_module._configure_major_ticks(vertical_axis, 3)
+        ticks_module._configure_major_ticks(vertical_axis, 3)
         self.assertEqual(
             vertical_axis.tickSpacing(1.0, -1.0, 1),
             [(1.0, 0.0), (0.2, 0.0)],
@@ -330,7 +331,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         log_axis = pg.AxisItem("bottom")
         log_axis.setLogMode(True)
-        plotwin_module._configure_major_ticks(log_axis, 3)
+        ticks_module._configure_major_ticks(log_axis, 3)
         levels = log_axis.tickSpacing(3.0, -3.0, 10)
         self.assertGreater(levels[0][0], 0.0)
         values = [-2.0, 0.0, 2.0]
@@ -348,7 +349,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         widget.show()
         plot = widget.getPlotItem()
         for side in ("bottom", "left"):
-            plotwin_module._configure_major_ticks(plot.getAxis(side), 3)
+            ticks_module._configure_major_ticks(plot.getAxis(side), 3)
 
         def dispose_plot_widget():
             widget.close()
