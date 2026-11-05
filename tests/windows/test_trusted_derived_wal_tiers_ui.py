@@ -10,6 +10,7 @@ import pytest
 from PyQt6 import QtCore, QtGui, QtWidgets
 from qcodes.dataset import load_by_id
 
+from qplot.datahandling import database as database_workers
 from qplot.datahandling import trusted_work_coordinator as coordinator_module
 from qplot.datahandling.trusted_derived_cache import TrustedDerivedDiskCache
 from qplot.windows import _database_actions as database_actions
@@ -210,9 +211,9 @@ def test_real_wal_mixed_size_tiers_do_not_starve_selected_images(
                 wraps=database_actions.DatabaseExpensiveDetailWorker,
             ) as legacy_expensive,
             patch.object(
-                database_actions,
-                "DatabaseSelectedRunWorker",
-                wraps=database_actions.DatabaseSelectedRunWorker,
+                database_workers.DatabaseSelectedRunWorker,
+                "__init__",
+                side_effect=AssertionError("trusted browsing started a legacy selected-run worker"),
             ) as legacy_selected,
             patch.object(
                 preview_module,

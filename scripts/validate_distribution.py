@@ -2257,6 +2257,7 @@ def exercise_stage5b_backend(service, record, bootstrap, database_directory):
 def exercise_stage5c_qt_bridge(service, record):
     from PyQt6 import QtCore, QtWidgets
     from qplot.datahandling import trusted_work_coordinator as coordinator_module
+    from qplot.windows._database_detail_state import detail_channel
     from qplot.windows.main import MainWindow
 
     cache_root = Path(trusted_derived_cache_root())
@@ -2314,6 +2315,8 @@ def exercise_stage5c_qt_bridge(service, record):
         process_until(
             lambda: (
                 guid in bridge._metadata_by_guid
+                and bridge._selected_detail_publication is not None
+                and bridge._selected_detail_publication.run_guid == guid
                 and window.RunList.run_preview_is_ready(guid)
                 and guid in window.infoBox.preview.cache
                 and bridge.coordinator is not None
@@ -2353,9 +2356,11 @@ def exercise_stage5c_qt_bridge(service, record):
         first_put_count = len(cache_puts)
         assert first_put_count >= 3
         assert not window.infoBox.preview._workers
-        assert window._database_detail_worker is None
-        assert window._database_expensive_detail_worker is None
-        assert window._database_selected_run_worker is None
+        for expensive in (False, True):
+            channel = detail_channel(window, expensive)
+            assert channel.worker is None
+            assert not channel.active
+        assert window.ds is None
 
         coordinator_before_reselection = bridge.coordinator
         timers_before_reselection = tuple(bridge.findChildren(QtCore.QTimer))
