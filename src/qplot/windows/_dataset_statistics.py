@@ -2,14 +2,13 @@
 
 import numpy as np
 
+from qplot._number_formatting import format_number
 from qplot.datahandling.parameter_data import numeric_isfinite
 from qplot.tools.sample_statistics import (
     finite_mean,
     finite_standard_deviation,
     finite_sum_is_zero,
 )
-
-from ._plotWin import plotWidget
 
 
 def _finite_statistics_samples(values, parameter_name):
@@ -53,7 +52,6 @@ def dataset_statistics_text(columns, parameter_name, *, setpoint_names):
         raise ValueError(
             f"Statistics for {parameter_name!r} are outside the statistics display range."
         )
-    format_num = plotWidget.formatNum
     lines = [f"{values.size} points"]
     # Inferred measurements also contain basis columns. Only declared
     # dependencies define the plot axes; basis values need not be numeric.
@@ -70,12 +68,12 @@ def dataset_statistics_text(columns, parameter_name, *, setpoint_names):
         samples = values if name == parameter_name else _finite_statistics_samples(columns[name], name)
         if samples.size:
             lines.append(
-                f"{axis} range: {format_num(samples.min())} to {format_num(samples.max())}"
+                f"{axis} range: {format_number(samples.min())} to {format_number(samples.max())}"
             )
     lines.extend((
-        f"Average: {format_num(average)}",
-        f"Standard deviation: {format_num(deviation)}",
-        f"Max: {format_num(float(values.max()))}",
-        f"Min: {format_num(float(values.min()))}",
+        f"Average: {format_number(average)}",
+        f"Standard deviation: {format_number(deviation)}",
+        f"Max: {format_number(float(values.max()))}",
+        f"Min: {format_number(float(values.min()))}",
     ))
     return "\n".join(lines)

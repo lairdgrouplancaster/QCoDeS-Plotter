@@ -111,6 +111,11 @@ context menus, plot-area resizing, and operation panels.
 on plot and colorbar axes. Named candidate records make the priority of count,
 coverage, centring, and spacing explicit while preserving deterministic ties.
 
+`qplot/_number_formatting.py` owns summary-number formatting and cursor field
+widths without importing Qt. Statistics use it directly; plot windows keep
+their existing formatting methods as delegates and supply the current cursor
+precision preference.
+
 `src/qplot/windows/_plot_refresh.py` contains shared worker-backed plot refresh
 orchestration: deciding whether to read from the database or cached data,
 starting workers, applying worker results back to plot-window state, and
@@ -227,11 +232,24 @@ identity and heatmap transposition pairs live in `tools/operation_registry.py`;
 promotion copies ordered panel state through `capture_state`/`restore_state`,
 including exact editor text and Apply generation, without using display labels
 as operation identifiers. This state is transient, not a settings format.
+Each operation row owns explicit read, reset, and validation methods. The panel
+compiles their validated values into ordered calls; it does not parse editors
+or resolve placeholder defaults itself.
 
 `src/qplot/windows/_widgets/dropbox.py` and `toolbar.py` contain smaller
 reusable UI controls used inside plot windows.
 
 ## Data Loading
+
+`datahandling/export_data.py` selects exportable measurements and expands CSV
+columns within each acquisition record. Keep its singleton broadcasting and
+nested object-cell handling separate from plot flattening: the two paths have
+different input contracts. GUI actions retain source validation and file writes.
+
+`_numeric_arrays.py` shares NPY header inspection and bounded numeric BLOB
+slices. The worker retains ownership of its read-only SQLite handle; preview
+decoding retains its stricter real-only dtype and sample-budget policy. Header
+inspection does not allocate or deserialize payloads.
 
 `datahandling/database.py` owns background database workers and reports.
 `cloud_files.py` owns cloud-placeholder detection and cancellable hydration;
@@ -914,6 +932,8 @@ them.
 `~/.qplot/config.json` using `config_schema.json`.
 
 `src/qplot/configuration/scripts.py` backs the `qplot-cfg` command-line helper.
+Dispatch and help share an explicit command registry. Adding a public method
+does not expose a new command, and help/version do not load user settings.
 
 `src/qplot/windows/_preferences.py` exposes the common config keys through the
 main-window preferences dialog and emits a signal when applied settings need to

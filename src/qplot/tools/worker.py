@@ -9,6 +9,7 @@ import numpy as np
 from PyQt6 import QtCore
 
 from qplot.datahandling import load_param_data_from_db, load_param_data_from_db_prep
+from qplot.datahandling._numeric_arrays import NumericArrayReader
 from qplot.datahandling._sqlite_identifiers import (
     quote_identifier_text as _sqlite_identifier,
 )
@@ -64,58 +65,6 @@ MAX_TRUSTED_FULL_PLOT_DECODE_BYTES = 1024 * 1024 * 1024
 
 class PlotWorkCancelled(InterruptedError):
     """Internal control flow used to unwind cancelled plot work safely."""
-
-
-class _HeatmapArrayReader:
-    """Read numeric NPY slices from a physically read-only SQLite BLOB."""
-
-    def __init__(self, blob):
-        self.blob = blob
-        version = np.lib.format.read_magic(blob)
-        # QCoDeS writes NPY v3: its length field matches v2 and its numeric
-        # dtype headers are ASCII (v3 only changes the text encoding).
-        if version == (1, 0):
-            read_header = np.lib.format.read_array_header_1_0
-        elif version in ((2, 0), (3, 0)):
-            read_header = np.lib.format.read_array_header_2_0
-        else:
-            raise ValueError("Unsupported heatmap array format.")
-        self.shape, self.fortran_order, self.dtype = read_header(blob)
-        self.offset = blob.tell()
-        self.size = math.prod(self.shape)
-        if self.dtype.kind not in "biufc":
-            raise ValueError("Heatmap arrays must contain numeric values.")
-        if self.offset + self.size * self.dtype.itemsize != len(blob):
-            raise ValueError("Heatmap array payload does not match its shape.")
-
-    def read(self, start, stop, check_cancelled):
-        check_cancelled()
-        if not self.fortran_order or len(self.shape) <= 1:
-            self.blob.seek(self.offset + start * self.dtype.itemsize)
-            return np.frombuffer(
-                self.blob.read((stop - start) * self.dtype.itemsize),
-                dtype=self.dtype,
-            )
-
-        # Flatten every column in the same logical (C) order, even when
-        # signal and setpoints were saved with different memory layouts.
-        positions = np.ravel_multi_index(
-            np.unravel_index(np.arange(start, stop), self.shape),
-            self.shape, order="F",
-        )
-        order = np.argsort(positions)
-        ordered_positions = positions[order]
-        boundaries = np.r_[0, np.flatnonzero(np.diff(ordered_positions) != 1) + 1,
-                           stop - start]
-        values = np.empty(stop - start, dtype=self.dtype)
-        for first, last in zip(boundaries[:-1], boundaries[1:], strict=True):
-            check_cancelled()
-            self.blob.seek(self.offset + int(ordered_positions[first]) * self.dtype.itemsize)
-            values[order[first:last]] = np.frombuffer(
-                self.blob.read(int(last - first) * self.dtype.itemsize),
-                dtype=self.dtype,
-            )
-        return values
 
 
 class loader(QtCore.QRunnable):
@@ -938,7 +887,7 @@ class loader(QtCore.QRunnable):
                 first_shapes = None
                 with closing(self._array_heatmap_records(conn)) as records:
                     for values, size in records:
-                        shapes = tuple(value.shape if isinstance(value, _HeatmapArrayReader)
+                        shapes = tuple(value.shape if isinstance(value, NumericArrayReader)
                                        else () for value in values)
                         if first_shapes is None:
                             first_shapes = shapes
@@ -1237,13 +1186,13 @@ class loader(QtCore.QRunnable):
                             blob = stack.enter_context(conn.blobopen(
                                 self.table_name, name, rowid, readonly=True,
                             ))
-                            values[index] = _HeatmapArrayReader(blob)
+                            values[index] = NumericArrayReader(blob)
                             if values[index].dtype.kind == "c":
                                 self._reject_complex_heatmap(
                                     name,
                                     coordinate=name != self.param.name,
                                 )
-                    sizes = [value.size if isinstance(value, _HeatmapArrayReader) else 1
+                    sizes = [value.size if isinstance(value, NumericArrayReader) else 1
                              for value in values]
                     # QCoDeS also expands a singleton dependent array (or
                     # numeric scalar) when its setpoints supply more samples.
@@ -1251,7 +1200,7 @@ class loader(QtCore.QRunnable):
                     # into measurements. Keep singleton payloads unexpanded
                     # until the existing bounded chunk broadcast below.
                     array_sizes = {name: value.size for name, value in zip(names, values, strict=True)
-                                   if isinstance(value, _HeatmapArrayReader)}
+                                   if isinstance(value, NumericArrayReader)}
                     # Scalar outputs expand to the first array in QCoDeS'
                     # output-first tree, independently of displayed axis order.
                     # Empty output records stay empty with singleton setpoints.
@@ -1276,7 +1225,7 @@ class loader(QtCore.QRunnable):
                         value.read(0 if value.size == 1 else start,
                                    1 if value.size == 1 else stop,
                                    self._check_cancelled)
-                        if isinstance(value, _HeatmapArrayReader) else value
+                        if isinstance(value, NumericArrayReader) else value
                         for value in values
                     ]
                     yield stop - start, self._arrays_from_values(*decoded)

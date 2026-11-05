@@ -1,4 +1,5 @@
 import unittest
+from decimal import Decimal
 
 import numpy as np
 from PyQt6 import QtCore, QtGui
@@ -9,6 +10,7 @@ from qplot.windows._widgets.operations import (
     operations_options_1d,
     operations_options_2d,
     operations_widget,
+    rowItem,
 )
 from qplot.windows._widgets.toolbar import QDock_context
 
@@ -128,6 +130,79 @@ class OperationsPanelTestCase(unittest.TestCase):
             np.testing.assert_array_equal(result["y"], [5.0, 10.0])
         finally:
             main.deleteLater()
+
+    def test_disabled_fill_discards_text_and_reuses_placeholder_default(self):
+        main, widget = self._panel(operations_options_2d)
+        try:
+            option = self._option(widget, "Fill Below")
+            row = option.operation_row
+            option.input.setChecked(True)
+            self.assertEqual(row.output(), "")
+            self.assertEqual(row.validated_output(), 10)
+            row.input.setText("23")
+            self.assertEqual(row.validated_output(), 23)
+
+            option.input.setChecked(False)
+            self.assertEqual(widget.get_data(), [])
+            option.input.setChecked(True)
+            self.assertEqual(row.editor_value(), "")
+            self.assertEqual(row.validated_output(), 10)
+        finally:
+            main.deleteLater()
+
+    def test_missing_input_is_reported_without_changing_editor_text(self):
+        main, widget = self._panel(operations_options_1d)
+        try:
+            option = self._option(widget, "Limit Maximum")
+            option.input.setChecked(True)
+            with self.assertRaisesRegex(
+                OperationValidationError, "Limit Maximum: a value is required"
+            ):
+                widget.get_data()
+            self.assertEqual(option.operation_row.editor_value(), "")
+        finally:
+            main.deleteLater()
+
+    def test_compiled_operations_keep_each_parsed_value_after_editor_changes(self):
+        main, widget = self._panel(operations_options_1d)
+        try:
+            maximum = self._option(widget, "Limit Maximum")
+            minimum = self._option(widget, "Limit Minimum")
+            maximum.input.setChecked(True)
+            minimum.input.setChecked(True)
+            maximum.operation_row.input.setText("2.25")
+            minimum.operation_row.input.setText("1.125")
+            operations = widget.get_data()
+            maximum.operation_row.input.setText("100")
+            minimum.operation_row.input.setText("-100")
+
+            data = {"x": np.arange(3), "y": np.array([0., 2., 3.]), "z": None}
+            for operation in operations:
+                data.update(operation(data))
+            np.testing.assert_array_equal(data["y"], [1.125, 2., 2.25])
+        finally:
+            main.deleteLater()
+
+    def test_row_editors_keep_raw_output_and_reset_contracts(self):
+        for input_type, default, edited, expected, cleared, resolved in (
+            (bool, True, False, False, False, False),
+            (
+                Decimal, "1.25", "9007199254740993.125",
+                Decimal("9007199254740993.125"), "", Decimal("1.25"),
+            ),
+            (["first", "second"], "first", "second", "second", "", "first"),
+            (None, "", None, None, None, None),
+        ):
+            with self.subTest(input_type=input_type):
+                row = rowItem("Custom", None, input_type, default)
+                try:
+                    row.restore_editor_value(edited)
+                    self.assertEqual(row.output(), expected)
+                    row.reset()
+                    self.assertEqual(row.output(), cleared)
+                    self.assertEqual(row.validated_output(), resolved)
+                finally:
+                    row.row_widget.deleteLater()
 
     def test_promotion_state_uses_keys_and_preserves_order_text_and_apply_generation(self):
         source_main, source = self._panel(operations_options_2d)

@@ -12,6 +12,7 @@ from qcodes.dataset import (
 )
 
 import qplot.tools.worker as worker_module
+from qplot.datahandling._numeric_arrays import NumericArrayReader
 from qplot.datahandling.qcodes_cache import update_cache_parameter_data
 from qplot.datahandling.readonly import load_by_id_read_only
 from qplot.tools.operation_registry import OperationCall
@@ -756,8 +757,8 @@ def test_array_heatmap_cancellation_closes_blob_readers_without_publication(tmp_
     with heatmap_dataset(tmp_path, shaped=False) as dataset:
         worker = make_worker(dataset, max_full_heatmap_points=4)
         blobs = []
-        init = worker_module._HeatmapArrayReader.__init__
-        read = worker_module._HeatmapArrayReader.read
+        init = NumericArrayReader.__init__
+        read = NumericArrayReader.read
         chunks = worker._array_heatmap_chunks
         passes = []
 
@@ -781,8 +782,8 @@ def test_array_heatmap_cancellation_closes_blob_readers_without_publication(tmp_
                         worker.cancel()
                     yield chunk
 
-        monkeypatch.setattr(worker_module._HeatmapArrayReader, "__init__", record_blob)
-        monkeypatch.setattr(worker_module._HeatmapArrayReader, "read", cancel_decode)
+        monkeypatch.setattr(NumericArrayReader, "__init__", record_blob)
+        monkeypatch.setattr(NumericArrayReader, "read", cancel_decode)
         monkeypatch.setattr(worker, "_array_heatmap_chunks", cancel_aggregation)
         finished, errors = [], []
         worker.emitter.finished.connect(finished.append)

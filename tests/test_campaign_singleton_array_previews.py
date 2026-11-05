@@ -12,6 +12,7 @@ from qcodes.dataset import (
 )
 
 from qplot.datahandling import trusted_array_preview
+from qplot.datahandling._numeric_arrays import NumericArrayReader
 from qplot.datahandling.file_identity import database_instance
 from qplot.datahandling.parameter_data import (
     flatten_record_columns,
@@ -279,7 +280,7 @@ def test_singleton_heatmap_chunks_cancel_and_retry_without_materializing_broadca
             worker = workers.loader(dataset.cache, params["signal"], params,
                                     {"x": "x", "y": "slow"}, force_sql_heatmap=True)
             reads = []
-            original = workers._HeatmapArrayReader.read
+            original = NumericArrayReader.read
 
             def read(reader, start, stop, check):
                 reads.append((reader.size, start, stop))
@@ -294,7 +295,7 @@ def test_singleton_heatmap_chunks_cancel_and_retry_without_materializing_broadca
             worker.emitter.errorOccurred.connect(errors.append)
             worker.emitter.finished.connect(finished.append)
             with monkeypatch.context() as patch:
-                patch.setattr(workers._HeatmapArrayReader, "read", read)
+                patch.setattr(NumericArrayReader, "read", read)
                 worker.run()
             assert errors == [] and finished == [False]
             assert len(reads) == 4 and worker._sql_connection is None
@@ -417,17 +418,17 @@ def test_initial_empty_singleton_cache_read_does_not_advance_acquisition(tmp_pat
 
 @pytest.mark.parametrize("output_size,coordinate_size", [(1, 0), (0, 2), (2, 0)])
 def test_empty_alignment_refuses_incompatible_nonempty_samples(output_size, coordinate_size):
-    from qplot.windows._plot_actions import _csv_scalar_columns
+    from qplot.datahandling.export_data import csv_scalar_columns
 
     data = {"signal": np.ones((1, output_size)), "x": np.ones((1, coordinate_size))}
     with pytest.raises(ValueError, match="shapes do not match"):
         flatten_record_columns(data)
     with pytest.raises(ValueError, match="Cannot align CSV"):
-        _csv_scalar_columns({"x": data["x"], "signal": data["signal"]}, "signal")
+        csv_scalar_columns({"x": data["x"], "signal": data["signal"]}, "signal")
 
 
 def test_empty_alignment_preserves_dtype_and_cancellation():
-    from qplot.windows._plot_actions import _csv_scalar_columns
+    from qplot.datahandling.export_data import csv_scalar_columns
 
     signal = np.empty(2, dtype=object)
     signal[0], signal[1] = np.array([], dtype=np.longdouble), np.array([2**63 + 1], dtype=np.uint64)
@@ -442,7 +443,7 @@ def test_empty_alignment_preserves_dtype_and_cancellation():
 
     with pytest.raises(InterruptedError, match="empty alignment cancelled"):
         flatten_record_columns(data, cancel)
-    for actual in (flatten_record_columns(data), _csv_scalar_columns(data, "signal")):
+    for actual in (flatten_record_columns(data), csv_scalar_columns(data, "signal")):
         assert actual["signal"].dtype == object
         assert actual["signal"].tolist() == [2**63 + 1]
         np.testing.assert_array_equal(actual["x"], [3.])

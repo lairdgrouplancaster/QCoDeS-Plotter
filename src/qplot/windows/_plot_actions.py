@@ -2,19 +2,21 @@ import os
 from functools import wraps
 from inspect import signature
 
-import numpy as np
 from PyQt6 import QtCore
 
 from qplot.datahandling.dimensions import (
     MAX_SUPPORTED_PLOT_DIMENSIONS,
     unsupported_plot_message,
 )
+from qplot.datahandling.export_data import (
+    csv_scalar_columns,
+    exportable_measurement_params,
+)
 from qplot.datahandling.file_identity import (
     DatabaseInstance,
     logical_database_path,
 )
 from qplot.datahandling.parameter_data import (
-    concatenate_record_samples,
     parameter_data_for_export,
 )
 from qplot.datahandling.readonly import (
@@ -93,78 +95,6 @@ def _combo_index_for_data(combo, value):
         if item_data(index) == value:
             return index
     return -1
-
-
-def _exportable_measurement_params(dataset):
-    """Return dependent values, then standalone values, in run order."""
-    parameters = dataset.get_parameters()
-    setpoint_names = {
-        name
-        for param in parameters
-        for name in param.depends_on_
-    }
-    dependent = [param for param in parameters if param.depends_on_]
-    standalone = [
-        param for param in parameters
-        if not param.depends_on_ and param.name not in setpoint_names
-    ]
-    return dependent + standalone
-
-
-def _csv_scalar_samples(values):
-    """Flatten a record, including arrays held in NumPy object cells."""
-    array = np.asarray(values)
-    if not array.dtype.hasobject:
-        return array.ravel()
-    samples = []
-    for value in array.ravel():
-        if isinstance(value, (np.ndarray, list, tuple)):
-            samples.extend(_csv_scalar_samples(value))
-        else:
-            samples.append(value)
-    # These cells can mix signed/unsigned integers (or integers and floats).
-    # Inferring a dtype again would undo extraction's precision protection.
-    return np.asarray(samples, dtype=object)
-
-
-def _csv_scalar_columns(param_data, output_param=None):
-    """Align samples within each QCoDeS record before joining records."""
-    arrays = {name: np.asarray(values) for name, values in param_data.items()}
-    if not arrays:
-        return {}
-    # QCoDeS trees are output-first; export callers also supply the selected
-    # output explicitly so column presentation order cannot define acquisition.
-    if output_param is None:
-        output_param = next(iter(arrays))
-    # Regular, already aligned columns need no record-by-record expansion.
-    if (
-            len({values.shape for values in arrays.values()}) == 1
-            and all(not values.dtype.hasobject for values in arrays.values())
-            ):
-        return {name: values.ravel() for name, values in arrays.items()}
-
-    chunks = {name: [] for name in arrays}
-    for record in zip(*arrays.values(), strict=True):
-        samples = {
-            name: _csv_scalar_samples(values)
-            for name, values in zip(arrays, record, strict=True)
-        }
-        sample_count = (max(values.size for values in samples.values())
-                        if samples[output_param].size else 0)
-        for name, values in samples.items():
-            if values.size == sample_count:
-                chunks[name].append(values)
-            elif values.size == 1:
-                chunks[name].append(np.repeat(values, sample_count))
-            else:
-                raise ValueError(
-                    f"Cannot align CSV record column {name}: "
-                    f"{values.size} samples instead of {sample_count}."
-                )
-    return {
-        name: concatenate_record_samples(parts) if parts else np.array([], dtype=arrays[name].dtype)
-        for name, parts in chunks.items()
-    }
 
 
 class PlotActionsMixin:
@@ -1225,7 +1155,7 @@ class PlotActionsMixin:
             dataset_key = self._bind_one_shot_dataset_key(dataset_key)
             dataset = self._load_run_csv_dataset(dataset_key)
             data = parameter_data_for_export(dataset, parameter_name)
-            columns = _csv_scalar_columns(data, parameter_name)
+            columns = csv_scalar_columns(data, parameter_name)
             stats_text = dataset_statistics_text(
                 columns, parameter_name,
                 setpoint_names=dataset.paramspecs[parameter_name].depends_on_,
@@ -2364,7 +2294,7 @@ class PlotActionsMixin:
             try:
                 parameter_names = tuple(
                     param.name
-                    for param in _exportable_measurement_params(selected_dataset)
+                    for param in exportable_measurement_params(selected_dataset)
                 )
             except Exception as error:
                 log_exception("Run parameter enumeration failed", error, __name__)
@@ -2403,7 +2333,7 @@ class PlotActionsMixin:
                     dataset = self._load_run_csv_dataset(dataset_key)
                     parameter_names = tuple(
                         param.name
-                        for param in _exportable_measurement_params(dataset)
+                        for param in exportable_measurement_params(dataset)
                     )
                     self._require_run_csv_source_current(dataset_key)
                 except DatabaseInstanceChangedError:
@@ -2453,7 +2383,7 @@ class PlotActionsMixin:
     def _measurement_params_by_names(self, dataset, parameter_names):
         """Resolve captured measurement names against a freshly loaded run."""
         parameters = {
-            param.name: param for param in _exportable_measurement_params(dataset)
+            param.name: param for param in exportable_measurement_params(dataset)
         }
         resolved = []
         for name in parameter_names:
@@ -2576,7 +2506,7 @@ class PlotActionsMixin:
         for param in params:
             param_data = parameter_data_for_export(dataset, param.name)
             columns = {}
-            for name, values in _csv_scalar_columns(param_data, param.name).items():
+            for name, values in csv_scalar_columns(param_data, param.name).items():
                 column_name = f"{param.name}.{name}" if prefix_columns else name
                 # Object samples may need both uint64 and negative int64, or
                 # exact integers alongside floats. Disable pandas' inference.

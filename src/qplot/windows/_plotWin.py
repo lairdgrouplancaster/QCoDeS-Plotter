@@ -1,4 +1,4 @@
-from math import floor, isfinite, isnan, log10
+from math import isfinite
 from os import path
 from typing import TYPE_CHECKING, cast, final
 
@@ -6,6 +6,11 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot._number_formatting import (
+    cursor_field_width,
+    format_cursor_number,
+    format_number,
+)
 from qplot.tools import (
     unpack_param,
 )
@@ -1209,60 +1214,20 @@ class plotWidget(
 #Other Methods  
         
     @staticmethod
-    def formatNum(num : float, sf : int=3) -> str:
-        """
-        Formats cursor point value to clean str display for user.
-
-        Parameters
-        ----------
-        num : float
-            Value at cursor point.
-        sf : int, optional
-            Number of significant figures to display. The default is 3.
-            If this is changed, recomand increase labelWidth in initLables.
-
-        Returns
-        -------
-        str
-            Formated string for display.
-
-        """
-        if not isfinite(num):
-            if isnan(num):
-                return "nan"
-            return "-inf" if num < 0 else "inf"
-
-        try: # Get number of leading/following zeros
-            exponent = floor(log10(abs(num)))
-        except ValueError:
-            return f"{0:.{sf}f}"
-
-        precision = max(sf - 1, 0)
-        if exponent >= sf or exponent < 0:
-            return f"{num:.{precision}e}"
-
-        formatted = f"{num:.{max(sf - exponent - 1, 0)}f}"
-        rounded_exponent = floor(log10(abs(float(formatted))))
-        if rounded_exponent != exponent:
-            return f"{num:.{precision}e}"
-        return formatted
-
+    def formatNum(num: float, sf: int = 3) -> str:
+        """Format summary values with the shared measurement presentation."""
+        return format_number(num, sf)
 
     def format_cursor_number(self, value: float) -> str:
         """Format a coordinate using the current cursor precision preference."""
         figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
-        mantissa_width = figures + 2 if figures > 1 else 2
-        if not isfinite(value):
-            return f"{value:>{mantissa_width + 4}}"
-        mantissa, exponent = f"{value:.{figures - 1}e}".split("e")
-        return f"{mantissa:>{mantissa_width}}e{int(exponent):+03d}"
+        return format_cursor_number(value, figures)
 
 
     def apply_cursor_label_widths(self) -> None:
         """Keep monospaced fields stable across signs, values and exponents."""
         labels = self.__dict__.get("pos_labels", {})
         figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
-        mantissa_width = figures + 2 if figures > 1 else 2
         for axis, label in labels.items():
             if axis == "index":
                 characters = 17 if "z" in labels else 9
@@ -1270,7 +1235,7 @@ class plotWidget(
             else:
                 # Two exponent digits are enough for ordinary measurements.
                 # Qt can grow a field for an exceptional three-digit exponent.
-                label.setMinimumWidth(label.fontMetrics().horizontalAdvance("0" * (mantissa_width + 4)))
+                label.setMinimumWidth(label.fontMetrics().horizontalAdvance("0" * cursor_field_width(figures)))
 
 
     def _set_cursor_index_label(self, text: str) -> None:
