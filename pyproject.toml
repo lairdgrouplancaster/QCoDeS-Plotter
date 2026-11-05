@@ -75,7 +75,7 @@ include = ["qplot", "qplot.*"]
 "qplot.datahandling" = ["*.c", "*.h", "**/*.c", "**/*.h"]
 
 [tool.pytest.ini_options]
-addopts = "-ra --cov=qplot --cov-report=term-missing:skip-covered --cov-report=xml"
+addopts = "-ra"
 pythonpath = ["src"]
 testpaths = ["tests"]
 markers = [

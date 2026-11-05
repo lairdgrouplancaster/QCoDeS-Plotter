@@ -1,6 +1,7 @@
 """CI must reuse current-revision wheels throughout platform validation."""
 
 import re
+import runpy
 import tomllib
 from pathlib import Path
 
@@ -26,7 +27,9 @@ def test_application_wheel_is_built_once_and_consumed_by_all_jobs(workflow):
     for name in ('static-analysis', 'checks', 'coverage', 'package', 'platform-wheels'):
         job = text.split(f'  {name}:\n', 1)[1].split('\n  required-checks:', 1)[0]
         job = re.split(r'\n  [a-z-]+:\n', job, maxsplit=1)[0]
-        assert 'needs: [application-artifacts, native-wheels]' in job
+        dependencies = ('application-artifacts, native-wheels' if name == 'static-analysis'
+                        else 'ci-plan, application-artifacts, native-wheels')
+        assert f'needs: [{dependencies}]' in job
         assert 'name: qplotter-application' in job
         assert 'Download matching native artifacts from this revision' in job
         # Never select another run/branch's artifacts.
@@ -67,7 +70,10 @@ def test_publication_native_builds_are_arch_specific_and_manylinux_repaired(work
     assert 'macos-15-intel' in native
 
 
-def test_every_advertised_python_runs_installed_smoke_on_every_platform(workflow):
+@pytest.mark.parametrize('full_validation', [False, True], ids=['routine', 'full'])
+def test_every_advertised_python_runs_installed_smoke_on_selected_platforms(
+    workflow, full_validation,
+):
     text, repository = workflow
     project = tomllib.loads((repository / 'pyproject.toml').read_text())['project']
     supported = {
@@ -81,10 +87,17 @@ def test_every_advertised_python_runs_installed_smoke_on_every_platform(workflow
     assert native_project['requires-python'] == '>=3.11'
     assert supported == {'3.12', '3.13', '3.14'}
     wheels = text.split('  platform-wheels:\n', 1)[1].split('  required-checks:\n', 1)[0]
-    versions = re.search(r'python-version: \[([^\n]+)\]', wheels)
-    assert versions is not None
-    assert set(re.findall(r'"([^"]+)"', versions[1])) == supported
-    assert 'platform: [linux-x86_64, macos-arm64, macos-intel, windows-x64]' in wheels
+    assert 'matrix: ${{ fromJSON(needs.ci-plan.outputs.installations) }}' in wheels
+    planner = runpy.run_path(str(repository / '.github/scripts/ci_plan.py'))
+    entries = planner['installation_matrix'](full_validation)['include']
+    platforms = {'macos-arm64', 'macos-intel', 'windows-x64'}
+    if full_validation:
+        platforms.add('linux-x86_64')
+    expected = {(platform, version) for platform in platforms for version in supported}
+    assert len(entries) == len(expected)
+    assert {(entry['platform'], entry['python-version']) for entry in entries} == expected
+    for entry in entries:
+        assert entry['native-artifact'] == f"qplotter-native-{entry['platform']}"
     assert 'python-version: ${{ matrix.python-version }}' in wheels
     assert 'run-unprivileged-windows.ps1' in wheels
     for mode in ('wheel', 'editable'):
@@ -107,13 +120,19 @@ def test_pytest_cannot_shadow_the_installed_pair(workflow):
     assert '"-m", "pytest", "-o", "pythonpath="' in windows
 
 
-def test_application_matrices_drop_311_but_keep_native_abi_build(workflow):
+@pytest.mark.parametrize('full_validation', [False, True], ids=['routine', 'full'])
+def test_application_matrices_drop_311_but_keep_native_abi_build(workflow, full_validation):
     text, repository = workflow
     checks = text.split('  checks:\n', 1)[1].split('    env:\n', 1)[0]
-    entries = re.findall(r'- os: ([^\n]+)\n\s+python-version: "([^"]+)"', checks)
-    assert set(entries) == {
+    assert 'matrix: ${{ fromJSON(needs.ci-plan.outputs.checks) }}' in checks
+    planner = runpy.run_path(str(repository / '.github/scripts/ci_plan.py'))
+    entries = planner['check_matrix'](full_validation)['include']
+    platforms = {'windows-2025', 'macos-latest', 'macos-15-intel'}
+    if full_validation:
+        platforms.add('ubuntu-latest')
+    assert {(entry['os'], entry['python-version']) for entry in entries} == {
         (platform, version)
-        for platform in ('windows-2025', 'macos-latest', 'macos-15-intel', 'ubuntu-latest')
+        for platform in platforms
         for version in ('3.12', '3.13', '3.14')
     }
     assert text.count('python-version: "3.11"') == 1  # native build only

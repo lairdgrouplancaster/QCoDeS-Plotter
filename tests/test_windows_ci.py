@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import re
+import runpy
 import shutil
 import subprocess
 from pathlib import Path
@@ -41,25 +42,24 @@ def test_full_windows_suite_has_its_own_bounded_time_budget(
     assert '"-n", "2", "--dist=loadfile"' in full_suite
 
 
+@pytest.mark.parametrize("full_validation", [False, True], ids=["routine", "full"])
 def test_windows_full_matrix_runs_both_partitions_with_existing_containment(
-    github_directory: Path,
+    github_directory: Path, full_validation: bool,
 ) -> None:
     workflow = (github_directory / "workflows/ci.yml").read_text(encoding="utf-8")
     checks = workflow.split("  checks:\n", 1)[1].split("    env:\n", 1)[0]
-    entries = re.findall(
-        r'- os: ([^\n]+)\n\s+python-version: "([^"]+)"\n\s+suite: (\w+)'
-        r'(?:\n\s+partition: "([^"]+)")?', checks,
-    )
-    windows_full = [(version, partition) for os_name, version, suite, partition in entries
-                    if os_name == "windows-2025" and suite == "full"]
+    assert 'matrix: ${{ fromJSON(needs.ci-plan.outputs.checks) }}' in checks
+    planner = runpy.run_path(str(github_directory / "scripts/ci_plan.py"))
+    entries = planner["check_matrix"](full_validation)["include"]
+    windows_full = [(entry["python-version"], entry.get("partition", "")) for entry in entries
+                    if entry["os"] == "windows-2025" and entry["suite"] == "full"]
     assert sorted(windows_full) == [("3.12", "1/2"), ("3.12", "2/2"),
                                     ("3.14", "1/2"), ("3.14", "2/2")]
-    mac_full = [(version, partition) for os_name, version, suite, partition in entries
-                if os_name == "macos-latest" and suite == "full"]
+    mac_full = [(entry["python-version"], entry.get("partition", "")) for entry in entries
+                if entry["os"] == "macos-latest" and entry["suite"] == "full"]
     assert sorted(mac_full) == [("3.12", "1/2"), ("3.12", "2/2"),
                                 ("3.14", "1/2"), ("3.14", "2/2")]
-    assert all(not partition for os_name, _version, suite, partition in entries
-               if suite != "full")
+    assert all(not entry.get("partition") for entry in entries if entry["suite"] != "full")
     full_suite = workflow.split(
         "      - name: Run full test suite as a standard Windows user\n", 1,
     )[1].split("      - name:", 1)[0]
@@ -74,12 +74,14 @@ def test_windows_full_matrix_runs_both_partitions_with_existing_containment(
     assert "-TimeoutSeconds 1500" in full_suite
     assert "timeout-minutes: 30" in checks
     assert "invoke-bounded-unprivileged-windows.ps1" in full_suite
-    # Every matrix entry remains required, and Linux coverage still runs all
-    # tests with its ordinary instrumentation and no partition option.
+    # Every selected matrix entry remains required. Full validation retains
+    # the complete Linux coverage suite with explicit instrumentation.
     required = workflow.split("  required-checks:\n", 1)[1]
     assert 'needs.checks.result }}" != "success"' in required
     coverage = workflow.split("  coverage:\n", 1)[1].split("  package:\n", 1)[0]
+    assert "if: needs.ci-plan.outputs.full-validation == 'true'" in coverage
     assert "python -m pytest -o pythonpath= -n 2 --dist=loadfile --no-loadscope-reorder" in coverage
+    assert "--cov=qplot --cov-report=term-missing:skip-covered --cov-report=xml" in coverage
     assert "--no-cov" not in coverage
     assert "--qplot-ci-partition" not in coverage
 

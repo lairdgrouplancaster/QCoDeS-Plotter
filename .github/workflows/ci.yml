@@ -5,8 +5,15 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
   workflow_call:
     inputs:
+      full-validation:
+        description: Run the complete Linux, coverage and source-distribution validation
+        type: boolean
+        default: true
       reuse-native:
         description: Validate with the pinned native wheels already published on PyPI
         type: boolean
@@ -23,6 +30,27 @@ env:
   PIP_ONLY_BINARY: apsw
 
 jobs:
+  ci-plan:
+    name: Choose validation scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      full-validation: ${{ steps.plan.outputs.full-validation }}
+      checks: ${{ steps.plan.outputs.checks }}
+      installations: ${{ steps.plan.outputs.installations }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Choose routine or full validation
+        id: plan
+        env:
+          QPLOT_FULL_VALIDATION: ${{ inputs.full-validation || false }}
+        run: python .github/scripts/ci_plan.py
+
   lint:
     name: Ruff
     runs-on: ubuntu-latest
@@ -166,87 +194,14 @@ jobs:
         run: python -m mypy
 
   checks:
-    needs: [application-artifacts, native-wheels]
+    needs: [ci-plan, application-artifacts, native-wheels]
     name: ${{ matrix.os }} Python ${{ matrix.python-version }} (${{ matrix.suite }}${{ matrix.partition && format(' {0}', matrix.partition) || '' }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
 
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: windows-2025
-            python-version: "3.12"
-            suite: full
-            partition: "1/2"
-            native-artifact: qplotter-native-windows-x64
-          - os: windows-2025
-            python-version: "3.12"
-            suite: full
-            partition: "2/2"
-            native-artifact: qplotter-native-windows-x64
-          - os: windows-2025
-            python-version: "3.13"
-            suite: compatibility
-            native-artifact: qplotter-native-windows-x64
-          - os: windows-2025
-            python-version: "3.14"
-            suite: full
-            partition: "1/2"
-            native-artifact: qplotter-native-windows-x64
-          - os: windows-2025
-            python-version: "3.14"
-            suite: full
-            partition: "2/2"
-            native-artifact: qplotter-native-windows-x64
-          - os: macos-latest
-            python-version: "3.12"
-            suite: full
-            partition: "1/2"
-            native-artifact: qplotter-native-macos-arm64
-          - os: macos-latest
-            python-version: "3.12"
-            suite: full
-            partition: "2/2"
-            native-artifact: qplotter-native-macos-arm64
-          - os: macos-latest
-            python-version: "3.13"
-            suite: compatibility
-            native-artifact: qplotter-native-macos-arm64
-          - os: macos-latest
-            python-version: "3.14"
-            suite: full
-            partition: "1/2"
-            native-artifact: qplotter-native-macos-arm64
-          - os: macos-latest
-            python-version: "3.14"
-            suite: full
-            partition: "2/2"
-            native-artifact: qplotter-native-macos-arm64
-          - os: macos-15-intel
-            python-version: "3.12"
-            suite: compatibility
-            native-artifact: qplotter-native-macos-intel
-          - os: macos-15-intel
-            python-version: "3.13"
-            suite: compatibility
-            native-artifact: qplotter-native-macos-intel
-          - os: macos-15-intel
-            python-version: "3.14"
-            suite: compatibility
-            native-artifact: qplotter-native-macos-intel
-          - os: ubuntu-latest
-            python-version: "3.12"
-            suite: compatibility
-            native-artifact: qplotter-native-linux-x86_64
-          - os: ubuntu-latest
-            python-version: "3.13"
-            suite: compatibility
-            native-artifact: qplotter-native-linux-x86_64
-          - os: ubuntu-latest
-            python-version: "3.14"
-            suite: compatibility
-            native-artifact: qplotter-native-linux-x86_64
+      matrix: ${{ fromJSON(needs.ci-plan.outputs.checks) }}
 
     env:
       QT_QPA_PLATFORM: offscreen
@@ -537,7 +492,8 @@ jobs:
           }
 
   coverage:
-    needs: [application-artifacts, native-wheels]
+    needs: [ci-plan, application-artifacts, native-wheels]
+    if: needs.ci-plan.outputs.full-validation == 'true'
     name: Coverage
     runs-on: ubuntu-latest
 
@@ -588,10 +544,13 @@ jobs:
       - name: Run tests with coverage
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-        run: python -m pytest -o pythonpath= -n 2 --dist=loadfile --no-loadscope-reorder
+        run: >-
+          python -m pytest -o pythonpath= -n 2 --dist=loadfile --no-loadscope-reorder
+          --cov=qplot --cov-report=term-missing:skip-covered --cov-report=xml
 
   package:
-    needs: [application-artifacts, native-wheels]
+    needs: [ci-plan, application-artifacts, native-wheels]
+    if: needs.ci-plan.outputs.full-validation == 'true'
     name: Linux source and installed manylinux validation
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -658,31 +617,12 @@ jobs:
 
   platform-wheels:
     name: ${{ matrix.os-name }} compiler-free installations Python ${{ matrix.python-version }}
-    needs: [application-artifacts, native-wheels]
+    needs: [ci-plan, application-artifacts, native-wheels]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      matrix:
-        platform: [linux-x86_64, macos-arm64, macos-intel, windows-x64]
-        python-version: ["3.12", "3.13", "3.14"]
-        include:
-          - platform: linux-x86_64
-            os-name: Linux x86_64
-            os: ubuntu-latest
-            native-artifact: qplotter-native-linux-x86_64
-          - platform: macos-arm64
-            os-name: macOS ARM64
-            os: macos-latest
-            native-artifact: qplotter-native-macos-arm64
-          - platform: macos-intel
-            os-name: macOS Intel
-            os: macos-15-intel
-            native-artifact: qplotter-native-macos-intel
-          - platform: windows-x64
-            os-name: Windows x64
-            os: windows-2025
-            native-artifact: qplotter-native-windows-x64
+      matrix: ${{ fromJSON(needs.ci-plan.outputs.installations) }}
 
     env:
       QT_QPA_PLATFORM: offscreen
@@ -798,12 +738,21 @@ jobs:
   required-checks:
     name: Required checks
     runs-on: ubuntu-latest
-    needs: [lint, application-artifacts, native-wheels, static-analysis, checks, coverage, package, platform-wheels]
+    needs: [lint, ci-plan, application-artifacts, native-wheels, static-analysis, checks, coverage, package, platform-wheels]
     if: always()
 
     steps:
       - name: Check matrix result
         run: |
+          if [ "${{ needs.ci-plan.result }}" != "success" ]; then
+            echo "Validation planning failed."
+            exit 1
+          fi
+          case "${{ needs.ci-plan.outputs.full-validation }}" in
+            true) expected_full_result=success ;;
+            false) expected_full_result=skipped ;;
+            *) echo "Missing or invalid validation scope."; exit 1 ;;
+          esac
           if [ "${{ needs.lint.result }}" != "success" ]; then
             echo "Ruff failed."
             exit 1
@@ -820,12 +769,12 @@ jobs:
             echo "One or more matrix checks failed."
             exit 1
           fi
-          if [ "${{ needs.coverage.result }}" != "success" ]; then
-            echo "Coverage tests failed."
+          if [ "${{ needs.coverage.result }}" != "$expected_full_result" ]; then
+            echo "Coverage result does not match the required validation scope."
             exit 1
           fi
-          if [ "${{ needs.package.result }}" != "success" ]; then
-            echo "Package build failed."
+          if [ "${{ needs.package.result }}" != "$expected_full_result" ]; then
+            echo "Source validation result does not match the required validation scope."
             exit 1
           fi
           if [ "${{ needs.platform-wheels.result }}" != "success" ]; then

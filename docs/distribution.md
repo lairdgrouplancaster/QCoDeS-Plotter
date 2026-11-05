@@ -391,18 +391,31 @@ those files through the same validation/upload/consumer pipeline. No native
 wheel is rebuilt or republished on that path. The native sdist is still built
 for explicit source-build validation, which may use a compiler in CI.
 
-The retained Linux package job compares both sdists and wheels with the source
-inventory, runs the extracted sdists' complete test suite in an isolated venv,
-and exercises the installed wheel pair in another venv. Linux coverage still
-runs the complete suite. The Windows and ARM64 macOS full suites retain both
-partitions on Python 3.12 and 3.14; Python 3.13 uses the existing
-compatibility subset. Intel macOS and Linux run that subset on all three
-versions. The compatibility
-subset retains the database protections, concurrent-writer tests and focused
-Stage 4 coverage. All four platforms run the complete installed-package smoke
-on each advertised CPython version, 3.12, 3.13 and 3.14, reusing the same
-platform's stable-ABI wheel across versions. Free-threaded CPython and PyPy are
-not part of the advertised CPython support matrix.
+Ordinary pull requests and pushes to `main` run both full-suite partitions on
+Windows and ARM64 macOS with Python 3.12 and 3.14, and the compatibility subset
+with Python 3.13. Intel macOS runs the compatibility subset on all three
+versions. The subset retains database protections, concurrent-writer tests and
+focused Stage 4 coverage. All three desktop platforms also run installed-package
+and compiler-free ordinary/editable installation acceptance on Python
+3.12–3.14. Ubuntu Ruff, application/native builds and mypy remain part of every
+run; mypy uses the same run's Linux native wheel and application artifact.
+
+Full validation adds Linux compatibility and compiler-free installation checks
+on Python 3.12–3.14, the complete Linux coverage suite, and the Linux package
+job. The package job compares both sdists and wheels with the source inventory,
+runs the extracted sdists' complete test suite in an isolated venv, and exercises
+the installed wheel pair in another venv. Each platform reuses its same
+stable-ABI wheel across Python versions. Free-threaded CPython and PyPy are not
+part of the advertised support matrix.
+
+Full validation runs weekly on Mondays at 04:23 UTC and is available manually
+through **Actions → CI → Run workflow** after this workflow is merged to
+`main`. Native-code, database-reader, packaging, dependency and CI-path changes
+also select full validation automatically; a missing change comparison defaults
+to full validation. The tag release workflow explicitly passes
+`full-validation: true`, retaining every release gate for that exact tagged
+revision. Ordinary and full runs publish the same aggregate **Required checks**
+status, which checks the jobs required by the selected mode.
 
 The validator writes a real `if __name__ == "__main__"`-guarded smoke script
 into a temporary directory outside the repository and runs it with isolated
@@ -451,9 +464,9 @@ preview-only cache replay, selected/visible/remaining progression, and stale
 database/helper-generation rejection. A real writer-held QCoDeS WAL database
 exercises append, completion, new-run reconciliation, helper restart, active
 database switching and reselection, later writer commits, PASSIVE/TRUNCATE
-checkpoints, cache separation, and protected-artifact audits. Hosted Linux,
-ARM64 macOS, Intel macOS, and unprivileged Windows checks remain required for
-the exact final revision.
+checkpoints, cache separation, and protected-artifact audits. Release acceptance
+requires the hosted Linux, ARM64 macOS, Intel macOS, and unprivileged Windows
+checks to pass for the exact final revision under full validation.
 
 The installed-wheel checks also invoke the installed shutdown launcher rather
 than substituting a source-tree module. They exercise both the unchanged CLI

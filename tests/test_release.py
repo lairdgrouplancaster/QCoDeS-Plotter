@@ -317,6 +317,8 @@ def test_workflow_gates_uploads_and_verifies_native_before_application():
     text = workflow_path.read_text()
     assert 'tags: ["v*", "native-and-app/v*"]' in text
     assert "uses: ./.github/workflows/ci.yml" in text
+    validation = text.split("  validate:\n", 1)[1].split("\n  prepare:\n", 1)[0]
+    assert "full-validation: true" in validation
     assert "reuse-native: ${{ needs.preflight.outputs.publish-native != 'true' }}" in text
     assert "needs: validate" in text
     assert "run-id:" not in text and "github-token:" not in text
