@@ -124,7 +124,7 @@ Windows:
 macOS:
 
 ```console
-./.venv-mac/bin/python -m pytest
+MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-mac/bin/python -m pytest
 ```
 
 Linux:
@@ -145,7 +145,7 @@ Windows:
 macOS:
 
 ```console
-../.venv-mac/bin/python -m pytest
+MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache ../.venv-mac/bin/python -m pytest
 ```
 
 Linux:
@@ -171,14 +171,44 @@ python -m mypy
 On macOS, prefix Python commands that may import Matplotlib with
 `MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache` and reuse that directory.
 
-Run the automated test suite:
+While editing, run the test files relevant to the change. For example, using
+the project environment directly:
+
+Windows:
+
+```console
+.\.venv\Scripts\python.exe -m pytest tests/test_config.py
+```
+
+macOS:
+
+```console
+MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-mac/bin/python -m pytest tests/test_config.py
+```
+
+Replace the example path with the affected test files. Run the full automated
+suite when the scope of a change warrants it, using the activated project
+environment (with the Matplotlib prefix on macOS):
 
 ```console
 python -m pytest
 ```
 
-Pytest prints branch coverage for the `qplot` package and writes `coverage.xml`
-for CI or editor integrations.
+Coverage is opt-in so ordinary and focused runs avoid its instrumentation and
+report generation. To collect branch coverage and write `coverage.xml`, add
+the coverage options explicitly:
+
+```console
+python -m pytest --cov=qplot --cov-report=term-missing:skip-covered --cov-report=xml
+```
+
+On macOS without an activated environment, use:
+
+```console
+MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-mac/bin/python -m pytest --cov=qplot --cov-report=term-missing:skip-covered --cov-report=xml
+```
+
+Coverage uses the existing branch settings and exclusions in `pyproject.toml`.
 
 For release or packaging changes, start from a clean source tree, build the
 two source distributions and wheels, validate all four artifacts, and check their
@@ -255,16 +285,31 @@ or interrupted runs, which omit tests. For a local measurement, add
 Failed or malformed reports are rejected before the updater writes the profile.
 
 Ruff runs immediately in an independent required job. Mypy continues to use the
-current revision's installed application and native artifacts. All runtime,
-database-safety, packaging, and platform checks remain required.
+current revision's installed application and native artifacts. Ordinary pull
+requests and pushes to `main` retain the full Windows and ARM64 macOS suites on
+Python 3.12 and 3.14, their compatibility suites on 3.13, and Intel macOS
+compatibility suites on all three versions. Compiler-free ordinary and editable
+installation checks also run on all three versions for Windows and both macOS
+architectures. Ubuntu still runs Ruff, application/native builds, and mypy; the
+Linux native wheel is needed for installed-artifact type checking.
+
+Full validation additionally runs Linux compatibility and compiler-free
+installation checks on Python 3.12–3.14, the complete Linux coverage suite, and
+the extracted-sdist validation suite. It runs every Monday at 04:23 UTC, can be
+requested through **Actions → CI → Run workflow**, and is explicitly required
+by releases with `full-validation: true`. Changes to native code, database
+readers, packaging, dependencies, or CI paths automatically select full
+validation; an unavailable change comparison also selects full validation.
+The weekly schedule and manual workflow become available once the workflow is
+merged to `main`. The aggregate **Required checks** status keeps its existing
+name and validates every job required by the selected mode.
 
 GitHub Actions is configured to build the application wheel once and separate
 `cp311-abi3` native wheels for Windows x64, macOS ARM64, macOS Intel, and Linux
 x86_64. Linux publication wheels use cibuildwheel's `manylinux_2_28` image and
 auditwheel repair. Each platform exercises the same run's matching native wheel
-and shared application wheel on Python 3.12, 3.13, and 3.14. The existing
-full and compatibility suites, Linux coverage, source-distribution validation,
-Ruff, and mypy remain required. Pytest disables the checkout's `src` import
+and shared application wheel on Python 3.12, 3.13, and 3.14 when its validation
+jobs run. Pytest disables the checkout's `src` import
 path in CI and verifies installed file hashes and module origins against the
 downloaded wheels; the native origin is checked before loading the extension.
 Both wheels are explicit local installation arguments, so these jobs do not
@@ -275,12 +320,13 @@ the same artifact pipeline; paired releases build new native wheels. Because
 the trusted reader requires an unprivileged
 process, its Windows tests and wheel exercise run through a disposable local
 standard account; a separate probe confirms that the hosted runner's elevated
-token is rejected. Configuring these jobs is not cross-platform acceptance for
-a source revision: its Linux, ARM64 macOS, Intel macOS, and unprivileged Windows
-hosted jobs must all finish successfully for that exact revision.
+token is rejected. Release acceptance still requires successful full validation
+of the exact tagged revision on Linux, ARM64 macOS, Intel macOS, and
+unprivileged Windows; a successful ordinary pull-request run does not establish
+that release acceptance.
 
-The platform jobs additionally require compiler-free ordinary and editable
-installation acceptance in separate fresh environments. Run
+The platform installation jobs require compiler-free ordinary and editable
+acceptance in separate fresh environments. Run
 `python scripts/validate_compiler_free_install.py --mode wheel dist` and
 `python scripts/validate_compiler_free_install.py --mode editable dist` to
 exercise them locally. Every runtime/development dependency must be a wheel;
@@ -333,7 +379,8 @@ Before committing:
 
 1. Run `python -m ruff check .`.
 2. Run `python -m mypy`.
-3. Run `python -m pytest`.
+3. Run the relevant automated tests; use the full suite when the change's scope
+   warrants it. The commands in Checks above use the project environment.
 4. Run `python -m qplot` for application or GUI changes, using the platform
    environment settings in Manual GUI Check above.
 5. Run `python -m build native --outdir dist`, `python -m build`, `python scripts/validate_distribution.py dist`, and
