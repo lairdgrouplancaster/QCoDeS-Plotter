@@ -60,6 +60,14 @@ def fake_tools(monkeypatch):
     return calls
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="native macOS applet compiler")
+def test_mac_launcher_compilation_is_quiet(tmp_path, capfd):
+    desktop._mac_launcher(tmp_path / "qPlot.app", Path(sys.executable), False)
+    captured = capfd.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
 def test_mac_setup_and_remove(tmp_path, monkeypatch, fake_tools, isolated_desktop):
     monkeypatch.setattr(sys, "platform", "darwin")
     destination = tmp_path / "qPlot Ω space.app"
