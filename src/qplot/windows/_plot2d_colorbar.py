@@ -7,6 +7,7 @@ from PyQt6 import QtCore
 
 from ._colorbar import (
     _CET_COLORBAR_SUBTYPES,
+    _COLORBAR_FILTERS,
     _MATPLOTLIB_COLORBAR_SUBTYPES,
     _cet_colorbar_colormap_subtype,
     _colorbar_colormap_for_name,
@@ -1019,26 +1020,10 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
 
         """
         config_obj = self.__dict__.get("config")
-        include_cet = _config_value(
-            config_obj,
-            "user_preference.bar_colour_include_cet",
-            True,
-        )
-        include_matplotlib = _config_value(
-            config_obj,
-            "user_preference.bar_colour_include_matplotlib",
-            True,
-        )
-        include_local = _config_value(
-            config_obj,
-            "user_preference.bar_colour_include_local",
-            True,
-        )
-        include_custom = _config_value(
-            config_obj,
-            "user_preference.bar_colour_include_custom",
-            True,
-        )
+        include_groups = {
+            group: _config_value(config_obj, spec.config_key, True)
+            for group, spec in _COLORBAR_FILTERS.items()
+        }
         include_cet_subtypes = {
             subtype: _config_value(
                 config_obj,
@@ -1080,14 +1065,12 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
                 continue
 
             group = _colorbar_colormap_group(name)
-            if group == "cet" and not include_cet:
+            if not include_groups.get(group, True):
                 continue
             if (
                     group == "cet"
                     and not include_cet_subtypes[_cet_colorbar_colormap_subtype(name)]
                     ):
-                continue
-            if group == "matplotlib" and not include_matplotlib:
                 continue
             if (
                     group == "matplotlib"
@@ -1095,10 +1078,6 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
                         _matplotlib_colorbar_colormap_subtype(name)
                         ]
                     ):
-                continue
-            if group == "pyqtgraph" and not include_local:
-                continue
-            if group == "custom" and not include_custom:
                 continue
 
             available.append(name)

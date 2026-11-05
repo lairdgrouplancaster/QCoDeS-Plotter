@@ -35,6 +35,12 @@ the controller can run and be tested without importing the main window.
 by concrete types. Reconfiguration and cleanup share one ownership snapshot,
 leaving handlers installed by callers attached and open.
 
+`desktop.py` provisions launchers and delegates Windows Open With ownership,
+registry preflight, installation, and rollback to `_desktop_associations.py`.
+`_desktop_sidecars.py` separately manages optional sidecar icons. It converts
+persisted JSON backups into named validated records before registry mutation;
+installation rollback and removal share restoration of those records.
+
 ## Main Window
 
 `src/qplot/windows/main.py` owns the top-level application window. It handles
@@ -160,9 +166,10 @@ source identity validation and selection/UI changes.
 native printing, pyqtgraph export-dialog setup, PDF rendering, clipboard image
 copies, high-DPI copies, and SVG clipboard output.
 
-`windows/_export_names.py` owns filename suffix rules, including selected-filter
-precedence, without Qt or filesystem access. `_export_paths.py` resolves the
-name before approving its destination and retains all publication protections.
+`windows/_export_names.py` owns suggested-name sanitization and filename suffix
+rules, including selected-filter precedence, without Qt or filesystem access.
+`_export_paths.py` resolves the name before approving its destination and retains
+all publication protections.
 
 `_plot_source_promotion.py` validates the surviving primary source and restores
 its controls, retained datasets, then rendering settings through named phases.
@@ -203,6 +210,11 @@ readout, and snap marker display.
 owns secondary trace controls, added-trace refresh handling, right-axis viewbox
 synchronization, and cleanup of hidden trace windows.
 
+`_plot_appearance.py` shares the row-order calculation used by trace, heatmap,
+and mixed appearance dialogs. Each dialog still owns registry mutation and its
+refresh policy. `_plot_drop_axes.py` uses named axis identities and candidate
+priorities to select compatible axes before mutating the target plot.
+
 `src/qplot/windows/plot2d.py` extends the shared plot window for heatmaps. It
 owns heatmap rendering, hover pixel display, and marquee color scaling.
 
@@ -231,6 +243,10 @@ movement, grouped dragging, and synchronization with 1D sweep windows.
 `src/qplot/windows/_colorbar.py` contains the heatmap color-map catalog,
 filtering helpers, preview rendering, and colorbar table items used by
 `_plot2d_colorbar.py`.
+
+Its filter specification registry is also the source of broad filter labels,
+settings keys, control names, and catalogue groups for the color scale dialog.
+The existing subtype rules and transactional settings persistence stay separate.
 
 Use the shared base only for behavior that should apply to both line plots and
 heatmaps. Keep plot-type-specific interaction details in `plot1d.py` or
@@ -578,6 +594,11 @@ binary, and image fields are validated before retention. Unsupported, empty,
 malformed, non-finite/extreme numeric, or higher-dimensional sources become
 bounded descriptions.
 
+`_trusted_preview_raster.py` provides shared exact numeric normalization,
+Viridis colors, pixel/line drawing, and 1D rendering for scalar and array
+previews. Neither renderer imports the other for these primitives. Payload
+validation and PNG encoding remain in `trusted_derived_rendering.py`.
+
 `trusted_derived_cache.py` cache format version 3 stores only canonical,
 type-tagged keyed entries under the absolute platform application-cache root
 returned by `trusted_derived_cache_root()`. SHA-256 filenames and an internal
@@ -592,6 +613,11 @@ index and heap instead of rescanning. POSIX roots and files are normalised to
 0700 and 0600. A cache root inside, containing, or equal to the selected
 database directory is disabled. Restart-unique service namespaces deliberately
 prevent unproved cross-session hits.
+
+`_trusted_cache_codec.py` owns canonical value/key encoding, deterministic
+filenames, and bounded JSON preflight/decoding. It performs no file operations;
+`trusted_derived_cache.py` retains cache locks, artifact ownership, index
+transactions, publication, and cleanup.
 
 `src/qplot/datahandling/readonly.py` centralises the retained snapshot path.
 Use these helpers for explicitly deferred QCoDeS/dataset consumers and the
@@ -957,6 +983,10 @@ testing. It backs the
 `qplot-generate-db` command and remains separate from qPlot's enforced
 read-only database-loading path.
 
+`_testdata_samples.py` calculates bounded synthetic chunks and seeded sinusoid
+components using NumPy and specification records. `testdata.py` retains chunk
+iteration, cancellation, QCoDeS measurement writes, and destination publication.
+
 `src/qplot/tools/worker.py` defines the background loader used by plot windows.
 It loads data, reshapes it for the plot type, applies selected operations, and
 emits results back to the GUI thread. Plot workers use cooperative cancellation:
@@ -969,6 +999,9 @@ third-party operation callables remain compatible with the one-argument
 stopped during that individual Python call, so cancellation takes effect as soon
 as it returns. Threads are never terminated forcibly, and cancelled results are
 not applied to plot windows.
+
+The worker's internal heatmap spatial summary names its matching-row count and
+coordinate bounds/cardinalities, keeping the SQL result contract explicit.
 
 `tools/plot_result.py` defines the successful `PlotLoadResult`, its source
 identity, and optional cache update. The worker snapshots output mappings once

@@ -5,6 +5,15 @@ import re
 from dataclasses import dataclass
 
 
+def suggested_export_filename(filename: str) -> str:
+    """Replace path-hostile characters in a suggestion, retaining Unicode names.
+
+    This is display/naming policy only. Destination approval and atomic
+    publication still belong to ``_export_paths``.
+    """
+    return "".join(char if char.isalnum() or char in "._-" else "_" for char in filename)
+
+
 def normalize_export_path(filename: str, required_suffix: str) -> str:
     """Return an absolute export path with ``required_suffix`` exactly once."""
     if not required_suffix.startswith("."):

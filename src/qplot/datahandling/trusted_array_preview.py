@@ -11,7 +11,16 @@ import numpy as np
 from qplot.tools.sample_statistics import finite_mean
 
 from ._numeric_arrays import read_npy_header
-from .trusted_live_queries import TRUSTED_DERIVED_MAX_SAMPLE_ROWS
+from ._trusted_preview_raster import (
+    _MISSING_CELL_RGBA,
+    _finite_number,
+    _normalised_position,
+    _pixel,
+    _render_1d,
+    _UnsupportedNumericData,
+    _viridis_rgba,
+)
+from .trusted_query_types import TRUSTED_DERIVED_MAX_SAMPLE_ROWS
 
 MAX_SAMPLES = 131_072
 # Exact extended ratios can be much larger than their stored NPY samples.
@@ -20,8 +29,6 @@ MAX_EXACT_SAMPLE_BYTES = 64 * 1024 * 1024
 
 
 def _decode(value):
-    from .trusted_derived_rendering import _UnsupportedNumericData
-
     if not isinstance(value, bytes):
         return np.asarray([value])
     try:
@@ -41,16 +48,6 @@ def _decode(value):
 
 
 def render_array_preview(observation, dependencies, dependent, width, height, check):
-    from .trusted_derived_rendering import (
-        _MISSING_CELL_RGBA,
-        _finite_number,
-        _normalised_position,
-        _pixel,
-        _render_1d,
-        _UnsupportedNumericData,
-        _viridis_rgba,
-    )
-
     indexes = [observation.sample_columns.index(name)
                for name in (*dependencies, dependent)]
     points = []

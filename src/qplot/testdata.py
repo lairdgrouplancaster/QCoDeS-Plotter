@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import csv
 import errno
-import math
 import os
 import re
 import secrets
@@ -27,6 +26,7 @@ from qcodes.parameters import ManualParameter
 from qcodes.station import Station
 
 from qplot._auxiliary_paths import ensure_safe_auxiliary_path
+from qplot._testdata_samples import random_sinusoid_components, sample_chunk
 from qplot._testdata_specifications import (
     CSV_COLUMNS as CSV_COLUMNS,
 )
@@ -81,11 +81,6 @@ INSTRUCTION_FILE_NAMES = (
     "qplot_test_db_10_30gb.csv",
 )
 
-_MINIMUM_AMPLITUDE = 0.5
-_MAXIMUM_AMPLITUDE = 1.5
-_MINIMUM_FREQUENCY = 0.5
-_MAXIMUM_FREQUENCY = 4.0
-_SINUSOID_COMPONENT_COUNT = 2
 _RESULT_CHUNK_POINTS = 10_000
 _TEMPORARY_DATABASE_PREFIX = ".qplot-testdata-"
 _PROVENANCE_WRITER_ENABLED_ATTRIBUTE = "_qplot_provenance_writer_enabled"
@@ -746,39 +741,6 @@ def _timestamped_message(message):
     print(f"[{timestamp}] {message}", flush=True)
 
 
-def _random_sinusoid_components(random_generator, dimensions):
-    """Return independently randomised sinusoid parameters for one run."""
-    components = []
-    for _ in range(_SINUSOID_COMPONENT_COUNT):
-        amplitude = random_generator.uniform(_MINIMUM_AMPLITUDE, _MAXIMUM_AMPLITUDE)
-        frequencies = tuple(
-            random_generator.uniform(_MINIMUM_FREQUENCY, _MAXIMUM_FREQUENCY)
-            for _ in range(dimensions)
-        )
-        phase = random_generator.uniform(0.0, 2.0 * np.pi)
-        components.append((amplitude, frequencies, phase))
-    return tuple(components)
-
-
-def _axis_coordinates(axis, indices):
-    """Interpolate a bounded chunk, including extreme finite endpoints."""
-    if axis.points == 1:
-        # Programmatic fixtures also use single-point sweeps. The CSV format
-        # requires at least two points, but linspace's singleton convention
-        # must remain usable by those fixtures.
-        return np.full(indices.shape, axis.start), np.zeros(indices.shape)
-    normalized = indices / (axis.points - 1)
-    if math.isfinite(axis.stop - axis.start):
-        coordinates = axis.start + (axis.stop - axis.start) * normalized
-    else:
-        coordinates = (
-            axis.start / 2.0 + (axis.stop / 2.0 - axis.start / 2.0) * normalized
-        ) * 2.0
-    coordinates[indices == 0] = axis.start
-    coordinates[indices == axis.points - 1] = axis.stop
-    return coordinates, normalized
-
-
 def _write_run(
     experiment,
     run_number,
@@ -814,7 +776,7 @@ def _write_run(
         for measured, parameter in zip(
             specification.measurements, parameters, strict=True
         ):
-            components = _random_sinusoid_components(
+            components = random_sinusoid_components(
                 random_generator, measured.dimensions
             )
             # Scalar storage through QCoDeS leaves unrelated quantities NULL.
@@ -822,28 +784,13 @@ def _write_run(
             # their exact definitions without repeating lower-dimensional data.
             for result_slice in _result_chunks(measured.point_count):
                 _raise_if_cancelled(cancelled_callback)
-                remaining = np.arange(
-                    result_slice.start, result_slice.stop, dtype=np.int64
+                chunk = sample_chunk(
+                    measured.axes, components, result_slice.start, result_slice.stop,
                 )
-                coordinates = []
-                normalized = []
-                for axis in reversed(measured.axes):
-                    indices = remaining % axis.points
-                    remaining = remaining // axis.points
-                    values, fractions = _axis_coordinates(axis, indices)
-                    coordinates.append((axes[axis.name], values))
-                    normalized.append(fractions)
-                normalized.reverse()
-                values = np.zeros(result_slice.stop - result_slice.start)
-                for amplitude, frequencies, phase in components:
-                    argument = sum(
-                        frequency * fractions
-                        for frequency, fractions in zip(
-                            frequencies, normalized, strict=True
-                        )
-                    )
-                    values += amplitude * np.sin(2.0 * np.pi * argument + phase)
-                datasaver.add_result(*reversed(coordinates), (parameter, values))
+                datasaver.add_result(
+                    *((axes[name], values) for name, values in chunk.coordinates),
+                    (parameter, chunk.values),
+                )
     points_written = int(datasaver.points_written)
     if points_written != specification.point_count:
         raise RuntimeError(

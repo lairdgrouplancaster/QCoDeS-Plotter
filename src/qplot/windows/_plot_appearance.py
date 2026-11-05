@@ -2,10 +2,27 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
+
+
+def reordered_rows[Item](
+    items: Sequence[Item], source_rows: Sequence[int], destination_row: int,
+) -> list[Item]:
+    """Move selected rows to an insertion boundary in the original sequence.
+
+    Ignore invalid/duplicate selections and retain the relative order of both
+    selected and remaining items. Callers own registry updates and UI refreshes.
+    """
+    rows = sorted({row for row in source_rows if 0 <= row < len(items)})
+    destination = max(0, min(destination_row, len(items)))
+    selected = [items[row] for row in rows]
+    destination -= sum(row < destination for row in rows)
+    remaining = [item for row, item in enumerate(items) if row not in rows]
+    return remaining[:destination] + selected + remaining[destination:]
 
 
 class CenteredPreviewDelegate(qtw.QStyledItemDelegate):

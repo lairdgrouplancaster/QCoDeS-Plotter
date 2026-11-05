@@ -2,6 +2,7 @@ import math
 import threading
 from contextlib import ExitStack, closing
 from copy import copy
+from dataclasses import dataclass
 from fractions import Fraction
 from typing import TYPE_CHECKING, Any
 
@@ -66,6 +67,19 @@ MAX_TRUSTED_FULL_PLOT_DECODE_BYTES = 1024 * 1024 * 1024
 
 class PlotWorkCancelled(InterruptedError):
     """Internal control flow used to unwind cancelled plot work safely."""
+
+
+@dataclass(frozen=True)
+class _HeatmapSpatialSummary:
+    """Finite matching rows and the exact coordinate extent on each axis."""
+
+    matching_rows: int
+    x_min: int | float | None
+    x_max: int | float | None
+    x_count: int
+    y_min: int | float | None
+    y_max: int | float | None
+    y_count: int
 
 
 class loader(QtCore.QRunnable):
@@ -1100,7 +1114,7 @@ class loader(QtCore.QRunnable):
                 where_sql,
                 parameters,
                 )
-            range_row_count = range_summary[0]
+            range_row_count = range_summary.matching_rows
             self._heatmap_estimated_range_rows = range_row_count
             self._heatmap_source_info.update({
                 "estimated_range_rows": range_row_count,
@@ -1371,7 +1385,7 @@ class loader(QtCore.QRunnable):
         return axes[0][x_indices], axes[1][y_indices], z_data
 
 
-    def _heatmap_spatial_summary(self, conn, where_sql, parameters):
+    def _heatmap_spatial_summary(self, conn, where_sql, parameters) -> _HeatmapSpatialSummary:
         self._check_cancelled()
         table = _sqlite_identifier(self.table_name)
         x_column = _sqlite_identifier(self.axes_dict["x"])
@@ -1386,9 +1400,9 @@ class loader(QtCore.QRunnable):
             parameters,
             ).fetchone()
         if row is None or row[0] is None:
-            return (0, None, None, 0, None, None, 0)
+            return _HeatmapSpatialSummary(0, None, None, 0, None, None, 0)
 
-        return (
+        return _HeatmapSpatialSummary(
             int(row[0]),
             row[1],
             row[2],
@@ -1404,46 +1418,37 @@ class loader(QtCore.QRunnable):
             conn,
             where_sql,
             parameters,
-            summary,
+            summary: _HeatmapSpatialSummary,
             ):
-        (
-            matching_rows,
-            x_min,
-            x_max,
-            x_count,
-            y_min,
-            y_max,
-            y_count,
-            ) = summary
         if (
-                matching_rows <= 0
-                or x_min is None
-                or x_max is None
-                or y_min is None
-                or y_max is None
-                or x_count <= 0
-                or y_count <= 0
+                summary.matching_rows <= 0
+                or summary.x_min is None
+                or summary.x_max is None
+                or summary.y_min is None
+                or summary.y_max is None
+                or summary.x_count <= 0
+                or summary.y_count <= 0
                 ):
             self.sampled_heatmap_source = False
             self.aggregated_heatmap_source = False
             return self._arrays_from_values([], [], [])
 
-        x_bins, y_bins = self._bounded_grid_shape(x_count, y_count)
+        x_bins, y_bins = self._bounded_grid_shape(summary.x_count, summary.y_count)
         table = _sqlite_identifier(self.table_name)
         x_column = _sqlite_identifier(self.axes_dict["x"])
         y_column = _sqlite_identifier(self.axes_dict["y"])
         z_column = _sqlite_identifier(self.param.name)
 
-        x_exact = x_bins >= x_count
-        y_exact = y_bins >= y_count
+        x_exact = x_bins >= summary.x_count
+        y_exact = y_bins >= summary.y_count
         query_parameters: list[float | int] = []
         if x_exact:
             x_group_sql = x_column
         else:
             x_centres, x_lower_edge, x_width, x_scale = self._spatial_axis_bins(
-                float(x_min),
-                float(x_max),
-                x_count,
+                float(summary.x_min),
+                float(summary.x_max),
+                summary.x_count,
                 x_bins,
                 )
             x_group_sql = f"MIN(CAST(({x_column} / ? - ?) / ? AS INTEGER), ?)"
@@ -1453,9 +1458,9 @@ class loader(QtCore.QRunnable):
             y_group_sql = y_column
         else:
             y_centres, y_lower_edge, y_width, y_scale = self._spatial_axis_bins(
-                float(y_min),
-                float(y_max),
-                y_count,
+                float(summary.y_min),
+                float(summary.y_max),
+                summary.y_count,
                 y_bins,
                 )
             y_group_sql = f"MIN(CAST(({y_column} / ? - ?) / ? AS INTEGER), ?)"
@@ -1541,7 +1546,7 @@ class loader(QtCore.QRunnable):
         z_data = z_data[finite]
         self._spatial_heatmap_axes = (x_centres, y_centres)
         self._spatial_heatmap_indices = (x_index_data, y_index_data)
-        self._spatial_heatmap_source_unique_counts = (x_count, y_count)
+        self._spatial_heatmap_source_unique_counts = (summary.x_count, summary.y_count)
         self._heatmap_aggregated_source_rows = aggregated_source_rows
         full_axis_ranges = self._normalised_heatmap_axis_ranges(
             self.heatmap_full_axis_ranges
@@ -1550,13 +1555,13 @@ class loader(QtCore.QRunnable):
             self.heatmap_source_axis_ranges = full_axis_ranges
         elif self.heatmap_axis_ranges is None:
             self.heatmap_source_axis_ranges = {
-                "x": (float(x_min), float(x_max)),
-                "y": (float(y_min), float(y_max)),
+                "x": (float(summary.x_min), float(summary.x_max)),
+                "y": (float(summary.y_min), float(summary.y_max)),
                 }
         self.sampled_heatmap_source = False
         self.aggregated_heatmap_source = True
         self._heatmap_source_info.update({
-            "estimated_range_rows": matching_rows,
+            "estimated_range_rows": summary.matching_rows,
             "sampled": False,
             "aggregated": True,
             "sample_limit": None,

@@ -1,9 +1,41 @@
+from dataclasses import dataclass
 from functools import cache
 
 import numpy as np
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
+
+
+@dataclass(frozen=True)
+class _ColorbarFilterSpec:
+    """One broad catalogue filter and its existing settings/control names."""
+
+    name: str
+    label: str
+
+    @property
+    def config_key(self) -> str:
+        return f"user_preference.bar_colour_include_{self.name}"
+
+    @property
+    def widget_name(self) -> str:
+        return f"colorbar_include_{self.name}_check"
+
+    @property
+    def changed_slot(self) -> str:
+        return f"_colorbar_include_{self.name}_changed"
+
+
+# Catalogue group names differ from the persisted preference name for local
+# pyqtgraph maps. Keep that mapping, UI order and labels in one place.
+_COLORBAR_FILTERS = {
+    "cet": _ColorbarFilterSpec("cet", "CET"),
+    "matplotlib": _ColorbarFilterSpec("matplotlib", "Matplotlib"),
+    "pyqtgraph": _ColorbarFilterSpec("local", "Local"),
+    "custom": _ColorbarFilterSpec("custom", "Custom"),
+}
+
 
 _PREFERRED_COLORBAR_COLORMAPS = (
     "viridis",
