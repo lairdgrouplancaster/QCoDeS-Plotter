@@ -1441,13 +1441,6 @@ def test_snapshot_basic_only_publication_restores_reentrant_selection():
 
 
 def test_typed_run_id_clears_guid_and_invalidates_selected_publication():
-    class Worker:
-        def __init__(self) -> None:
-            self.cancelled = False
-
-        def cancel(self) -> None:
-            self.cancelled = True
-
     class RunList:
         def __init__(self) -> None:
             self.signals_blocked = False
