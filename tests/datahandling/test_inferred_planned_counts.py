@@ -11,7 +11,7 @@ from qcodes.dataset import (
     load_or_create_experiment,
 )
 
-from qplot.datahandling import readSQL
+from qplot.datahandling import readSQL, run_metadata
 from qplot.datahandling.trusted_live_queries import (
     TrustedMetadataQueryAdapter,
 )
@@ -132,7 +132,7 @@ def test_ambiguous_inference_graph_does_not_invent_count(inferences, truncated):
         "interdependencies_": {"inferences": inferences},
         "shapes": {"y": [3], "converted": [3]},
     }
-    expected, limited = readSQL._bounded_expected_results_from_shapes(
+    expected, limited = run_metadata._bounded_expected_results_from_shapes(
         json.loads(json.dumps(description)), ["y", "converted"],
     )
     assert expected is None
@@ -145,4 +145,4 @@ def test_complete_but_oversized_inference_graph_is_marked_truncated():
         "interdependencies_": {"inferences": {name: ["p0"] for name in names[1:]}},
         "shapes": {name: [3] for name in names},
     }
-    assert readSQL._bounded_expected_results_from_shapes(description, names) == (None, True)
+    assert run_metadata._bounded_expected_results_from_shapes(description, names) == (None, True)

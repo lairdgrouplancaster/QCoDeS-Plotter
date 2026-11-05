@@ -107,6 +107,20 @@ class _DatabaseSafeRotatingFileHandler(RotatingFileHandler):
         super().doRollover()
 
 
+class _UnavailableLogHandler(logging.NullHandler):
+    """Remember a failed setup without repeatedly retrying it on every event."""
+
+
+def _owned_handlers(
+    logger: logging.Logger,
+) -> tuple[_DatabaseSafeRotatingFileHandler | _UnavailableLogHandler, ...]:
+    """Snapshot qPlot's handlers so cleanup leaves caller-owned handlers alone."""
+    return tuple(
+        handler for handler in logger.handlers
+        if isinstance(handler, (_DatabaseSafeRotatingFileHandler, _UnavailableLogHandler))
+    )
+
+
 def default_log_file():
     """
     Returns qPlot's default log file path.
@@ -149,7 +163,7 @@ def configure_logging(
 
     if force:
         _remove_owned_handlers(logger)
-    elif log_file is None and _has_owned_handler(logger):
+    elif log_file is None and _owned_handlers(logger):
         return logger
     elif _has_handler_for(logger, target):
         return logger
@@ -165,11 +179,10 @@ def configure_logging(
             encoding="utf-8",
             )
     except (OSError, ValueError):
-        handler = logging.NullHandler()
+        handler = _UnavailableLogHandler()
 
     handler.setLevel(level)
     handler.setFormatter(formatter)
-    handler.__dict__["_qplot_owned"] = True
     logger.addHandler(handler)
     return logger
 
@@ -257,7 +270,7 @@ def log_bounded_shutdown(message, diagnostics, logger_name=None):
     get_logger(logger_name).error("%s\n%s", message, diagnostics)
 
 
-def _has_handler_for(logger, target):
+def _has_handler_for(logger: logging.Logger, target: Path) -> bool:
     try:
         target = target.resolve()
     except (OSError, RuntimeError):
@@ -265,10 +278,8 @@ def _has_handler_for(logger, target):
         # guarded file open refuse the path without making logging fatal.
         target = target.absolute()
 
-    for handler in logger.handlers:
-        if not getattr(handler, "_qplot_owned", False):
-            continue
-        if not hasattr(handler, "baseFilename"):
+    for handler in _owned_handlers(logger):
+        if not isinstance(handler, _DatabaseSafeRotatingFileHandler):
             continue
         try:
             if Path(handler.baseFilename).resolve() == target:
@@ -278,14 +289,8 @@ def _has_handler_for(logger, target):
     return False
 
 
-def _has_owned_handler(logger):
-    return any(getattr(handler, "_qplot_owned", False) for handler in logger.handlers)
-
-
-def _remove_owned_handlers(logger):
-    for handler in list(logger.handlers):
-        if not getattr(handler, "_qplot_owned", False):
-            continue
+def _remove_owned_handlers(logger: logging.Logger) -> None:
+    for handler in _owned_handlers(logger):
         logger.removeHandler(handler)
         handler.close()
 

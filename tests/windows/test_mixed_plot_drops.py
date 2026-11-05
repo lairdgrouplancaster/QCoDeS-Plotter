@@ -856,7 +856,8 @@ def test_removing_source_promotes_bottom_remaining_dataset(
         assert not final._plot_appearance_dialog.remove_item_button.isEnabled()
 
 
-def test_failed_promotion_keeps_original_plot_and_dataset_ownership(mixed_plot, monkeypatch):
+@pytest.mark.parametrize("failure_stage", ["construction", "layer-appearance", "display-controls"])
+def test_failed_promotion_keeps_original_plot_and_dataset_ownership(mixed_plot, monkeypatch, failure_stage):
     window, target, runs = mixed_plot
     errors = []
     monkeypatch.setattr(qtw.QMessageBox, "exec", lambda box: qtw.QMessageBox.StandardButton.Ok)
@@ -867,18 +868,28 @@ def test_failed_promotion_keeps_original_plot_and_dataset_ownership(mixed_plot, 
     target.open_plot_appearance_dialog()
     dialog = target._plot_appearance_dialog
     original_windows = list(window.windows)
+    original_position = window._plot_tile_grid, window._next_plot_tile
     original_order = _data_identities(target)
     users = {key: handle.users for key, handle in window.dataset_holder.items()}
     open_window = window.openWin
+    def fail(*args, **kwargs):
+        raise RuntimeError("Source restoration failed")
     def fail_after_construction(*args, **kwargs):
         open_window(*args, **kwargs)
-        raise RuntimeError("Source construction failed")
+        if failure_stage == "construction":
+            fail()
+        replacement = next(win for win in window.windows if win not in original_windows)
+        if failure_stage == "layer-appearance":
+            monkeypatch.setattr(replacement, "_apply_trace_style", fail)
+        elif failure_stage == "display-controls":
+            monkeypatch.setattr(replacement.plot.ctrl.alphaSlider, "setValue", fail)
     monkeypatch.setattr(window, "openWin", fail_after_construction)
     dialog.table.clearSelection()
     dialog.table.selectRow(next(row for row in range(2) if dialog._row_entry(row) == original_entry))
     dialog.remove_item_button.click()
     assert len(errors) == 1
     assert window.windows == original_windows
+    assert (window._plot_tile_grid, window._next_plot_tile) == original_position
     assert _data_identities(target) == original_order
     assert {key: handle.users for key, handle in window.dataset_holder.items()} == users
     assert not target._closed

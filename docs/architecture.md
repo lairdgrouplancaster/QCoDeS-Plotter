@@ -30,6 +30,10 @@ there so both endpoints use the same rules.
 persistence. The entry point supplies the persistence callback explicitly;
 the controller can run and be tested without importing the main window.
 
+`diagnostics.py` recognizes its guarded file handler and unavailable-log fallback
+by concrete types. Reconfiguration and cleanup share one ownership snapshot,
+leaving handlers installed by callers attached and open.
+
 ## Main Window
 
 `src/qplot/windows/main.py` owns the top-level application window. It handles
@@ -87,6 +91,11 @@ and pending text edit in one `_RefreshIntervalState` record. The state is
 transient and works with ordinary Qt spin boxes as well as the custom control;
 rounded display values do not silently replace the accepted timer precision.
 
+`windows/_updates.py` owns asynchronous update requests and dialog lifetimes.
+`_update_presentation.py` builds immutable messages without Qt or networking;
+the displayed instructions and copy button use the same platform-quoted command.
+`updates.py` selects compatible releases from the bounded PyPI response.
+
 `_shutdown_coordinator.py` owns confirmed GUI shutdown: one typed state tracks
 the phase, fixed deadlines, cleanup escalation, and diagnostic snapshots.
 `MainWindow` retains exit confirmation and Qt entry points, with read-only status
@@ -141,6 +150,15 @@ its active plot-window user count, and any delayed-release timer.
 `src/qplot/windows/_plot_export.py` contains shared plot output behavior:
 native printing, pyqtgraph export-dialog setup, PDF rendering, clipboard image
 copies, high-DPI copies, and SVG clipboard output.
+
+`windows/_export_names.py` owns filename suffix rules, including selected-filter
+precedence, without Qt or filesystem access. `_export_paths.py` resolves the
+name before approving its destination and retains all publication protections.
+
+`_plot_source_promotion.py` validates the surviving primary source and restores
+its controls, retained datasets, then rendering settings through named phases.
+The outer operation retains replacement-window ownership and rollback. Restore
+averages after layer mappings and viewport, and trace limits after averages.
 
 `src/qplot/windows/_plot_feedback.py` contains shared plot-window status,
 state-overlay, error-dialog, and shortcut helpers. Keep common plot-window user
@@ -267,9 +285,11 @@ retain their existing conversion to text. This helper neither opens databases
 nor determines what a reader may query.
 
 `src/qplot/datahandling/readSQL.py` contains the cursor-based snapshot query
-path and the pure metadata transformations shared with trusted access. Snapshot
-callers still use its dynamic cursor and QCoDeS-compatible operations; the
-trusted reader is not presented as a DB-API connection.
+path. Snapshot callers still use its dynamic cursor and QCoDeS-compatible
+operations; the trusted reader is not presented as a DB-API connection.
+`run_metadata.py` owns shared bounded parameter/shape interpretation and derived
+run fields. Both readers use its observed-setpoint publication rules; trusted
+queries no longer import the snapshot reader to materialize primitive results.
 
 `src/qplot/datahandling/trusted_live_queries.py` coordinates the trusted
 metadata and preview query plans, run cache, and primitive-result publication.

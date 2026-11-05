@@ -34,6 +34,82 @@ class DiagnosticsTestCase(unittest.TestCase):
         self.assertTrue(log_file.exists())
         self.assertIn("diagnostic smoke", log_file.read_text(encoding="utf-8"))
 
+    def test_force_and_reset_preserve_caller_handlers(self):
+        diagnostics._reset_logging_for_tests()
+        existing_handlers = list(diagnostics.get_logger().handlers)
+        first_path = self.temp_path / "first.log"
+        second_path = self.temp_path / "second.log"
+        caller_path = self.temp_path / "caller.log"
+        logger = diagnostics.configure_logging(log_file=first_path, force=True)
+        first_stream = next(
+            handler.stream for handler in logger.handlers
+            if isinstance(handler, logging.FileHandler) and Path(handler.baseFilename) == first_path
+        )
+        caller_handler = logging.FileHandler(caller_path, encoding="utf-8")
+        caller_stream = caller_handler.stream
+        caller_null_handler = logging.NullHandler()
+        logger.addHandler(caller_handler)
+        logger.addHandler(caller_null_handler)
+        try:
+            logger.info("before replacement")
+            diagnostics.configure_logging(log_file=second_path, force=True)
+            self.assertTrue(first_stream.closed)
+            second_stream = next(
+                handler.stream for handler in logger.handlers
+                if isinstance(handler, logging.FileHandler)
+                and Path(handler.baseFilename) == second_path
+            )
+            logger.info("after replacement")
+            diagnostics._reset_logging_for_tests()
+            logger.info("after reset")
+
+            self.assertEqual(
+                logger.handlers, [*existing_handlers, caller_handler, caller_null_handler],
+            )
+            self.assertFalse(caller_stream.closed)
+            self.assertTrue(second_stream.closed)
+            self.assertIn("before replacement", first_path.read_text())
+            self.assertNotIn("after replacement", first_path.read_text())
+            self.assertIn("after replacement", second_path.read_text())
+            self.assertNotIn("after reset", second_path.read_text())
+            self.assertIn("after reset", caller_path.read_text())
+        finally:
+            logger.removeHandler(caller_handler)
+            logger.removeHandler(caller_null_handler)
+            caller_handler.close()
+            caller_null_handler.close()
+
+    def test_repeated_setup_reuses_the_configured_destination(self):
+        log_file = self.temp_path / "logs" / "qplot.log"
+        logger = diagnostics.configure_logging(log_file=log_file, force=True)
+        default_file = self.temp_path / "default.log"
+        with patch.object(diagnostics, "default_log_file", return_value=default_file):
+            diagnostics.configure_logging()
+        diagnostics.configure_logging(log_file=log_file.parent / ".." / "logs" / "qplot.log")
+        logger.info("exactly once")
+
+        self.assertEqual(log_file.read_text().count("exactly once"), 1)
+        self.assertFalse(default_file.exists())
+
+    def test_failed_setup_is_retained_until_explicit_reconfiguration(self):
+        diagnostics._reset_logging_for_tests()
+        existing_handlers = tuple(diagnostics.get_logger().handlers)
+        logger = diagnostics.configure_logging(log_file=Path("\0"), force=True)
+        configured_handlers = tuple(logger.handlers)
+        fallback_handlers = tuple(
+            handler for handler in logger.handlers if handler not in existing_handlers
+        )
+        recovery_file = self.temp_path / "recovery.log"
+        with patch.object(diagnostics, "default_log_file", return_value=recovery_file):
+            diagnostics.log_event("still unavailable")
+            self.assertEqual(tuple(logger.handlers), configured_handlers)
+            self.assertFalse(recovery_file.exists())
+
+            diagnostics.configure_logging(force=True)
+            logger.info("recovered")
+        self.assertEqual(recovery_file.read_text().count("recovered"), 1)
+        self.assertTrue(all(handler not in logger.handlers for handler in fallback_handlers))
+
     def test_log_exception_writes_traceback(self):
         log_file = self.temp_path / "qplot.log"
         diagnostics.configure_logging(log_file=log_file, force=True)
