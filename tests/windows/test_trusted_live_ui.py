@@ -954,7 +954,7 @@ def test_trusted_selection_checks_source_before_bridge_handoff(tmp_path, sidecar
 
     assert harness._update_trusted_selected_run("guid-7")
 
-    assert harness.reloads == [str(database_path)]
+    assert harness.reloads == [logical_database_path(database_path)]
     assert harness._trusted_derived_bridge.selections == []
 
 
