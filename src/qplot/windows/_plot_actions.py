@@ -9,6 +9,7 @@ from qplot.datahandling.dimensions import (
     unsupported_plot_message,
 )
 from qplot.datahandling.export_data import (
+    csv_dataframe,
     csv_scalar_columns,
     exportable_measurement_params,
 )
@@ -1539,53 +1540,29 @@ class PlotActionsMixin:
                         unsupported_plot_message(param.name, depends_on)
                         )
                     continue
+                widget = plot1d if len(depends_on) == 1 else plot2d
                 skip = False
+                for win in self.windows:
+                    if (
+                        win._dataset_key == dataset_key
+                        and win.param == param
+                        and isinstance(win, widget)
+                    ):
+                        skipped += 1
+                        skip = True
+                        break
+                if skip:
+                    continue
 
-                if len(depends_on) == 1:
-                    for win in self.windows:
-                        if (
-                            win._dataset_key == dataset_key
-                            and win.param == param
-                            and isinstance(win, plot1d)
-                        ):
-                            skipped += 1
-                            skip = True
-                            break
-                    if skip:
-                        continue
-
-                    self.openWin(
-                        plot1d,
-                        ds,
-                        param,
-                        refrate=refresh_interval_value(self.spinBox),
-                        show=show,
-                        dataset_key=dataset_key,
-                    )
-                    opened += 1
-
-                else:
-                    for win in self.windows:
-                        if (
-                            win._dataset_key == dataset_key
-                            and win.param == param
-                            and isinstance(win, plot2d)
-                        ):
-                            skipped += 1
-                            skip = True
-                            break
-                    if skip:
-                        continue
-
-                    self.openWin(
-                        plot2d,
-                        ds,
-                        param,
-                        refrate=refresh_interval_value(self.spinBox),
-                        show=show,
-                        dataset_key=dataset_key,
-                    )
-                    opened += 1
+                self.openWin(
+                    widget,
+                    ds,
+                    param,
+                    refrate=refresh_interval_value(self.spinBox),
+                    show=show,
+                    dataset_key=dataset_key,
+                )
+                opened += 1
 
             self.post_admin()
 
@@ -2464,35 +2441,13 @@ class PlotActionsMixin:
 
 
     def _measurement_dataframe(self, dataset, params):
-        """
-        Builds a flat CSV-friendly dataframe for the selected measurement data.
+        """Read and assemble each selected measurement before reading the next."""
+        def measurement_columns():
+            for param in params:
+                param_data = parameter_data_for_export(dataset, param.name)
+                yield param.name, csv_scalar_columns(param_data, param.name)
 
-        """
-        import pandas as pd
-
-        frames = []
-        prefix_columns = len(params) > 1
-        for param in params:
-            param_data = parameter_data_for_export(dataset, param.name)
-            columns = {}
-            for name, values in csv_scalar_columns(param_data, param.name).items():
-                column_name = f"{param.name}.{name}" if prefix_columns else name
-                # Object samples may need both uint64 and negative int64, or
-                # exact integers alongside floats. Disable pandas' inference.
-                dtype: str | type[object] | None = object if values.dtype.hasobject else None
-                if values.dtype.kind in "iu":
-                    # Alignment adds blanks to shorter columns. Nullable
-                    # integers retain exact values instead of becoming floats.
-                    prefix = "U" if values.dtype.kind == "u" else ""
-                    dtype = f"{prefix}Int{values.dtype.itemsize * 8}"
-                elif values.dtype.kind == "f" and values.dtype.itemsize < 8:
-                    # Untyped CSV is normally read as binary64. Widen exactly
-                    # before pandas formats narrow floats to their short text.
-                    dtype = "float64"
-                columns[column_name] = pd.Series(values, dtype=dtype)
-            frames.append(pd.DataFrame(columns))
-
-        return pd.concat(frames, axis=1) if frames else pd.DataFrame()
+        return csv_dataframe(measurement_columns(), prefix_columns=len(params) > 1)
 
 
     def _default_export_filename(self, dataset, params):

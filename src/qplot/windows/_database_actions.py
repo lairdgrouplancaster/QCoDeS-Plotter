@@ -79,6 +79,14 @@ class _DatabaseRefreshPublicationAborted(RuntimeError):
     """A nested Qt event invalidated an in-progress refresh publication."""
 
 
+@dataclass(frozen=True)
+class _SelectedRunState:
+    """Generation and cached metadata captured before selection callbacks."""
+
+    generation: int
+    metadata: dict[str, object]
+
+
 def _database_paths_equal(first, second):
     """Compare database paths using the platform's logical path spelling."""
     if not first or not second:
@@ -3878,6 +3886,34 @@ class DatabaseActionsMixin:
             self._restoring_selected_run_publication = False
 
 
+    def _prepare_selected_run_state(self, guid, run_id, item) -> _SelectedRunState:
+        """Apply the common selection mutation after source and row validation.
+
+        Keep the captured generation through dataset-release and widget
+        callbacks. Each caller still revalidates it at its publication fences.
+        """
+        DatabaseActionsMixin._cancel_selected_run_detail(self)
+        generation = self._database_selected_run_generation
+        metadata = dict(getattr(item, "run_metadata", {}) or {})
+        metadata.setdefault("run_id", run_id)
+        metadata.setdefault("guid", str(guid))
+
+        self._selected_run_guid = str(guid)
+        self.selected_run_id = run_id
+        release_selected = getattr(self, "_release_selected_dataset", None)
+        if callable(release_selected):
+            release_selected()
+        else:
+            self.ds = None
+            self._selected_dataset_key = None
+        blocked = self.run_idBox.blockSignals(True)
+        try:
+            self.run_idBox.setText(str(run_id))
+        finally:
+            self.run_idBox.blockSignals(blocked)
+        return _SelectedRunState(generation, metadata)
+
+
     def _update_snapshot_selected_run(self, guid):
         """Publish cached basics only for one snapshot-fallback selection.
 
@@ -3911,26 +3947,8 @@ class DatabaseActionsMixin:
         except (TypeError, ValueError):
             return False
 
-        DatabaseActionsMixin._cancel_selected_run_detail(self)
-        generation = self._database_selected_run_generation
-        metadata = dict(getattr(item, "run_metadata", {}) or {})
-        metadata.setdefault("run_id", run_id)
-        metadata.setdefault("guid", str(guid))
-
-        self._selected_run_guid = str(guid)
-        self.selected_run_id = run_id
-        release_selected = getattr(self, "_release_selected_dataset", None)
-        if callable(release_selected):
-            release_selected()
-        else:
-            self.ds = None
-            self._selected_dataset_key = None
-        blocked = self.run_idBox.blockSignals(True)
-        try:
-            self.run_idBox.setText(str(run_id))
-        finally:
-            self.run_idBox.blockSignals(blocked)
-
+        selected = DatabaseActionsMixin._prepare_selected_run_state(self, guid, run_id, item)
+        generation, metadata = selected.generation, selected.metadata
         prioritize_previews = getattr(self, "_prioritize_preview_runs", None)
         if callable(prioritize_previews):
             prioritize_previews([run_id])
@@ -4022,26 +4040,8 @@ class DatabaseActionsMixin:
         except (TypeError, ValueError):
             return False
 
-        DatabaseActionsMixin._cancel_selected_run_detail(self)
-        generation = self._database_selected_run_generation
-        metadata = dict(getattr(item, "run_metadata", {}) or {})
-        metadata.setdefault("run_id", run_id)
-        metadata.setdefault("guid", str(guid))
-
-        self._selected_run_guid = str(guid)
-        self.selected_run_id = run_id
-        release_selected = getattr(self, "_release_selected_dataset", None)
-        if callable(release_selected):
-            release_selected()
-        else:
-            self.ds = None
-            self._selected_dataset_key = None
-        blocked = self.run_idBox.blockSignals(True)
-        try:
-            self.run_idBox.setText(str(run_id))
-        finally:
-            self.run_idBox.blockSignals(blocked)
-
+        selected = DatabaseActionsMixin._prepare_selected_run_state(self, guid, run_id, item)
+        generation, metadata = selected.generation, selected.metadata
         set_loading = getattr(self.infoBox, "set_trusted_run_loading", None)
         if callable(set_loading):
             set_loading(metadata)

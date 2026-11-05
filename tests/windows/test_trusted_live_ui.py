@@ -939,6 +939,65 @@ def test_trusted_selection_uses_only_current_bridge(bridge_available):
         assert any("coordinator is unavailable" in str(event) for event in harness.infoBox.events)
 
 
+@pytest.mark.parametrize("mode", [
+    database_actions.TRUSTED_LIVE_MODE, database_actions.SNAPSHOT_FALLBACK_MODE,
+])
+@pytest.mark.parametrize("signals_blocked", [False, True])
+def test_selection_reentered_from_run_id_update_keeps_newest_publication(mode, signals_blocked):
+    instance = _instance("reentrant-selection-control.db", (4, 7))
+    harness = _SelectionHarness(instance, _FakeService(instance))
+    harness._database_access_mode = mode
+    if mode == database_actions.SNAPSHOT_FALLBACK_MODE:
+        harness._trusted_read_service = None
+
+    class ReentrantField(_Field):
+        def setText(self, value):
+            super().setText(value)
+            if str(value) == "7":
+                harness.RunList = _SelectionRunList(8, "guid-8")
+                plot_actions.PlotActionsMixin.updateSelected(harness, "guid-8")
+
+    harness.run_idBox = ReentrantField()
+    harness.run_idBox.blockSignals(signals_blocked)
+    with patch.object(database_actions, "database_instance", return_value=instance):
+        plot_actions.PlotActionsMixin.updateSelected(harness, "guid-7")
+
+    assert harness._selected_run_guid == "guid-8"
+    assert harness.selected_run_id == 8
+    assert harness.run_idBox.text() == "8"
+    assert harness.run_idBox.signals_blocked is signals_blocked
+    assert harness.infoBox.visible[1]["guid"] == "guid-8"
+    assert harness.released_datasets == 2
+    assert harness._trusted_derived_bridge.selections == (
+        ["guid-8"] if mode == database_actions.TRUSTED_LIVE_MODE else []
+    )
+    assert not harness.databaseDetailThreadPool.started
+
+
+@pytest.mark.parametrize("mode", [
+    database_actions.TRUSTED_LIVE_MODE, database_actions.SNAPSHOT_FALLBACK_MODE,
+])
+@pytest.mark.parametrize("signals_blocked", [False, True])
+def test_selection_restores_signal_state_when_run_id_update_fails(mode, signals_blocked):
+    instance = _instance("failed-selection-control.db", (4, 7))
+    harness = _SelectionHarness(instance, _FakeService(instance))
+    harness._database_access_mode = mode
+    if mode == database_actions.SNAPSHOT_FALLBACK_MODE:
+        harness._trusted_read_service = None
+    harness.run_idBox.blockSignals(signals_blocked)
+    with (
+        patch.object(database_actions, "database_instance", return_value=instance),
+        patch.object(harness.run_idBox, "setText", side_effect=RuntimeError("control failed")),
+        pytest.raises(RuntimeError, match="control failed"),
+    ):
+        plot_actions.PlotActionsMixin.updateSelected(harness, "guid-7")
+
+    assert harness.run_idBox.signals_blocked is signals_blocked
+    assert harness.released_datasets == 1
+    assert harness.infoBox.events == []
+    assert harness._trusted_derived_bridge.selections == []
+
+
 @pytest.mark.parametrize("sidecar", ["", "-wal", "-shm"])
 def test_trusted_selection_checks_source_before_bridge_handoff(tmp_path, sidecar):
     database_path = tmp_path / "selected.db"

@@ -72,7 +72,7 @@ end open
         source_path = Path(temporary) / "launcher.applescript"
         source_path.write_text(source, encoding="utf-8")
         subprocess.run(["/usr/bin/osacompile", "-o", str(destination), str(source_path)],
-                       check=True, timeout=compile_timeout)
+                       check=True, capture_output=True, timeout=compile_timeout)
     resources = script.parent
     shutil.copyfile(icon_path("qplot.icns"), resources / "qplot.icns")
     if associations:
