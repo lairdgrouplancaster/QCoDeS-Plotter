@@ -74,6 +74,91 @@ def test_desktop_launch_uses_installed_bundle(monkeypatch):
     assert environment["__PYVENV_LAUNCHER__"] == sys.executable
 
 
+@pytest.mark.parametrize("desktop_launch", [False, True])
+@pytest.mark.parametrize("failure", [None, "identity", "timeout"])
+def test_interpreter_preflight_keeps_installation_and_aborts_on_failure(
+    tmp_path, monkeypatch, desktop_launch, failure,
+):
+    import qplot
+    from qplot import desktop
+
+    source = tmp_path / "interpreter"
+    source.write_bytes(b"synthetic interpreter")
+    monkeypatch.setattr(_macos_identity, "_interpreter_executable", lambda: source)
+    # Preserve the existing distinction between the launcher's raw spelling in
+    # desktop setup and its absolute spelling in the runtime bundle path.
+    monkeypatch.setattr(sys, "executable", "relative venv/測定 python")
+    monkeypatch.setenv("QPLOT_PREFLIGHT_TEST", "inherited")
+    monkeypatch.setenv("__PYVENV_LAUNCHER__", "prior launcher")
+    probes, signed, verified = [], [], []
+
+    def make_bundle(bundle, *_args, **_kwargs):
+        resources = bundle / "Contents/Resources"
+        resources.mkdir(parents=True)
+        (bundle / "Contents/MacOS").mkdir()
+        (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps({}))
+        return resources
+
+    monkeypatch.setattr(desktop, "_mac_launcher", make_bundle)
+
+    def run(command, **options):
+        if command[0] == "/usr/bin/codesign":
+            signed.append(Path(command[-1]))
+        else:
+            probes.append((command, options))
+            assert Path(command[0]) in signed
+            if failure == "identity":
+                raise subprocess.CalledProcessError(1, command)
+            if failure == "timeout":
+                raise subprocess.TimeoutExpired(command, options["timeout"])
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(_macos_identity.subprocess, "run", run)
+
+    def verify_bundle(bundle, _record):
+        verified.append(bundle)
+        assert bundle.is_dir()
+        assert probes
+        return bundle / "Contents/MacOS/qPlot"
+
+    monkeypatch.setattr(_macos_identity, "_verify_bundle", verify_bundle)
+    bundle = tmp_path / "desktop.app"
+    if desktop_launch:
+        make_bundle(bundle)
+
+    def prepare():
+        if desktop_launch:
+            _macos_identity.install_interpreter(bundle)
+        else:
+            _macos_identity._runtime_executable(tmp_path / "cache")
+
+    if failure:
+        exception = (subprocess.CalledProcessError if failure == "identity"
+                     else subprocess.TimeoutExpired)
+        with pytest.raises(exception):
+            prepare()
+        assert not verified
+        assert not list((tmp_path / "cache").rglob("qPlot.app"))
+    else:
+        prepare()
+        assert len(verified) == (0 if desktop_launch else 1)
+
+    assert len(probes) == 1
+    command, options = probes[0]
+    assert command[1:3] == ["-I", "-c"]
+    assert command[4:] == [sys.prefix, str(Path(sys.executable).absolute()),
+                           str(Path(qplot.__file__).absolute())]
+    assert options.keys() == {"env", "check", "capture_output", "timeout"}
+    assert options["check"] is True
+    assert options["capture_output"] is True
+    assert options["timeout"] == 2
+    assert options["env"]["QPLOT_PREFLIGHT_TEST"] == "inherited"
+    assert options["env"]["__PYVENV_LAUNCHER__"] == (
+        sys.executable if desktop_launch else str(Path(sys.executable).absolute())
+    )
+    assert os.environ["__PYVENV_LAUNCHER__"] == "prior launcher"
+
+
 def test_file_open_handler_validates_and_forwards_each_document(tmp_path, monkeypatch, qapplication):
     from types import SimpleNamespace
 

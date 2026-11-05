@@ -1,5 +1,6 @@
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from math import isclose, isfinite, log10
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -15,38 +16,39 @@ from ._plot_host import PlotHost
 from ._range_entry import RangeEntry
 
 _AxisName = Literal["x", "y", "x2", "y2"]
-_AXIS_MENU_ITEMS: tuple[tuple[_AxisName, str], ...] = (
-    ("x", "X axis"),
-    ("y", "Y axis"),
+
+
+@dataclass(frozen=True)
+class _AxisSpec:
+    name: _AxisName
+    label: str
+    side: str
+    dimension: Literal["x", "y"]
+    tooltip: str
+
+    @property
+    def assignment_side(self) -> str:
+        return self.side.capitalize()
+
+    @property
+    def trace_attribute(self) -> str:
+        return f"{self.dimension}_axis"
+
+
+_AXIS_SPECS = (
+    _AxisSpec("x", "X", "bottom", "x", "Bottom horizontal axis"),
+    _AxisSpec("y", "Y", "left", "y", "Left vertical axis"),
+    _AxisSpec("x2", "X2", "top", "x", "Top horizontal axis"),
+    _AxisSpec("y2", "Y2", "right", "y", "Right vertical axis"),
 )
-_AXIS_SPECS: tuple[tuple[_AxisName, str, str], ...] = (
-    ("x", "X", "bottom"),
-    ("y", "Y", "left"),
-    ("x2", "X2", "top"),
-    ("y2", "Y2", "right"),
+_AXIS_BY_NAME = {spec.name: spec for spec in _AXIS_SPECS}
+_AXIS_ALIASES = {
+    alias: spec.name for spec in _AXIS_SPECS for alias in (spec.name, spec.side)
+}
+_AXIS_MENU_ITEMS = tuple(
+    (spec.name, f"{spec.label} axis")
+    for spec in _AXIS_SPECS if spec.name in ("x", "y")
 )
-_AXIS_DIMENSIONS: dict[_AxisName, Literal["x", "y"]] = {
-    "x": "x",
-    "y": "y",
-    "x2": "x",
-    "y2": "y",
-}
-_AXIS_SIDES: dict[_AxisName, str] = {
-    "x": "bottom",
-    "y": "left",
-    "x2": "top",
-    "y2": "right",
-}
-_AXIS_ALIASES: dict[str, _AxisName] = {
-    "x": "x",
-    "bottom": "x",
-    "y": "y",
-    "left": "y",
-    "x2": "x2",
-    "top": "x2",
-    "y2": "y2",
-    "right": "y2",
-}
 
 _NumericValue = float | npt.ArrayLike
 
@@ -365,7 +367,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
 
         changed_axes = self.__dict__.pop("_axis_scale_changed_axes", set())
         limits_by_axis: dict[_AxisName, tuple[float, float]] = {}
-        for axis, _label, _side in _AXIS_SPECS:
+        for spec in _AXIS_SPECS:
+            axis = spec.name
             if axis not in self.__dict__.get("_axis_scale_custom_auto_axes", set()):
                 continue
             number = self._axis_scale_axis_number(axis)
@@ -409,7 +412,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
     def force_all_axes_autoscale(self) -> None:
         """Return every active plot axis to automatic scaling mode."""
 
-        for axis, _label, _side in _AXIS_SPECS:
+        for spec in _AXIS_SPECS:
+            axis = spec.name
             if not self._axis_scale_axis_is_used(axis):
                 continue
             if self._axis_scale_uses_filtered_auto(axis):
@@ -437,8 +441,9 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         Open the relevant axis scale dialog when an axis is double-clicked.
 
         """
-        for axis, _label, side in _AXIS_SPECS:
-            axis_item = self.plot.getAxis(side)
+        for spec in _AXIS_SPECS:
+            axis = spec.name
+            axis_item = self.plot.getAxis(spec.side)
             if axis_item is None:
                 continue
 
@@ -463,7 +468,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         return "Axis scaling"
 
     def _axis_scale_dimension(self, axis: _AxisName) -> Literal["x", "y"]:
-        return _AXIS_DIMENSIONS[axis]
+        return _AXIS_BY_NAME[axis].dimension
 
     @staticmethod
     def _axis_scale_normalise_axis(axis: str) -> _AxisName:
@@ -770,7 +775,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             ui.visibleOnlyCheck.setChecked(state["autoVisibleOnly"][axis_number])
             dimension = self._axis_scale_dimension(axis)
             ui.invertCheck.setChecked(state.get(dimension + "Inverted", False))
-            axis_item = self.plot.getAxis(_AXIS_SIDES[axis])
+            axis_item = self.plot.getAxis(_AXIS_BY_NAME[axis].side)
             ui.logCheck.setChecked(bool(getattr(axis_item, "logMode", False)))
             log_supported = self._axis_scale_log_is_supported(axis)
             ui.logCheck.setEnabled(log_supported)
@@ -1210,7 +1215,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         """Reapply active trace-filtered auto ranges after a data update."""
 
         axes = set(self.__dict__.get("_axis_scale_custom_auto_axes", set()))
-        for axis, _label, _side in _AXIS_SPECS:
+        for spec in _AXIS_SPECS:
+            axis = spec.name
             if (self._axis_scale_axis_is_used(axis)
                     and self._axis_scale_uses_filtered_auto(axis)
                     and self._axis_scale_viewbox(axis).autoRangeEnabled()[
@@ -1297,7 +1303,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         get_axis = getattr(plot, "getAxis", None)
         if not callable(get_axis):
             return False
-        axis_item = get_axis(_AXIS_SIDES[axis])
+        axis_item = get_axis(_AXIS_BY_NAME[axis].side)
         return bool(getattr(axis_item, "logMode", False))
 
     def _sync_axis_scale_line_log_mode(self, trace_key: Any, line: Any) -> None:
@@ -1325,7 +1331,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             self._sync_axis_scale_controls(axis)
             return
 
-        self.plot.getAxis(_AXIS_SIDES[axis]).setLogMode(checked)
+        self.plot.getAxis(_AXIS_BY_NAME[axis].side).setLogMode(checked)
         if axis in ("x", "y"):
             control_name = "logXCheck" if axis == "x" else "logYCheck"
             plot_control = getattr(
@@ -1386,27 +1392,17 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         if not isinstance(styles, dict) or not isinstance(lines, dict):
             assignments = self.__dict__.get("_heatmap_axis_assignments")
             if isinstance(assignments, dict):
-                attribute, value = {
-                    "x": ("x", "Bottom"),
-                    "y": ("y", "Left"),
-                    "x2": ("x", "Top"),
-                    "y2": ("y", "Right"),
-                }[axis]
+                spec = _AXIS_BY_NAME[axis]
                 return any(
-                    assignment.get(attribute) == value
+                    assignment.get(spec.dimension) == spec.assignment_side
                     for assignment in assignments.values()
                 )
             return axis in ("x", "y")
 
-        attribute, value = {
-            "x": ("x_axis", "Bottom"),
-            "y": ("y_axis", "Left"),
-            "x2": ("x_axis", "Top"),
-            "y2": ("y_axis", "Right"),
-        }[axis]
+        spec = _AXIS_BY_NAME[axis]
         return any(
             line is not None
-            and getattr(styles.get(trace_key), attribute, None) == value
+            and getattr(styles.get(trace_key), spec.trace_attribute, None) == spec.assignment_side
             for trace_key, line in lines.items()
         )
 
@@ -1430,15 +1426,9 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             "color: palette(highlighted-text); font-weight: 600; } "
             "QTabBar::tab:disabled { color: palette(mid); }"
         )
-        tab_tooltips = {
-            "x": "Bottom horizontal axis",
-            "y": "Left vertical axis",
-            "x2": "Top horizontal axis",
-            "y2": "Right vertical axis",
-        }
-        for axis, label, _side in _AXIS_SPECS:
-            index = tabs.addTab(self._new_axis_scale_controls(axis), label)
-            tabs.setTabToolTip(index, tab_tooltips[axis])
+        for spec in _AXIS_SPECS:
+            index = tabs.addTab(self._new_axis_scale_controls(spec.name), spec.label)
+            tabs.setTabToolTip(index, spec.tooltip)
         tabs.currentChanged.connect(self._axis_scale_current_tab_changed)
         layout.addWidget(tabs)
 
@@ -1457,7 +1447,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
 
         if not 0 <= index < len(_AXIS_SPECS):
             return
-        axis = _AXIS_SPECS[index][0]
+        axis = _AXIS_SPECS[index].name
         if self._axis_scale_axis_is_used(axis):
             self._sync_axis_scale_controls(axis)
 
@@ -1467,7 +1457,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         tabs = self.__dict__.get("_axis_scale_tabs")
         if tabs is None:
             return
-        for index, (axis, _label, _side) in enumerate(_AXIS_SPECS):
+        for index, spec in enumerate(_AXIS_SPECS):
+            axis = spec.name
             enabled = self._axis_scale_axis_is_used(axis)
             tabs.setTabEnabled(index, enabled)
             if enabled and axis in self._axis_scale_controls:
@@ -1498,8 +1489,8 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         tabs = self._axis_scale_tabs
         requested_index = next(
             index
-            for index, (current_axis, _label, _side) in enumerate(_AXIS_SPECS)
-            if current_axis == axis_name
+            for index, spec in enumerate(_AXIS_SPECS)
+            if spec.name == axis_name
         )
         if tabs.isTabEnabled(requested_index):
             tabs.setCurrentIndex(requested_index)

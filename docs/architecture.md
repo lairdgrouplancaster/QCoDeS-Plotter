@@ -41,6 +41,10 @@ registry preflight, installation, and rollback to `_desktop_associations.py`.
 persisted JSON backups into named validated records before registry mutation;
 installation rollback and removal share restoration of those records.
 
+`_macos_identity.py` shares one bounded interpreter-identity preflight between
+desktop installation and runtime-bundle creation. Each caller keeps its own
+signing and publication sequence.
+
 ## Main Window
 
 `src/qplot/windows/main.py` owns the top-level application window. It handles
@@ -187,6 +191,12 @@ feedback there instead of adding more status or message-box methods to
 `src/qplot/windows/_plot_axis_scaling.py` contains the shared plot-axis scaling
 mixin and the custom axis item used for power-of-ten unit labels. It owns the
 X/Y axis scaling dialogs opened by double-clicking plot axes.
+Its immutable axis specifications define names, aliases, dimensions, sides,
+assignment attributes, and tab help together.
+
+`tools/native_transform_math.py` owns sample differences, secants, interpolation,
+and FFT coordinate arithmetic. `windows/_native_transforms.py`
+retains the PyQtGraph item, display checks, and existing helper entry points.
 
 `src/qplot/windows/_range_entry.py` shares the Min / Max and Center / Span
 input selector between axis and color-scale dialogs. It retains canonical
@@ -306,6 +316,11 @@ decoding retains its stricter real-only dtype and sample-budget policy. Header
 inspection does not allocate or deserialize payloads.
 
 `datahandling/database.py` owns background database workers and reports.
+Its access check launches `_database_probe.py`, which accepts the source path,
+quarantined-WAL flag, time budget, and observed identity and delegates to the
+read-only reader. The parent retains timeout, cancellation, and process reaping.
+`_database_info.py` formats already collected diagnostic summaries; SQL reads,
+source checks, and worker publication stay in `database.py`.
 `cloud_files.py` owns cloud-placeholder detection and cancellable hydration;
 it runs the standard-library-only `_cloud_prefetch.py` helper in a subprocess
 so a stalled OS read cannot block the GUI. The helper opens files only as `rb`.
@@ -380,10 +395,6 @@ values remain unknown; in particular, an incomplete dependent-blocked layout
 without a complete rectangular candidate is not inferred from its plan. Fixed
 ID-edge summaries still provide bounded first/last setpoint values, grouped
 eight parameters at a time, and result storage remains explicitly estimated.
-
-`src/qplot/datahandling/database.py` contains database-file access helpers,
-cloud-storage hydration, background main-window load workers, and database
-diagnostic report generation.
 
 The Stage 4 application read broker is Qt-independent and belongs to one exact
 accepted `DatabaseInstance`. It owns exactly one
