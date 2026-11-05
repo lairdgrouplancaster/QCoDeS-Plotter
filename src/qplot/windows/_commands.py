@@ -276,6 +276,15 @@ COMMANDS: dict[str, CommandSpec] = {
         help_section="All Plot Windows (1D, 2D, and Cuts)",
         help_shortcut="Ctrl+C / Cmd+C",
     ),
+    "plot.copy_coordinates": CommandSpec(
+        "plot.copy_coordinates",
+        "Copy Coordinates",
+        "Copy the current cursor indices and coordinates as text",
+        "Ctrl+Shift+C",
+        object_name="copyCoordinatesAction",
+        help_section="All Plot Windows (1D, 2D, and Cuts)",
+        help_shortcut="Ctrl+Shift+C / Cmd+Shift+C",
+    ),
     "plot.print": CommandSpec(
         "plot.print",
         "&Print Plot...",

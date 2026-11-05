@@ -1593,6 +1593,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
     def test_plot_export_action_has_keyboard_shortcut(self):
         class Host(qtw.QMainWindow):
+            copy_coordinates = plotWidget.copy_coordinates
             initContextMenu = plotWidget.initContextMenu
             register_shortcut = plotWidget.register_shortcut
             _remove_scene_export_context_menu = plotWidget._remove_scene_export_context_menu
@@ -1847,6 +1848,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
     def test_plot_copy_image_action_has_shortcut_context_menu_and_edit_menu(self):
         class Host(qtw.QMainWindow):
+            copy_coordinates = plotWidget.copy_coordinates
             initContextMenu = plotWidget.initContextMenu
             initMenu = plotWidget.initMenu
             refresh_plot_data = plotWidget.refresh_plot_data
@@ -1951,6 +1953,30 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertIn(host.savePlotPdfAction, menus["File"].actions())
             self.assertIn(host.printPlotAction, menus["File"].actions())
             self.assertIn(host.copyPlotImageAction, menus["Edit"].actions())
+            self.assertIn(host.copyCoordinatesAction, menus["Edit"].actions())
+            self.assertIn("Copy Coordinates", context_actions)
+            self.assertIn(host.copyCoordinatesAction, host.actions())
+            self.assertEqual(host.copyCoordinatesAction.shortcut().toString(), "Ctrl+Shift+C")
+            host.pos_labels = {
+                axis: qtw.QLabel(value, host)
+                for axis, value in (("index", "[3,7]"), ("x", "1.25"),
+                                    ("y", "2.5"), ("z", "0.003"))
+            }
+            for label in host.pos_labels.values():
+                label.show()
+            host.copyCoordinatesAction.trigger()
+            self.assertEqual(qtw.QApplication.clipboard().text(), "[3,7] (1.25, 2.5, 0.003)")
+            host.pos_labels["z"].hide()
+            host.pos_labels["index"].setText("[3]")
+            host.copyCoordinatesAction.trigger()
+            self.assertEqual(qtw.QApplication.clipboard().text(), "[3] (1.25, 2.5)")
+            host.pos_labels["index"].clear()
+            host.copyCoordinatesAction.trigger()
+            self.assertEqual(qtw.QApplication.clipboard().text(), "(1.25, 2.5)")
+            for label in host.pos_labels.values():
+                label.clear()
+            self.assertFalse(host.copy_coordinates())
+            self.assertEqual(qtw.QApplication.clipboard().text(), "(1.25, 2.5)")
             self.assertEqual(
                 menus["File"].actions()[:3],
                 [
@@ -3108,6 +3134,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
     def test_axis_scale_controls_move_from_context_menu_to_dialogs(self):
         class Host(qtw.QMainWindow):
+            copy_coordinates = plotWidget.copy_coordinates
             initContextMenu = plotWidget.initContextMenu
             _init_axis_scale_dialogs = plotWidget._init_axis_scale_dialogs
             _install_axis_scale_viewbox_range_handlers = (

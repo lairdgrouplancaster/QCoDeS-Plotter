@@ -768,6 +768,12 @@ class plotWidget(
             )
         self.copyPlotImageAction.triggered.connect(self.copy_plot_image)
 
+        self.copyCoordinatesAction = create_action("plot.copy_coordinates", self)
+        self.register_shortcut(
+            self.copyCoordinatesAction, command_spec("plot.copy_coordinates"),
+        )
+        self.copyCoordinatesAction.triggered.connect(self.copy_coordinates)
+
         contextAction = create_action(
             "context.show",
             self,
@@ -800,6 +806,7 @@ class plotWidget(
         self.vbMenu.insertAction(x_action, self.savePlotPdfAction)
         self.vbMenu.insertSeparator(x_action)
         self.vbMenu.insertAction(x_action, self.copyPlotImageAction)
+        self.vbMenu.insertAction(x_action, self.copyCoordinatesAction)
         self.vbMenu.insertSeparator(x_action)
         
         # Create visibility
@@ -1160,6 +1167,7 @@ class plotWidget(
         if copy_plot_image_action is not None:
             edit_menu = menu.addMenu("&Edit")
             edit_menu.addAction(copy_plot_image_action)
+            edit_menu.addAction(self.copyCoordinatesAction)
 
         close_all_plots_action = create_action(
             "plots.close_all",
@@ -1223,6 +1231,23 @@ class plotWidget(
         figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
         return format_cursor_number(value, figures)
 
+
+    def copy_coordinates(self) -> bool:
+        """Copy the instantaneous readout with its displayed precision."""
+        labels = self.pos_labels
+        coordinates = [
+            labels[axis].text().strip()
+            for axis in ("x", "y", "z")
+            if axis in labels and not labels[axis].isHidden()
+        ]
+        if not any(coordinates):
+            return False
+        index = labels["index"].text().strip()
+        text = f"({', '.join(coordinates)})"
+        if index:
+            text = f"{index} {text}"
+        qtw.QApplication.clipboard().setText(text)
+        return True
 
     def apply_cursor_label_widths(self) -> None:
         """Keep monospaced fields stable across signs, values and exponents."""
