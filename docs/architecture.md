@@ -83,6 +83,9 @@ actions. It handles:
 * adding compatible preview traces to existing 1D plots
 * tracking datasets currently used by plot windows
 
+Its `openPlot` path selects the 1D/2D widget class before the shared duplicate
+check and launch sequence, keeping dataset ownership and status handling common.
+
 `src/qplot/windows/_run_controls.py` contains the run-selection and refresh
 controls owned by the main window. It handles:
 
@@ -293,6 +296,9 @@ reusable UI controls used inside plot windows.
 columns within each acquisition record. Keep its singleton broadcasting and
 nested object-cell handling separate from plot flattening: the two paths have
 different input contracts. GUI actions retain source validation and file writes.
+The same module assembles dataframes with precision-preserving pandas dtypes.
+The controller supplies aligned measurement columns lazily, so each frame is
+assembled before the next measurement is read.
 
 `_numeric_arrays.py` shares NPY header inspection and bounded numeric BLOB
 slices. The worker retains ownership of its read-only SQLite handle; preview
@@ -413,6 +419,10 @@ also does not trigger an automatic fallback copy. This is a property of the
 selection action, not the whole fallback session: fallback metadata and retained
 preview paths can still create private snapshots. Fallback plot actions
 (including Auto-plot) and CSV actions can materialise a DataSet.
+
+Both selection paths share generation invalidation, metadata capture, selected
+ID updates, dataset release, and run-ID control synchronization. Their source
+preflight and later mode-specific publication fences remain in each caller.
 
 Trusted selection is owned by the derived-work bridge. Its detail publication
 rechecks selection and source identity after each widget update. A per-attempt
@@ -704,6 +714,11 @@ and receiver. If either cannot be proved stopped, the incarnation is
 quarantined and no replacement can start until later zero-time joins prove both
 have exited.
 Partial-frame timeouts therefore cannot reuse or replay the affected generation.
+
+After polling, decoding, or process inspection outside the supervisor lock,
+every reply path uses the same lock-held helper/job ownership check. Completed
+or superseded jobs cannot publish into a newer owner; each path retains its
+contextual error and existing cleanup behavior.
 
 Cancellation is cooperative first and uses a monotonic, generation-scoped
 control tombstone. An exact cancellation may arrive before its command or once

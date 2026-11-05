@@ -1,13 +1,54 @@
-"""Measurement selection and scalar columns for raw QCoDeS CSV export.
+"""Measurement selection, scalar alignment, and raw QCoDeS CSV tables.
 
 Export expands singleton fields within each acquisition record and preserves
 nested object-cell samples. This differs from plotting's already-aligned
 record flattening; joining the records must not round stored integer values.
 """
 
+from collections.abc import Iterable, Mapping
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from qplot.datahandling.numeric_samples import concatenate_record_samples
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+
+def csv_dataframe(
+    measurements: Iterable[tuple[str, Mapping[str, np.ndarray]]],
+    *,
+    prefix_columns: bool,
+) -> "pd.DataFrame":
+    """Assemble lazy measurement columns without rounding their stored samples.
+
+    Consume one measurement at a time so callers can retain their read and
+    failure boundaries without materialising every source column up front.
+    """
+    import pandas as pd
+
+    frames = []
+    for parameter_name, measurement_columns in measurements:
+        columns = {}
+        for name, values in measurement_columns.items():
+            column_name = f"{parameter_name}.{name}" if prefix_columns else name
+            # Object samples may need both uint64 and negative int64, or
+            # exact integers alongside floats. Disable pandas' inference.
+            dtype: str | type[object] | None = object if values.dtype.hasobject else None
+            if values.dtype.kind in "iu":
+                # Alignment adds blanks to shorter columns. Nullable
+                # integers retain exact values instead of becoming floats.
+                prefix = "U" if values.dtype.kind == "u" else ""
+                dtype = f"{prefix}Int{values.dtype.itemsize * 8}"
+            elif values.dtype.kind == "f" and values.dtype.itemsize < 8:
+                # Untyped CSV is normally read as binary64. Widen exactly
+                # before pandas formats narrow floats to their short text.
+                dtype = "float64"
+            columns[column_name] = pd.Series(values, dtype=dtype)
+        frames.append(pd.DataFrame(columns))
+
+    return pd.concat(frames, axis=1) if frames else pd.DataFrame()
 
 
 def exportable_measurement_params(dataset):

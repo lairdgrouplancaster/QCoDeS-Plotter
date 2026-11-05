@@ -1445,6 +1445,28 @@ class TrustedLiveReaderSupervisor:
             self._discard_helper_locked(force=False)
         self._complete_job(job, value=value, error=error)
 
+    def _poll_job_owner_is_current_locked(
+        self,
+        job: TrustedLiveJob[Any],
+        helper: _HelperIncarnation,
+        retired_message: str,
+    ) -> bool:
+        """Fence a polling outcome after work outside the supervisor lock.
+
+        The caller holds ``_lock``. Retirement can complete this exact job or
+        replace its helper/active generation while polling or decoding. Never
+        apply an old outcome to those newer owners.
+        """
+        if job.done:
+            return False
+        if self._helper is not helper or self._active_job is not job:
+            self._complete_job(
+                job,
+                error=TrustedLiveHelperExitedError(retired_message),
+            )
+            return False
+        return True
+
     def _poll_job_once(self, job: TrustedLiveJob[Any], timeout: float) -> None:
         with self._lock:
             if job.done:
@@ -1465,15 +1487,10 @@ class TrustedLiveReaderSupervisor:
             item = self._take_reply_item(helper, max(0.0, timeout))
         except Exception as error:
             with self._lock:
-                if job.done:
-                    return
-                if self._helper is not helper or self._active_job is not job:
-                    self._complete_job(
-                        job,
-                        error=TrustedLiveHelperExitedError(
-                            "The job's helper was retired while polling its reply."
-                        ),
-                    )
+                if not self._poll_job_owner_is_current_locked(
+                    job, helper,
+                    "The job's helper was retired while polling its reply.",
+                ):
                     return
                 self._protocol_failure_locked(
                     job,
@@ -1484,16 +1501,11 @@ class TrustedLiveReaderSupervisor:
         if item is not None:
             if isinstance(item, _ReplyReceiveFailure):
                 with self._lock:
-                    if job.done:
-                        return
-                    if self._helper is not helper or self._active_job is not job:
-                        self._complete_job(
-                            job,
-                            error=TrustedLiveHelperExitedError(
-                                "The job's helper was retired while its sole "
-                                "reply receiver was stopping."
-                            ),
-                        )
+                    if not self._poll_job_owner_is_current_locked(
+                        job, helper,
+                        "The job's helper was retired while its sole "
+                        "reply receiver was stopping.",
+                    ):
                         return
                     if item.kind == "eof":
                         try:
@@ -1513,16 +1525,11 @@ class TrustedLiveReaderSupervisor:
                 envelope = decode_reply_frame(frame)
             except TrustedLiveProtocolValidationError as error:
                 with self._lock:
-                    if job.done:
-                        return
-                    if self._helper is not helper or self._active_job is not job:
-                        self._complete_job(
-                            job,
-                            error=TrustedLiveHelperExitedError(
-                                "The job's helper was retired before its reply "
-                                "could be validated."
-                            ),
-                        )
+                    if not self._poll_job_owner_is_current_locked(
+                        job, helper,
+                        "The job's helper was retired before its reply "
+                        "could be validated.",
+                    ):
                         return
                     self._protocol_failure_locked(
                         job,
@@ -1532,16 +1539,11 @@ class TrustedLiveReaderSupervisor:
                 return
             except EOFError:
                 with self._lock:
-                    if job.done:
-                        return
-                    if self._helper is not helper or self._active_job is not job:
-                        self._complete_job(
-                            job,
-                            error=TrustedLiveHelperExitedError(
-                                "The job's helper was retired while receiving "
-                                "its reply."
-                            ),
-                        )
+                    if not self._poll_job_owner_is_current_locked(
+                        job, helper,
+                        "The job's helper was retired while receiving "
+                        "its reply.",
+                    ):
                         return
                     try:
                         exit_code = process.exitcode
@@ -1555,16 +1557,11 @@ class TrustedLiveReaderSupervisor:
                 return
             except (OSError, ValueError) as error:
                 with self._lock:
-                    if job.done:
-                        return
-                    if self._helper is not helper or self._active_job is not job:
-                        self._complete_job(
-                            job,
-                            error=TrustedLiveHelperExitedError(
-                                "The job's helper was retired while receiving "
-                                "its reply frame."
-                            ),
-                        )
+                    if not self._poll_job_owner_is_current_locked(
+                        job, helper,
+                        "The job's helper was retired while receiving "
+                        "its reply frame.",
+                    ):
                         return
                     self._protocol_failure_locked(
                         job,
@@ -1573,16 +1570,11 @@ class TrustedLiveReaderSupervisor:
                     )
                 return
             with self._lock:
-                if job.done:
-                    return
-                if self._helper is not helper or self._active_job is not job:
-                    self._complete_job(
-                        job,
-                        error=TrustedLiveHelperExitedError(
-                            "The job's helper was retired before its reply "
-                            "could be accepted."
-                        ),
-                    )
+                if not self._poll_job_owner_is_current_locked(
+                    job, helper,
+                    "The job's helper was retired before its reply "
+                    "could be accepted.",
+                ):
                     return
                 self._handle_job_reply_locked(job, envelope)
             return
@@ -1591,16 +1583,11 @@ class TrustedLiveReaderSupervisor:
             exit_code = None if process_alive else process.exitcode
         except (AssertionError, OSError, ValueError) as error:
             with self._lock:
-                if job.done:
-                    return
-                if self._helper is not helper or self._active_job is not job:
-                    self._complete_job(
-                        job,
-                        error=TrustedLiveHelperExitedError(
-                            "The job's helper was retired while its process "
-                            "state was inspected."
-                        ),
-                    )
+                if not self._poll_job_owner_is_current_locked(
+                    job, helper,
+                    "The job's helper was retired while its process "
+                    "state was inspected.",
+                ):
                     return
                 self._protocol_failure_locked(
                     job,
@@ -1610,16 +1597,11 @@ class TrustedLiveReaderSupervisor:
             return
         if not process_alive:
             with self._lock:
-                if job.done:
-                    return
-                if self._helper is not helper or self._active_job is not job:
-                    self._complete_job(
-                        job,
-                        error=TrustedLiveHelperExitedError(
-                            "The job's helper was retired before process-exit "
-                            "handling completed."
-                        ),
-                    )
+                if not self._poll_job_owner_is_current_locked(
+                    job, helper,
+                    "The job's helper was retired before process-exit "
+                    "handling completed.",
+                ):
                     return
                 # A complete frame may have become readable with the process
                 # sentinel.  The receiver publishes before marking itself
