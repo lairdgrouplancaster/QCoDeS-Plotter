@@ -74,6 +74,7 @@ def choose_destination(monkeypatch, target):
 
 def export_action(source_plot, route, target, monkeypatch):
     main, plot, run_id, guid, _errors = source_plot
+    prior_tasks = set(getattr(main, "_export_tasks", ())) | set(getattr(plot, "_export_tasks", ()))
     if route in {"plot_csv", "plot_tsv", "image", "svg"}:
         exporter = {"image": ImageExporter, "svg": SVGExporter}.get(route, CSVExporter)
         dialog = select_exporter(plot, exporter)
@@ -106,6 +107,10 @@ def export_action(source_plot, route, target, monkeypatch):
         action = main.findChild(QtGui.QAction, name)
         assert action is not None
         action.trigger()
+    tasks = (set(getattr(main, "_export_tasks", ()))
+             | set(getattr(plot, "_export_tasks", ()))) - prior_tasks
+    wait_for(lambda: all(task.done for task in tasks))
+    assert all(task.error is None and not task.cancelled for task in tasks)
 
 
 def destination_for(tmp_path, route, suffix):

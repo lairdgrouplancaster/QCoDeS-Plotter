@@ -255,17 +255,6 @@ def _assert_database_unchanged(database_path: Path, before) -> None:
     assert _database_artifact_state(database_path) == before
 
 
-class _CsvFrame:
-    def __init__(self, *, fail: bool = False):
-        self.fail = fail
-
-    def to_csv(self, filename, *, index: bool):
-        assert not index
-        Path(filename).write_bytes(b"new,csv\n1,2\n")
-        if self.fail:
-            raise RuntimeError("CSV writer failed after opening its output")
-
-
 class _CsvHarness(PlotActionsMixin):
     def __init__(self, selected_path: Path, *, fail: bool = False):
         self.selected_path = selected_path
@@ -273,7 +262,9 @@ class _CsvHarness(PlotActionsMixin):
             str(selected_path.with_name(f"{selected_path.name}.source.db")),
             "csv-export-guid",
         )
-        self.frame = _CsvFrame(fail=fail)
+        self.fail = fail
+        self.fileTextbox = SimpleNamespace(text=lambda: self.dataset_key.database_path)
+        self.RunList = SimpleNamespace(run_id_for_guid=lambda _guid: 1)
         self.status_messages = []
         self.errors = []
 
@@ -286,15 +277,18 @@ class _CsvHarness(PlotActionsMixin):
             ):
         return str(self.selected_path)
 
-    def _load_run_csv_dataset(self, dataset_key):
+    def _bind_one_shot_dataset_key(self, dataset_key):
         assert dataset_key == self.dataset_key
-        return object()
+        return dataset_key
 
-    def _measurement_params_by_names(self, dataset, parameter_names):
-        return [object()]
+    def _require_run_csv_source_current(self, dataset_key):
+        assert dataset_key == self.dataset_key
 
-    def _measurement_dataframe(self, dataset, params):
-        return self.frame
+    def write_raw_csv(self, filename, **_kwargs):
+        Path(filename).write_bytes(b"new,csv\n1,2\n")
+        if self.fail:
+            raise RuntimeError("CSV writer failed after opening its output")
+        return SimpleNamespace(row_count=1)
 
     def show_status(self, message, timeout=5000):
         self.status_messages.append((message, timeout))
@@ -326,10 +320,35 @@ class _PdfHarness(PlotExportMixin):
         self.errors.append((title, message, details))
 
 
+def _invoke_csv_harness(harness):
+    """Exercise real path approval/publication without a Qt task owner.
+
+    Worker scheduling is covered by test_export_tasks; these route tests keep
+    their writer synchronous so every assertion targets filesystem safety.
+    """
+    def run_task(_owner, *, destination, writer, before_publish, on_success, **_kwargs):
+        result = None
+
+        def write(filename):
+            nonlocal result
+            result = writer(filename, lambda: False, lambda *_args: None)
+            return result
+
+        write_export_atomically(destination, write, before_publish=before_publish)
+        on_success(result)
+
+    with (
+        patch("qplot.windows._run_csv_export._writer_for",
+              side_effect=lambda owner, _key, _selector: owner.write_raw_csv),
+        patch("qplot.windows._run_csv_export.start_export_task", side_effect=run_task),
+    ):
+        harness._export_measurement_csv(harness.dataset_key, ("signal",))
+
+
 def _invoke_export(kind: str, selected_path: Path, *, fail: bool = False):
     if kind == "csv":
         harness = _CsvHarness(selected_path, fail=fail)
-        harness._export_measurement_csv(harness.dataset_key, ("signal",))
+        _invoke_csv_harness(harness)
         return harness
 
     harness = _PdfHarness(selected_path, fail=fail)
@@ -618,7 +637,7 @@ def test_pdf_and_measurement_csv_routes_reject_their_loaded_database(
         patch.object(qtw.QMessageBox, "question") as question,
     ):
         if kind == "csv":
-            harness._export_measurement_csv(harness.dataset_key, ("signal",))
+            _invoke_csv_harness(harness)
         else:
             assert not harness.save_plot_pdf()
 

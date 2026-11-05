@@ -23,8 +23,9 @@ verified disk-cache I/O on its sole worker. Stage 5C connects those payloads to
 Qt through one GUI-owned bridge, progressively displaying derived metadata,
 thumbnails, and previews without reviving the legacy competing producers.
 Explicit plots now acquire their metadata and result prefixes through the same
-broker/helper. CSV actions still acquire action-owned private snapshots, and a
-narrowly eligible snapshot fallback session retains its existing behavior.
+broker/helper. Raw CSV exports now use that same run-prefix capture in a
+cancellable background task. A narrowly eligible snapshot fallback session
+retains its read-only dataset route.
 
 ## Explicit plotting
 
@@ -155,7 +156,14 @@ selected prefix to include all valid observations. Very large individual runs
 can still be expensive or reach the finite capture deadline; live refresh
 currently recaptures that run's prefix or numerical reduction. The disk
 cache cap limits retained completed prefixes, not the active capture file.
-CSV export is unchanged.
+Raw CSV export requests the selected run's descriptor and committed prefix
+through this broker too. It never substitutes a heatmap aggregation for raw
+values, retries a trusted failure through the snapshot path, or reads later
+appends beyond the captured watermark. It streams scalar and array records
+into an approved staging file and publishes only after source and destination
+revalidation. Prefix capture remains subject to the existing finite deadlines
+and storage limits. Batch exports capture each run independently when its
+queued task starts; they do not promise a shared cross-run instant.
 
 `scripts/benchmark_plot_launch.py DATABASE RUN_ID` measures the actual
 `MainWindow.openPlot` path through populated Qt painting, rejects whole-database
@@ -693,8 +701,9 @@ run-list fields and an unavailable detail state without starting a
 selected-detail worker, opening SQLite for detail, or preparing an additional
 selected-detail snapshot. This narrow guarantee applies only to ordinary row
 selection: fallback metadata and retained preview paths can still create
-private snapshots. Plotting and CSV export address the selected identity
-directly and materialise a QCoDeS dataset only after the explicit action.
+private snapshots. Explicit fallback plotting and CSV export address the
+selected identity directly and can then materialise a QCoDeS dataset. Trusted
+actions use the broker without a whole-database snapshot.
 
 ### Pending, active, and retired services
 

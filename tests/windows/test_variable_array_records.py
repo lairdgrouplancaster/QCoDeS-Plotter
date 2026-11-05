@@ -19,7 +19,7 @@ from qplot.datahandling.readonly import load_by_id_read_only
 from qplot.tools.worker import loader
 from qplot.windows import main as main_window
 from qplot.windows._database_detail_state import detail_channel
-from tests._window_lifecycle import close_main_window
+from tests._window_lifecycle import close_main_window, wait_for_exports
 from tests.windows.test_complex_line_data import database_state
 from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
 
@@ -154,6 +154,7 @@ def test_actual_normal_plot_and_export_run_csv(tmp_path, monkeypatch, kind, shap
         monkeypatch.setattr(qtw.QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
         window.measurementBox.setText("1")
         window.exportRunCsv()
+        wait_for_exports(window)
         assert errors == []
         with target.open(newline="", encoding="utf-8") as csv_file:
             reader = csv.DictReader(csv_file)

@@ -1190,6 +1190,9 @@ class DatabaseActionsMixin:
         Clears the current database from the main window state.
 
         """
+        from ._export_tasks import cancel_owner_exports
+
+        cancel_owner_exports(self)
         cancel_auto_plot(self)
         worker = getattr(self, "_database_load_worker", None)
         if worker is not None:
@@ -2552,6 +2555,9 @@ class DatabaseActionsMixin:
             self.remember_loaded_database(abspath)
             return True
 
+        from ._export_tasks import cancel_owner_exports
+
+        cancel_owner_exports(self)
         DatabaseActionsMixin._cancel_database_refresh(self)
         DatabaseActionsMixin._cancel_database_info(self)
         if replacement:

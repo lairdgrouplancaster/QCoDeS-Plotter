@@ -136,6 +136,7 @@ class RunPreviewCell(qtw.QWidget):
                 self.icon_size,
                 "measurementPreviewUnsupported",
                 )
+            label.guid = self.guid
             label.exportRequested.connect(self._emit_export_requested)
             label.statsRequested.connect(self._emit_stats_requested)
             self.content_layout.addWidget(label)
@@ -203,6 +204,7 @@ class RunPreviewCell(qtw.QWidget):
         dimension = dimensions[index] if index < len(dimensions) else None
         if dimension is not None and dimension > MAX_SUPPORTED_PLOT_DIMENSIONS:
             label = PreviewImageLabel(parameter, plot_supported=False)
+            label.guid = self.guid
         else:
             label = DraggablePreviewImageLabel(self.guid, parameter, axes_pending=True)
             label.dragFinished.connect(self._apply_pending_display)
@@ -272,18 +274,27 @@ class RunPreviewCell(qtw.QWidget):
         self.exportRequested.emit(self.guid, parameter)
 
 
+    def preview_selection_labels(self):
+        labels = []
+        for index in range(self.content_layout.count()):
+            item = self.content_layout.itemAt(index)
+            label = item.widget() if item is not None else None
+            if isinstance(label, PreviewImageLabel):
+                labels.append(label)
+        return labels
+
+
     def _clear_layout(self):
-        selected_parameter = next(
-            (label.parameter for label in self.findChildren(PreviewImageLabel)
-             if label._selected),
-            None,
-            )
+        selected_parameters = {label.parameter for label in self.preview_selection_labels()
+                               if label._selected}
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
             if item is None:
                 continue
             widget = item.widget()
             if widget is not None:
+                if isinstance(widget, PreviewImageLabel):
+                    widget._preview_retired = True
                 # A queued show can outlive removal from the layout. Retire
                 # the label under the containing view, outside this cell's
                 # active children, so it cannot become a native window and
@@ -291,15 +302,12 @@ class RunPreviewCell(qtw.QWidget):
                 widget.setParent(self.parentWidget())
                 widget.hide()
                 widget.deleteLater()
-        return selected_parameter
+        return selected_parameters
 
 
-    def _restore_selection(self, parameter):
-        if parameter:
-            for label in self.findChildren(PreviewImageLabel):
-                if label.parameter == parameter:
-                    label.set_selected(True)
-                    break
+    def _restore_selection(self, parameters):
+        for label in self.preview_selection_labels():
+            label.set_selected(label.parameter in parameters)
 
 
 class EqualsAlignedDelegate(qtw.QStyledItemDelegate):

@@ -53,6 +53,7 @@ from qplot.windows._window_controls import (
 )
 from qplot.windows.plot1d import plot1d
 from tests._shutdown_harness import attach_shutdown
+from tests.windows.test_plot_integration import wait_for
 
 
 class _FailedTrustedRequest:
@@ -86,6 +87,38 @@ class _RejectedTrustedService:
     def wait_closed(self, timeout):
         del timeout
         return self.closed
+
+
+class _CsvTaskHarness(qtw.QMainWindow, PlotActionsMixin):
+    """Exercise CSV routing with a real task owner and injected backend reads."""
+
+    def __init__(self, database_path):
+        super().__init__()
+        self.fileTextbox = qtw.QLineEdit(str(database_path), self)
+        self.RunList = SimpleNamespace(run_id_for_guid=lambda _guid: 3)
+        self.threadPool = QtCore.QThreadPool(self)
+        self.status_messages = []
+        self.error_messages = []
+        self.replacement_handled = False
+        attach_shutdown(self)
+
+    def show_status(self, *args):
+        self.status_messages.append(args)
+
+    def show_error(self, *args):
+        self.error_messages.append(args)
+
+    def _handle_run_csv_source_replaced(self, _dataset_key):
+        self.replacement_handled = True
+
+    def dispose(self):
+        manager = getattr(self, "_export_task_manager", None)
+        if manager is not None:
+            manager.cancel_all()
+            assert manager.pool.waitForDone(5000)
+            manager.poll()
+        self.deleteLater()
+        qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
 
 
 class MeasurementExportDataFrameTestCase(unittest.TestCase):
@@ -168,31 +201,10 @@ class MeasurementExportDataFrameTestCase(unittest.TestCase):
         self.assertEqual(Path(filename).parent, Path("C:/data"))
 
     def test_run_csv_sidecar_replacement_in_destination_dialog_prevents_load(self):
-        class Harness(PlotActionsMixin):
-            def __init__(self, wal_path, replacement_wal, export_path):
-                self.wal_path = wal_path
-                self.replacement_wal = replacement_wal
-                self.export_path = export_path
-                self.load_attempted = False
-                self.replacement_handled = False
-
-            def _default_run_csv_export_filename(self, *_args, **_kwargs):
-                return str(self.export_path)
-
+        class Harness(_CsvTaskHarness):
             def _choose_csv_export_filename(self, _default_name):
-                os.replace(self.replacement_wal, self.wal_path)
-                return str(self.export_path)
-
-            def _load_run_csv_dataset(self, dataset_key):
-                self.load_attempted = True
-                self._require_run_csv_source_current(dataset_key)
-                self.fail("A replaced sidecar must be rejected before dataset load")
-
-            def _handle_run_csv_source_replaced(self, _dataset_key):
-                self.replacement_handled = True
-
-            def fail(self, message):
-                raise AssertionError(message)
+                os.replace(replacement_wal, wal_path)
+                return str(export_path)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "database.db"
@@ -203,50 +215,18 @@ class MeasurementExportDataFrameTestCase(unittest.TestCase):
             wal_path.write_bytes(b"accepted wal")
             replacement_wal.write_bytes(b"replacement wal")
             dataset_key = DatasetKey(database_path, "guid")
-            harness = Harness(wal_path, replacement_wal, export_path)
+            harness = Harness(database_path)
+            self.addCleanup(harness.dispose)
 
-            harness._export_measurement_csv(dataset_key, ("signal",), run_id=1)
+            with patch("qplot.datahandling.csv_export.export_raw_csv") as read:
+                harness._export_measurement_csv(dataset_key, ("signal",), run_id=1)
+                read.assert_not_called()
 
-            self.assertFalse(harness.load_attempted)
             self.assertTrue(harness.replacement_handled)
             self.assertFalse(export_path.exists())
+            self.assertFalse(hasattr(harness, "_export_task_manager"))
 
     def test_run_csv_sidecar_replacement_after_materialisation_prevents_publish(self):
-        class Connection:
-            def __init__(self):
-                self.closed = False
-
-            def close(self):
-                self.closed = True
-
-        class Harness(PlotActionsMixin):
-            def __init__(self, dataset, wal_path, replacement_wal, export_path):
-                self.dataset = dataset
-                self.wal_path = wal_path
-                self.replacement_wal = replacement_wal
-                self.export_path = export_path
-                self.replacement_handled = False
-
-            def _default_run_csv_export_filename(self, *_args, **_kwargs):
-                return str(self.export_path)
-
-            def _choose_csv_export_filename(self, _default_name):
-                return str(self.export_path)
-
-            def _load_run_csv_dataset(self, dataset_key):
-                self._require_run_csv_source_current(dataset_key)
-                return self.dataset
-
-            def _measurement_params_by_names(self, _dataset, _parameter_names):
-                return (object(),)
-
-            def _measurement_dataframe(self, _dataset, _params):
-                os.replace(self.replacement_wal, self.wal_path)
-                return object()
-
-            def _handle_run_csv_source_replaced(self, _dataset_key):
-                self.replacement_handled = True
-
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "database.db"
             wal_path = Path(f"{database_path}-wal")
@@ -256,14 +236,25 @@ class MeasurementExportDataFrameTestCase(unittest.TestCase):
             wal_path.write_bytes(b"accepted wal")
             replacement_wal.write_bytes(b"replacement wal")
             dataset_key = DatasetKey(database_path, "guid")
-            dataset = SimpleNamespace(conn=Connection())
-            harness = Harness(dataset, wal_path, replacement_wal, export_path)
+            harness = _CsvTaskHarness(database_path)
+            self.addCleanup(harness.dispose)
 
-            harness._export_measurement_csv(dataset_key, ("signal",), run_id=1)
+            def write_then_replace(filename, **_kwargs):
+                Path(filename).write_text("signal\n3\n", encoding="utf-8")
+                os.replace(replacement_wal, wal_path)
+                return SimpleNamespace(row_count=1)
+
+            with (
+                patch.object(qtw.QFileDialog, "getSaveFileName",
+                             return_value=(str(export_path), "CSV files (*.csv)")),
+                patch("qplot.datahandling.csv_export.export_raw_csv", side_effect=write_then_replace),
+            ):
+                harness._export_measurement_csv(dataset_key, ("signal",), run_id=1)
+                wait_for(lambda: not harness._export_task_manager.tasks)
 
             self.assertTrue(harness.replacement_handled)
-            self.assertTrue(dataset.conn.closed)
             self.assertFalse(export_path.exists())
+            self.assertFalse(list(Path(temp_dir).glob(".export.csv.*")))
 
 
 class PreviewExportLifecycleTestCase(unittest.TestCase):
@@ -274,28 +265,6 @@ class PreviewExportLifecycleTestCase(unittest.TestCase):
         def close(self):
             self.closed = True
 
-    class Param:
-        name = "signal"
-
-    class Dataset:
-        guid = "preview-guid"
-        run_id = 3
-
-        def __init__(self, *, data_error=None):
-            self.conn = PreviewExportLifecycleTestCase.Connection()
-            self.param = PreviewExportLifecycleTestCase.Param()
-            self.data_error = data_error
-            self.requested_parameters = []
-
-        def get_parameters(self):
-            return [self.param]
-
-        def get_parameter_data(self, name):
-            self.requested_parameters.append(name)
-            if self.data_error is not None:
-                raise self.data_error
-            return {name: {"gate": [1.0], name: [2.0]}}
-
     class HeldDataset:
         guid = "preview-guid"
 
@@ -305,13 +274,9 @@ class PreviewExportLifecycleTestCase(unittest.TestCase):
         def __bool__(self):
             raise AssertionError("Dataset presence must not query row count")
 
-    class Field:
-        def text(self):
-            return "preview.db"
-
-    class Harness(PlotActionsMixin):
-        def __init__(self, local_dataset):
-            self.fileTextbox = PreviewExportLifecycleTestCase.Field()
+    class Harness(_CsvTaskHarness):
+        def __init__(self, database_path):
+            super().__init__(database_path)
             self.ds = PreviewExportLifecycleTestCase.HeldDataset()
             self._selected_dataset_key = DatasetKey(
                 self.fileTextbox.text(),
@@ -321,35 +286,19 @@ class PreviewExportLifecycleTestCase(unittest.TestCase):
             self.dataset_holder = {
                 self._selected_dataset_key: self.held_handle,
             }
-            self.local_dataset = local_dataset
-            self.loaded_keys = []
-            self.status_messages = []
-            self.error_messages = []
-
-        def _load_run_csv_dataset(self, dataset_key):
-            self.loaded_keys.append(dataset_key)
-            return self.local_dataset
-
-        def show_status(self, *args):
-            self.status_messages.append(args)
-
-        def show_error(self, *args):
-            self.error_messages.append(args)
-
     def test_selected_preview_cancel_does_not_acquire_a_fresh_dataset(self):
-        local_dataset = self.Dataset()
-        harness = self.Harness(local_dataset)
+        harness = self.Harness("preview.db")
+        self.addCleanup(harness.dispose)
 
-        with patch.object(
-            qtw.QFileDialog,
-            "getSaveFileName",
-            return_value=("", "CSV files (*.csv)"),
+        with (
+            patch.object(qtw.QFileDialog, "getSaveFileName",
+                         return_value=("", "CSV files (*.csv)")),
+            patch("qplot.datahandling.csv_export.export_raw_csv") as read,
         ):
             harness.export_preview_csv("signal")
+            read.assert_not_called()
 
-        self.assertEqual(harness.loaded_keys, [])
-        self.assertFalse(local_dataset.conn.closed)
-        self.assertEqual(local_dataset.requested_parameters, [])
+        self.assertFalse(hasattr(harness, "_export_task_manager"))
         self.assertFalse(harness.held_handle.closed)
         self.assertFalse(harness.ds.conn.closed)
         self.assertIs(
@@ -359,31 +308,39 @@ class PreviewExportLifecycleTestCase(unittest.TestCase):
         self.assertEqual(harness.error_messages, [])
         self.assertIn("cancelled", harness.status_messages[-1][0].lower())
 
-    def test_run_preview_data_error_closes_fresh_dataset_and_preserves_handle(self):
-        local_dataset = self.Dataset(data_error=RuntimeError("broken export"))
-        harness = self.Harness(local_dataset)
-
+    def test_run_preview_data_error_preserves_held_handle_and_discards_stage(self):
         with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "preview.db"
+            database_path.write_bytes(b"source")
+            harness = self.Harness(database_path)
+            self.addCleanup(harness.dispose)
             export_path = Path(temp_dir) / "preview.csv"
-            with patch.object(
-                qtw.QFileDialog,
-                "getSaveFileName",
-                return_value=(str(export_path), "CSV files (*.csv)"),
+            with (
+                patch.object(qtw.QFileDialog, "getSaveFileName",
+                             return_value=(str(export_path), "CSV files (*.csv)")),
+                patch("qplot.datahandling.csv_export.export_raw_csv",
+                      side_effect=RuntimeError("broken export")) as read,
             ):
                 harness.export_run_preview_csv("preview-guid", "signal")
+                wait_for(lambda: not harness._export_task_manager.tasks)
+                read.assert_called_once()
+                self.assertEqual(read.call_args.kwargs["guid"], "preview-guid")
+                self.assertEqual(read.call_args.kwargs["parameter_names"], ("signal",))
 
             self.assertFalse(export_path.exists())
+            self.assertFalse(list(Path(temp_dir).glob(".preview.csv.*")))
 
-        self.assertEqual(harness.loaded_keys, [harness._selected_dataset_key])
-        self.assertTrue(local_dataset.conn.closed)
-        self.assertEqual(local_dataset.requested_parameters, ["signal"])
         self.assertFalse(harness.held_handle.closed)
         self.assertFalse(harness.ds.conn.closed)
         self.assertIs(
             harness.dataset_holder[harness._selected_dataset_key],
             harness.held_handle,
         )
-        self.assertEqual(harness.error_messages[0][0], "CSV Export Failed")
+        task = harness._export_task_manager.history[0]
+        self.assertIsInstance(task.error, RuntimeError)
+        self.assertIn("broken export", task.row.toolTip(1))
+        self.assertEqual(task.row.text(1), "Failed")
+        self.assertEqual(harness.error_messages, [])
 
 
 class DatasetHandleTestCase(unittest.TestCase):
@@ -1724,6 +1681,12 @@ class OptionsMenuTestCase(unittest.TestCase):
             pass
 
         def export_test_database_csv_collection(self):
+            pass
+
+        def export_selected_runs_csv(self):
+            pass
+
+        def show_csv_exports(self):
             pass
 
         def generate_test_database_from_csv(self):

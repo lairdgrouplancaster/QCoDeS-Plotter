@@ -336,6 +336,14 @@ class MainWindow(
 
         fileMenu.addSeparator()
 
+        export_runs = create_action("run.export_selected", self)
+        export_runs.triggered.connect(self.export_selected_runs_csv)
+        fileMenu.addAction(export_runs)
+        exports_progress = create_action("exports.show", self)
+        exports_progress.triggered.connect(self.show_csv_exports)
+        fileMenu.addAction(exports_progress)
+        fileMenu.addSeparator()
+
         test_data_menu = cast(qtw.QMenu, fileMenu.addMenu("Generate &Test Data"))
         bundled_csv_action = create_action("testdata.open_bundled_folder", self)
         bundled_csv_action.triggered.connect(self.open_bundled_test_database_csv_folder)
@@ -444,9 +452,13 @@ class MainWindow(
         self.loadDatabaseButton.setIcon(
             style.standardIcon(qtw.QStyle.StandardPixmap.SP_DialogOpenButton)
             )
+        self.loadDatabaseButton.setText("Open…")
+        self.loadDatabaseButton.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+            )
         self.loadDatabaseButton.setToolTip("Load a QCoDeS .db database (Ctrl+L)")
         self.loadDatabaseButton.setAccessibleName("Load database")
-        self.loadDatabaseButton.setFixedSize(28, 26)
+        self.loadDatabaseButton.setFixedHeight(26)
         self.loadDatabaseButton.clicked.connect(self.getfile)
         self.targetLayout.addWidget(self.loadDatabaseButton)
 

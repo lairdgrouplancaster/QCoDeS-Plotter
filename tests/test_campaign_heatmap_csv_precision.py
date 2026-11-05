@@ -10,6 +10,7 @@ from qplot.windows._plot_actions import PlotActionsMixin
 from tests.test_worker_array_heatmaps import heatmap_dataset
 from tests.windows.test_numeric_sample_preservation import array_plot
 from tests.windows.test_plot_csv_precision import _export_from_dialog, _open_csv_dialog
+from tests.windows.test_plot_integration import wait_for
 
 
 def _samples(dtype):
@@ -50,8 +51,12 @@ def test_actual_heatmap_export_dialog_preserves_float_samples(
             np.testing.assert_array_equal(plot.dataGrid, expected)
 
         destination = tmp_path / "raw.csv"
-        monkeypatch.setattr(window, "_choose_csv_export_filename", lambda _default: str(destination))
+        monkeypatch.setattr(window, "_choose_csv_export_filename",
+                            lambda _default, **_kwargs: str(destination))
         window._export_measurement_csv(plot._dataset_key, ["signal"])
+        task, = window._export_tasks
+        wait_for(lambda: task.done)
+        assert task.error is None and not task.cancelled
         with destination.open(newline="", encoding="utf-8") as exported:
             raw_rows = list(csv.DictReader(exported))
         recovered = np.asarray([row["signal"] for row in raw_rows], dtype=_import_dtype(dtype))

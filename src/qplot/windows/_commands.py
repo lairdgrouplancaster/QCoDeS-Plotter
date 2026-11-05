@@ -201,6 +201,18 @@ COMMANDS: dict[str, CommandSpec] = {
         "Ctrl+Shift+D",
         help_section="Main Window",
     ),
+    "run.export_selected": CommandSpec(
+        "run.export_selected",
+        "Export Selected Runs as &CSV…",
+        "Export raw measurements from selected runs, one CSV per run",
+        object_name="exportSelectedRunsCsvAction",
+    ),
+    "exports.show": CommandSpec(
+        "exports.show",
+        "CSV Export &Progress…",
+        "Show background CSV exports and cancellation controls",
+        object_name="showCsvExportsAction",
+    ),
     "testdata.open_bundled_folder": CommandSpec(
         "testdata.open_bundled_folder",
         "Open &Bundled CSV Folder",

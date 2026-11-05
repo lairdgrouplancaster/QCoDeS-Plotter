@@ -21,7 +21,7 @@ from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._export_paths import prepare_export_destination
 from qplot.windows._widgets.preview import PreviewImageLabel
 from qplot.windows.main import MainWindow
-from tests._window_lifecycle import close_main_window
+from tests._window_lifecycle import close_main_window, wait_for_exports
 from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
 
 
@@ -139,6 +139,7 @@ def test_selected_actions_use_latest_row_after_thumbnail_completion(
         monkeypatch.setattr(window, "_choose_csv_export_filename", lambda _name:
                             prepare_export_destination(window, str(destination)))
         window.infoBox.preview.exportRequested.emit("response")
+        wait_for_exports(window)
         with destination.open(newline="", encoding="utf-8") as exported:
             rows = list(csv.reader(exported))
         assert rows[0] == ["response", "drive"]

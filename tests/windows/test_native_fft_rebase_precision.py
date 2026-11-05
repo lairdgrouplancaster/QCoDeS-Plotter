@@ -10,7 +10,8 @@ import pytest
 from pyqtgraph.exporters import CSVExporter
 
 from qplot.tools import native_transform_math as transforms
-from qplot.windows._native_transforms import NativePlotDataItem, _resample_fft_samples
+from qplot.tools.native_transform_math import _resample_fft_samples
+from qplot.windows._native_transforms import NativePlotDataItem
 from tests.windows.test_native_fft_coordinates import fft_plots as _fft_plots_fixture
 from tests.windows.test_native_transform_labels import click_control
 from tests.windows.test_native_transform_labels import (

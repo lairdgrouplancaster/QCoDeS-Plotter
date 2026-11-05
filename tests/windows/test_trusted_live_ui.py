@@ -3151,15 +3151,15 @@ def test_legacy_preview_callback_cannot_land_on_staged_trusted_rows(
 @pytest.mark.parametrize(
     ("access_mode", "expected_close_calls"),
     (
-        (database_actions.TRUSTED_LIVE_MODE, [1, 1]),
-        (database_actions.SNAPSHOT_FALLBACK_MODE, [1, 1]),
+        (database_actions.TRUSTED_LIVE_MODE, []),
+        (database_actions.SNAPSHOT_FALLBACK_MODE, [1]),
     ),
 )
-def test_explicit_plot_and_export_materialize_guid_for_exact_instance(
-    tmp_path,
-    access_mode,
-    expected_close_calls,
+def test_explicit_plot_and_export_bind_guid_to_exact_instance(
+    tmp_path, access_mode, expected_close_calls,
 ):
+    from qplot.windows import _run_csv_export as raw_export
+
     database_path = tmp_path / "trusted-actions.db"
     database_path.write_bytes(b"trusted action identity")
     instance = database_instance(database_path)
@@ -3174,9 +3174,7 @@ def test_explicit_plot_and_export_materialize_guid_for_exact_instance(
         harness._trusted_plot_ready = {
             harness._current_dataset_key(guid): plot_dataset,
         }
-    load_calls = []
-    datasets = []
-    published = []
+    load_calls, datasets, requests = [], [], []
 
     def load_selected_guid(*args, **kwargs):
         dataset = _ActionDataset(guid, 7)
@@ -3184,58 +3182,39 @@ def test_explicit_plot_and_export_materialize_guid_for_exact_instance(
         load_calls.append((args, kwargs))
         return dataset
 
-    def choose_after_preflight(_default_name):
-        # Trusted export enumerates progressive metadata in its own short-lived
-        # dataset. It must close before a modal destination dialog; trusted
-        # plots use connection-free metadata, not another snapshot DataSet.
-        assert [dataset.conn.close_calls for dataset in datasets] == (
-            expected_close_calls[:-1]
-        )
-        return harness.export_filename
-
-    def publish_without_disk_write(
-        filename,
-        _writer,
-        *,
-        before_publish=None,
-    ) -> None:
-        if before_publish is not None:
-            before_publish()
-        published.append(filename)
+    def queue_exact_request(owner, key, selector, *, run_id):
+        owner._require_run_csv_source_current(key)
+        requests.append((key, selector, run_id, raw_export._writer_for(owner, key, selector)))
 
     with (
-        patch.object(
-            plot_actions,
-            "load_by_guid_read_only",
-            side_effect=load_selected_guid,
-        ),
-        patch.object(
-            plot_actions,
-            "write_export_atomically",
-            side_effect=publish_without_disk_write,
-        ),
-        patch.object(
-            harness,
-            "_choose_csv_export_filename",
-            side_effect=choose_after_preflight,
-        ),
+        patch.object(plot_actions, "load_by_guid_read_only", side_effect=load_selected_guid),
+        patch.object(raw_export, "queue_raw_export", side_effect=queue_exact_request),
     ):
         harness.openPlot(guid, show=False)
+        loads_before_export = len(load_calls)
         harness.exportRunCsv()
+        # The Qt request records the selector; only its eventual worker reads.
+        assert len(load_calls) == loads_before_export
 
     assert service.accepted
-    assert service.database_instance == instance
     assert len(harness.opened) == 1
     assert harness.opened[0][3].guid == guid
     assert harness.opened[0][3].database_identity == instance.identity
     assert load_calls == [
-        (
-            (guid, instance.logical_path),
-            {"expected_database_identity": instance.identity},
-        ),
+        ((guid, instance.logical_path), {"expected_database_identity": instance.identity}),
     ] * len(expected_close_calls)
-    assert published == [harness.export_filename]
     assert [dataset.conn.close_calls for dataset in datasets] == expected_close_calls
+    assert len(requests) == 1
+    key, selector, run_id, writer = requests[0]
+    assert key.guid == guid and key.database_identity == instance.identity
+    assert selector is None and run_id == 7
+    assert writer.keywords["database_path"] == instance.logical_path
+    assert writer.keywords["guid"] == guid
+    assert writer.keywords["expected_database_identity"] == instance.identity
+    assert writer.keywords["parameter_names"] is None
+    assert writer.keywords["measurement_index"] is None
+    expected_service = service if access_mode == database_actions.TRUSTED_LIVE_MODE else None
+    assert writer.keywords["service"] is expected_service
     assert harness.ds is None
     assert harness.error_messages == []
 

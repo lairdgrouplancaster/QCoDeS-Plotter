@@ -1,5 +1,85 @@
 # qPlot bug-hunt campaign
 
+## Focused live-acquisition and UI-transition review — 2026-11-05
+
+Starting revision: `bbe6060` (clean working tree). This request authorizes a
+focused investigation, confirmed repairs and regression tests, with no finding
+quota and no PR. Historical campaign stopping/publication instructions below
+belong to those earlier requests.
+
+**Result: no confirmed application bugs.** No application code or permanent
+tests changed; this coverage entry is the only repository change. No PR,
+commit, push, version change or release was made.
+
+### Coverage selection and fresh experiments
+
+Reviewed the historical campaign ledger, especially live schema/metadata
+refresh, empty incremental records, final-status retry, paused promotion,
+retained-source manual refresh, selected-run publication, pending Close All,
+and rounds 47–49. Read the corresponding current tests and implementation
+before selecting the following combinations. All acquisition sources were
+disposable databases produced by the installed QCoDeS; none was user data.
+
+- **Browser and Auto-plot:** four cases (ascending/descending table order ×
+  cleared/typed selection) combine discovery of a started empty run, automatic
+  plot launch, two appends, queued database refreshes, manual plot refresh,
+  selection changes, completion, Close All, refresh without reopening the
+  closed run, and automatic plotting of a subsequent run. Explicit producer
+  values and the intended selected GUID match. Main/WAL/journal state is
+  unchanged across each viewing stage. **4 passed in 9.08 s.** Probe:
+  `/private/tmp/qplot_live_selection_probe.py`.
+- **Live data:** four planned/unplanned × foreground/background acquisitions
+  exercise 36 staggered array stages with empty records, dtype changes,
+  plan overflow, metadata updates, cached rendering and delayed publication
+  across completion. **1,360 exact values and 40 protected-artifact comparisons
+  pass.** Two further live databases exercise 14 grid stages, transitions
+  between full/buffered/aggregated rendering, sparse outputs, duplicate
+  coordinates, X-only/Y-only viewport changes, plan overflow and successful
+  retry after two operation-limit refusals. **818 grid cells match independent
+  Fraction means; 18 protected-artifact comparisons pass.** Probes/receipts:
+  `/private/tmp/qplot-focused-live-data.py`, `qplot-focused-live-grid.py`, and
+  their corresponding `-receipt.json` files.
+- **Plot transitions:** four horizontal/vertical cut × swapped/unswapped
+  promotion cases combine row-mean processing, independent raw cuts, axis
+  swaps, visible producer closure, paused line-to-map promotion, two further
+  acquired rows, manual refresh, cut-slider changes and processed CSV export.
+  **90 display/CSV values match independent expectations; 4 passed in 11.75 s.**
+  Protected artifacts and Qt callback checks pass. Probe/receipt:
+  `/private/tmp/test_qplot_live_transition_probe.py` and
+  `/private/tmp/qplot-ui-live-transition-receipt.json`.
+- **Reader lifetime:** two zero/delayed eviction cases use four disposable WAL
+  databases for A→B→A switching, old-reader reuse by different dependent plots,
+  closing the last consumers and immediately reopening, appending both live
+  sources, refreshing retained/current plots, and public Close Database.
+  **52 independently calculated values pass**, protected artifact comparisons
+  pass, six reader-service instances close, and four producer-owned TRUNCATE
+  checkpoints succeed after viewing. Probe:
+  `/private/tmp/qplot-focused-2026-11-05-lifecycle.py`.
+
+### Validation and limits
+
+Neighboring automated batches pass: **66** browser/Auto-plot/selection/refresh
+tests, **30** registry/pending-close/modal-close/shutdown tests, and **23**
+incremental-record/array-dtype/acquired-count tests. These batches overlap;
+their sum is not a count of distinct tests. Runs used the project venv,
+`QT_QPA_PLATFORM=offscreen`, the prescribed Matplotlib cache and `--no-cov`.
+No full-suite or cross-platform validation is claimed.
+
+The pytest probes run with the same environment and `python -m pytest`; the
+plot-transition and lifecycle probes additionally use `-p tests.conftest`.
+The two live-data scripts run directly with `PYTHONPATH=.`. All probe paths
+above are local temporary evidence, not committed regression tests.
+
+Probe expectation/setup errors were corrected without changing application
+behavior: typed selection commits when a newly shown plot moves focus;
+reopening an existing same-parameter plot raises its window; buffered SQL
+obeys viewport filtering. A suspected shared-hidden-source interval conflict
+was excluded because the attempted ordinary drops create separate producers.
+None is counted as an application finding. Services/windows and owned fixture
+resources retired. Protection checks cover main/WAL/journal between producer
+writes; permitted SQLite SHM changes are excluded. Coverage is bounded to the
+listed combinations on local macOS/offscreen Qt, not proof of absence of bugs.
+
 ## Campaign 2026-10-29 — rounds 47–49 complete; current-main integration
 
 The new request authorizes up to three rounds after the historical round 46,

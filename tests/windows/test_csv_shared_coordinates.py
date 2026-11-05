@@ -7,6 +7,7 @@ from tests.windows.test_plot_csv_precision import _open_csv_dialog
 from tests.windows.test_plot_csv_precision import (
     precision_plot as _precision_plot_fixture,
 )
+from tests.windows.test_plot_integration import wait_for
 
 precision_plot = _precision_plot_fixture
 
@@ -34,14 +35,19 @@ def test_shared_coordinates_refuse_mismatched_traces_and_allow_retry(precision_p
     monkeypatch.setattr(plot, "show_error", lambda *args: errors.append(args))
     monkeypatch.setattr(qtw.QFileDialog, "getSaveFileName", lambda *_a, **_kw: (str(target), "CSV files (*.csv)"))
     dialog.ui.exportBtn.click()
+    task, = plot._export_tasks
+    wait_for(lambda: task.done)
     assert not target.exists(), "Shared-X CSV must not relabel a trace against another trace's coordinates"
-    assert errors
-    assert "(x,y) per plot" in str(errors[-1])
+    assert isinstance(task.error, ValueError)
+    assert "(x,y) per plot" in str(task.error)
     assert not list(target.parent.glob(f".{target.name}.*"))
 
     errors.clear()
     dialog.currentExporter.params["columnMode"] = "(x,y) per plot"
     dialog.ui.exportBtn.click()
+    task, = plot._export_tasks
+    wait_for(lambda: task.done)
+    assert task.error is None and not task.cancelled
     assert not errors
     import csv
     from decimal import Decimal

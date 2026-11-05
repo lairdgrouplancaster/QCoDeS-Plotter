@@ -19,6 +19,7 @@ from tests.windows.test_differentiation_integration import (
 from tests.windows.test_differentiation_integration import (
     integer_array_plot as _integer_array_plot_fixture,
 )
+from tests.windows.test_plot_integration import wait_for
 
 integer_array_plot = _integer_array_plot_fixture
 
@@ -39,6 +40,9 @@ def _plot_csv_from_action(plot, monkeypatch, target):
         lambda *_args, **_kwargs: (str(target), ""),
     )
     dialog.ui.exportBtn.click()
+    task, = plot._export_tasks
+    wait_for(lambda: task.done)
+    assert task.error is None and not task.cancelled
     assert target.exists()
     with target.open(newline="", encoding="utf-8") as stream:
         return list(csv.reader(stream))

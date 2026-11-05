@@ -10,7 +10,6 @@ from qplot.datahandling.file_identity import database_sidecar_identities
 from qplot.tools import worker as worker_module
 from qplot.tools.plot_result import capture_plot_result
 from qplot.tools.worker import loader
-from qplot.windows import _plot_actions as plot_actions_module
 from qplot.windows import _plot_refresh as plot_refresh_module
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
 from qplot.windows._plot_actions import PlotActionsMixin
@@ -703,34 +702,41 @@ def test_first_sidecars_are_promoted_into_plot_and_holder_key(tmp_path):
     assert _normalized_paths(harness.recoveries) == _normalized_paths([database_path])
 
 
-class _CsvHarness(PlotActionsMixin):
-    def __init__(self, export_path: Path):
-        self.export_path = export_path
-        self.dataset_holder = {}
-        self.recoveries = []
-        self.statuses = []
-        self.errors = []
+@pytest.fixture
+def csv_sidecar_window(tmp_path, monkeypatch):
+    from qplot.windows.main import MainWindow
+    from tests._window_lifecycle import close_main_window
+    from tests.windows.test_plot_integration import configure_temp_qplot
 
-    def _reload_if_database_instance_changed(self, path):
-        self.recoveries.append(path)
-        return False
-
-    def show_status(self, *args):
-        self.statuses.append(args)
-
-    def show_error(self, *args):
-        self.errors.append(args)
+    configure_temp_qplot(monkeypatch, tmp_path)
+    window = MainWindow()
+    window.startupDatabaseTimer.stop()
+    window.monitor.stop()
+    window.config.config["user_preference"]["confirm_close"] = False
+    window.config.config["user_preference"]["confirm_close_all"] = False
+    window.recoveries = []
+    window.statuses = []
+    window.errors = []
+    monkeypatch.setattr(window, "_reload_if_database_instance_changed",
+                        lambda path: window.recoveries.append(path))
+    monkeypatch.setattr(window, "show_status", lambda *args: window.statuses.append(args))
+    monkeypatch.setattr(window, "show_error", lambda *args: window.errors.append(args))
+    monkeypatch.setattr(window.RunList, "run_id_for_guid", lambda _guid: 1)
+    yield window
+    close_main_window(window)
 
 
 def test_run_csv_binds_first_sidecars_then_rejects_swap_before_open(
-    tmp_path,
-    monkeypatch,
+    tmp_path, monkeypatch, csv_sidecar_window,
 ):
+    from qplot.windows import _run_csv_export as raw_export
+
     database_path = tmp_path / "run-csv.db"
     database_path.write_bytes(b"main database identity")
     initial_key = DatasetKey(database_path, "run-guid")
     export_path = tmp_path / "run.csv"
-    harness = _CsvHarness(export_path)
+    harness = csv_sidecar_window
+    harness.fileTextbox.setText(str(database_path))
     opened = []
 
     def choose_after_first_sidecars(_default_name):
@@ -742,65 +748,61 @@ def test_run_csv_binds_first_sidecars_then_rejects_swap_before_open(
 
     def bind_then_swap(dataset_key):
         bound_key = real_bind(dataset_key)
-        assert bound_key.sidecar_identities == database_sidecar_identities(
-            database_path
-        )
+        assert bound_key.sidecar_identities == database_sidecar_identities(database_path)
         _replace_sidecars(database_path)
         return bound_key
 
-    harness._choose_csv_export_filename = choose_after_first_sidecars
-    harness._bind_one_shot_dataset_key = bind_then_swap
-    monkeypatch.setattr(
-        plot_actions_module,
-        "load_by_guid_read_only",
-        lambda *_args, **_kwargs: opened.append(True),
-    )
+    monkeypatch.setattr(harness, "_choose_csv_export_filename", choose_after_first_sidecars)
+    monkeypatch.setattr(harness, "_bind_one_shot_dataset_key", bind_then_swap)
+    monkeypatch.setattr(raw_export, "_writer_for",
+                        lambda *_args, **_kwargs: opened.append(True))
 
     harness._export_measurement_csv(initial_key, ("signal",), run_id=1)
 
     assert opened == []
     assert not export_path.exists()
     assert _normalized_paths(harness.recoveries) == _normalized_paths([database_path])
+    assert harness.errors == []
 
 
-def test_preview_csv_rejects_swap_after_materialisation_before_publish(tmp_path):
+def test_preview_csv_rejects_swap_after_materialisation_before_publish(
+        tmp_path, monkeypatch, csv_sidecar_window,
+        ):
+    from qplot.windows import _run_csv_export as raw_export
+    from tests.windows.test_plot_integration import wait_for
+
     database_path = tmp_path / "preview-csv.db"
     database_path.write_bytes(b"main database identity")
     initial_key = DatasetKey(database_path, "run-guid")
     export_path = tmp_path / "preview.csv"
-    harness = _CsvHarness(export_path)
+    harness = csv_sidecar_window
+    harness.fileTextbox.setText(str(database_path))
     bound_keys = []
-
-    class Param:
-        name = "signal"
-        depends_on = "x"
-
-    class Dataset:
-        guid = "run-guid"
-
-        @staticmethod
-        def get_parameters():
-            return [Param()]
 
     def choose_after_first_sidecars(_default_name):
         Path(f"{database_path}-wal").write_bytes(b"first WAL")
         Path(f"{database_path}-shm").write_bytes(b"first SHM")
         return str(export_path)
 
-    def materialise_then_swap(dataset_key):
-        harness._require_run_csv_source_current(dataset_key)
-        bound_keys.append(dataset_key)
-        _replace_sidecars(database_path)
-        return Dataset()
+    def make_writer(_window, key, _selector):
+        bound_keys.append(key)
 
-    harness._choose_csv_export_filename = choose_after_first_sidecars
-    harness._load_run_csv_dataset = materialise_then_swap
-    harness._measurement_dataframe = lambda *_args: object()
+        def materialise_then_swap(filename, **_kwargs):
+            Path(filename).write_text("signal,x\n1,2\n", encoding="utf-8")
+            _replace_sidecars(database_path)
+            return True
 
+        return materialise_then_swap
+
+    monkeypatch.setattr(harness, "_choose_csv_export_filename", choose_after_first_sidecars)
+    monkeypatch.setattr(raw_export, "_writer_for", make_writer)
     harness._export_preview_csv(initial_key, "signal")
+    wait_for(lambda: not harness._export_task_manager.tasks)
 
     assert len(bound_keys) == 1
     assert bound_keys[0].sidecar_identities
     assert not export_path.exists()
+    assert not list(tmp_path.glob(f".{export_path.name}.*"))
     assert _normalized_paths(harness.recoveries) == _normalized_paths([database_path])
-    assert harness.errors[-1][0] == "CSV Export Failed"
+    assert harness.errors == []
+    assert "database was replaced" in harness.statuses[-1][0].lower()

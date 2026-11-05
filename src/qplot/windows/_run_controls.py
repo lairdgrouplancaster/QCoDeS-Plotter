@@ -151,9 +151,13 @@ class RunControlsMixin:
         self.plotRunButton.setIcon(
             self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_MediaPlay)
             )
+        self.plotRunButton.setText("Plot")
+        self.plotRunButton.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+            )
         self.plotRunButton.setToolTip("Plot (Ctrl+Return)")
         self.plotRunButton.setAccessibleName("Plot measurement")
-        self.plotRunButton.setFixedSize(28, 26)
+        self.plotRunButton.setFixedHeight(26)
         self.plotRunButton.clicked.connect(self._open_entered_run)
         sublayout.addWidget(self.plotRunButton)
 
@@ -162,9 +166,15 @@ class RunControlsMixin:
         self.exportCsvButton.setIcon(
             self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogSaveButton)
             )
-        self.exportCsvButton.setToolTip("Export CSV")
-        self.exportCsvButton.setAccessibleName("Export measurement to CSV")
-        self.exportCsvButton.setFixedSize(28, 26)
+        self.exportCsvButton.setText("CSV…")
+        self.exportCsvButton.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+            )
+        self.exportCsvButton.setToolTip(
+            "Export raw measurement values as CSV (multiple selected runs: batch export)"
+            )
+        self.exportCsvButton.setAccessibleName("Export raw measurement values to CSV")
+        self.exportCsvButton.setFixedHeight(26)
         self.exportCsvButton.clicked.connect(self.exportRunCsv)
         sublayout.addWidget(self.exportCsvButton)
 
@@ -188,6 +198,7 @@ class RunControlsMixin:
         self.RunList.plot.connect(self.openPlot)
         self.RunList.previewPlotRequested.connect(self.open_run_preview_plot)
         self.RunList.previewExportRequested.connect(self.export_run_preview_csv)
+        self.RunList.batchExportRequested.connect(self.export_selected_previews_csv)
         self.RunList.previewStatsRequested.connect(self.show_run_preview_stats)
         self.RunList.verticalScrollBar().valueChanged.connect(
             lambda _: self._run_table_view_changed()
@@ -196,6 +207,7 @@ class RunControlsMixin:
         self.infoBox = moreInfo(preview_size=self.preview_size)
         self.infoBox.preview.plotRequested.connect(self.open_preview_plot)
         self.infoBox.preview.exportRequested.connect(self.export_preview_csv)
+        self.infoBox.preview.batchExportRequested.connect(self.export_selected_previews_csv)
         self.infoBox.preview.statsRequested.connect(self.show_preview_stats)
         self.infoBox.preview.previewsReady.connect(self.RunList.set_run_previews)
         self.infoBox.preview.previewGenerationChanged.connect(
@@ -702,7 +714,11 @@ class RunControlsMixin:
             return
 
         item = matches[0]
-        self.RunList.setCurrentItem(item)
+        # A typed Run ID selects exactly one row, even while Ctrl+Return is
+        # held. ExtendedSelection otherwise interprets Ctrl as a toggle.
+        self.RunList.setCurrentItem(
+            item, 0, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
         self.RunList.scrollToItem(item, qtw.QAbstractItemView.ScrollHint.PositionAtCenter)
 
 

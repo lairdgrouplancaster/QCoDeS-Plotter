@@ -124,6 +124,15 @@ class ShutdownResources:
                 active = True
                 diagnostics.append(f"pool {pool_name}: active_threads={count}")
 
+        exports = getattr(self.window, "_export_task_manager", None)
+        if exports is not None:
+            # A finished worker still owns a stage until GUI publication or
+            # cancellation cleanup has run. Do not destroy that owner early.
+            exports.poll()
+            if exports.tasks:
+                active = True
+                diagnostics.append(f"pending_csv_exports={len(exports.tasks)}")
+
         reap_services = getattr(
             self.window, "_reap_retired_trusted_read_services", None
         )
@@ -250,7 +259,9 @@ class ShutdownResources:
 
         for pool_name, pool in self.pools:
             try:
-                pool.clear()
+                exports = getattr(self.window, "_export_task_manager", None)
+                if pool is not getattr(exports, "pool", None):
+                    pool.clear()
             except BaseException as error:
                 escalation_diagnostics.append(
                     f"pool {pool_name} clear raised {type(error).__name__}: {error}"

@@ -5,7 +5,7 @@ from collections import OrderedDict
 from time import monotonic
 
 import numpy as np
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling._sqlite_identifiers import (
@@ -31,6 +31,13 @@ from qplot.datahandling.trusted_presentation import bounded_presentation_error
 from qplot.diagnostics import log_exception
 
 from .._dragdrop import make_run_preview_mime
+from ._preview_selection import (
+    active_preview_labels,
+    preview_key,
+    preview_menu_token,
+    select_preview,
+    selected_preview_targets,
+)
 from ._run_formatting import preview_title as _preview_title
 from ._run_formatting import preview_tooltip_text
 
@@ -122,6 +129,7 @@ class PreviewTab(qtw.QWidget):
     """
     plotRequested = QtCore.pyqtSignal(str)
     exportRequested = QtCore.pyqtSignal(str)
+    batchExportRequested = QtCore.pyqtSignal(object)
     statsRequested = QtCore.pyqtSignal(str)
     previewsReady = QtCore.pyqtSignal(str, object)
     previewGenerationChanged = QtCore.pyqtSignal(str, bool)
@@ -1172,14 +1180,31 @@ class PreviewTab(qtw.QWidget):
         self.databaseReplaced.emit(replaced_path)
 
 
+    def preview_selection_labels(self):
+        labels = []
+        for index in range(self.content_layout.count()):
+            item = self.content_layout.itemAt(index)
+            card = item.widget() if item is not None else None
+            if isinstance(card, PreviewCard):
+                labels.extend(card.findChildren(PreviewImageLabel))
+        return labels
+
+
     def _clear_layout(self):
+        selected = {preview_key(label) for label in self.preview_selection_labels()
+                    if label._selected}
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
             if item is None:
                 continue
             widget = item.widget()
             if widget is not None:
+                for label in widget.findChildren(PreviewImageLabel):
+                    label._preview_retired = True
+                widget.hide()
+                widget.setParent(self)
                 widget.deleteLater()
+        return selected
 
 
     def _show_message(self, message, tooltip=None):
@@ -1207,7 +1232,7 @@ class PreviewTab(qtw.QWidget):
 
 
     def _show_previews(self, previews):
-        self._clear_layout()
+        selected = self._clear_layout()
 
         if not previews:
             self._show_message("No 1D or 2D previews")
@@ -1220,6 +1245,8 @@ class PreviewTab(qtw.QWidget):
             card.statsRequested.connect(self.statsRequested)
             self.content_layout.addWidget(card)
         self.content_layout.addStretch()
+        for label in self.preview_selection_labels():
+            label.set_selected(preview_key(label) in selected)
 
 
 class PreviewCard(qtw.QWidget):
@@ -1237,6 +1264,7 @@ class PreviewCard(qtw.QWidget):
                 preview_size,
                 "previewUnsupported",
                 )
+            label.guid = str(guid or "")
             label.exportRequested.connect(self.exportRequested)
             label.statsRequested.connect(self.statsRequested)
             layout = qtw.QHBoxLayout()
@@ -1274,6 +1302,9 @@ class PreviewImageLabel(qtw.QLabel):
     def __init__(self, parameter, *args, plot_supported=True):
         super().__init__(*args)
         self.parameter = parameter
+        self.guid = ""
+        self._qplot_preview_label = True
+        self._preview_retired = False
         self.plot_supported = plot_supported
         self._selected = False
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
@@ -1287,8 +1318,10 @@ class PreviewImageLabel(qtw.QLabel):
         accessible_name = f"Plot preview: {title}" if title else "Plot preview"
         self.setAccessibleName(accessible_name)
         self.setAccessibleDescription(
+            "Ctrl/Cmd-click to select several thumbnails; Shift-click selects a range. "
             "Press Enter or Space to plot. Press Menu or Shift+F10 for plot and export actions."
             if self.plot_supported else
+            "Ctrl/Cmd-click to select several thumbnails; Shift-click selects a range. "
             "Press Menu or Shift+F10 for CSV export and statistics. Plotting is unavailable."
             )
 
@@ -1299,13 +1332,9 @@ class PreviewImageLabel(qtw.QLabel):
         self.update()
 
 
-    def select_preview(self):
-        scope = self._selection_scope()
-        if scope is not None:
-            for label in scope.findChildren(PreviewImageLabel):
-                if label is not self:
-                    label.set_selected(False)
-        self.set_selected(True)
+    def select_preview(self, *, modifiers=QtCore.Qt.KeyboardModifier.NoModifier,
+                       preserve=False):
+        select_preview(self, modifiers=modifiers, preserve=preserve)
 
 
     def _selection_scope(self):
@@ -1319,14 +1348,17 @@ class PreviewImageLabel(qtw.QLabel):
 
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.MouseButton.LeftButton and self.parameter:
-            self.select_preview()
+            self.select_preview(modifiers=event.modifiers())
+            if event.modifiers() & (
+                QtCore.Qt.KeyboardModifier.ControlModifier
+                | QtCore.Qt.KeyboardModifier.MetaModifier
+                | QtCore.Qt.KeyboardModifier.ShiftModifier
+            ):
+                # Thumbnail selection is independent of the table's row
+                # selection. Do not toggle rows with the same modifier click.
+                event.accept()
+                return
         super().mousePressEvent(event)
-
-
-    def focusInEvent(self, event):
-        if self.parameter:
-            self.select_preview()
-        super().focusInEvent(event)
 
 
     def paintEvent(self, event):
@@ -1383,7 +1415,7 @@ class PreviewImageLabel(qtw.QLabel):
             and bool(event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
             )
         if self.parameter and (context_menu_key or shift_f10):
-            self.select_preview()
+            self.select_preview(preserve=True)
             self._show_context_menu(self.mapToGlobal(self.rect().center()))
             event.accept()
             return
@@ -1396,28 +1428,61 @@ class PreviewImageLabel(qtw.QLabel):
             super().contextMenuEvent(event)
             return
 
-        self.select_preview()
+        self.select_preview(preserve=True)
         self._show_context_menu(event.globalPos())
         event.accept()
 
 
     def _show_context_menu(self, global_position):
+        self.select_preview(preserve=True)
+        scope = self._selection_scope()
+        token = preview_menu_token(scope)
+        targets = selected_preview_targets(scope)
         menu = qtw.QMenu(self)
+
+        def is_current():
+            return (not sip.isdeleted(self)
+                    and not self._preview_retired
+                    and self in active_preview_labels(scope)
+                    and preview_menu_token(scope) == token)
+
+        def execute_menu():
+            try:
+                menu.exec(global_position)
+            finally:
+                if not sip.isdeleted(menu):
+                    menu.deleteLater()
+
+        batch_signal = getattr(scope, "batchExportRequested", None)
+        if len(targets) > 1 and batch_signal is not None:
+            export_action = QtGui.QAction("Export Selected Thumbnails as CSV…", menu)
+            menu.addAction(export_action)
+            export_action.triggered.connect(
+                lambda: batch_signal.emit(targets) if is_current() else None,
+            )
+            execute_menu()
+            return
 
         plot_action = QtGui.QAction("&Plot", menu)
         plot_action.setEnabled(self.plot_supported)
-        plot_action.triggered.connect(lambda: self.plotRequested.emit(self.parameter))
+        plot_action.triggered.connect(
+            lambda: self.plotRequested.emit(self.parameter) if is_current() else None,
+        )
         menu.addAction(plot_action)
 
         export_action = QtGui.QAction("&Export CSV...", menu)
-        export_action.triggered.connect(lambda: self.exportRequested.emit(self.parameter))
+        export_action.triggered.connect(
+            lambda: self.exportRequested.emit(self.parameter) if is_current() else None,
+        )
         menu.addAction(export_action)
 
         stats_action = QtGui.QAction("Generate &stats...", menu)
-        stats_action.triggered.connect(lambda: self.statsRequested.emit(self.parameter))
+        stats_action.triggered.connect(
+            lambda: self.statsRequested.emit(self.parameter) if is_current() else None,
+        )
         menu.addAction(stats_action)
 
-        menu.exec(global_position)
+        execute_menu()
 
 
 class DraggablePreviewImageLabel(PreviewImageLabel):

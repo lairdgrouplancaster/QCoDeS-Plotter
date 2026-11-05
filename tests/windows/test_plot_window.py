@@ -199,10 +199,13 @@ class _PyqtgraphExportHost(qtw.QMainWindow):
     def _default_plot_pdf_filename(self):
         return self.suggested_path
 
-    def _write_line_csv_stage(self, staging_path, exporter, *, separator=None):
+    def _capture_line_csv(self, exporter, *, transformed=False):
         # These publication tests supply mock payload writers. The real CSV
         # serializer is exercised through the dialog in integration tests.
-        return exporter.export(fileName=staging_path)
+        class Snapshot:
+            def write(self, staging_path, *_args, **_kwargs):
+                return exporter.export(fileName=staging_path)
+        return Snapshot()
 
     def show_status(self, message, timeout=0):
         self.status_messages.append((message, timeout))
@@ -1666,7 +1669,11 @@ class RunListParentLookupTestCase(unittest.TestCase):
                         target.write_bytes(original)
                         exporter = exporter_type.__new__(exporter_type)
                         if exporter_type is CSVExporter:
-                            exporter.params = {"separator": "comma"}
+                            exporter.params = pg.parametertree.Parameter.create(
+                                name="params", type="group", children=[
+                                    {"name": "separator", "type": "str", "value": "comma"},
+                                ],
+                            )
                         staged_paths = []
 
                         def export(
@@ -1694,7 +1701,17 @@ class RunListParentLookupTestCase(unittest.TestCase):
                             return True
 
                         exporter.export = export
+
+                        def run_csv_inline(_owner, *, destination, writer, on_success, **_kwargs):
+                            saved = plot_export_module.write_export_atomically(
+                                destination,
+                                lambda stage: writer(stage, lambda: False, lambda *_args: None),
+                            )
+                            self.assertTrue(saved)
+                            on_success(True)
+
                         with (
+                            patch("qplot.windows._export_tasks.start_export_task", run_csv_inline),
                             patch.object(
                                 plot_export_module,
                                 "write_svg_stage",

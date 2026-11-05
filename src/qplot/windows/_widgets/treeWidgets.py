@@ -283,6 +283,7 @@ class RunList(qtw.QTreeWidget):
     plot = QtCore.pyqtSignal([str])
     previewPlotRequested = QtCore.pyqtSignal(str, str)
     previewExportRequested = QtCore.pyqtSignal(str, str)
+    batchExportRequested = QtCore.pyqtSignal(object)
     previewStatsRequested = QtCore.pyqtSignal(str, str)
     _shortcut_keys = "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
@@ -301,6 +302,7 @@ class RunList(qtw.QTreeWidget):
 
         self.watching: list[SortableTreeWidgetItem] = []
         self.preview_cells: dict[str, RunPreviewCell] = {}
+        self._preview_selection_generation = 0
         self._preview_publication_suspended = False
         self._items_by_guid: dict[str, SortableTreeWidgetItem] = {}
         self._resizing_columns = False
@@ -330,6 +332,7 @@ class RunList(qtw.QTreeWidget):
                     qtw.QHeaderView.ResizeMode.Interactive,
                 )
         self.setRootIsDecorated(False)
+        self.setSelectionMode(qtw.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setIndentation(0)
         self.setUniformRowHeights(False)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -755,12 +758,29 @@ class RunList(qtw.QTreeWidget):
             self.watching.append(item)
 
     def clear(self):
+        self._preview_selection_generation += 1
+        self._preview_selection_anchor = None
         self.preview_cells = {}
         self._items_by_guid = {}
         self._preview_widgets_enabled = True
         self.setUniformRowHeights(False)
         self._setpoints_delegate.invalidate_width_cache()
         super().clear()
+
+    def preview_selection_labels(self):
+        """Use current row order, ignoring removed and hidden thumbnails."""
+        column = self.cols.index("Measurements")
+        if self.isColumnHidden(column):
+            return []
+        labels = []
+        for index in range(self.topLevelItemCount()):
+            item = self.topLevelItem(index)
+            if item is None or item.isHidden():
+                continue
+            cell = self.preview_cells.get(getattr(item, "guid", ""))
+            if cell is not None and self.itemWidget(item, column) is cell:
+                labels.extend(cell.preview_selection_labels())
+        return labels
 
     def _set_measurement_preview_cell(self, item, measurement_count):
         column = self.cols.index("Measurements")
@@ -1504,12 +1524,34 @@ class RunList(qtw.QTreeWidget):
         if not isinstance(item, SortableTreeWidgetItem):
             return
 
-        if self.currentItem() is not item or item not in self.selectedItems():
+        if item not in self.selectedItems():
             self.clearSelection()
             self.setCurrentItem(item)
             item.setSelected(True)
 
         menu = qtw.QMenu(self)
+
+        if len(self.selectedItems()) > 1:
+            selected_items = tuple(self.selectedItems())
+            generation = getattr(main, "_database_load_generation", None)
+            export_selected = create_action("run.export_selected", menu)
+            def export_group():
+                if (generation == getattr(main, "_database_load_generation", None)
+                        and {id(item) for item in self.selectedItems()}
+                        == {id(item) for item in selected_items}):
+                    main.export_selected_runs_csv()
+            export_selected.triggered.connect(export_group)
+            menu.addAction(export_selected)
+            self.itemSelectionChanged.connect(menu.close)
+            model = self.model()
+            if model is not None:
+                model.modelAboutToBeReset.connect(menu.close)
+            try:
+                menu.exec(self.mapToGlobal(pos))
+            finally:
+                if not sip.isdeleted(menu):
+                    menu.deleteLater()
+            return
 
         open_all = create_action(
             "run.plot_selected_all",

@@ -261,6 +261,7 @@ def test_non_single_selection_releases_an_action_owned_dataset_once(tmp_path):
     harness.run_idBox = _Field("7")
     harness.RunList = RunList()
     harness.infoBox = InfoBox()
+    current_item = harness.RunList.current_item
 
     harness.clear_non_single_run_selection()
     harness.clear_non_single_run_selection()
@@ -270,8 +271,8 @@ def test_non_single_selection_releases_an_action_owned_dataset_once(tmp_path):
     assert harness._selected_dataset_key is None
     assert harness.selected_run_id is None
     assert harness.run_idBox.text() == ""
-    assert harness.RunList.selection_cleared
-    assert harness.RunList.current_item is None
+    assert not harness.RunList.selection_cleared
+    assert harness.RunList.current_item is current_item
     assert harness.infoBox.clear_calls == 2
 
 
@@ -349,11 +350,16 @@ def test_non_single_run_list_selection_cannot_reuse_plot_or_export_target(tmp_pa
         first_dataset = Dataset("guid-1", 1)
         harness = _ActionHarness(tmp_path / "selection.db", first_dataset)
         harness.run_idBox = _Field("1")
+        harness.measurementBox = _Field("*")
         harness.infoBox = InfoBox()
         harness.selected_run_id = 1
         harness._dataset_for_plot_target = lambda: first_dataset
         harness._selected_measurement_params = lambda _dataset: []
         exported = []
+        exported_batches = []
+        harness.export_selected_runs_csv = lambda: exported_batches.append(
+            tuple(sorted(harness.RunList.selected_run_ids()))
+        )
         harness._export_measurement_csv = (
             lambda dataset_key, parameter_names, **kwargs: exported.append(
                 (dataset_key, parameter_names, kwargs)
@@ -405,7 +411,7 @@ def test_non_single_run_list_selection_cannot_reuse_plot_or_export_target(tmp_pa
         assert len(exported) == 1
 
         # Returning to one row restores normal operation; selecting a second
-        # row invalidates it again rather than retaining the first row.
+        # row clears the single-run target and retains the batch selection.
         run_list.setCurrentItem(first)
         harness.open_selected_run_all()
         run_list.setSelectionMode(qtw.QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -416,6 +422,7 @@ def test_non_single_run_list_selection_cannot_reuse_plot_or_export_target(tmp_pa
         harness.exportRunCsv()
         assert len(harness.plot_calls) == 2
         assert len(exported) == 1
+        assert exported_batches == [(1, 2)]
     finally:
         treeWidgets.isfile = old_isfile
 
