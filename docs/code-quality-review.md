@@ -1,6 +1,7 @@
 # Code quality review: 1 November 2026
 
 For the current review and refactoring, see the
+[5 November follow-up to PR #120](maintainability-followup-120.md) and the
 [4 November maintainability review](#maintainability-review-4-november-2026).
 The earlier scan counts below are historical.
 

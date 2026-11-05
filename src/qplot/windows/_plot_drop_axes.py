@@ -21,22 +21,30 @@ def displayed_axis_parameter(window: Any, axis: str) -> Any:
     return getattr(window, "param_dict", {}).get(name)
 
 
-def _axis_identity(window: Any, axis: str, parameter: Any) -> tuple[Any, ...]:
+@dataclass(frozen=True)
+class _AxisIdentity:
+    name: Any
+    unit: str | None
+    independent: bool
+
+
+def _axis_identity(window: Any, axis: str, parameter: Any) -> _AxisIdentity:
     """Coordinates match by name and unit; measured values match by unit."""
     unit = getattr(parameter, "unit", None)
     name = window.axis_options.get(axis)
     independent = name in getattr(window.param, "depends_on_", ())
-    return (
+    return _AxisIdentity(
         name,
         None if unit is None else str(unit or "").strip(),
         independent,
     )
 
 
-def _axes_match(existing, incoming):
-    return (existing is not None and incoming[1] is not None
-            and existing[1] == incoming[1]
-            and (existing[0] == incoming[0] or not (existing[2] or incoming[2])))
+def _axes_match(existing: _AxisIdentity | None, incoming: _AxisIdentity) -> bool:
+    return (existing is not None and incoming.unit is not None
+            and existing.unit == incoming.unit
+            and (existing.name == incoming.name
+                 or not (existing.independent or incoming.independent)))
 
 
 def dataset_axis_entries(target: Any, kind: str, key: Any):
@@ -81,7 +89,7 @@ def plot_axis_entries(target: Any):
 
 def dataset_axis_warnings(target: Any, kind: str, key: Any) -> tuple[str, ...]:
     """Explain mismatches with the quantities labelling the assigned plot axes."""
-    references: dict[str, tuple[tuple[Any, ...], Any]] = {}
+    references: dict[str, tuple[_AxisIdentity, Any]] = {}
     for side, identity, parameter in plot_axis_entries(target):
         references.setdefault(side, (identity, parameter))
 
@@ -95,8 +103,8 @@ def dataset_axis_warnings(target: Any, kind: str, key: Any) -> tuple[str, ...]:
         reference, plot_parameter = references[side]
         if not _axes_match(reference, identity):
             reason = f"{side} axis: dataset {quantity(parameter)} does not match plot {quantity(plot_parameter)}."
-            if identity[0] != reference[0] and (identity[2] or reference[2]):
-                reason += f" Coordinate names differ (dataset: {identity[0]}; plot: {reference[0]})."
+            if identity.name != reference.name and (identity.independent or reference.independent):
+                reason += f" Coordinate names differ (dataset: {identity.name}; plot: {reference.name})."
             reasons.append(reason)
     if kind == "heatmap":
         layer = target.heatmaps[key]
@@ -110,8 +118,8 @@ def dataset_axis_warnings(target: Any, kind: str, key: Any) -> tuple[str, ...]:
     return tuple(reasons)
 
 
-def _occupied_axes(target: Any) -> dict[str, tuple[Any, ...]]:
-    occupied: dict[str, tuple[Any, ...]] = {}
+def _occupied_axes(target: Any) -> dict[str, _AxisIdentity]:
+    occupied: dict[str, _AxisIdentity] = {}
     for side, identity, _parameter in plot_axis_entries(target):
         occupied.setdefault(side, identity)
     return occupied
@@ -149,6 +157,17 @@ class DropAxisPlan:
         return result == qtw.QMessageBox.StandardButton.Ok
 
 
+@dataclass(frozen=True)
+class _DropAxisCandidate:
+    compatible_count: int
+    unused_count: int
+    plan: DropAxisPlan
+
+    @property
+    def priority(self) -> tuple[int, int]:
+        return self.compatible_count, self.unused_count
+
+
 def plan_drop_axes(target: Any, source: Any) -> DropAxisPlan:
     occupied = _occupied_axes(target)
     candidates = []
@@ -183,11 +202,11 @@ def plan_drop_axes(target: Any, source: Any) -> DropAxisPlan:
                 sides.append(choices[0])
                 name = getattr(parameter, "label", None) or source.axis_options[source_axis]
                 incompatible.append(f"{name} does not match the {choices[0].lower()} axis.")
-        candidates.append((compatible_count, unused_count, DropAxisPlan(
+        candidates.append(_DropAxisCandidate(compatible_count, unused_count, DropAxisPlan(
             order, sides[0], sides[1], tuple(incompatible),
         )))
     # Stable ties keep the source's existing orientation.
-    plan = max(candidates, key=lambda candidate: candidate[:2])[2]
+    plan = max(candidates, key=lambda candidate: candidate.priority).plan
     heatmaps = target.__dict__.get("heatmaps", {})
     if getattr(source, "operation_kind", None) == "plot2d" and heatmaps:
         first = next(iter(heatmaps.values()))

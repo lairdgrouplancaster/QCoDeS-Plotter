@@ -31,7 +31,11 @@ from ._display_precision import (
     float_display_loses_distinctions,
     heatmap_display_range_is_finite,
 )
-from ._plot_appearance import ReorderAppearanceTable, configure_appearance_table
+from ._plot_appearance import (
+    ReorderAppearanceTable,
+    configure_appearance_table,
+    reordered_rows,
+)
 from ._plot_drop_axes import DroppedAxisMapping, displayed_axis_parameter
 from ._plot_host import PlotHost
 from ._plot_refresh import plot_refresh_required
@@ -2181,22 +2185,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         destination_row: int,
     ) -> None:
         keys = list(self.owner.heatmaps)
-        source_rows = sorted(
-            {row for row in source_rows if 0 <= row < len(keys)}
-        )
-        if not source_rows:
-            return
-        destination_row = max(0, min(destination_row, len(keys)))
-        selected = [keys[row] for row in source_rows]
-        destination_row -= sum(row < destination_row for row in source_rows)
-        remaining = [
-            key for row, key in enumerate(keys) if row not in source_rows
-        ]
-        reordered = (
-            remaining[:destination_row]
-            + selected
-            + remaining[destination_row:]
-        )
+        reordered = reordered_rows(keys, source_rows, destination_row)
         if reordered == keys:
             return
         heatmaps = self.owner.heatmaps

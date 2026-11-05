@@ -3,10 +3,31 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 _CLASSES = r"Software\Classes"
 _SIDECARS = {".db-wal": "sqlite-wal.ico", ".db-shm": "sqlite-shm.ico"}
+
+
+@dataclass(frozen=True)
+class _ValidatedIconRecord:
+    """Decoded installation state used after the complete JSON preflight."""
+
+    extension: str
+    icon: str
+    previous: tuple[Any, int] | None
+    created_extension: bool
+    created_icon_key: bool
+
+    @property
+    def extension_key(self) -> str:
+        return _CLASSES + "\\" + self.extension
+
+    @property
+    def icon_key(self) -> str:
+        return self.extension_key + r"\DefaultIcon"
 
 
 def _registry():
@@ -64,7 +85,7 @@ def _decode_previous(value):
     return data, kind
 
 
-def _validated_records(records):
+def _validated_records(records) -> list[_ValidatedIconRecord]:
     if not isinstance(records, list):
         raise ValueError("Invalid sidecar icon registration record.")
     checked = []
@@ -90,7 +111,10 @@ def _validated_records(records):
         if (record["created_extension"] and not record["created_icon_key"]
                 or record["created_icon_key"] and previous is not None):
             raise ValueError("Inconsistent sidecar icon backup.")
-        checked.append((record, previous))
+        checked.append(_ValidatedIconRecord(
+            extension, icon, previous,
+            record["created_extension"], record["created_icon_key"],
+        ))
     return checked
 
 
@@ -134,27 +158,24 @@ def install_sidecar_icons(destination: Path, *, records=None) -> list[dict]:
         records = prepare_sidecar_icons(destination)
     checked = _validated_records(records)
     if len(checked) != len(_SIDECARS) or any(
-        record["icon"] != f'"{destination / _SIDECARS[record["extension"]]}",0'
-        for record, _previous in checked
+        record.icon != f'"{destination / _SIDECARS[record.extension]}",0'
+        for record in checked
     ):
         raise ValueError("Sidecar icon backup does not match the setup destination.")
     registry = _registry()
-    for record, previous in checked:
-        extension_key = _CLASSES + "\\" + record["extension"]
-        icon_key = extension_key + r"\DefaultIcon"
-        if (_read_icon(registry, icon_key) != previous
-                or _key_exists(registry, icon_key) == record["created_icon_key"]
-                or _key_exists(registry, extension_key) == record["created_extension"]):
+    for record in checked:
+        if (_read_icon(registry, record.icon_key) != record.previous
+                or _key_exists(registry, record.icon_key) == record.created_icon_key
+                or _key_exists(registry, record.extension_key) == record.created_extension):
             raise ValueError("Sidecar icon registration changed after preparing its backup.")
     attempted = []
     try:
-        for record in records:
+        for record in checked:
             attempted.append(record)
-            path = _CLASSES + "\\" + record["extension"] + r"\DefaultIcon"
-            with registry.CreateKey(registry.HKEY_CURRENT_USER, path) as key:
-                registry.SetValueEx(key, "", 0, registry.REG_SZ, record["icon"])
+            with registry.CreateKey(registry.HKEY_CURRENT_USER, record.icon_key) as key:
+                registry.SetValueEx(key, "", 0, registry.REG_SZ, record.icon)
     except OSError:
-        remove_sidecar_icons(attempted)
+        _restore_sidecar_icons(attempted, registry)
         raise
     return records
 
@@ -163,23 +184,26 @@ def remove_sidecar_icons(records) -> None:
     """Restore prior icons only while our exact installed values still own them."""
     checked = _validated_records(records)
     registry = _registry()
+    _restore_sidecar_icons(checked, registry)
+
+
+def _restore_sidecar_icons(records: list[_ValidatedIconRecord], registry) -> None:
+    """Restore a validated removal or the attempted portion of an install."""
     errors = []
-    for record, previous in reversed(checked):
-        extension_key = _CLASSES + "\\" + record["extension"]
-        icon_key = extension_key + r"\DefaultIcon"
+    for record in reversed(records):
         try:
-            if _read_icon(registry, icon_key) == (record["icon"], registry.REG_SZ):
-                with registry.OpenKey(registry.HKEY_CURRENT_USER, icon_key, 0,
+            if _read_icon(registry, record.icon_key) == (record.icon, registry.REG_SZ):
+                with registry.OpenKey(registry.HKEY_CURRENT_USER, record.icon_key, 0,
                                       registry.KEY_SET_VALUE) as key:
-                    if previous is None:
+                    if record.previous is None:
                         registry.DeleteValue(key, "")
                     else:
-                        data, kind = previous
+                        data, kind = record.previous
                         registry.SetValueEx(key, "", 0, kind, data)
-            if record["created_icon_key"]:
-                _delete_empty_key(registry, icon_key)
-            if record["created_extension"]:
-                _delete_empty_key(registry, extension_key)
+            if record.created_icon_key:
+                _delete_empty_key(registry, record.icon_key)
+            if record.created_extension:
+                _delete_empty_key(registry, record.extension_key)
         except OSError as error:
             # A failure on one extension must not prevent the other's rollback.
             errors.append(error)

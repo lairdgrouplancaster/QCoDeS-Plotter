@@ -7,6 +7,7 @@ from PyQt6 import QtWidgets as qtw
 
 from ._colorbar import (
     _CET_COLORBAR_SUBTYPES,
+    _COLORBAR_FILTERS,
     _COLORBAR_TABLE_SORT_ROLE,
     _MATPLOTLIB_COLORBAR_SUBTYPES,
     _colorbar_colormap_label,
@@ -150,10 +151,8 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
                 style.standardIcon(qtw.QStyle.StandardPixmap.SP_BrowserReload)
             )
         self.colorbar_colormap_table = qtw.QTableWidget()
-        self.colorbar_include_cet_check = qtw.QCheckBox("CET")
-        self.colorbar_include_matplotlib_check = qtw.QCheckBox("Matplotlib")
-        self.colorbar_include_local_check = qtw.QCheckBox("Local")
-        self.colorbar_include_custom_check = qtw.QCheckBox("Custom")
+        for spec in _COLORBAR_FILTERS.values():
+            setattr(self, spec.widget_name, qtw.QCheckBox(spec.label))
         self.colorbar_cet_subtype_checks = {}
         self.colorbar_matplotlib_subtype_checks = {}
         for subtype, label in _CET_COLORBAR_SUBTYPES:
@@ -238,18 +237,8 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         self.colorbar_colormap_table.itemSelectionChanged.connect(
             self._colorbar_colormap_selection_changed
             )
-        self.colorbar_include_cet_check.toggled.connect(
-            self._colorbar_include_cet_changed
-            )
-        self.colorbar_include_matplotlib_check.toggled.connect(
-            self._colorbar_include_matplotlib_changed
-            )
-        self.colorbar_include_local_check.toggled.connect(
-            self._colorbar_include_local_changed
-            )
-        self.colorbar_include_custom_check.toggled.connect(
-            self._colorbar_include_custom_changed
-            )
+        for spec in _COLORBAR_FILTERS.values():
+            getattr(self, spec.widget_name).toggled.connect(getattr(self, spec.changed_slot))
         for subtype, widget in self.colorbar_cet_subtype_checks.items():
             widget.toggled.connect(
                 lambda enabled, subtype=subtype: self._colorbar_include_subtype_changed(
@@ -288,10 +277,8 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         layout.setVerticalSpacing(2)
 
         layout.addWidget(qtw.QLabel("Show"), 0, 0)
-        layout.addWidget(self.colorbar_include_cet_check, 0, 1)
-        layout.addWidget(self.colorbar_include_matplotlib_check, 0, 2)
-        layout.addWidget(self.colorbar_include_local_check, 0, 3)
-        layout.addWidget(self.colorbar_include_custom_check, 0, 4)
+        for column, spec in enumerate(_COLORBAR_FILTERS.values(), 1):
+            layout.addWidget(getattr(self, spec.widget_name), 0, column)
 
         layout.addWidget(qtw.QLabel("CET"), 1, 0)
         for column, (_subtype, widget) in enumerate(
@@ -383,26 +370,10 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         """
         config_obj = self.__dict__.get("config")
-        for widget, key in (
-                (
-                    self.colorbar_include_cet_check,
-                    "user_preference.bar_colour_include_cet",
-                    ),
-                (
-                    self.colorbar_include_matplotlib_check,
-                    "user_preference.bar_colour_include_matplotlib",
-                    ),
-                (
-                    self.colorbar_include_local_check,
-                    "user_preference.bar_colour_include_local",
-                    ),
-                (
-                    self.colorbar_include_custom_check,
-                    "user_preference.bar_colour_include_custom",
-                    ),
-                ):
+        for spec in _COLORBAR_FILTERS.values():
+            widget = getattr(self, spec.widget_name)
             widget.blockSignals(True)
-            widget.setChecked(_config_value(config_obj, key, True))
+            widget.setChecked(_config_value(config_obj, spec.config_key, True))
             widget.blockSignals(False)
 
         include_cet = self.colorbar_include_cet_check.isChecked()
@@ -459,7 +430,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         """
         self._set_colorbar_filter_setting(
-            "user_preference.bar_colour_include_cet",
+            _COLORBAR_FILTERS["cet"].config_key,
             enabled,
         )
 
@@ -470,7 +441,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         """
         self._set_colorbar_filter_setting(
-            "user_preference.bar_colour_include_matplotlib",
+            _COLORBAR_FILTERS["matplotlib"].config_key,
             enabled,
         )
 
@@ -481,7 +452,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         """
         self._set_colorbar_filter_setting(
-            "user_preference.bar_colour_include_local",
+            _COLORBAR_FILTERS["pyqtgraph"].config_key,
             enabled,
         )
 
@@ -492,7 +463,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         """
         self._set_colorbar_filter_setting(
-            "user_preference.bar_colour_include_custom",
+            _COLORBAR_FILTERS["custom"].config_key,
             enabled,
         )
 

@@ -39,6 +39,7 @@ from ._dataset_handle import (
     dataset_key_matches_current_source,
 )
 from ._dataset_registry import dataset_registry
+from ._export_names import suggested_export_filename
 from ._export_paths import choose_export_path, write_export_atomically
 from ._plot2d_layers import _heatmap_layer_compatibility, _window_display_unit
 from ._plot_drop_axes import plan_drop_axes
@@ -2570,7 +2571,7 @@ class PlotActionsMixin:
         Replaces path-hostile characters in a suggested filename.
 
         """
-        return "".join(char if char.isalnum() or char in "._-" else "_" for char in filename)
+        return suggested_export_filename(filename)
 
 
     @QtCore.pyqtSlot(object)

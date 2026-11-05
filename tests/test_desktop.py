@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from qplot import _desktop_associations as associations
 from qplot import _desktop_shortcut, desktop
 
 
@@ -162,7 +163,7 @@ def test_windows_shortcut_and_unicode(tmp_path, monkeypatch, fake_tools, isolate
     assert "cmd.exe" not in script
     command, _options = fake_tools[0]
     assert command == ["IShellLinkW", str(destination)]
-    assert desktop._windows_command(destination).endswith(' "%1"')
+    assert associations._windows_command(destination).endswith(' "%1"')
     assert not (destination / "sqlite-wal.ico").exists()
     shortcut = isolated_desktop / "qPlot.lnk"
     assert shortcut.read_bytes() == (destination / "qPlot.lnk").read_bytes()
@@ -589,7 +590,7 @@ def test_windows_registration_roundtrip(tmp_path, monkeypatch, missing_icon_key)
 
     # Avoid touching any real qPlot registration on a developer's machine.
     progid = "qPlot.Test." + uuid.uuid4().hex
-    monkeypatch.setattr(desktop, "_PROGID", progid)
+    monkeypatch.setattr(associations, "_PROGID", progid)
     destination = tmp_path / "qPlot Ω space"
     base = r"Software\Classes"
     extension = base + r"\.db"
@@ -601,7 +602,7 @@ def test_windows_registration_roundtrip(tmp_path, monkeypatch, missing_icon_key)
     try:
         desktop._windows_associations(destination)
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, base + "\\" + progid + r"\shell\open\command") as key:
-            assert winreg.QueryValue(key, "") == desktop._windows_command(destination)
+            assert winreg.QueryValue(key, "") == associations._windows_command(destination)
         icon_location = f'"{destination / "qplot-database.ico"}",0'
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, base + "\\" + progid + r"\DefaultIcon") as key:
             assert winreg.QueryValue(key, "") == icon_location

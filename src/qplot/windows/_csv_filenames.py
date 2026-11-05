@@ -1,5 +1,7 @@
 """CSV filename preferences; no database access is needed to suggest a name."""
 
+from ._export_names import suggested_export_filename
+
 CSV_FILENAME_FORMAT_KEY = "user_preference.csv_filename_format"
 CSV_FILENAME_FORMAT_OPTIONS = (
     ("run_<run_id>_<measurement>.csv", "current"),
@@ -15,5 +17,5 @@ def csv_filename(config, current_filename, *, guid, captured_run_id):
         use_qcodes = False
     if use_qcodes and guid and captured_run_id is not None:
         filename = f"{captured_run_id}_{guid}.csv"
-        return "".join(c if c.isalnum() or c in "._-" else "_" for c in filename)
+        return suggested_export_filename(filename)
     return current_filename

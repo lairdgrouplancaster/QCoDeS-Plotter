@@ -28,6 +28,7 @@ except ImportError:  # pragma: no cover - fail-closed compatibility path
 from qplot.diagnostics import log_exception
 
 from ._csv_filenames import csv_filename
+from ._export_names import suggested_export_filename
 from ._export_paths import (
     ExportDestinationTransaction,
     UnsafeExportDestinationError,
@@ -1139,7 +1140,7 @@ class PlotExportMixin(_PlotExportBase):
         Replaces path-hostile characters in a suggested plot export filename.
 
         """
-        return "".join(char if char.isalnum() or char in "._-" else "_" for char in filename)
+        return suggested_export_filename(filename)
 
 
     @QtCore.pyqtSlot()

@@ -7,7 +7,7 @@ from PyQt6 import QtWidgets as qtw
 
 from ._plot1d_traces import _TraceAppearanceDialog
 from ._plot2d_layers import _HeatmapAppearanceControls
-from ._plot_appearance import CenteredPreviewDelegate
+from ._plot_appearance import CenteredPreviewDelegate, reordered_rows
 from ._plot_drop_axes import dataset_axis_warnings
 
 if TYPE_CHECKING:
@@ -224,12 +224,7 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
 
     def _move_rows_to_position(self, source_rows, destination_row):
         entries = list(self.owner._plot_item_order)
-        source_rows = sorted({row for row in source_rows if 0 <= row < len(entries)})
-        selected = [entries[row] for row in source_rows]
-        destination_row = max(0, min(destination_row, len(entries)))
-        destination_row -= sum(row < destination_row for row in source_rows)
-        remaining = [entry for row, entry in enumerate(entries) if row not in source_rows]
-        self.owner._plot_item_order = remaining[:destination_row] + selected + remaining[destination_row:]
+        self.owner._plot_item_order = reordered_rows(entries, source_rows, destination_row)
         for kind, registry in (("trace", self.owner.lines), ("heatmap", self.owner.heatmaps)):
             reordered = [(key, registry[key]) for entry_kind, key in self.owner._plot_item_order if entry_kind == kind]
             registry.clear()

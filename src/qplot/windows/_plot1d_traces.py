@@ -10,6 +10,7 @@ from ._plot_appearance import (
     CenteredPreviewDelegate,
     ReorderAppearanceTable,
     configure_appearance_table,
+    reordered_rows,
 )
 from ._plot_host import PlotHost
 from ._plot_refresh import plot_refresh_required
@@ -2117,22 +2118,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
             destination_row: int,
             ) -> None:
         labels = list(self.owner.lines)
-        source_rows = sorted({row for row in source_rows if 0 <= row < len(labels)})
-        if not source_rows:
-            return
-
-        destination_row = max(0, min(destination_row, len(labels)))
-        selected = [labels[row] for row in source_rows]
-        destination_row -= sum(row < destination_row for row in source_rows)
-        remaining = [
-            label for row, label in enumerate(labels)
-            if row not in source_rows
-            ]
-        reordered = (
-            remaining[:destination_row]
-            + selected
-            + remaining[destination_row:]
-            )
+        reordered = reordered_rows(labels, source_rows, destination_row)
         if reordered == labels:
             return
 
