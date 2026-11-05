@@ -4,6 +4,24 @@ This directory contains local development helpers. They are not installed as
 package entry points and should be run from the repository root using the
 project development environment.
 
+## `render_icons.py`
+
+Rebuilds the packaged PNG, Windows ICO, and macOS ICNS icons from the editable
+masters in `src/qplot/assets`: `qplot` (program), `qplot-database`, `sqlite-wal`,
+and `sqlite-shm`. Each has a main `.svg` and a `-small.svg` master:
+
+```console
+python scripts/render_icons.py
+```
+
+Use the project development environment, which supplies PyQt6 and Pillow.
+On macOS, prefix the command with
+`MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache` and use `.venv-mac/bin/python`
+unless the environment is activated. The ICO includes a dedicated 16-pixel
+version; larger sizes are rendered directly from the main vector artwork.
+Commit the regenerated assets with the SVG changes. Desktop setup uses these
+prebuilt files and does not run this script.
+
 ## `manual_run.py`
 
 Legacy public-API launch helper:

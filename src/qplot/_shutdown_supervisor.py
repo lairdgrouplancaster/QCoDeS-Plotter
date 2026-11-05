@@ -2584,6 +2584,12 @@ def _supervise_child_outcome(
                 startup_timeout=timeout,
                 database_path=database_path,
             )
+            if sys.platform == "darwin" and list(child_argv[:4]) == [
+                sys.executable, "-m", "qplot._shutdown_supervisor", _GUI_CHILD_SENTINEL,
+            ]:
+                from qplot._macos_identity import prepare_gui_launch
+
+                child_argv, child_environment = prepare_gui_launch(child_argv, child_environment)
             # Guards and SIGCHLD=SIG_DFL are installed before Popen, closing the
             # spawn race and ensuring the POSIX child cannot be auto-reaped.
             signal_guards = _install_launcher_signal_guards(signal_state)

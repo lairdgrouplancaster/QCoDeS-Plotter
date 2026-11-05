@@ -1,0 +1,638 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="930" viewBox="0 0 1320 930">
+<title>qPlot database icon hierarchy proposals</title><desc>Current icons compared with a red database document and red-spine alternative, including Finder-scale rows. Proposed artwork only.</desc>
+<rect x="0" y="0" width="1320" height="930" rx="0" fill="#F4F5F5"/>
+<text x="40" y="55" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="32" font-weight="650" fill="#242929">Make the database the first thing you see</text>
+<text x="40" y="88" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="18" font-weight="400" fill="#555656">Use the amount of red to distinguish the primary file from its supporting files.</text>
+<rect x="40" y="116" width="1240" height="158" rx="14" fill="#FFFFFF"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(64 138) scale(0.171875)"><g>
+    <rect x="48" y="48" width="416" height="416" rx="88" fill="#FFFFFF" stroke="#555656" stroke-width="10" />
+  </g>
+  <g transform="translate(-46.76 -55.12) scale(1.16)">
+  <g>
+    <path fill="none" stroke="#BEC0C2" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" d="M142 166 V390 H380" />
+    
+    <path fill="none" stroke="#B5121B" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" d="M165.6000 344.7823              C169.5750 344.4672 173.5500 344.0382 177.5250 343.3575              C181.5000 342.6767 185.4750 341.7507 189.4500 340.2961              C193.4250 338.8416 197.4000 336.8667 201.3750 333.8310              C205.3500 330.7952 209.3250 326.6950 213.3000 320.6727              C217.2750 314.6503 221.2500 306.6389 225.2250 295.9175              C229.2000 285.1960 233.1750 271.5789 237.1500 256.3913              C241.1250 241.2037 245.1000 224.4537 249.0750 211.4843              C253.0500 198.5150 257.0250 190.0000 261.0000 190.0000              C264.9750 190.0000 268.9500 198.5150 272.9250 211.4843              C276.9000 224.4537 280.8750 241.2037 284.8500 256.3913              C288.8250 271.5789 292.8000 285.1960 296.7750 295.9175              C300.7500 306.6389 304.7250 314.6503 308.7000 320.6727              C312.6750 326.6950 316.6500 330.7952 320.6250 333.8310              C324.6000 336.8667 328.5750 338.8416 332.5500 340.2961              C336.5250 341.7507 340.5000 342.6767 344.4750 343.3575              C348.4500 344.0382 352.4250 344.4672 356.4000 344.7823" />
+  </g>
+  </g>
+</g>
+<text x="166" y="164" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="19" font-weight="650" fill="#242929">Program</text>
+<text x="166" y="190" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#555656">White tile</text>
+<text x="166" y="212" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#555656">red peak</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(388 138) scale(0.171875)"><g>
+    <path fill="#B5121B" stroke="#B5121B" stroke-width="10" stroke-linejoin="round" d="M112 40 H336 L424 128 V448              C424 461.255 413.255 472 400 472 H112              C98.745 472 88 461.255 88 448 V64              C88 50.745 98.745 40 112 40 Z" />
+    <path fill="#E5E6E7" stroke="#B5121B" stroke-width="10" stroke-linejoin="round" d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z" />
+  </g>
+
+  <g>
+    <path fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" d="M142 166 V390 H380" opacity="0.6" />
+    
+    <path fill="none" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" d="M165.6000 344.7823              C169.5750 344.4672 173.5500 344.0382 177.5250 343.3575              C181.5000 342.6767 185.4750 341.7507 189.4500 340.2961              C193.4250 338.8416 197.4000 336.8667 201.3750 333.8310              C205.3500 330.7952 209.3250 326.6950 213.3000 320.6727              C217.2750 314.6503 221.2500 306.6389 225.2250 295.9175              C229.2000 285.1960 233.1750 271.5789 237.1500 256.3913              C241.1250 241.2037 245.1000 224.4537 249.0750 211.4843              C253.0500 198.5150 257.0250 190.0000 261.0000 190.0000              C264.9750 190.0000 268.9500 198.5150 272.9250 211.4843              C276.9000 224.4537 280.8750 241.2037 284.8500 256.3913              C288.8250 271.5789 292.8000 285.1960 296.7750 295.9175              C300.7500 306.6389 304.7250 314.6503 308.7000 320.6727              C312.6750 326.6950 316.6500 330.7952 320.6250 333.8310              C324.6000 336.8667 328.5750 338.8416 332.5500 340.2961              C336.5250 341.7507 340.5000 342.6767 344.4750 343.3575              C348.4500 344.0382 352.4250 344.4672 356.4000 344.7823" />
+  </g>
+</g>
+<text x="490" y="164" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="19" font-weight="650" fill="#242929">Database</text>
+<text x="490" y="190" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#555656">Red page</text>
+<text x="490" y="212" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#555656">white peak</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(712 138) scale(0.171875)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M112 40 H336 L424 128 V448              C424 461.255 413.255 472 400 472 H112              C98.745 472 88 461.255 88 448 V64              C88 50.745 98.745 40 112 40 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z" />
+  </g>
+
+  <g fill="none" stroke="#555656" stroke-width="16" stroke-linecap="round">
+    <path stroke="#B5121B" d="M164 218 H346" />
+    <path d="M164 264 H346" />
+    <path d="M164 310 H294" />
+  </g>
+  <g>
+    <rect x="254" y="386" width="190" height="76" rx="16" fill="#555656" stroke="#FFFFFF" stroke-width="8" />
+    <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path transform="translate(281 408)" d="M0 0 L8 32 L17 10 L26 32 L34 0" />
+      <path transform="translate(327 408)" d="M0 32 L16 0 L32 32 M7 21 H25" />
+      <path transform="translate(373 408)" d="M0 0 V32 H28" />
+    </g>
+  </g>
+</g>
+<text x="814" y="164" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="19" font-weight="650" fill="#242929">WAL</text>
+<text x="814" y="190" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#555656">Grey marks</text>
+<text x="814" y="212" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#555656">red accent</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(1012 138) scale(0.171875)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M112 40 H336 L424 128 V448              C424 461.255 413.255 472 400 472 H112              C98.745 472 88 461.255 88 448 V64              C88 50.745 98.745 40 112 40 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z" />
+  </g>
+
+  <g stroke="#555656" stroke-width="14" stroke-linejoin="round">
+    <path d="M232 252 H264 V318 H280" fill="none" />
+    <rect x="160" y="216" width="72" height="72" rx="12" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="280" y="282" width="72" height="72" rx="12" fill="#E5E6E7" />
+  </g>
+  <g>
+    <rect x="254" y="386" width="190" height="76" rx="16" fill="#555656" stroke="#FFFFFF" stroke-width="8" />
+    <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path transform="translate(281 408)" d="M29 4 C23 -1 6 -1 2 7 C-3 20 32 12 30 25 C28 35 8 36 0 29" />
+      <path transform="translate(327 408)" d="M0 0 V32 M30 0 V32 M0 16 H30" />
+      <path transform="translate(373 408)" d="M0 32 V0 L17 20 L34 0 V32" />
+    </g>
+  </g>
+</g>
+<text x="1114" y="164" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="19" font-weight="650" fill="#242929">SHM</text>
+<text x="1114" y="190" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#555656">Grey marks</text>
+<text x="1114" y="212" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#555656">red accent</text>
+<rect x="40" y="304" width="400" height="564" rx="12" fill="#FFFFFF" stroke="#D9DCDC"/>
+<text x="62" y="343" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="23" font-weight="650" fill="#242929">Current</text>
+<text x="62" y="370" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#667070">Equal visual weight</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(64 388) scale(0.19921875)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M112 40 H336 L424 128 V448              C424 461.255 413.255 472 400 472 H112              C98.745 472 88 461.255 88 448 V64              C88 50.745 98.745 40 112 40 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z" />
+  </g>
+
+  <g>
+    <path fill="none" stroke="#BEC0C2" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" d="M142 166 V390 H380" />
+    
+    <path fill="none" stroke="#B5121B" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" d="M165.6000 344.7823              C169.5750 344.4672 173.5500 344.0382 177.5250 343.3575              C181.5000 342.6767 185.4750 341.7507 189.4500 340.2961              C193.4250 338.8416 197.4000 336.8667 201.3750 333.8310              C205.3500 330.7952 209.3250 326.6950 213.3000 320.6727              C217.2750 314.6503 221.2500 306.6389 225.2250 295.9175              C229.2000 285.1960 233.1750 271.5789 237.1500 256.3913              C241.1250 241.2037 245.1000 224.4537 249.0750 211.4843              C253.0500 198.5150 257.0250 190.0000 261.0000 190.0000              C264.9750 190.0000 268.9500 198.5150 272.9250 211.4843              C276.9000 224.4537 280.8750 241.2037 284.8500 256.3913              C288.8250 271.5789 292.8000 285.1960 296.7750 295.9175              C300.7500 306.6389 304.7250 314.6503 308.7000 320.6727              C312.6750 326.6950 316.6500 330.7952 320.6250 333.8310              C324.6000 336.8667 328.5750 338.8416 332.5500 340.2961              C336.5250 341.7507 340.5000 342.6767 344.4750 343.3575              C348.4500 344.0382 352.4250 344.4672 356.4000 344.7823" />
+  </g>
+</g>
+<text x="94" y="513" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="500" fill="#555656">.db</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(186 388) scale(0.19921875)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M112 40 H336 L424 128 V448              C424 461.255 413.255 472 400 472 H112              C98.745 472 88 461.255 88 448 V64              C88 50.745 98.745 40 112 40 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z" />
+  </g>
+
+  <g fill="none" stroke="#555656" stroke-width="16" stroke-linecap="round">
+    <path stroke="#B5121B" d="M164 218 H346" />
+    <path d="M164 264 H346" />
+    <path d="M164 310 H294" />
+  </g>
+  <g>
+    <rect x="254" y="386" width="190" height="76" rx="16" fill="#555656" stroke="#FFFFFF" stroke-width="8" />
+    <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path transform="translate(281 408)" d="M0 0 L8 32 L17 10 L26 32 L34 0" />
+      <path transform="translate(327 408)" d="M0 32 L16 0 L32 32 M7 21 H25" />
+      <path transform="translate(373 408)" d="M0 0 V32 H28" />
+    </g>
+  </g>
+</g>
+<text x="216" y="513" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="500" fill="#555656">WAL</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(308 388) scale(0.19921875)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M112 40 H336 L424 128 V448              C424 461.255 413.255 472 400 472 H112              C98.745 472 88 461.255 88 448 V64              C88 50.745 98.745 40 112 40 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z" />
+  </g>
+
+  <g stroke="#555656" stroke-width="14" stroke-linejoin="round">
+    <path d="M232 252 H264 V318 H280" fill="none" />
+    <rect x="160" y="216" width="72" height="72" rx="12" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="280" y="282" width="72" height="72" rx="12" fill="#E5E6E7" />
+  </g>
+  <g>
+    <rect x="254" y="386" width="190" height="76" rx="16" fill="#555656" stroke="#FFFFFF" stroke-width="8" />
+    <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path transform="translate(281 408)" d="M29 4 C23 -1 6 -1 2 7 C-3 20 32 12 30 25 C28 35 8 36 0 29" />
+      <path transform="translate(327 408)" d="M0 0 V32 M30 0 V32 M0 16 H30" />
+      <path transform="translate(373 408)" d="M0 32 V0 L17 20 L34 0 V32" />
+    </g>
+  </g>
+</g>
+<text x="338" y="513" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="500" fill="#555656">SHM</text>
+<text x="62" y="554" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="650" fill="#242929">Finder-size comparison</text>
+<rect x="52" y="572" width="376" height="34" rx="0" fill="#F1F2F3"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(65 579) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g stroke="#555656" stroke-width="0.9" stroke-linejoin="round">
+    <path d="M8.4 7.8 H10.7 V10" fill="none" />
+    <rect x="6" y="6.6" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="9.5" y="10" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" />
+  </g>
+</g>
+<text x="95" y="595" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">cooldown.db-shm</text>
+<rect x="52" y="606" width="376" height="34" rx="0" fill="#FFFFFF"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(65 613) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g>
+    <path fill="none" stroke="#BEC0C2" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" d="M5.5 6 V12.5 H11.5" />
+    
+    <path fill="none" stroke="#B5121B" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" d="M6.8000 10.7307              C6.9111 10.7236 7.0222 10.7131 7.1334 10.6917              C7.2445 10.6703 7.3555 10.6387 7.4666 10.5756              C7.5778 10.5125 7.6889 10.4188 7.8000 10.2445              C7.9111 10.0701 8.0222 9.8087 8.1334 9.4092              C8.2445 9.0097 8.3555 8.4472 8.4666 7.9178              C8.5778 7.3885 8.6889 6.9500 8.8000 6.9500              C8.9111 6.9500 9.0222 7.3885 9.1334 7.9178              C9.2445 8.4472 9.3555 9.0097 9.4666 9.4092              C9.5778 9.8087 9.6889 10.0701 9.8000 10.2445              C9.9111 10.4188 10.0222 10.5125 10.1334 10.5756              C10.2445 10.6387 10.3555 10.6703 10.4666 10.6917              C10.5778 10.7131 10.6889 10.7236 10.8000 10.7307" />
+  </g>
+</g>
+<text x="95" y="629" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">cooldown.db</text>
+<rect x="52" y="640" width="376" height="34" rx="0" fill="#F1F2F3"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(65 647) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g fill="none" stroke="#555656" stroke-width="1" stroke-linecap="round">
+    <path stroke="#B5121B" d="M6.2 7.5 H11" />
+    <path d="M6.2 9 H11 M6.2 10.5 H9.8" />
+  </g>
+</g>
+<text x="95" y="663" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">cooldown.db-wal</text>
+<rect x="52" y="674" width="376" height="34" rx="0" fill="#FFFFFF"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(65 681) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g stroke="#555656" stroke-width="0.9" stroke-linejoin="round">
+    <path d="M8.4 7.8 H10.7 V10" fill="none" />
+    <rect x="6" y="6.6" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="9.5" y="10" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" />
+  </g>
+</g>
+<text x="95" y="697" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">gate_sweep.db-shm</text>
+<rect x="52" y="708" width="376" height="34" rx="0" fill="#F1F2F3"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(65 715) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g>
+    <path fill="none" stroke="#BEC0C2" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" d="M5.5 6 V12.5 H11.5" />
+    
+    <path fill="none" stroke="#B5121B" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" d="M6.8000 10.7307              C6.9111 10.7236 7.0222 10.7131 7.1334 10.6917              C7.2445 10.6703 7.3555 10.6387 7.4666 10.5756              C7.5778 10.5125 7.6889 10.4188 7.8000 10.2445              C7.9111 10.0701 8.0222 9.8087 8.1334 9.4092              C8.2445 9.0097 8.3555 8.4472 8.4666 7.9178              C8.5778 7.3885 8.6889 6.9500 8.8000 6.9500              C8.9111 6.9500 9.0222 7.3885 9.1334 7.9178              C9.2445 8.4472 9.3555 9.0097 9.4666 9.4092              C9.5778 9.8087 9.6889 10.0701 9.8000 10.2445              C9.9111 10.4188 10.0222 10.5125 10.1334 10.5756              C10.2445 10.6387 10.3555 10.6703 10.4666 10.6917              C10.5778 10.7131 10.6889 10.7236 10.8000 10.7307" />
+  </g>
+</g>
+<text x="95" y="731" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">gate_sweep.db</text>
+<rect x="52" y="742" width="376" height="34" rx="0" fill="#FFFFFF"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(65 749) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g fill="none" stroke="#555656" stroke-width="1" stroke-linecap="round">
+    <path stroke="#B5121B" d="M6.2 7.5 H11" />
+    <path d="M6.2 9 H11 M6.2 10.5 H9.8" />
+  </g>
+</g>
+<text x="95" y="765" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">gate_sweep.db-wal</text>
+<text x="62" y="811" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#667070">16 px:</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(114 797) scale(1.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g>
+    <path fill="none" stroke="#BEC0C2" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" d="M5.5 6 V12.5 H11.5" />
+    
+    <path fill="none" stroke="#B5121B" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" d="M6.8000 10.7307              C6.9111 10.7236 7.0222 10.7131 7.1334 10.6917              C7.2445 10.6703 7.3555 10.6387 7.4666 10.5756              C7.5778 10.5125 7.6889 10.4188 7.8000 10.2445              C7.9111 10.0701 8.0222 9.8087 8.1334 9.4092              C8.2445 9.0097 8.3555 8.4472 8.4666 7.9178              C8.5778 7.3885 8.6889 6.9500 8.8000 6.9500              C8.9111 6.9500 9.0222 7.3885 9.1334 7.9178              C9.2445 8.4472 9.3555 9.0097 9.4666 9.4092              C9.5778 9.8087 9.6889 10.0701 9.8000 10.2445              C9.9111 10.4188 10.0222 10.5125 10.1334 10.5756              C10.2445 10.6387 10.3555 10.6703 10.4666 10.6917              C10.5778 10.7131 10.6889 10.7236 10.8000 10.7307" />
+  </g>
+</g>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(144 797) scale(1.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g fill="none" stroke="#555656" stroke-width="1" stroke-linecap="round">
+    <path stroke="#B5121B" d="M6.2 7.5 H11" />
+    <path d="M6.2 9 H11 M6.2 10.5 H9.8" />
+  </g>
+</g>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(174 797) scale(1.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g stroke="#555656" stroke-width="0.9" stroke-linejoin="round">
+    <path d="M8.4 7.8 H10.7 V10" fill="none" />
+    <rect x="6" y="6.6" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="9.5" y="10" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" />
+  </g>
+</g>
+<text x="238" y="811" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#667070">32 px:</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(284 789) scale(2.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g>
+    <path fill="none" stroke="#BEC0C2" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" d="M5.5 6 V12.5 H11.5" />
+    
+    <path fill="none" stroke="#B5121B" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" d="M6.8000 10.7307              C6.9111 10.7236 7.0222 10.7131 7.1334 10.6917              C7.2445 10.6703 7.3555 10.6387 7.4666 10.5756              C7.5778 10.5125 7.6889 10.4188 7.8000 10.2445              C7.9111 10.0701 8.0222 9.8087 8.1334 9.4092              C8.2445 9.0097 8.3555 8.4472 8.4666 7.9178              C8.5778 7.3885 8.6889 6.9500 8.8000 6.9500              C8.9111 6.9500 9.0222 7.3885 9.1334 7.9178              C9.2445 8.4472 9.3555 9.0097 9.4666 9.4092              C9.5778 9.8087 9.6889 10.0701 9.8000 10.2445              C9.9111 10.4188 10.0222 10.5125 10.1334 10.5756              C10.2445 10.6387 10.3555 10.6703 10.4666 10.6917              C10.5778 10.7131 10.6889 10.7236 10.8000 10.7307" />
+  </g>
+</g>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(326 789) scale(2.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g fill="none" stroke="#555656" stroke-width="1" stroke-linecap="round">
+    <path stroke="#B5121B" d="M6.2 7.5 H11" />
+    <path d="M6.2 9 H11 M6.2 10.5 H9.8" />
+  </g>
+</g>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(368 789) scale(2.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g stroke="#555656" stroke-width="0.9" stroke-linejoin="round">
+    <path d="M8.4 7.8 H10.7 V10" fill="none" />
+    <rect x="6" y="6.6" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="9.5" y="10" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" />
+  </g>
+</g>
+<rect x="460" y="304" width="400" height="564" rx="12" fill="#FFFFFF" stroke="#B5121B"/>
+<text x="482" y="343" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="23" font-weight="650" fill="#242929">A · Red document</text>
+<text x="482" y="370" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#B5121B">Recommended: strongest hierarchy</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(484 388) scale(0.19921875)"><g>
+    <path fill="#B5121B" stroke="#B5121B" stroke-width="10" stroke-linejoin="round" d="M112 40 H336 L424 128 V448              C424 461.255 413.255 472 400 472 H112              C98.745 472 88 461.255 88 448 V64              C88 50.745 98.745 40 112 40 Z" />
+    <path fill="#E5E6E7" stroke="#B5121B" stroke-width="10" stroke-linejoin="round" d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z" />
+  </g>
+
+  <g>
+    <path fill="none" stroke="#FFFFFF" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" d="M142 166 V390 H380" opacity="0.6" />
+    
+    <path fill="none" stroke="#FFFFFF" stroke-width="18" stroke-linecap="round" stroke-linejoin="round" d="M165.6000 344.7823              C169.5750 344.4672 173.5500 344.0382 177.5250 343.3575              C181.5000 342.6767 185.4750 341.7507 189.4500 340.2961              C193.4250 338.8416 197.4000 336.8667 201.3750 333.8310              C205.3500 330.7952 209.3250 326.6950 213.3000 320.6727              C217.2750 314.6503 221.2500 306.6389 225.2250 295.9175              C229.2000 285.1960 233.1750 271.5789 237.1500 256.3913              C241.1250 241.2037 245.1000 224.4537 249.0750 211.4843              C253.0500 198.5150 257.0250 190.0000 261.0000 190.0000              C264.9750 190.0000 268.9500 198.5150 272.9250 211.4843              C276.9000 224.4537 280.8750 241.2037 284.8500 256.3913              C288.8250 271.5789 292.8000 285.1960 296.7750 295.9175              C300.7500 306.6389 304.7250 314.6503 308.7000 320.6727              C312.6750 326.6950 316.6500 330.7952 320.6250 333.8310              C324.6000 336.8667 328.5750 338.8416 332.5500 340.2961              C336.5250 341.7507 340.5000 342.6767 344.4750 343.3575              C348.4500 344.0382 352.4250 344.4672 356.4000 344.7823" />
+  </g>
+</g>
+<text x="514" y="513" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="500" fill="#555656">.db</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(606 388) scale(0.19921875)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M112 40 H336 L424 128 V448              C424 461.255 413.255 472 400 472 H112              C98.745 472 88 461.255 88 448 V64              C88 50.745 98.745 40 112 40 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z" />
+  </g>
+
+  <g fill="none" stroke="#555656" stroke-width="16" stroke-linecap="round">
+    <path stroke="#B5121B" d="M164 218 H346" />
+    <path d="M164 264 H346" />
+    <path d="M164 310 H294" />
+  </g>
+  <g>
+    <rect x="254" y="386" width="190" height="76" rx="16" fill="#555656" stroke="#FFFFFF" stroke-width="8" />
+    <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path transform="translate(281 408)" d="M0 0 L8 32 L17 10 L26 32 L34 0" />
+      <path transform="translate(327 408)" d="M0 32 L16 0 L32 32 M7 21 H25" />
+      <path transform="translate(373 408)" d="M0 0 V32 H28" />
+    </g>
+  </g>
+</g>
+<text x="636" y="513" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="500" fill="#555656">WAL</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(728 388) scale(0.19921875)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M112 40 H336 L424 128 V448              C424 461.255 413.255 472 400 472 H112              C98.745 472 88 461.255 88 448 V64              C88 50.745 98.745 40 112 40 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z" />
+  </g>
+
+  <g stroke="#555656" stroke-width="14" stroke-linejoin="round">
+    <path d="M232 252 H264 V318 H280" fill="none" />
+    <rect x="160" y="216" width="72" height="72" rx="12" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="280" y="282" width="72" height="72" rx="12" fill="#E5E6E7" />
+  </g>
+  <g>
+    <rect x="254" y="386" width="190" height="76" rx="16" fill="#555656" stroke="#FFFFFF" stroke-width="8" />
+    <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path transform="translate(281 408)" d="M29 4 C23 -1 6 -1 2 7 C-3 20 32 12 30 25 C28 35 8 36 0 29" />
+      <path transform="translate(327 408)" d="M0 0 V32 M30 0 V32 M0 16 H30" />
+      <path transform="translate(373 408)" d="M0 32 V0 L17 20 L34 0 V32" />
+    </g>
+  </g>
+</g>
+<text x="758" y="513" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="500" fill="#555656">SHM</text>
+<text x="482" y="554" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="650" fill="#242929">Finder-size comparison</text>
+<rect x="472" y="572" width="376" height="34" rx="0" fill="#F1F2F3"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(485 579) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g stroke="#555656" stroke-width="0.9" stroke-linejoin="round">
+    <path d="M8.4 7.8 H10.7 V10" fill="none" />
+    <rect x="6" y="6.6" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="9.5" y="10" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" />
+  </g>
+</g>
+<text x="515" y="595" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">cooldown.db-shm</text>
+<rect x="472" y="606" width="376" height="34" rx="0" fill="#FFFFFF"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(485 613) scale(1.25)"><g>
+    <path fill="#B5121B" stroke="#B5121B" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#B5121B" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g>
+    <path fill="none" stroke="#FFFFFF" stroke-width="0.75" stroke-linecap="round" stroke-linejoin="round" d="M5.3 6 V12.5 H11.8" opacity="0.6" />
+    
+    <path fill="none" stroke="#FFFFFF" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" d="M6.8000 10.7307              C6.9111 10.7236 7.0222 10.7131 7.1334 10.6917              C7.2445 10.6703 7.3555 10.6387 7.4666 10.5756              C7.5778 10.5125 7.6889 10.4188 7.8000 10.2445              C7.9111 10.0701 8.0222 9.8087 8.1334 9.4092              C8.2445 9.0097 8.3555 8.4472 8.4666 7.9178              C8.5778 7.3885 8.6889 6.9500 8.8000 6.9500              C8.9111 6.9500 9.0222 7.3885 9.1334 7.9178              C9.2445 8.4472 9.3555 9.0097 9.4666 9.4092              C9.5778 9.8087 9.6889 10.0701 9.8000 10.2445              C9.9111 10.4188 10.0222 10.5125 10.1334 10.5756              C10.2445 10.6387 10.3555 10.6703 10.4666 10.6917              C10.5778 10.7131 10.6889 10.7236 10.8000 10.7307" transform="translate(-2.64 0) scale(1.3 1)" />
+  </g>
+</g>
+<text x="515" y="629" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">cooldown.db</text>
+<rect x="472" y="640" width="376" height="34" rx="0" fill="#F1F2F3"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(485 647) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g fill="none" stroke="#555656" stroke-width="1" stroke-linecap="round">
+    <path stroke="#B5121B" d="M6.2 7.5 H11" />
+    <path d="M6.2 9 H11 M6.2 10.5 H9.8" />
+  </g>
+</g>
+<text x="515" y="663" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">cooldown.db-wal</text>
+<rect x="472" y="674" width="376" height="34" rx="0" fill="#FFFFFF"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(485 681) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g stroke="#555656" stroke-width="0.9" stroke-linejoin="round">
+    <path d="M8.4 7.8 H10.7 V10" fill="none" />
+    <rect x="6" y="6.6" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="9.5" y="10" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" />
+  </g>
+</g>
+<text x="515" y="697" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">gate_sweep.db-shm</text>
+<rect x="472" y="708" width="376" height="34" rx="0" fill="#F1F2F3"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(485 715) scale(1.25)"><g>
+    <path fill="#B5121B" stroke="#B5121B" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#B5121B" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g>
+    <path fill="none" stroke="#FFFFFF" stroke-width="0.75" stroke-linecap="round" stroke-linejoin="round" d="M5.3 6 V12.5 H11.8" opacity="0.6" />
+    
+    <path fill="none" stroke="#FFFFFF" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" d="M6.8000 10.7307              C6.9111 10.7236 7.0222 10.7131 7.1334 10.6917              C7.2445 10.6703 7.3555 10.6387 7.4666 10.5756              C7.5778 10.5125 7.6889 10.4188 7.8000 10.2445              C7.9111 10.0701 8.0222 9.8087 8.1334 9.4092              C8.2445 9.0097 8.3555 8.4472 8.4666 7.9178              C8.5778 7.3885 8.6889 6.9500 8.8000 6.9500              C8.9111 6.9500 9.0222 7.3885 9.1334 7.9178              C9.2445 8.4472 9.3555 9.0097 9.4666 9.4092              C9.5778 9.8087 9.6889 10.0701 9.8000 10.2445              C9.9111 10.4188 10.0222 10.5125 10.1334 10.5756              C10.2445 10.6387 10.3555 10.6703 10.4666 10.6917              C10.5778 10.7131 10.6889 10.7236 10.8000 10.7307" transform="translate(-2.64 0) scale(1.3 1)" />
+  </g>
+</g>
+<text x="515" y="731" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">gate_sweep.db</text>
+<rect x="472" y="742" width="376" height="34" rx="0" fill="#FFFFFF"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(485 749) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g fill="none" stroke="#555656" stroke-width="1" stroke-linecap="round">
+    <path stroke="#B5121B" d="M6.2 7.5 H11" />
+    <path d="M6.2 9 H11 M6.2 10.5 H9.8" />
+  </g>
+</g>
+<text x="515" y="765" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">gate_sweep.db-wal</text>
+<text x="482" y="811" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#667070">16 px:</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(534 797) scale(1.0)"><g>
+    <path fill="#B5121B" stroke="#B5121B" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#B5121B" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g>
+    <path fill="none" stroke="#FFFFFF" stroke-width="0.75" stroke-linecap="round" stroke-linejoin="round" d="M5.3 6 V12.5 H11.8" opacity="0.6" />
+    
+    <path fill="none" stroke="#FFFFFF" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" d="M6.8000 10.7307              C6.9111 10.7236 7.0222 10.7131 7.1334 10.6917              C7.2445 10.6703 7.3555 10.6387 7.4666 10.5756              C7.5778 10.5125 7.6889 10.4188 7.8000 10.2445              C7.9111 10.0701 8.0222 9.8087 8.1334 9.4092              C8.2445 9.0097 8.3555 8.4472 8.4666 7.9178              C8.5778 7.3885 8.6889 6.9500 8.8000 6.9500              C8.9111 6.9500 9.0222 7.3885 9.1334 7.9178              C9.2445 8.4472 9.3555 9.0097 9.4666 9.4092              C9.5778 9.8087 9.6889 10.0701 9.8000 10.2445              C9.9111 10.4188 10.0222 10.5125 10.1334 10.5756              C10.2445 10.6387 10.3555 10.6703 10.4666 10.6917              C10.5778 10.7131 10.6889 10.7236 10.8000 10.7307" transform="translate(-2.64 0) scale(1.3 1)" />
+  </g>
+</g>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(564 797) scale(1.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g fill="none" stroke="#555656" stroke-width="1" stroke-linecap="round">
+    <path stroke="#B5121B" d="M6.2 7.5 H11" />
+    <path d="M6.2 9 H11 M6.2 10.5 H9.8" />
+  </g>
+</g>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(594 797) scale(1.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g stroke="#555656" stroke-width="0.9" stroke-linejoin="round">
+    <path d="M8.4 7.8 H10.7 V10" fill="none" />
+    <rect x="6" y="6.6" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="9.5" y="10" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" />
+  </g>
+</g>
+<text x="658" y="811" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#667070">32 px:</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(704 789) scale(2.0)"><g>
+    <path fill="#B5121B" stroke="#B5121B" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#B5121B" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g>
+    <path fill="none" stroke="#FFFFFF" stroke-width="0.75" stroke-linecap="round" stroke-linejoin="round" d="M5.3 6 V12.5 H11.8" opacity="0.6" />
+    
+    <path fill="none" stroke="#FFFFFF" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" d="M6.8000 10.7307              C6.9111 10.7236 7.0222 10.7131 7.1334 10.6917              C7.2445 10.6703 7.3555 10.6387 7.4666 10.5756              C7.5778 10.5125 7.6889 10.4188 7.8000 10.2445              C7.9111 10.0701 8.0222 9.8087 8.1334 9.4092              C8.2445 9.0097 8.3555 8.4472 8.4666 7.9178              C8.5778 7.3885 8.6889 6.9500 8.8000 6.9500              C8.9111 6.9500 9.0222 7.3885 9.1334 7.9178              C9.2445 8.4472 9.3555 9.0097 9.4666 9.4092              C9.5778 9.8087 9.6889 10.0701 9.8000 10.2445              C9.9111 10.4188 10.0222 10.5125 10.1334 10.5756              C10.2445 10.6387 10.3555 10.6703 10.4666 10.6917              C10.5778 10.7131 10.6889 10.7236 10.8000 10.7307" transform="translate(-2.64 0) scale(1.3 1)" />
+  </g>
+</g>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(746 789) scale(2.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g fill="none" stroke="#555656" stroke-width="1" stroke-linecap="round">
+    <path stroke="#B5121B" d="M6.2 7.5 H11" />
+    <path d="M6.2 9 H11 M6.2 10.5 H9.8" />
+  </g>
+</g>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(788 789) scale(2.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g stroke="#555656" stroke-width="0.9" stroke-linejoin="round">
+    <path d="M8.4 7.8 H10.7 V10" fill="none" />
+    <rect x="6" y="6.6" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="9.5" y="10" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" />
+  </g>
+</g>
+<rect x="880" y="304" width="400" height="564" rx="12" fill="#FFFFFF" stroke="#D9DCDC"/>
+<text x="902" y="343" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="23" font-weight="650" fill="#242929">B · Red spine</text>
+<text x="902" y="370" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#667070">Quieter, but less distinct</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(904 388) scale(0.19921875)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M112 40 H336 L424 128 V448              C424 461.255 413.255 472 400 472 H112              C98.745 472 88 461.255 88 448 V64              C88 50.745 98.745 40 112 40 Z" />
+    <path fill="#B5121B" d="M112 45 H132 V467 H112 C101.5 467 93 458.5 93 448 V64 C93 53.5 101.5 45 112 45 Z" /><path fill="#E5E6E7" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z" />
+  </g>
+
+  <g>
+    <path fill="none" stroke="#BEC0C2" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" d="M142 166 V390 H380" />
+    
+    <path fill="none" stroke="#B5121B" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" d="M165.6000 344.7823              C169.5750 344.4672 173.5500 344.0382 177.5250 343.3575              C181.5000 342.6767 185.4750 341.7507 189.4500 340.2961              C193.4250 338.8416 197.4000 336.8667 201.3750 333.8310              C205.3500 330.7952 209.3250 326.6950 213.3000 320.6727              C217.2750 314.6503 221.2500 306.6389 225.2250 295.9175              C229.2000 285.1960 233.1750 271.5789 237.1500 256.3913              C241.1250 241.2037 245.1000 224.4537 249.0750 211.4843              C253.0500 198.5150 257.0250 190.0000 261.0000 190.0000              C264.9750 190.0000 268.9500 198.5150 272.9250 211.4843              C276.9000 224.4537 280.8750 241.2037 284.8500 256.3913              C288.8250 271.5789 292.8000 285.1960 296.7750 295.9175              C300.7500 306.6389 304.7250 314.6503 308.7000 320.6727              C312.6750 326.6950 316.6500 330.7952 320.6250 333.8310              C324.6000 336.8667 328.5750 338.8416 332.5500 340.2961              C336.5250 341.7507 340.5000 342.6767 344.4750 343.3575              C348.4500 344.0382 352.4250 344.4672 356.4000 344.7823" />
+  </g>
+</g>
+<text x="934" y="513" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="500" fill="#555656">.db</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(1026 388) scale(0.19921875)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M112 40 H336 L424 128 V448              C424 461.255 413.255 472 400 472 H112              C98.745 472 88 461.255 88 448 V64              C88 50.745 98.745 40 112 40 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z" />
+  </g>
+
+  <g fill="none" stroke="#555656" stroke-width="16" stroke-linecap="round">
+    <path stroke="#B5121B" d="M164 218 H346" />
+    <path d="M164 264 H346" />
+    <path d="M164 310 H294" />
+  </g>
+  <g>
+    <rect x="254" y="386" width="190" height="76" rx="16" fill="#555656" stroke="#FFFFFF" stroke-width="8" />
+    <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path transform="translate(281 408)" d="M0 0 L8 32 L17 10 L26 32 L34 0" />
+      <path transform="translate(327 408)" d="M0 32 L16 0 L32 32 M7 21 H25" />
+      <path transform="translate(373 408)" d="M0 0 V32 H28" />
+    </g>
+  </g>
+</g>
+<text x="1056" y="513" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="500" fill="#555656">WAL</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(1148 388) scale(0.19921875)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M112 40 H336 L424 128 V448              C424 461.255 413.255 472 400 472 H112              C98.745 472 88 461.255 88 448 V64              C88 50.745 98.745 40 112 40 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z" />
+  </g>
+
+  <g stroke="#555656" stroke-width="14" stroke-linejoin="round">
+    <path d="M232 252 H264 V318 H280" fill="none" />
+    <rect x="160" y="216" width="72" height="72" rx="12" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="280" y="282" width="72" height="72" rx="12" fill="#E5E6E7" />
+  </g>
+  <g>
+    <rect x="254" y="386" width="190" height="76" rx="16" fill="#555656" stroke="#FFFFFF" stroke-width="8" />
+    <g fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path transform="translate(281 408)" d="M29 4 C23 -1 6 -1 2 7 C-3 20 32 12 30 25 C28 35 8 36 0 29" />
+      <path transform="translate(327 408)" d="M0 0 V32 M30 0 V32 M0 16 H30" />
+      <path transform="translate(373 408)" d="M0 32 V0 L17 20 L34 0 V32" />
+    </g>
+  </g>
+</g>
+<text x="1178" y="513" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="500" fill="#555656">SHM</text>
+<text x="902" y="554" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15" font-weight="650" fill="#242929">Finder-size comparison</text>
+<rect x="892" y="572" width="376" height="34" rx="0" fill="#F1F2F3"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(905 579) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g stroke="#555656" stroke-width="0.9" stroke-linejoin="round">
+    <path d="M8.4 7.8 H10.7 V10" fill="none" />
+    <rect x="6" y="6.6" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="9.5" y="10" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" />
+  </g>
+</g>
+<text x="935" y="595" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">cooldown.db-shm</text>
+<rect x="892" y="606" width="376" height="34" rx="0" fill="#FFFFFF"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(905 613) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#B5121B" d="M4 2 H5 V14 H4 Z" /><path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g>
+    <path fill="none" stroke="#BEC0C2" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" d="M5.5 6 V12.5 H11.5" />
+    
+    <path fill="none" stroke="#B5121B" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" d="M6.8000 10.7307              C6.9111 10.7236 7.0222 10.7131 7.1334 10.6917              C7.2445 10.6703 7.3555 10.6387 7.4666 10.5756              C7.5778 10.5125 7.6889 10.4188 7.8000 10.2445              C7.9111 10.0701 8.0222 9.8087 8.1334 9.4092              C8.2445 9.0097 8.3555 8.4472 8.4666 7.9178              C8.5778 7.3885 8.6889 6.9500 8.8000 6.9500              C8.9111 6.9500 9.0222 7.3885 9.1334 7.9178              C9.2445 8.4472 9.3555 9.0097 9.4666 9.4092              C9.5778 9.8087 9.6889 10.0701 9.8000 10.2445              C9.9111 10.4188 10.0222 10.5125 10.1334 10.5756              C10.2445 10.6387 10.3555 10.6703 10.4666 10.6917              C10.5778 10.7131 10.6889 10.7236 10.8000 10.7307" />
+  </g>
+</g>
+<text x="935" y="629" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">cooldown.db</text>
+<rect x="892" y="640" width="376" height="34" rx="0" fill="#F1F2F3"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(905 647) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g fill="none" stroke="#555656" stroke-width="1" stroke-linecap="round">
+    <path stroke="#B5121B" d="M6.2 7.5 H11" />
+    <path d="M6.2 9 H11 M6.2 10.5 H9.8" />
+  </g>
+</g>
+<text x="935" y="663" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">cooldown.db-wal</text>
+<rect x="892" y="674" width="376" height="34" rx="0" fill="#FFFFFF"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(905 681) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g stroke="#555656" stroke-width="0.9" stroke-linejoin="round">
+    <path d="M8.4 7.8 H10.7 V10" fill="none" />
+    <rect x="6" y="6.6" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="9.5" y="10" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" />
+  </g>
+</g>
+<text x="935" y="697" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">gate_sweep.db-shm</text>
+<rect x="892" y="708" width="376" height="34" rx="0" fill="#F1F2F3"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(905 715) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#B5121B" d="M4 2 H5 V14 H4 Z" /><path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g>
+    <path fill="none" stroke="#BEC0C2" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" d="M5.5 6 V12.5 H11.5" />
+    
+    <path fill="none" stroke="#B5121B" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" d="M6.8000 10.7307              C6.9111 10.7236 7.0222 10.7131 7.1334 10.6917              C7.2445 10.6703 7.3555 10.6387 7.4666 10.5756              C7.5778 10.5125 7.6889 10.4188 7.8000 10.2445              C7.9111 10.0701 8.0222 9.8087 8.1334 9.4092              C8.2445 9.0097 8.3555 8.4472 8.4666 7.9178              C8.5778 7.3885 8.6889 6.9500 8.8000 6.9500              C8.9111 6.9500 9.0222 7.3885 9.1334 7.9178              C9.2445 8.4472 9.3555 9.0097 9.4666 9.4092              C9.5778 9.8087 9.6889 10.0701 9.8000 10.2445              C9.9111 10.4188 10.0222 10.5125 10.1334 10.5756              C10.2445 10.6387 10.3555 10.6703 10.4666 10.6917              C10.5778 10.7131 10.6889 10.7236 10.8000 10.7307" />
+  </g>
+</g>
+<text x="935" y="731" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">gate_sweep.db</text>
+<rect x="892" y="742" width="376" height="34" rx="0" fill="#FFFFFF"/>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(905 749) scale(1.25)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g fill="none" stroke="#555656" stroke-width="1" stroke-linecap="round">
+    <path stroke="#B5121B" d="M6.2 7.5 H11" />
+    <path d="M6.2 9 H11 M6.2 10.5 H9.8" />
+  </g>
+</g>
+<text x="935" y="765" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="400" fill="#242929">gate_sweep.db-wal</text>
+<text x="902" y="811" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#667070">16 px:</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(954 797) scale(1.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#B5121B" d="M4 2 H5 V14 H4 Z" /><path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g>
+    <path fill="none" stroke="#BEC0C2" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" d="M5.5 6 V12.5 H11.5" />
+    
+    <path fill="none" stroke="#B5121B" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" d="M6.8000 10.7307              C6.9111 10.7236 7.0222 10.7131 7.1334 10.6917              C7.2445 10.6703 7.3555 10.6387 7.4666 10.5756              C7.5778 10.5125 7.6889 10.4188 7.8000 10.2445              C7.9111 10.0701 8.0222 9.8087 8.1334 9.4092              C8.2445 9.0097 8.3555 8.4472 8.4666 7.9178              C8.5778 7.3885 8.6889 6.9500 8.8000 6.9500              C8.9111 6.9500 9.0222 7.3885 9.1334 7.9178              C9.2445 8.4472 9.3555 9.0097 9.4666 9.4092              C9.5778 9.8087 9.6889 10.0701 9.8000 10.2445              C9.9111 10.4188 10.0222 10.5125 10.1334 10.5756              C10.2445 10.6387 10.3555 10.6703 10.4666 10.6917              C10.5778 10.7131 10.6889 10.7236 10.8000 10.7307" />
+  </g>
+</g>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(984 797) scale(1.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g fill="none" stroke="#555656" stroke-width="1" stroke-linecap="round">
+    <path stroke="#B5121B" d="M6.2 7.5 H11" />
+    <path d="M6.2 9 H11 M6.2 10.5 H9.8" />
+  </g>
+</g>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(1014 797) scale(1.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g stroke="#555656" stroke-width="0.9" stroke-linejoin="round">
+    <path d="M8.4 7.8 H10.7 V10" fill="none" />
+    <rect x="6" y="6.6" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="9.5" y="10" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" />
+  </g>
+</g>
+<text x="1078" y="811" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#667070">32 px:</text>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(1124 789) scale(2.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#B5121B" d="M4 2 H5 V14 H4 Z" /><path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g>
+    <path fill="none" stroke="#BEC0C2" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" d="M5.5 6 V12.5 H11.5" />
+    
+    <path fill="none" stroke="#B5121B" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" d="M6.8000 10.7307              C6.9111 10.7236 7.0222 10.7131 7.1334 10.6917              C7.2445 10.6703 7.3555 10.6387 7.4666 10.5756              C7.5778 10.5125 7.6889 10.4188 7.8000 10.2445              C7.9111 10.0701 8.0222 9.8087 8.1334 9.4092              C8.2445 9.0097 8.3555 8.4472 8.4666 7.9178              C8.5778 7.3885 8.6889 6.9500 8.8000 6.9500              C8.9111 6.9500 9.0222 7.3885 9.1334 7.9178              C9.2445 8.4472 9.3555 9.0097 9.4666 9.4092              C9.5778 9.8087 9.6889 10.0701 9.8000 10.2445              C9.9111 10.4188 10.0222 10.5125 10.1334 10.5756              C10.2445 10.6387 10.3555 10.6703 10.4666 10.6917              C10.5778 10.7131 10.6889 10.7236 10.8000 10.7307" />
+  </g>
+</g>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(1166 789) scale(2.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g fill="none" stroke="#555656" stroke-width="1" stroke-linecap="round">
+    <path stroke="#B5121B" d="M6.2 7.5 H11" />
+    <path d="M6.2 9 H11 M6.2 10.5 H9.8" />
+  </g>
+</g>
+<g xmlns="http://www.w3.org/2000/svg" transform="translate(1208 789) scale(2.0)"><g>
+    <path fill="#FFFFFF" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M4 1.5 H10.5 L13.5 4.5 V14              Q13.5 14.5 13 14.5 H4 Q3.5 14.5 3.5 14 V2              Q3.5 1.5 4 1.5 Z" />
+    <path fill="#E5E6E7" stroke="#555656" stroke-width="1" stroke-linejoin="round" d="M10.5 1.5 V4.5 H13.5 Z" />
+  </g>
+  <g stroke="#555656" stroke-width="0.9" stroke-linejoin="round">
+    <path d="M8.4 7.8 H10.7 V10" fill="none" />
+    <rect x="6" y="6.6" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" stroke="#B5121B" />
+    <rect x="9.5" y="10" width="2.5" height="2.5" rx="0.5" fill="#E5E6E7" />
+  </g>
+</g>
+<text x="40" y="904" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#667070">Editable concepts • Current installed icons are unchanged</text>
+</svg>

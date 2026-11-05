@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="512" height="512" viewBox="0 0 512 512"
+     role="img" aria-labelledby="title description">
+  <title id="title">qPlot database document icon</title>
+  <desc id="description">An original document icon with a blue graph tracing a simplified Ashton Memorial skyline: stepped shoulders, a rounded dome, and a small lantern and finial. A reference to Lancaster's architecture, with no university insignia. All artwork is editable vector geometry.</desc>
+
+  <!-- Named groups become editable objects in Illustrator. No fonts, linked
+       images, filters, masks, or external dependencies are required. -->
+  <g id="Document">
+    <path id="Paper" fill="#F7FAFF" stroke="#263D5A" stroke-width="10"
+          stroke-linejoin="round"
+          d="M112 40 H336 L424 128 V448
+             C424 461.255 413.255 472 400 472 H112
+             C98.745 472 88 461.255 88 448 V64
+             C88 50.745 98.745 40 112 40 Z"/>
+    <path id="Fold" fill="#DCE7F5" stroke="#263D5A" stroke-width="10"
+          stroke-linejoin="round"
+          d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z"/>
+  </g>
+
+  <g id="Plot">
+    <path id="Axes" fill="none" stroke="#A0B1C6" stroke-width="10"
+          stroke-linecap="round" stroke-linejoin="round"
+          d="M142 212 V390 H380"/>
+    <!-- A single editable plot trace follows the landmark's outer profile.
+         Fine architectural ornament is omitted for file-icon legibility. -->
+    <path id="Ashton-Memorial-trace" fill="none" stroke="#3064AD"
+          stroke-width="14" stroke-linecap="round" stroke-linejoin="round"
+          d="M166 344 H185 V319 H200 V293 H214
+             C210 283 212 275 222 268
+             C222 241 235 223 256 216
+             V202 H265 L272 186 L279 202 H288 V216
+             C309 223 322 241 322 268
+             C332 275 334 283 330 293
+             H344 V319 H359 V344 H378"/>
+    <circle id="First-data-point" cx="166" cy="344" r="10" fill="#3064AD"/>
+    <circle id="Last-data-point" cx="378" cy="344" r="10" fill="#3064AD"/>
+  </g>
+</svg>

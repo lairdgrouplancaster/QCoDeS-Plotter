@@ -5,6 +5,7 @@ from typing import Any, cast
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot._icons import application_icon
 from qplot._metadata import version_info
 from qplot.diagnostics import default_log_file
 
@@ -110,6 +111,14 @@ def check_for_updates(window):
 def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     """Show selectable release and development provenance in an owned dialog."""
     info = version_info()
+    heading = (
+        '<table cellspacing="0" cellpadding="0"><tr>'
+        '<td width="80" valign="middle"><img src="qplot:application-icon" width="64" height="64" '
+        'alt="qPlot application icon"></td>'
+        '<td valign="middle"><h2 style="margin: 0">qPlot</h2>'
+        '<p style="margin-top: 8px; margin-bottom: 0">A viewer for QCoDeS measurement data.</p>'
+        '</td></tr></table>'
+    )
     rows = [f"<p><b>Version:</b> {escape(str(info['version']))}</p>"]
     if "released" in info:
         build = "Release" if info["released"] else "Unreleased development build"
@@ -124,12 +133,13 @@ def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
         rows.append(f"<p><b>Pull request:</b> #{escape(str(info['pull_request']))}</p>")
     return _show_help_dialog(
         parent, "About qPlot",
-        "<h2>qPlot</h2><p>A viewer for QCoDeS measurement data.</p>"
+        heading
         + "".join(rows)
         + '<p><a href="https://github.com/lairdgrouplancaster/QCoDeS-Plotter">'
         "Project on GitHub</a></p>",
         "qplotAboutDialog",
         size=(580, 320),
+        icon=application_icon(),
     )
 
 
@@ -200,6 +210,7 @@ def _show_help_dialog(
         object_name: str,
         *,
         size: tuple[int, int] = (640, 520),
+        icon: QtGui.QIcon | None = None,
         ) -> qtw.QDialog:
     dialog = qtw.QDialog(parent)
     dialog.setObjectName(object_name)
@@ -211,6 +222,12 @@ def _show_help_dialog(
     browser = qtw.QTextBrowser()
     browser.setObjectName("qplotHelpBrowser")
     browser.setOpenExternalLinks(True)
+    if icon is not None:
+        cast(QtGui.QTextDocument, browser.document()).addResource(
+            QtGui.QTextDocument.ResourceType.ImageResource,
+            QtCore.QUrl("qplot:application-icon"),
+            icon.pixmap(QtCore.QSize(64, 64), dialog.devicePixelRatioF()),
+        )
     browser.setHtml(html)
     browser.setMinimumSize(min(520, size[0] - 40), min(360, size[1] - 100))
     layout.addWidget(browser)

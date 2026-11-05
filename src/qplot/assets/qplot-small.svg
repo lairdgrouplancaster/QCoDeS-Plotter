@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+     viewBox="0 0 16 16" role="img" aria-labelledby="title description">
+  <title id="title">qPlot program icon at 16 pixels</title>
+  <desc id="description">An optically adjusted program tile. Original editable vector artwork. No fonts or linked images.</desc>
+  <g id="Program-tile">
+    <rect x="1.5" y="1.5" width="13" height="13" rx="3"
+          fill="#FFFFFF" stroke="#555656" stroke-width="1"/>
+  </g>
+  <g id="Plot" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path id="Axes" d="M4.5 4.2 V12 H12.4" stroke="#BEC0C2" stroke-width="0.8"/>
+    <path id="Coulomb-peak" d="M5.6000 10.8039
+             C5.7555 10.7944 5.9111 10.7802 6.0668 10.7513
+             C6.2223 10.7224 6.3777 10.6797 6.5332 10.5946
+             C6.6889 10.5094 6.8445 10.3829 7.0000 10.1476
+             C7.1555 9.9121 7.3111 9.5592 7.4668 9.0199
+             C7.6223 8.4806 7.7777 7.7212 7.9332 7.0065
+             C8.0889 6.2920 8.2445 5.7000 8.4000 5.7000
+             C8.5555 5.7000 8.7111 6.2920 8.8668 7.0065
+             C9.0223 7.7212 9.1777 8.4806 9.3332 9.0199
+             C9.4889 9.5592 9.6445 9.9121 9.8000 10.1476
+             C9.9555 10.3829 10.1111 10.5094 10.2668 10.5946
+             C10.4223 10.6797 10.5777 10.7224 10.7332 10.7513
+             C10.8889 10.7802 11.0445 10.7944 11.2000 10.8039" stroke="#B5121B" stroke-width="1.1"/>
+  </g>
+</svg>

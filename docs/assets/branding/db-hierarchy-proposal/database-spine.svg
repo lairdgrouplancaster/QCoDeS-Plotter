@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">qPlot database — red spine proposal</title>
+  <desc id="description">Alternative concept: white folded document with a red left edge and the existing red Coulomb peak. Editable SVG concept; not installed.</desc>
+
+  
+
+  <g id="Document">
+    <path id="Paper" fill="#FFFFFF" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M112 40 H336 L424 128 V448              C424 461.255 413.255 472 400 472 H112              C98.745 472 88 461.255 88 448 V64              C88 50.745 98.745 40 112 40 Z" />
+    <path id="Red-spine" fill="#B5121B" d="M112 45 H132 V467 H112 C101.5 467 93 458.5 93 448 V64 C93 53.5 101.5 45 112 45 Z" /><path id="Fold" fill="#E5E6E7" stroke="#555656" stroke-width="10" stroke-linejoin="round" d="M336 40 V104 C336 117.255 346.745 128 360 128 H424 Z" />
+  </g>
+
+  <g id="Plot">
+    <path id="Axes" fill="none" stroke="#BEC0C2" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" d="M142 166 V390 H380" />
+    
+    <path id="Coulomb-peak" fill="none" stroke="#B5121B" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" d="M165.6000 344.7823              C169.5750 344.4672 173.5500 344.0382 177.5250 343.3575              C181.5000 342.6767 185.4750 341.7507 189.4500 340.2961              C193.4250 338.8416 197.4000 336.8667 201.3750 333.8310              C205.3500 330.7952 209.3250 326.6950 213.3000 320.6727              C217.2750 314.6503 221.2500 306.6389 225.2250 295.9175              C229.2000 285.1960 233.1750 271.5789 237.1500 256.3913              C241.1250 241.2037 245.1000 224.4537 249.0750 211.4843              C253.0500 198.5150 257.0250 190.0000 261.0000 190.0000              C264.9750 190.0000 268.9500 198.5150 272.9250 211.4843              C276.9000 224.4537 280.8750 241.2037 284.8500 256.3913              C288.8250 271.5789 292.8000 285.1960 296.7750 295.9175              C300.7500 306.6389 304.7250 314.6503 308.7000 320.6727              C312.6750 326.6950 316.6500 330.7952 320.6250 333.8310              C324.6000 336.8667 328.5750 338.8416 332.5500 340.2961              C336.5250 341.7507 340.5000 342.6767 344.4750 343.3575              C348.4500 344.0382 352.4250 344.4672 356.4000 344.7823" />
+  </g>
+</svg>

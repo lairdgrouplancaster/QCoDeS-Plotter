@@ -204,16 +204,28 @@ python -c "import qplot; print(qplot.__file__)"
 
 ## Run
 
-For everyday desktop use on macOS or Windows, run this once from the installed
-virtual environment:
+**Recommended if you mainly work with QCoDeS databases:** create the desktop
+launcher and register the file icons on macOS or Windows by running this once
+from the installed virtual environment:
 
 ```console
-python -m qplot.desktop setup
+python -m qplot.desktop setup --file-associations
 ```
 
-Then double-click **qPlot.app** in `~/Applications` (macOS) or **qPlot** in the
-Start menu (Windows). Add `--file-associations` during setup to opt into
-**Open With → qPlot** for `.db` files without changing their default app.
+Setup also adds a **qPlot** desktop shortcut. Double-click it, **qPlot.app** in
+`~/Applications` (macOS), or **qPlot** in the Start menu (Windows).
+Use `--no-desktop-shortcut` to omit the desktop shortcut.
+The launcher and running application use the rounded-square
+Coulomb-peak icon. The `--file-associations` option adds
+**Open With → qPlot** for `.db` files and the matching database, WAL, and SHM
+document icons. Databases use a red document with a white peak; the WAL and SHM
+companions use quieter white documents with grey symbols and small red accents.
+This does not change the default app or add an open action for
+the WAL and SHM companions.
+File registration remains opt-in because these extensions are also used by
+other programs; the icons can apply to their files too. Omit the flag
+(`python -m qplot.desktop setup`) for just the launcher and desktop shortcut.
+If a launcher already exists, run `python -m qplot.desktop remove` before setup.
 See [desktop setup and removal](docs/user-guide.md#opening-databases-from-the-file-manager).
 Desktop launches require no activated terminal or manual cache configuration.
 

@@ -57,10 +57,13 @@ def _database_path_from_arguments(args):
 
 def _configure_application_identity(app):
     """
-    Sets the application name used by native desktop menus.
+    Set the application name and icon used by windows and native desktops.
 
     """
+    from qplot._icons import application_icon
+
     app.setApplicationName("qPlot")
+    app.setWindowIcon(application_icon())
     if hasattr(app, "setApplicationDisplayName"):
         # Window titles already identify qPlot; suppress Qt's automatic suffix.
         app.setApplicationDisplayName("")
@@ -138,7 +141,7 @@ def _run_gui(
     configure_logging()
     install_excepthook()
     log_event("Starting qPlot %s", package_version())
-    print("Initialising GUI, this may take a few seconds.\n")
+    print(f"Starting qPlot {package_version()}.", flush=True)
 
     try:
         app = qtw.QApplication(sys.argv)
@@ -146,6 +149,10 @@ def _run_gui(
         if database_path is None:
             database_path = _database_path_from_arguments(sys.argv[1:])
         w = MainWindow(startup_database_path=database_path)
+        if sys.platform == "darwin":
+            from qplot._macos_identity import install_file_open_handler
+
+            install_file_open_handler(app, w, database_path)
         process_fail_safe = None
         if hasattr(w, "_shutdown_process_fail_safe"):
             process_fail_safe = _ProcessShutdownFailSafe(

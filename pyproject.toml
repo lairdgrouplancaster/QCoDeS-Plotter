@@ -41,6 +41,7 @@ dependencies = [
 dev = [
     "build>=1.2",
     "mypy>=1.14,<2.0",
+    "pillow>=11.0",
     "pytest>=8.2",
     "pytest-cov>=6.0",
     "pytest-timeout>=2.3",
@@ -68,7 +69,7 @@ where = ["src"]
 include = ["qplot", "qplot.*"]
 
 [tool.setuptools.package-data]
-"qplot" = ["**/*.csv", "**/*.json"]
+"qplot" = ["**/*.csv", "**/*.json", "assets/*.svg", "assets/*.png", "assets/*.ico", "assets/*.icns"]
 
 [tool.setuptools.exclude-package-data]
 "qplot.datahandling" = ["*.c", "*.h", "**/*.c", "**/*.h"]
@@ -103,7 +104,11 @@ follow_imports = "silent"
 files = [
     "src/qplot/__init__.py",
     "src/qplot/__main__.py",
+    "src/qplot/_icons.py",
+    "src/qplot/_macos_identity.py",
     "src/qplot/desktop.py",
+    "src/qplot/_desktop_sidecars.py",
+    "src/qplot/_desktop_shortcut.py",
     "src/qplot/_desktop_bootstrap.py",
     "src/qplot/_shutdown_supervisor.py",
     "src/qplot/_windows_shutdown_job.py",
