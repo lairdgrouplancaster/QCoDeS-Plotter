@@ -24,7 +24,6 @@ from qplot.datahandling.database import (
     DatabaseInfoWorker,
     DatabaseLoadWorker,
     DatabaseRefreshWorker,
-    DatabaseSelectedRunWorker,
 )
 from qplot.datahandling.file_identity import (
     DatabaseInstance,
@@ -44,7 +43,6 @@ from qplot.datahandling.trusted_live_service import (
     SNAPSHOT_FALLBACK_MODE,
     TRUSTED_LIVE_MODE,
 )
-from qplot.datahandling.trusted_presentation import bounded_presentation_error
 from qplot.diagnostics import log_event, log_exception
 from qplot.testdata import (
     GenerationCancelled,
@@ -53,6 +51,7 @@ from qplot.testdata import (
     instruction_collection_contents,
     read_specifications,
 )
+from qplot.windows._database_detail_state import detail_channel
 
 from ._auto_plot import cancel_auto_plot, enqueue_auto_plot, update_auto_plot
 from ._config_persistence import persist_config_value
@@ -88,38 +87,6 @@ def _database_paths_equal(first, second):
         return logical_database_path(first) == logical_database_path(second)
     except (TypeError, ValueError, OSError):
         return False
-
-
-def _selected_run_detail_cache_key(instance, run_id, guid):
-    """Return a sidecar-aware immutable key for one plain detail view."""
-    if not isinstance(instance, DatabaseInstance):
-        return None
-    try:
-        run_id = int(run_id)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return (
-        instance.logical_path,
-        instance.resolved_path,
-        instance.identity,
-        frozenset(instance.sidecar_identities),
-        run_id,
-        str(guid),
-    )
-
-
-def _selected_run_detail_is_stale(detail, metadata):
-    """Keep accepted live progress from regressing to an older observation."""
-    observed = detail.run.as_dict()
-    accepted_count = metadata.get("result_count")
-    observed_count = observed.get("result_count")
-    return (
-        accepted_count is not None
-        and (observed_count is None or observed_count < accepted_count)
-    ) or (
-        bool(metadata.get("is_completed"))
-        and not bool(observed.get("is_completed"))
-    )
 
 
 def _database_publication_is_guarded(database_path):
@@ -521,15 +488,10 @@ class DatabaseActionsMixin:
 
 
     def _cancel_selected_run_detail(self):
-        worker = getattr(self, "_database_selected_run_worker", None)
-        if worker is not None:
-            worker.cancel()
+        """Invalidate synchronous selection publication; the bridge owns work."""
         self._database_selected_run_generation = (
             getattr(self, "_database_selected_run_generation", 0) + 1
         )
-        self._database_selected_run_worker = None
-        self._database_selected_run_instance = None
-        self._database_selected_run_mode = None
 
     def _database_generation_transaction_blocks_path(self, database_path=None):
         """Return whether a publication transaction blocks database actions.
@@ -1258,8 +1220,6 @@ class DatabaseActionsMixin:
         self.measurementBox.setText("*")
         self.selected_run_id = None
         self._selected_run_guid = None
-        self._selected_run_detail_cache = {}
-        self._selected_run_partial_detail_keys = set()
         release_selected = getattr(self, "_release_selected_dataset", None)
         if callable(release_selected):
             release_selected()
@@ -2009,66 +1969,10 @@ class DatabaseActionsMixin:
 
 
     def _queue_incremental_trusted_detail_runs(self, run_ids):
-        """Compatibility hook routing trusted additions only to Stage 5C."""
-
+        """Route trusted additions through the current derived-work bridge."""
         bridge = getattr(self, "_trusted_derived_bridge", None)
         if bridge is not None:
             bridge.reconcile_runs(self.RunList.all_run_metadata())
-            return
-        normalised = []
-        for run_id in run_ids or ():
-            try:
-                run_id = int(run_id)
-            except (TypeError, ValueError):
-                continue
-            if run_id > 0:
-                normalised.append(run_id)
-        if not normalised:
-            return
-
-        database_path = self.fileTextbox.text()
-        detail_instance = getattr(self, "_loaded_database_instance", None)
-        if not database_path or not isinstance(detail_instance, DatabaseInstance):
-            return
-        trusted_service = DatabaseActionsMixin._active_trusted_service_for_instance(
-            self,
-            detail_instance,
-        )
-        if trusted_service is None:
-            return
-        worker_kwargs = {
-            "expected_database_instance": detail_instance,
-            "trusted_service": trusted_service,
-        }
-        cheap_worker = getattr(self, "_database_detail_worker", None)
-        add_cheap = getattr(cheap_worker, "add_run_ids", None)
-        if not (
-                getattr(self, "_database_detail_active", False)
-                and callable(add_cheap)
-                and add_cheap(normalised)
-                ):
-            DatabaseActionsMixin._start_database_cheap_detail_worker(
-                self,
-                database_path,
-                normalised,
-                detail_instance,
-                worker_kwargs,
-            )
-        expensive_worker = getattr(self, "_database_expensive_detail_worker", None)
-        add_expensive = getattr(expensive_worker, "add_run_ids", None)
-        if not (
-                getattr(self, "_database_expensive_detail_active", False)
-                and callable(add_expensive)
-                and add_expensive(normalised)
-                ):
-            DatabaseActionsMixin._start_database_expensive_detail_worker(
-                self,
-                database_path,
-                normalised,
-                detail_instance,
-                worker_kwargs,
-            )
-        self._prioritize_database_detail_runs()
 
 
     def _cancel_database_refresh(self):
@@ -2254,8 +2158,6 @@ class DatabaseActionsMixin:
 
             self.selected_run_id = None
             self._selected_run_guid = None
-            self._selected_run_detail_cache = {}
-            self._selected_run_partial_detail_keys = set()
             release_selected = getattr(self, "_release_selected_dataset", None)
             if callable(release_selected):
                 release_selected()
@@ -2820,8 +2722,6 @@ class DatabaseActionsMixin:
         )
         self._database_access_mode = None
         self._database_fallback_reason = None
-        self._selected_run_detail_cache = {}
-        self._selected_run_partial_detail_keys = set()
 
         cancel_plot_work = getattr(self, "_cancel_plot_work", None)
         if callable(cancel_plot_work):
@@ -3384,8 +3284,6 @@ class DatabaseActionsMixin:
             final_instance,
         )
 
-        self._selected_run_detail_cache = {}
-        self._selected_run_partial_detail_keys = set()
         if state.reload_same_path and not state.replacement_reload:
             invalidate_runtime_state = getattr(
                 self,
@@ -3563,25 +3461,11 @@ class DatabaseActionsMixin:
 
 
     def _cancel_database_detail_load(self):
-        worker = getattr(self, "_database_detail_worker", None)
-        if worker is not None:
-            worker.cancel()
-        expensive_worker = getattr(self, "_database_expensive_detail_worker", None)
-        if expensive_worker is not None:
-            expensive_worker.cancel()
-
-        self._database_detail_generation = (
-            getattr(self, "_database_detail_generation", 0) + 1
-            )
-        self._database_detail_active = False
-        self._database_detail_worker = None
-        self._database_detail_instance = None
-        self._database_expensive_detail_generation = (
-            getattr(self, "_database_expensive_detail_generation", 0) + 1
-            )
-        self._database_expensive_detail_active = False
-        self._database_expensive_detail_worker = None
-        self._database_expensive_detail_instance = None
+        channels = (detail_channel(self), detail_channel(self, True))
+        for channel in channels:
+            channel.cancel_worker()
+        for channel in channels:
+            channel.invalidate()
 
 
     def _start_database_detail_load(self, abspath, runs):
@@ -3596,7 +3480,7 @@ class DatabaseActionsMixin:
                 if bridge.coordinator is not None:
                     bridge.reconcile_runs(self.RunList.all_run_metadata())
                     bridge.request_priority_update()
-                return
+            return
         run_ids = self._database_detail_run_order(runs)
         if not run_ids:
             return
@@ -3646,98 +3530,49 @@ class DatabaseActionsMixin:
 
 
     def _start_database_cheap_detail_worker(
-            self,
-            abspath,
-            run_ids,
-            detail_instance,
-            worker_kwargs,
-            ):
-        if (
-                getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE
-                and (
-                    getattr(self, "_trusted_derived_bridge", None) is not None
-                    or worker_kwargs.get("trusted_service") is None
-                )
-                ):
-            return
-        prior_worker = getattr(self, "_database_detail_worker", None)
-        if prior_worker is not None:
-            prior_worker.cancel()
-        self._database_detail_generation = (
-            getattr(self, "_database_detail_generation", 0) + 1
+            self, abspath, run_ids, detail_instance, worker_kwargs):
+        DatabaseActionsMixin._start_database_detail_worker(
+            self, abspath, run_ids, detail_instance, worker_kwargs, expensive=False,
         )
-        generation = self._database_detail_generation
-        self._database_detail_active = True
-        self._database_detail_instance = detail_instance
-
-        worker = DatabaseDetailWorker(
-            generation,
-            abspath,
-            run_ids,
-            batch_size=100,
-            **worker_kwargs,
-        )
-        self._database_detail_worker = worker
-        priority_run_ids = self._database_detail_priority_run_ids()
-        worker.prioritize_run_ids(priority_run_ids)
-        worker.signals.status.connect(self.database_detail_status)
-        worker.signals.batch_ready.connect(self.database_detail_batch_ready)
-        worker.signals.finished.connect(self.database_detail_finished)
-        thread_pool = getattr(
-            self,
-            "databaseDetailThreadPool",
-            self.databaseLoadThreadPool,
-            )
-        thread_pool.start(worker)
 
 
     def _start_database_expensive_detail_worker(
-            self,
-            abspath,
-            run_ids,
-            detail_instance,
-            worker_kwargs,
-            ):
-        if (
-                getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE
-                and (
-                    getattr(self, "_trusted_derived_bridge", None) is not None
-                    or worker_kwargs.get("trusted_service") is None
-                )
-                ):
-            return
-        prior_worker = getattr(self, "_database_expensive_detail_worker", None)
-        if prior_worker is not None:
-            prior_worker.cancel()
-        self._database_expensive_detail_generation = (
-            getattr(self, "_database_expensive_detail_generation", 0) + 1
+            self, abspath, run_ids, detail_instance, worker_kwargs):
+        DatabaseActionsMixin._start_database_detail_worker(
+            self, abspath, run_ids, detail_instance, worker_kwargs, expensive=True,
         )
-        expensive_generation = self._database_expensive_detail_generation
-        self._database_expensive_detail_active = True
-        self._database_expensive_detail_instance = detail_instance
-        priority_run_ids = self._database_detail_priority_run_ids()
-        expensive_worker = DatabaseExpensiveDetailWorker(
-            expensive_generation,
-            abspath,
-            run_ids,
-            batch_size=100,
-            **worker_kwargs,
-            )
-        self._database_expensive_detail_worker = expensive_worker
-        expensive_worker.prioritize_run_ids(priority_run_ids)
-        expensive_worker.signals.status.connect(self.database_expensive_detail_status)
-        expensive_worker.signals.batch_ready.connect(
-            self.database_expensive_detail_batch_ready
-            )
-        expensive_worker.signals.finished.connect(
-            self.database_expensive_detail_finished
-            )
-        expensive_thread_pool = getattr(
-            self,
-            "databaseExpensiveDetailThreadPool",
-            getattr(self, "databaseDetailThreadPool", self.databaseLoadThreadPool),
-            )
-        expensive_thread_pool.start(expensive_worker)
+
+
+    def _start_database_detail_worker(
+            self, abspath, run_ids, detail_instance, worker_kwargs, *, expensive):
+        if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
+            return
+        channel = detail_channel(self, expensive)
+        channel.cancel_worker()
+        channel.generation += 1
+        channel.active = True
+        channel.instance = detail_instance
+        worker_type = DatabaseExpensiveDetailWorker if expensive else DatabaseDetailWorker
+        priority = self._database_detail_priority_run_ids() if expensive else None
+        worker = worker_type(
+            channel.generation, abspath, run_ids, batch_size=100, **worker_kwargs,
+        )
+        channel.worker = worker
+        if priority is None:
+            priority = self._database_detail_priority_run_ids()
+        worker.prioritize_run_ids(priority)
+        if expensive:
+            worker.signals.status.connect(self.database_expensive_detail_status)
+            worker.signals.batch_ready.connect(self.database_expensive_detail_batch_ready)
+            worker.signals.finished.connect(self.database_expensive_detail_finished)
+        else:
+            worker.signals.status.connect(self.database_detail_status)
+            worker.signals.batch_ready.connect(self.database_detail_batch_ready)
+            worker.signals.finished.connect(self.database_detail_finished)
+        pool = getattr(self, "databaseDetailThreadPool", self.databaseLoadThreadPool)
+        if expensive:
+            pool = getattr(self, "databaseExpensiveDetailThreadPool", pool)
+        pool.start(worker)
 
 
     def _database_detail_run_order(self, runs):
@@ -3757,27 +3592,15 @@ class DatabaseActionsMixin:
                 bridge.request_priority_update()
                 return
         if not (
-                getattr(self, "_database_detail_active", False)
-                or getattr(self, "_database_expensive_detail_active", False)
+                detail_channel(self).active
+                or detail_channel(self, True).active
                 ):
             return
 
         priority_run_ids = self._database_detail_priority_run_ids(run_ids=run_ids)
-        for active_attr, worker_attr in (
-                ("_database_detail_active", "_database_detail_worker"),
-                (
-                    "_database_expensive_detail_active",
-                    "_database_expensive_detail_worker",
-                    ),
-                ):
-            if not getattr(self, active_attr, False):
-                continue
-
-            worker = getattr(self, worker_attr, None)
-            if worker is None or not hasattr(worker, "prioritize_run_ids"):
-                continue
-
-            worker.prioritize_run_ids(priority_run_ids)
+        for channel in (detail_channel(self), detail_channel(self, True)):
+            if channel.active and channel.worker is not None:
+                channel.worker.prioritize_run_ids(priority_run_ids)
 
 
     def _database_detail_priority_run_ids(self, run_ids=None):
@@ -3818,85 +3641,48 @@ class DatabaseActionsMixin:
 
     @QtCore.pyqtSlot(int, str)
     def database_detail_status(self, generation, message):
-        if generation != getattr(self, "_database_detail_generation", 0):
-            return
-        if not getattr(self, "_database_detail_active", False):
-            return
-
-        self.show_status(message, 0)
-
-
-    @QtCore.pyqtSlot(int, str, object)
-    def database_detail_batch_ready(self, generation, abspath, runs):
-        if generation != getattr(self, "_database_detail_generation", 0):
-            return
-        if not getattr(self, "_database_detail_active", False):
-            return
-        if DatabaseActionsMixin._database_generation_transaction_blocks_path(
-                self,
-                abspath,
-                ):
-            return
-        if not _database_paths_equal(abspath, self.fileTextbox.text()):
-            return
-        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-                self,
-                abspath,
-                getattr(self, "_database_detail_instance", None),
-                ):
-            return
-
-        detail_instance = getattr(self, "_database_detail_instance", None)
-        self._apply_database_detail_batch(runs)
-        DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-            self,
-            abspath,
-            detail_instance,
-            discard_stale_publication=True,
-        )
+        DatabaseActionsMixin._detail_status(self, generation, message, expensive=False)
 
 
     @QtCore.pyqtSlot(int, str)
     def database_expensive_detail_status(self, generation, message):
-        if generation != getattr(self, "_database_expensive_detail_generation", 0):
-            return
-        if not getattr(self, "_database_expensive_detail_active", False):
-            return
+        DatabaseActionsMixin._detail_status(self, generation, message, expensive=True)
 
-        self.show_status(message, 0)
+
+    def _detail_status(self, generation, message, *, expensive):
+        if detail_channel(self, expensive).accepts(generation):
+            self.show_status(message, 0)
+
+
+    @QtCore.pyqtSlot(int, str, object)
+    def database_detail_batch_ready(self, generation, abspath, runs):
+        DatabaseActionsMixin._detail_batch_ready(
+            self, generation, abspath, runs, expensive=False,
+        )
 
 
     @QtCore.pyqtSlot(int, str, object)
     def database_expensive_detail_batch_ready(self, generation, abspath, runs):
-        if generation != getattr(self, "_database_expensive_detail_generation", 0):
+        DatabaseActionsMixin._detail_batch_ready(
+            self, generation, abspath, runs, expensive=True,
+        )
+
+
+    def _detail_batch_ready(self, generation, abspath, runs, *, expensive):
+        channel = detail_channel(self, expensive)
+        if not channel.accepts(generation):
             return
-        if not getattr(self, "_database_expensive_detail_active", False):
-            return
-        if DatabaseActionsMixin._database_generation_transaction_blocks_path(
-                self,
-                abspath,
-                ):
+        if DatabaseActionsMixin._database_generation_transaction_blocks_path(self, abspath):
             return
         if not _database_paths_equal(abspath, self.fileTextbox.text()):
             return
         if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-                self,
-                abspath,
-                getattr(self, "_database_expensive_detail_instance", None),
-                ):
+                self, abspath, channel.instance):
             return
-
-        detail_instance = getattr(
-            self,
-            "_database_expensive_detail_instance",
-            None,
-        )
+        detail_instance = channel.instance
         self._apply_database_detail_batch(runs)
         DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-            self,
-            abspath,
-            detail_instance,
-            discard_stale_publication=True,
+            self, abspath, detail_instance, discard_stale_publication=True,
         )
 
 
@@ -3917,70 +3703,40 @@ class DatabaseActionsMixin:
 
     @QtCore.pyqtSlot(int, str, object)
     def database_detail_finished(self, generation, abspath, error):
-        if generation != getattr(self, "_database_detail_generation", 0):
-            return
+        DatabaseActionsMixin._detail_finished(
+            self, generation, abspath, error, expensive=False,
+        )
 
-        detail_instance = getattr(self, "_database_detail_instance", None)
-        self._database_detail_active = False
-        self._database_detail_worker = None
-        self._database_detail_instance = None
-
-        if not _database_paths_equal(abspath, self.fileTextbox.text()):
-            return
-
-        if isinstance(error, DatabaseInstanceChangedError):
-            DatabaseActionsMixin._cancel_database_detail_load(self)
-            self._reload_replaced_database(abspath)
-            return
-        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-            self,
-            abspath,
-            detail_instance,
-        ):
-            return
-
-        if error is not None:
-            log_exception("Database detail load failed", error, __name__)
-            self.show_status(f"Run detail loading failed: {error}", 5000)
-            return
-
-        if not getattr(self, "_database_expensive_detail_active", False):
-            self.show_status("Run details loaded.", 5000)
 
     @QtCore.pyqtSlot(int, str, object)
     def database_expensive_detail_finished(self, generation, abspath, error):
-        if generation != getattr(self, "_database_expensive_detail_generation", 0):
-            return
-
-        detail_instance = getattr(
-            self,
-            "_database_expensive_detail_instance",
-            None,
+        DatabaseActionsMixin._detail_finished(
+            self, generation, abspath, error, expensive=True,
         )
-        self._database_expensive_detail_active = False
-        self._database_expensive_detail_worker = None
-        self._database_expensive_detail_instance = None
 
+
+    def _detail_finished(self, generation, abspath, error, *, expensive):
+        channel = detail_channel(self, expensive)
+        if generation != channel.generation:
+            return
+        detail_instance = channel.instance
+        channel.clear()
         if not _database_paths_equal(abspath, self.fileTextbox.text()):
             return
-
         if isinstance(error, DatabaseInstanceChangedError):
             DatabaseActionsMixin._cancel_database_detail_load(self)
             self._reload_replaced_database(abspath)
             return
         if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-            self,
-            abspath,
-            detail_instance,
-        ):
+                self, abspath, detail_instance):
             return
-
         if error is not None:
-            log_exception("Expensive database detail load failed", error, __name__)
-            self.show_status(f"Setpoint and size loading failed: {error}", 5000)
+            diagnostic = "Expensive database detail load failed" if expensive else "Database detail load failed"
+            message = "Setpoint and size loading failed" if expensive else "Run detail loading failed"
+            log_exception(diagnostic, error, __name__)
+            self.show_status(f"{message}: {error}", 5000)
             return
-
-        if not getattr(self, "_database_detail_active", False):
+        if not detail_channel(self, not expensive).active:
             self.show_status("Run details loaded.", 5000)
 
 
@@ -3988,19 +3744,6 @@ class DatabaseActionsMixin:
         if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
             if not live_only:
                 return
-            # Refresh affects cached runs even when another run (or no run)
-            # is selected. Include partial keys without a remaining cache entry.
-            refreshed_guids = {
-                str(metadata["guid"])
-                for metadata in runs.values()
-                if metadata.get("guid")
-            }
-            cache = getattr(self, "_selected_run_detail_cache", {})
-            partial_keys = getattr(self, "_selected_run_partial_detail_keys", set())
-            for key in set(cache) | partial_keys:
-                if key and key[-1] in refreshed_guids:
-                    cache.pop(key, None)
-                    partial_keys.discard(key)
 
         guid = getattr(self, "_selected_run_guid", None)
         selected_key = getattr(self, "_selected_dataset_key", None)
@@ -4076,7 +3819,7 @@ class DatabaseActionsMixin:
         """Re-render the newest selection after a nested stale publication.
 
         A stale setter may have resumed after selection changed underneath it.
-        Reapplying the current cached detail (or its immediate loading model)
+        Reapplying the current selection’s immediate loading model
         prevents the older detail from remaining visible.  This method never
         opens SQLite and never starts another worker.
         """
@@ -4103,18 +3846,10 @@ class DatabaseActionsMixin:
                 metadata = dict(getattr(item, "run_metadata", {}) or {})
                 metadata.setdefault("guid", str(guid))
                 metadata.setdefault("run_id", run_id)
-                cache_key = _selected_run_detail_cache_key(instance, run_id, guid)
-                detail = getattr(self, "_selected_run_detail_cache", {}).get(
-                    cache_key
-                )
                 access_mode = getattr(self, "_database_access_mode", None)
                 if access_mode == SNAPSHOT_FALLBACK_MODE:
                     setter_name = "set_snapshot_run_unavailable"
                     setter_value = metadata
-                elif detail is not None and not _selected_run_detail_is_stale(
-                        detail, metadata):
-                    setter_name = "set_trusted_run_detail"
-                    setter_value = detail
                 else:
                     setter_name = "set_trusted_run_loading"
                     setter_value = metadata
@@ -4343,346 +4078,9 @@ class DatabaseActionsMixin:
             bridge.select_run(str(guid))
             return True
 
-        # Non-MainWindow compatibility harnesses retain the Stage 4 path.
-        # Every production MainWindow owns the Stage 5C bridge, so this branch
-        # cannot compete with coordinator-owned trusted work in the app.
-        cache_key = _selected_run_detail_cache_key(instance, run_id, guid)
-        cache = getattr(self, "_selected_run_detail_cache", {})
-        cached = cache.get(cache_key)
-        if cached is not None and _selected_run_detail_is_stale(
-                cached, self._run_metadata_for_guid(guid)):
-            cache.pop(cache_key, None)
-            getattr(self, "_selected_run_partial_detail_keys", set()).discard(cache_key)
-            cached = None
-        if cached is not None:
-            if not DatabaseActionsMixin._publish_trusted_selected_run_detail(
-                    self,
-                    instance,
-                    guid,
-                    cached,
-                    detail_complete=(
-                        cache_key not in getattr(
-                            self,
-                            "_selected_run_partial_detail_keys",
-                            set(),
-                        )
-                    ),
-                    access_mode=TRUSTED_LIVE_MODE,
-                    generation=generation,
-                    ):
-                DatabaseActionsMixin._restore_current_selected_run_view(self)
-                return True
-            partial_keys = getattr(
-                self,
-                "_selected_run_partial_detail_keys",
-                set(),
-            )
-            if cache_key not in partial_keys:
-                return True
-
-        worker = DatabaseSelectedRunWorker(
-            generation,
-            instance.logical_path,
-            run_id,
-            str(guid),
-            service,
-            expected_database_instance=instance,
-        )
-        self._database_selected_run_worker = worker
-        self._database_selected_run_instance = instance
-        self._database_selected_run_mode = TRUSTED_LIVE_MODE
-        worker.signals.progress.connect(self.database_selected_run_progress)
-        worker.signals.finished.connect(self.database_selected_run_finished)
-        pool = getattr(
-            self,
-            "databaseSelectedRunThreadPool",
-            self.databaseDetailThreadPool,
-        )
-        pool.start(worker)
-        return True
-
-
-    @QtCore.pyqtSlot(int, str, str, object)
-    def database_selected_run_progress(
-            self,
-            generation,
-            database_path,
-            guid,
-            detail,
-            ):
-        """Publish cheap selected-run fields while expensive work continues."""
-        if generation != getattr(self, "_database_selected_run_generation", 0):
-            return
-        instance = getattr(self, "_database_selected_run_instance", None)
-        if getattr(self, "_database_selected_run_mode", None) != TRUSTED_LIVE_MODE:
-            return
-        if guid != getattr(self, "_selected_run_guid", None):
-            return
-        if not _database_paths_equal(database_path, self.fileTextbox.text()):
-            return
-        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-                self,
-                database_path,
-                instance,
-                ):
-            return
-        instance = getattr(self, "_loaded_database_instance", instance)
-        DatabaseActionsMixin._publish_trusted_selected_run_detail(
-            self,
-            instance,
-            guid,
-            detail,
-            detail_complete=False,
-            access_mode=TRUSTED_LIVE_MODE,
-            generation=generation,
-        )
-
-
-    @QtCore.pyqtSlot(int, str, str, object, object)
-    def database_selected_run_finished(
-            self,
-            generation,
-            database_path,
-            guid,
-            detail,
-            error,
-            ):
-        if generation != getattr(self, "_database_selected_run_generation", 0):
-            return
-        instance = getattr(self, "_database_selected_run_instance", None)
-        access_mode = getattr(self, "_database_selected_run_mode", None)
-        self._database_selected_run_worker = None
-        self._database_selected_run_instance = None
-        self._database_selected_run_mode = None
-        if guid != getattr(self, "_selected_run_guid", None):
-            return
-        if not _database_paths_equal(database_path, self.fileTextbox.text()):
-            return
-        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-                self,
-                database_path,
-                instance,
-                ):
-            return
-        instance = getattr(self, "_loaded_database_instance", instance)
-
-        run_metadata = self._run_metadata_for_guid(guid)
-        if error is not None:
-            if isinstance(error, DatabaseInstanceChangedError):
-                log_exception("Selected-run detail failed", error, __name__)
-                self._reload_replaced_database(database_path)
-                return
-            error = bounded_presentation_error(error)
-            log_exception("Selected-run detail failed", error, __name__)
-            cache_key = _selected_run_detail_cache_key(
-                instance,
-                getattr(self, "selected_run_id", None),
-                guid,
-            )
-            cached = getattr(self, "_selected_run_detail_cache", {}).get(cache_key)
-            partial_keys = getattr(
-                self,
-                "_selected_run_partial_detail_keys",
-                set(),
-            )
-            service = (
-                DatabaseActionsMixin._active_trusted_service_for_instance(
-                    self,
-                    instance,
-                )
-                if access_mode == TRUSTED_LIVE_MODE
-                else None
-            )
-            if cached is not None and cache_key in partial_keys and service is not None:
-                if not DatabaseActionsMixin._publish_trusted_selected_run_detail(
-                        self,
-                        instance,
-                        guid,
-                        cached,
-                        detail_complete=False,
-                        access_mode=TRUSTED_LIVE_MODE,
-                        generation=generation,
-                        ):
-                    DatabaseActionsMixin._restore_current_selected_run_view(self)
-                    return
-                self.show_status(
-                    f"Selected-run summaries failed; basic details remain: {error}",
-                    5000,
-                )
-                if DatabaseActionsMixin._selected_run_publication_instance(
-                        self,
-                        instance,
-                        guid,
-                        getattr(self, "selected_run_id", None),
-                        generation,
-                        ) is None:
-                    DatabaseActionsMixin._restore_current_selected_run_view(self)
-                return
-            error_method = (
-                "set_snapshot_run_error"
-                if access_mode == SNAPSHOT_FALLBACK_MODE
-                else "set_trusted_run_error"
-            )
-            set_error = getattr(self.infoBox, error_method, None)
-            if callable(set_error):
-                set_error(error, run_metadata)
-            instance = DatabaseActionsMixin._selected_run_publication_instance(
-                    self,
-                    instance,
-                    guid,
-                    getattr(self, "selected_run_id", None),
-                    generation,
-                    )
-            if instance is None:
-                DatabaseActionsMixin._restore_current_selected_run_view(self)
-                return
-            self.show_status(f"Selected-run details failed: {error}", 5000)
-            if DatabaseActionsMixin._selected_run_publication_instance(
-                    self,
-                    instance,
-                    guid,
-                    getattr(self, "selected_run_id", None),
-                    generation,
-                    ) is None:
-                DatabaseActionsMixin._restore_current_selected_run_view(self)
-            return
-        if detail is None or not isinstance(instance, DatabaseInstance):
-            return
-
-        DatabaseActionsMixin._publish_trusted_selected_run_detail(
-            self,
-            instance,
-            guid,
-            detail,
-            detail_complete=True,
-            access_mode=access_mode,
-            generation=generation,
-        )
-
-
-    def _publish_trusted_selected_run_detail(
-            self,
-            instance,
-            guid,
-            detail,
-            *,
-            detail_complete,
-            access_mode=None,
-            generation=None,
-            ):
-        """Apply one current selected-run view model without database I/O."""
-        if detail is None or not isinstance(instance, DatabaseInstance):
-            return False
-        if generation is None:
-            generation = getattr(self, "_database_selected_run_generation", 0)
-        detail_metadata = detail.run.as_dict()
-        detail_guid_value = detail_metadata.get("guid")
-        if detail_guid_value is None:
-            return False
-        detail_guid = str(detail_guid_value)
-        if (
-                detail_guid != guid
-                or guid != getattr(self, "_selected_run_guid", None)
-                or detail.run.run_id != self.selected_run_id
-                ):
-            return False
-        instance = DatabaseActionsMixin._selected_run_publication_instance(
-                self,
-                instance,
-                guid,
-                detail.run.run_id,
-                generation,
-                )
-        if instance is None:
-            return False
-
-        def discard_stale_cache(candidate_instance):
-            cache = getattr(self, "_selected_run_detail_cache", {})
-            partial_keys = getattr(
-                self,
-                "_selected_run_partial_detail_keys",
-                set(),
-            )
-            stale_key = _selected_run_detail_cache_key(
-                candidate_instance,
-                detail.run.run_id,
-                guid,
-            )
-            cache.pop(stale_key, None)
-            partial_keys.discard(stale_key)
-
-        if _selected_run_detail_is_stale(detail, self._run_metadata_for_guid(guid)):
-            # Reject before either widget sees the old counts/completion state.
-            # Refresh also cancels/restarts the selected worker via its generation.
-            return False
-
-        self.RunList.updateRuns({detail.run.run_id: detail_metadata})
-        guarded_instance = (
-            DatabaseActionsMixin._selected_run_publication_instance(
-                self,
-                instance,
-                guid,
-                detail.run.run_id,
-                generation,
-            )
-        )
-        if guarded_instance is None:
-            discard_stale_cache(instance)
-            DatabaseActionsMixin._restore_current_selected_run_view(self)
-            return False
-        instance = guarded_instance
-
-        if access_mode == SNAPSHOT_FALLBACK_MODE:
-            self.infoBox.set_snapshot_run_detail(detail)
-        else:
-            self.infoBox.set_trusted_run_detail(detail)
-        guarded_instance = DatabaseActionsMixin._selected_run_publication_instance(
-                self,
-                instance,
-                guid,
-                detail.run.run_id,
-                generation,
-        )
-        if guarded_instance is None:
-            discard_stale_cache(instance)
-            DatabaseActionsMixin._restore_current_selected_run_view(self)
-            return False
-        instance = guarded_instance
-
-        cache = getattr(self, "_selected_run_detail_cache", None)
-        if cache is None:
-            cache = {}
-            self._selected_run_detail_cache = cache
-        cache_key = _selected_run_detail_cache_key(
-            instance,
-            detail.run.run_id,
-            guid,
-        )
-        cache[cache_key] = detail
-        partial_keys = getattr(self, "_selected_run_partial_detail_keys", None)
-        if partial_keys is None:
-            partial_keys = set()
-            self._selected_run_partial_detail_keys = partial_keys
-        if detail_complete:
-            partial_keys.discard(cache_key)
-        else:
-            partial_keys.add(cache_key)
-
-        self._show_selected_run_status(
-            detail.run.run_id,
-            self._run_point_count(detail_metadata),
-        )
-        if DatabaseActionsMixin._selected_run_publication_instance(
-                self,
-                instance,
-                guid,
-                detail.run.run_id,
-                generation,
-                ) is None:
-            cache.pop(cache_key, None)
-            partial_keys.discard(cache_key)
-            DatabaseActionsMixin._restore_current_selected_run_view(self)
-            return False
+        set_error = getattr(self.infoBox, "set_trusted_run_error", None)
+        if callable(set_error):
+            set_error("The trusted detail coordinator is unavailable. Reload the database to continue.", metadata)
         return True
 
 

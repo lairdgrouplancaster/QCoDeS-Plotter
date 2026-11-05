@@ -20,6 +20,7 @@ from qplot.datahandling.readonly import quarantine_wal_for_replaced_database
 from qplot.diagnostics import log_exception
 from qplot.tools import loader
 from qplot.tools.operation_registry import OperationValidationError
+from qplot.tools.plot_result import PlotLoadResult
 
 from ._dataset_handle import DatasetKey, dataset_key_matches_current_source
 from ._plot_host import PlotHost
@@ -298,8 +299,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
         if overlay is not None:
             overlay.finish(worker)
         publish_preview = self.__dict__.get("_plot_preview_sink")
+        result = getattr(worker, "result", None)
         if (
             preview_ready
+            and result is not None
             and callable(publish_preview)
             and not getattr(worker, "operations", None)
             and getattr(worker, "heatmap_axis_ranges", None) is None
@@ -307,7 +310,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
             and self._source_database_matches_key()
         ):
             try:
-                publish_preview(self, worker)
+                publish_preview(self, result)
             except Exception as error:
                 # A supplementary image must never turn a successful plot
                 # publication into a plot load failure.
@@ -382,12 +385,11 @@ class PlotRefreshMixin(_PlotRefreshBase):
             return False
         if not getattr(worker, "_qplot_display_commit_ready", False):
             return False
-        if getattr(worker, "dataset_completed", None) is not True:
+        result = getattr(worker, "result", None)
+        if result is None or result.dataset_completed is not True:
             return False
 
-        loaded_from_sql = bool(
-            getattr(worker, "loaded_from_sql_heatmap", False)
-            )
+        loaded_from_sql = result.loaded_from_sql_heatmap
         if not loaded_from_sql and not cache_parameter_is_synchronized(
                 self.ds.cache,
                 self.param.name,
@@ -753,23 +755,23 @@ class PlotRefreshMixin(_PlotRefreshBase):
                     )
                 return False
 
+            result: PlotLoadResult | None = worker.result
+            if result is None:
+                raise AttributeError("The completed plot worker has no result.")
             self._begin_refresh_publication(worker)
             # Update qcodes dataset variables if db read happened
-            if worker.read_data:
+            cache_update = result.cache_update
+            if cache_update is not None:
                 cache = self.ds.cache
                 name = self.param.name
 
                 cache_updated = update_cache_parameter_data(
                     cache,
                     name,
-                    worker.updated_read_status,
-                    worker.updated_write_status,
-                    worker.cache_data,
-                    dataset_completed=getattr(
-                        worker,
-                        "dataset_completed",
-                        None,
-                        ),
+                    cache_update.read_status,
+                    cache_update.write_status,
+                    cache_update.data,
+                    dataset_completed=result.dataset_completed,
                     )
                 if not cache_updated:
                     self._discard_refresh_publication(worker)
@@ -788,7 +790,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                     self._live = False
 
             if (
-                    getattr(worker, "dataset_completed", None) is True
+                    result.dataset_completed is True
                     and cache_is_live(self.ds.cache)
                     ):
                 # An in-memory live cache is already authoritative; no database
@@ -801,18 +803,18 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
             # set data to be called by plot<1/2>d.refreshPlot()
             self.axis_data = {
-                "x": worker.axis_data["x"],
-                "y": worker.axis_data["y"],
+                "x": result.axis_data["x"],
+                "y": result.axis_data["y"],
                 }
             self.axis_param = {
-                "x": worker.axis_param["x"],
-                "y": worker.axis_param["y"],
+                "x": result.axis_param["x"],
+                "y": result.axis_param["y"],
                 }
-            self.display_param = getattr(worker, "display_param", self.param)
+            self.display_param = result.display_param if result.display_param is not None else self.param
 
             # For 2d plots
-            if hasattr(worker, "dataGrid"):
-                self.dataGrid = worker.dataGrid
+            if result.dataGrid is not None:
+                self.dataGrid = result.dataGrid
 
             # I didnt want to make this a dedicated callback for the few times
             # it is used, as the performace hit is neglible
@@ -827,9 +829,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 update_coordinate_context()
             elapsed = perf_counter() - worker.started_at
 
-            if getattr(worker, "loaded_from_sql_heatmap", False):
-                loaded_points = getattr(worker, "loaded_point_count", None)
-                if getattr(worker, "aggregated_heatmap_source", False):
+            if result.loaded_from_sql_heatmap:
+                loaded_points = result.loaded_point_count
+                if result.aggregated_heatmap_source:
                     point_text = (
                         f"{loaded_points:,} aggregated cells"
                         if loaded_points is not None
@@ -847,9 +849,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
                     5000,
                     )
             else:
-                loaded_points = getattr(worker, "loaded_point_count", None)
+                loaded_points = result.loaded_point_count
                 if loaded_points is None:
-                    loaded_points = getattr(worker, "dataset_length_at_start", None)
+                    loaded_points = result.dataset_length_at_start
                 if loaded_points is None:
                     loaded_points = self.ds.number_of_results
                 self.show_status(
@@ -857,7 +859,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                     f"in {elapsed:.2f} seconds.",
                     5000,
                     )
-            dataset_length = getattr(worker, "dataset_length_at_start", None)
+            dataset_length = result.dataset_length_at_start
             if dataset_length is None:
                 dataset_length = self.ds.number_of_results
             self.last_ds_len = dataset_length
@@ -870,17 +872,17 @@ class PlotRefreshMixin(_PlotRefreshBase):
             else:
                 self.hide_plot_state()
             if (
-                    getattr(worker, "loaded_from_sql_heatmap", False)
-                    and getattr(worker, "dataset_completed", None) is True
+                    result.loaded_from_sql_heatmap
+                    and result.dataset_completed is True
                 ):
                 # Direct SQL heatmaps intentionally bypass the QCoDeS cache.
                 # Publish the global source observation here; the concrete
                 # heatmap publishes its per-plot state only after rendering.
                 set_cache_dataset_completed(self.ds.cache, True)
             worker._qplot_display_commit_ready = bool(
-                getattr(worker, "dataset_completed", None) is True
+                result.dataset_completed is True
                 and (
-                    getattr(worker, "loaded_from_sql_heatmap", False)
+                    result.loaded_from_sql_heatmap
                     or cache_parameter_is_synchronized(
                         self.ds.cache,
                         self.param.name,

@@ -25,6 +25,7 @@ from qplot.datahandling.file_identity import (
     database_file_identity,
 )
 from qplot.tools.operation_registry import OperationValidationError
+from qplot.tools.plot_result import capture_plot_result
 from qplot.windows import _plot_export as plot_export_module
 from qplot.windows import _plot_refresh as plot_refresh_module
 from qplot.windows._colorbar import (
@@ -1156,6 +1157,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window = plot1d.__new__(plot1d)
         qtw.QMainWindow.__init__(window)
         worker = Worker()
+        worker.result = capture_plot_result(worker)
         line = Line()
         states = []
         statuses = []
@@ -1226,6 +1228,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window = plot1d.__new__(plot1d)
         qtw.QMainWindow.__init__(window)
         worker = Worker()
+        worker.result = capture_plot_result(worker)
         window.worker = worker
         window.line = Line()
         window.marquee = None

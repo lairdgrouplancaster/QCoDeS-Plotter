@@ -12,6 +12,8 @@ from qplot.datahandling.run_metadata import (
     materialize_run_observation,
 )
 
+pytestmark = pytest.mark.pure
+
 
 def test_run_metadata_import_does_not_load_database_or_gui_dependencies():
     result = subprocess.run(

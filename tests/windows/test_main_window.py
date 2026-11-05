@@ -31,6 +31,7 @@ from qplot.datahandling.trusted_live_supervisor import (
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
 from qplot.windows._commands import command_spec
+from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._database_load_state import DatabaseLoadSession
 from qplot.windows._dataset_handle import (
     DatasetHandle,
@@ -2932,12 +2933,12 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self._database_load_active = False
             self._database_load_state = None
             self._database_load_worker = None
-            self._database_detail_generation = 4
-            self._database_detail_active = False
-            self._database_detail_worker = None
-            self._database_expensive_detail_generation = 6
-            self._database_expensive_detail_active = False
-            self._database_expensive_detail_worker = None
+            detail_channel(self).generation = 4
+            detail_channel(self).active = False
+            detail_channel(self).worker = None
+            detail_channel(self, True).generation = 6
+            detail_channel(self, True).active = False
+            detail_channel(self, True).worker = None
             self.fileTextbox = DatabaseLoadUiTestCase.Field()
             self.run_idBox = DatabaseLoadUiTestCase.Field()
             self.measurementBox = DatabaseLoadUiTestCase.Field()
@@ -3002,10 +3003,10 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             "previews": harness.infoBox.preview.database_runs,
             "info_cleared": harness.infoBox.cleared,
             "monitor_stopped": harness.monitor.stopped,
-            "detail_worker": harness._database_detail_worker,
-            "detail_active": harness._database_detail_active,
-            "expensive_detail_worker": harness._database_expensive_detail_worker,
-            "expensive_detail_active": harness._database_expensive_detail_active,
+            "detail_worker": detail_channel(harness).worker,
+            "detail_active": detail_channel(harness).active,
+            "expensive_detail_worker": detail_channel(harness, True).worker,
+            "expensive_detail_active": detail_channel(harness, True).active,
         }
 
     def _active_database_harness(self):
@@ -3019,10 +3020,10 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         harness.RunList.runs = old_runs
         harness.RunList.selected_ids = [5]
         harness.infoBox.preview.set_database_runs("database-a.db", old_runs)
-        harness._database_detail_active = True
-        harness._database_detail_worker = self.Worker()
-        harness._database_expensive_detail_active = True
-        harness._database_expensive_detail_worker = self.Worker()
+        detail_channel(harness).active = True
+        detail_channel(harness).worker = self.Worker()
+        detail_channel(harness, True).active = True
+        detail_channel(harness, True).worker = self.Worker()
         return harness
 
     def test_current_view_remains_unchanged_while_another_database_is_pending(self):
@@ -3610,8 +3611,8 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             )
 
             def __init__(self):
-                self._database_detail_generation = 4
-                self._database_detail_active = True
+                detail_channel(self).generation = 4
+                detail_channel(self).active = True
                 self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
                 self.RunList = RunList()
                 self.infoBox = InfoBox()
@@ -3644,8 +3645,8 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             )
 
             def __init__(self):
-                self._database_detail_generation = 4
-                self._database_detail_active = True
+                detail_channel(self).generation = 4
+                detail_channel(self).active = True
                 self._loaded_database_instance = DatabaseInstance(
                     "loaded.db", "loaded.db", (1, 1),
                 )
@@ -3684,8 +3685,8 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             )
 
             def __init__(self, view_path):
-                self._database_detail_generation = 4
-                self._database_detail_active = True
+                detail_channel(self).generation = 4
+                detail_channel(self).active = True
                 self._loaded_database_instance = database_actions.database_instance(
                     view_path
                 )

@@ -18,6 +18,7 @@ from qcodes.dataset.sqlite.database import connect
 
 from qplot.diagnostics import configure_logging
 from qplot.windows._auto_plot import enqueue_auto_plot
+from qplot.windows._database_detail_state import detail_channel
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
@@ -74,7 +75,7 @@ def pending_plot_window(tmp_path, monkeypatch, qapplication):
             window.config.config["user_preference"]["confirm_close_all"] = True
             window.config.config["runtime_settings"]["del_grace_period"] = 0
             assert window.load_file(str(database))
-            wait_for(lambda: not window._database_load_active and not window._database_detail_active)
+            wait_for(lambda: not window._database_load_active and not detail_channel(window).active)
             service = window._trusted_read_service
             assert window._selected_run_guid == guids[-1]
             yield window, guids, writer, experiment, database

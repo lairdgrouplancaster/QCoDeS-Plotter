@@ -19,7 +19,7 @@ from qplot.datahandling.file_identity import (
     database_file_identity,
     database_sidecar_identities,
 )
-from qplot.datahandling.parameter_data import (
+from qplot.datahandling.numeric_samples import (
     concatenate_record_samples,
     integer_preserving_dtype,
     numeric_isfinite,
@@ -42,6 +42,7 @@ from qplot.datahandling.readonly import (
 from qplot.datahandling.trusted_live import TrustedLiveSourceChangedError
 from qplot.diagnostics import log_exception
 from qplot.tools.operation_registry import OperationCall, OperationExecutionError
+from qplot.tools.plot_result import PlotLoadResult, capture_plot_result
 
 from . import data2matrix
 from .finite_means import FiniteBinMeans
@@ -122,6 +123,7 @@ class loader(QtCore.QRunnable):
         """
         super().__init__()
         self.running = True
+        self.result: PlotLoadResult | None = None
         self.emitter = _emitter() # For signals
         self._cancelled = threading.Event()
         self._sql_connection_lock = threading.Lock()
@@ -279,7 +281,7 @@ class loader(QtCore.QRunnable):
         self._require_expected_source_current()
 
 
-    def _emit_finished(self, finished: bool) -> None:
+    def _emit_finished(self, finished: bool, result: PlotLoadResult | None = None) -> None:
         """Emit completion unless Qt already deleted the receiver at shutdown."""
 
         self._ensure_cancel_state()
@@ -287,6 +289,7 @@ class loader(QtCore.QRunnable):
             if finished and self._cancelled.is_set():
                 finished = False
                 self.running = False
+            self.result = result if finished else None
             try:
                 self.emitter.finished.emit(finished)
             except RuntimeError as err:
@@ -309,6 +312,7 @@ class loader(QtCore.QRunnable):
         Called on the GUI thread. Submission and done checks are nonblocking;
         all capture, decoding and transform work remains off the GUI thread.
         """
+        self.result = None
         from qplot.datahandling.trusted_plot import TrustedPlotDataset
         dataset = getattr(self.cache, "_dataset", None)
         if not isinstance(dataset, TrustedPlotDataset) or not self.read_data:
@@ -441,6 +445,7 @@ class loader(QtCore.QRunnable):
         return factory(cache_database_path(self.cache), **self._read_only_open_kwargs())
 
     def run(self):
+        self.result = None
         try:
             self._run()
         finally:
@@ -656,6 +661,13 @@ class loader(QtCore.QRunnable):
             # the final geometry validation and normalization as well.
             self._canonicalize_heatmap()
             self._check_cancelled()
+            self.heatmap_full_resolution = bool(
+                len(self.param.depends_on_) == 2
+                and self.heatmap_downsample_info is None
+                and not self.sampled_heatmap_source
+                and not self.aggregated_heatmap_source
+            )
+            completed_result = capture_plot_result(self)
         except PlotWorkCancelled:
             self._finish_cancelled()
             return
@@ -688,14 +700,8 @@ class loader(QtCore.QRunnable):
             return
 
         # Callback
-        self.heatmap_full_resolution = bool(
-            len(self.param.depends_on_) == 2
-            and self.heatmap_downsample_info is None
-            and not self.sampled_heatmap_source
-            and not self.aggregated_heatmap_source
-        )
         self._progress = PlotProgress("Preparing display", stage=2)
-        self._emit_finished(True)
+        self._emit_finished(True, completed_result)
 
 
     def _acquired_sample_mask(self, values, write_status):

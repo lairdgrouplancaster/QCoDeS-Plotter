@@ -16,6 +16,7 @@ from qcodes.parameters import ManualParameter
 
 from qplot.configuration.config import config
 from qplot.windows import main as main_window
+from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._dataset_handle import TraceKey
 from qplot.windows._dragdrop import make_run_preview_mime
 from tests._window_lifecycle import close_main_window
@@ -200,8 +201,8 @@ def test_preview_drop_adds_and_removes_real_secondary_heatmap(
         _wait_for(
             lambda: (
                 not window._database_load_active
-                and not window._database_detail_active
-                and not window._database_expensive_detail_active
+                and not detail_channel(window).active
+                and not detail_channel(window, True).active
             )
         )
         window.monitor.stop()

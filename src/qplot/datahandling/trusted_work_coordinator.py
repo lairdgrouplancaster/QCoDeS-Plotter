@@ -70,6 +70,43 @@ WakeupCallback: TypeAlias = Callable[[], None]
 PublicationCallback: TypeAlias = Callable[[WorkPublication], None]
 
 
+@dataclass(slots=True)
+class _ContinuationState:
+    """Compact readiness, round position, and fairness for progressive work."""
+
+    ready: bytearray
+    round_epoch: bool = False
+    active_count: int = 0
+    remaining_cursor: int = 0
+    restart_deferred: bool = False
+    not_before: float = 0.0
+    foreground_claims_since_background_metadata: int = 0
+    age_background_next: bool = True
+    ordinary_claims_since_page: int = 0
+
+    def append_runs(self, run_count: int) -> None:
+        self.ready.extend(b"\0" * (run_count - len(self.ready)))
+
+
+@dataclass(slots=True)
+class _RetryState:
+    """One compact retry slot per run and work kind, with common sizing."""
+
+    attempts: bytearray
+    deadlines: array
+
+    @classmethod
+    def for_runs(cls, run_count: int) -> _RetryState:
+        slot_count = run_count * _RETRY_KIND_COUNT
+        return cls(bytearray(slot_count), array("d", [0.0]) * slot_count)
+
+    def append_runs(self, run_count: int) -> None:
+        additions = run_count * _RETRY_KIND_COUNT - len(self.attempts)
+        if additions:
+            self.attempts.extend(b"\0" * additions)
+            self.deadlines.extend([0.0] * additions)
+
+
 class TrustedDerivedErrorCategory(StrEnum):
     """Bounded worker outcome classification safe to marshal to the owner."""
 
@@ -333,21 +370,11 @@ class TrustedWorkCoordinator:
         # One byte per stable run is the complete continuation-ready state.
         # Its served bit is compared with the global round epoch, allowing a
         # lazy full rotation without materialising an O(run-count) ready deque.
-        self._progressive_state = bytearray(len(self._runs))
-        self._progressive_round_epoch = False
-        self._progressive_active_count = 0
-        self._progressive_remaining_cursor = 0
-        self._progressive_restart_deferred = False
-        self._progressive_not_before = 0.0
+        self._continuations = _ContinuationState(bytearray(len(self._runs)))
         self._progressive_notifier = _ProgressiveWakeupNotifier(wakeup)
-        self._foreground_claims_since_background_metadata = 0
-        self._age_progressive_background_next = True
-        self._ordinary_claims_since_progressive_page = 0
         self._memory_payload: tuple[TrustedCacheWorkKey, DerivedPayload] | None = None
         self._deferred_invalidations: set[int] = set()
-        retry_slot_count = len(self._runs) * _RETRY_KIND_COUNT
-        self._retry_attempts = bytearray(retry_slot_count)
-        self._retry_deadlines = array("d", [0.0]) * retry_slot_count
+        self._retries = _RetryState.for_runs(len(self._runs))
         self._retry_notifier = _RetryWakeupNotifier(wakeup)
         self._invalidation_serial = 0
         self._closed = False
@@ -422,7 +449,7 @@ class TrustedWorkCoordinator:
         self._selection_generation += 1
         self._selected_index = run_index
         self._accepted_selected_detail = None
-        self._progressive_remaining_cursor = 0
+        self._continuations.remaining_cursor = 0
         if run_index is not None and self._progressive_is_active(run_index):
             # An explicit new selection gets a page at the next boundary even
             # if this run already consumed its current round quantum.  This is
@@ -472,7 +499,7 @@ class TrustedWorkCoordinator:
         current = frozenset(visible_indices)
         if current == prior:
             return
-        self._progressive_remaining_cursor = 0
+        self._continuations.remaining_cursor = 0
         promoted = False
         for run_index in current - prior:
             if self._progressive_is_active(run_index):
@@ -499,13 +526,8 @@ class TrustedWorkCoordinator:
         self._run_indices_by_guid = {
             run.run_guid: index for index, run in enumerate(updated)
         }
-        self._progressive_state.extend(
-            b"\0" * (len(updated) - len(self._progressive_state))
-        )
-        retry_additions = (len(updated) - old_count) * _RETRY_KIND_COUNT
-        if retry_additions:
-            self._retry_attempts.extend(b"\0" * retry_additions)
-            self._retry_deadlines.extend([0.0] * retry_additions)
+        self._continuations.append_runs(len(updated))
+        self._retries.append_runs(len(updated))
         self._scheduler.reconcile_runs(tuple(run.scheduler_source() for run in updated))
         if priority is not None:
             selected_index, visible_indices = priority
@@ -601,21 +623,11 @@ class TrustedWorkCoordinator:
         if own_service is not None:
             self._own_service = bool(own_service)
         self._clear_reused_observations()
-        self._progressive_state = bytearray(len(updated))
-        self._progressive_round_epoch = False
-        self._progressive_active_count = 0
-        self._progressive_remaining_cursor = 0
-        self._progressive_restart_deferred = False
-        self._progressive_not_before = 0.0
+        self._continuations = _ContinuationState(bytearray(len(updated)))
         self._progressive_notifier.cancel()
-        self._foreground_claims_since_background_metadata = 0
-        self._age_progressive_background_next = True
-        self._ordinary_claims_since_progressive_page = 0
         self._memory_payload = None
         self._deferred_invalidations.clear()
-        retry_slot_count = len(updated) * _RETRY_KIND_COUNT
-        self._retry_attempts = bytearray(retry_slot_count)
-        self._retry_deadlines = array("d", [0.0]) * retry_slot_count
+        self._retries = _RetryState.for_runs(len(updated))
         self._retry_notifier.cancel()
         self._configure_cache(database_instance)
         self._scheduler.switch_database(
@@ -652,21 +664,11 @@ class TrustedWorkCoordinator:
         )
         self._runs = replacements
         self._clear_reused_observations()
-        self._progressive_state = bytearray(len(replacements))
-        self._progressive_round_epoch = False
-        self._progressive_active_count = 0
-        self._progressive_remaining_cursor = 0
-        self._progressive_restart_deferred = False
-        self._progressive_not_before = 0.0
+        self._continuations = _ContinuationState(bytearray(len(replacements)))
         self._progressive_notifier.cancel()
-        self._foreground_claims_since_background_metadata = 0
-        self._age_progressive_background_next = True
-        self._ordinary_claims_since_progressive_page = 0
         self._memory_payload = None
         self._deferred_invalidations.clear()
-        retry_slot_count = len(replacements) * _RETRY_KIND_COUNT
-        self._retry_attempts = bytearray(retry_slot_count)
-        self._retry_deadlines = array("d", [0.0]) * retry_slot_count
+        self._retries = _RetryState.for_runs(len(replacements))
         self._retry_notifier.cancel()
         self._scheduler.switch_database(
             self._scheduler.database_instance,
@@ -734,8 +736,7 @@ class TrustedWorkCoordinator:
         self._selection_generation += 1
         self._selected_index = None
         self._accepted_selected_detail = None
-        self._retry_attempts = bytearray(len(self._retry_attempts))
-        self._retry_deadlines = array("d", [0.0]) * len(self._retry_deadlines)
+        self._retries = _RetryState.for_runs(len(self._runs))
         self._retry_notifier.cancel()
         self._progressive_notifier.cancel()
         self._scheduler.close()
@@ -746,14 +747,10 @@ class TrustedWorkCoordinator:
             active.work.cancellation.cancel()
         self._executor.shutdown(wait=False, cancel_futures=True)
         self._clear_reused_observations()
-        self._progressive_state = bytearray(len(self._runs))
-        self._progressive_round_epoch = False
-        self._progressive_active_count = 0
-        self._progressive_remaining_cursor = 0
-        self._progressive_restart_deferred = False
-        self._progressive_not_before = 0.0
-        self._foreground_claims_since_background_metadata = 0
-        self._ordinary_claims_since_progressive_page = 0
+        self._continuations = _ContinuationState(
+            bytearray(len(self._runs)),
+            age_background_next=self._continuations.age_background_next,
+        )
         self._memory_payload = None
 
     def wait_closed(self, timeout: float = 0.0) -> bool:
@@ -835,7 +832,7 @@ class TrustedWorkCoordinator:
             )
         )
         age_background_due = (
-            self._foreground_claims_since_background_metadata
+            self._continuations.foreground_claims_since_background_metadata
             >= TRUSTED_DERIVED_BACKGROUND_AGING_CLAIM_BOUND
             and not selected_image_ready
         )
@@ -868,7 +865,7 @@ class TrustedWorkCoordinator:
                     or (progressive_tier < TrustedRunTier(next_priority[0]))
                     or (
                         progressive_tier is TrustedRunTier(next_priority[0])
-                        and self._ordinary_claims_since_progressive_page
+                        and self._continuations.ordinary_claims_since_page
                         >= TRUSTED_DERIVED_SAME_TIER_PROGRESSIVE_CLAIM_BOUND
                     )
                 )
@@ -899,7 +896,7 @@ class TrustedWorkCoordinator:
             )
             choose_progressive = remaining_progressive_index is not None and (
                 ordinary_remaining_index is None
-                or self._age_progressive_background_next
+                or self._continuations.age_background_next
             )
             if choose_progressive:
                 progressive_index = remaining_progressive_index
@@ -910,7 +907,7 @@ class TrustedWorkCoordinator:
 
         work: ScheduledWork | None = None
         if progressive_precedes:
-            if not allow_progressive_restart or now < self._progressive_not_before:
+            if not allow_progressive_restart or now < self._continuations.not_before:
                 self._defer_progressive_restart(now)
                 return
             assert progressive_index is not None
@@ -936,8 +933,8 @@ class TrustedWorkCoordinator:
                 ):
                     self._discard_progressive_guid(run.run_guid)
                 return
-            self._progressive_restart_deferred = False
-            self._progressive_not_before = 0.0
+            self._continuations.restart_deferred = False
+            self._continuations.not_before = 0.0
             self._progressive_notifier.cancel()
         if work is None and age_ordinary_metadata:
             assert ordinary_remaining_index is not None
@@ -957,7 +954,7 @@ class TrustedWorkCoordinator:
                     age_remaining_metadata=False,
                 )
         if work is None:
-            if self._progressive_active_count == 0:
+            if self._continuations.active_count == 0:
                 self._clear_progressive_pacing()
             return
         run = self._runs[work.run_index]
@@ -1000,16 +997,16 @@ class TrustedWorkCoordinator:
         future.add_done_callback(self._worker_done)
 
     def _defer_progressive_restart(self, now: float) -> None:
-        self._progressive_restart_deferred = True
-        if self._progressive_not_before <= now:
-            self._progressive_not_before = (
+        self._continuations.restart_deferred = True
+        if self._continuations.not_before <= now:
+            self._continuations.not_before = (
                 now + TRUSTED_DERIVED_PROGRESSIVE_MIN_INTERVAL_SECONDS
             )
-        self._progressive_notifier.schedule(self._progressive_not_before)
+        self._progressive_notifier.schedule(self._continuations.not_before)
 
     def _clear_progressive_pacing(self) -> None:
-        self._progressive_restart_deferred = False
-        self._progressive_not_before = 0.0
+        self._continuations.restart_deferred = False
+        self._continuations.not_before = 0.0
         self._progressive_notifier.cancel()
 
     def _record_claim_admission(self, work: ScheduledWork) -> None:
@@ -1017,23 +1014,23 @@ class TrustedWorkCoordinator:
         if work.key.kind is TrustedWorkKind.METADATA and self._progressive_is_active(
             work.run_index
         ):
-            self._ordinary_claims_since_progressive_page = 0
+            self._continuations.ordinary_claims_since_page = 0
         else:
-            self._ordinary_claims_since_progressive_page = min(
+            self._continuations.ordinary_claims_since_page = min(
                 TRUSTED_DERIVED_SAME_TIER_PROGRESSIVE_CLAIM_BOUND,
-                self._ordinary_claims_since_progressive_page + 1,
+                self._continuations.ordinary_claims_since_page + 1,
             )
         if tier is TrustedRunTier.REMAINING and (
             work.key.kind is TrustedWorkKind.METADATA
         ):
-            self._foreground_claims_since_background_metadata = 0
-            self._age_progressive_background_next = not self._progressive_is_active(
+            self._continuations.foreground_claims_since_background_metadata = 0
+            self._continuations.age_background_next = not self._progressive_is_active(
                 work.run_index
             )
         elif tier is not TrustedRunTier.REMAINING:
-            self._foreground_claims_since_background_metadata = min(
+            self._continuations.foreground_claims_since_background_metadata = min(
                 TRUSTED_DERIVED_BACKGROUND_AGING_CLAIM_BOUND,
-                self._foreground_claims_since_background_metadata + 1,
+                self._continuations.foreground_claims_since_background_metadata + 1,
             )
 
     def _retry_offset(self, run_index: int, kind: TrustedWorkKind) -> int:
@@ -1062,7 +1059,7 @@ class TrustedWorkCoordinator:
         """Earliest retained slot deadline, exposed for bounded diagnostics."""
 
         return min(
-            (deadline for deadline in self._retry_deadlines if deadline), default=0.0
+            (deadline for deadline in self._retries.deadlines if deadline), default=0.0
         )
 
     @property
@@ -1072,7 +1069,7 @@ class TrustedWorkCoordinator:
         candidate = min(
             (
                 (deadline, offset)
-                for offset, deadline in enumerate(self._retry_deadlines)
+                for offset, deadline in enumerate(self._retries.deadlines)
                 if deadline
             ),
             default=None,
@@ -1087,7 +1084,7 @@ class TrustedWorkCoordinator:
         kind: TrustedWorkKind,
         now: float,
     ) -> bool:
-        return self._retry_deadlines[self._retry_offset(run_index, kind)] <= now
+        return self._retries.deadlines[self._retry_offset(run_index, kind)] <= now
 
     def _retry_work_is_admissible(
         self,
@@ -1103,7 +1100,7 @@ class TrustedWorkCoordinator:
 
     def _reschedule_retry_notifier(self, now: float) -> float | None:
         deadline = min(
-            (candidate for candidate in self._retry_deadlines if candidate > now),
+            (candidate for candidate in self._retries.deadlines if candidate > now),
             default=None,
         )
         if deadline is None:
@@ -1140,10 +1137,10 @@ class TrustedWorkCoordinator:
         if (
             candidate is None
             and required_tier is None
-            and self._progressive_active_count
+            and self._continuations.active_count
         ):
-            self._progressive_round_epoch = not self._progressive_round_epoch
-            self._progressive_remaining_cursor = 0
+            self._continuations.round_epoch = not self._continuations.round_epoch
+            self._continuations.remaining_cursor = 0
             candidate = self._peek_progressive_current_round(
                 snapshot,
                 None,
@@ -1180,15 +1177,15 @@ class TrustedWorkCoordinator:
         if required_tier not in {None, TrustedRunTier.REMAINING}:
             return None
         target = _PROGRESSIVE_ACTIVE_BIT | (
-            0 if self._progressive_round_epoch else _PROGRESSIVE_SERVED_BIT
+            0 if self._continuations.round_epoch else _PROGRESSIVE_SERVED_BIT
         )
         needle = bytes((target,))
         visible = frozenset(snapshot.visible_indices)
         for start, stop in (
-            (self._progressive_remaining_cursor, len(self._progressive_state)),
-            (0, self._progressive_remaining_cursor),
+            (self._continuations.remaining_cursor, len(self._continuations.ready)),
+            (0, self._continuations.remaining_cursor),
         ):
-            run_index = self._progressive_state.find(needle, start, stop)
+            run_index = self._continuations.ready.find(needle, start, stop)
             while run_index >= 0:
                 if (
                     run_index != selected
@@ -1197,7 +1194,7 @@ class TrustedWorkCoordinator:
                     and (admissible is None or admissible(run_index))
                 ):
                     return run_index
-                run_index = self._progressive_state.find(
+                run_index = self._continuations.ready.find(
                     needle,
                     run_index + 1,
                     stop,
@@ -1548,7 +1545,7 @@ class TrustedWorkCoordinator:
             result.observation_revision,
             result.observation_size,
         )
-        self._ordinary_claims_since_progressive_page = 0
+        self._continuations.ordinary_claims_since_page = 0
         self._runs = tuple(
             TrustedDerivedRun(
                 run.run_id,
@@ -1806,9 +1803,9 @@ class TrustedWorkCoordinator:
         offset = self._retry_offset_for_slot(slot)
         if offset is None:
             return
-        attempt = min(self._retry_attempts[offset] + 1, 8)
-        self._retry_attempts[offset] = attempt
-        self._retry_deadlines[offset] = now + min(
+        attempt = min(self._retries.attempts[offset] + 1, 8)
+        self._retries.attempts[offset] = attempt
+        self._retries.deadlines[offset] = now + min(
             1.0,
             0.025 * (2 ** (attempt - 1)),
         )
@@ -1821,8 +1818,8 @@ class TrustedWorkCoordinator:
         offset = self._retry_offset_for_slot(slot)
         if offset is None:
             return
-        self._retry_attempts[offset] = 0
-        self._retry_deadlines[offset] = 0.0
+        self._retries.attempts[offset] = 0
+        self._retries.deadlines[offset] = 0.0
         self._reschedule_retry_notifier(time.monotonic())
 
     def _clear_retry_for_run(
@@ -1835,15 +1832,15 @@ class TrustedWorkCoordinator:
             if kind is preserve_kind:
                 continue
             offset = self._retry_offset(run_index, kind)
-            self._retry_attempts[offset] = 0
-            self._retry_deadlines[offset] = 0.0
+            self._retries.attempts[offset] = 0
+            self._retries.deadlines[offset] = 0.0
         self._reschedule_retry_notifier(time.monotonic())
 
     def _clear_retry_kind(self, kind: TrustedWorkKind) -> None:
         for run_index in range(len(self._runs)):
             offset = self._retry_offset(run_index, kind)
-            self._retry_attempts[offset] = 0
-            self._retry_deadlines[offset] = 0.0
+            self._retries.attempts[offset] = 0
+            self._retries.deadlines[offset] = 0.0
         self._reschedule_retry_notifier(time.monotonic())
 
     def _invalidation_revision(self, run_index: int) -> TrustedSourceRevision:
@@ -1930,35 +1927,35 @@ class TrustedWorkCoordinator:
         run_index = self._run_indices_by_guid.get(run_guid)
         if run_index is None or not self._progressive_is_active(run_index):
             return
-        self._progressive_state[run_index] = 0
-        self._progressive_active_count -= 1
-        self._progressive_remaining_cursor = min(
-            self._progressive_remaining_cursor,
+        self._continuations.ready[run_index] = 0
+        self._continuations.active_count -= 1
+        self._continuations.remaining_cursor = min(
+            self._continuations.remaining_cursor,
             run_index,
         )
-        if self._progressive_active_count == 0:
+        if self._continuations.active_count == 0:
             self._clear_progressive_pacing()
 
     def _progressive_is_active(self, run_index: int) -> bool:
-        return bool(self._progressive_state[run_index] & _PROGRESSIVE_ACTIVE_BIT)
+        return bool(self._continuations.ready[run_index] & _PROGRESSIVE_ACTIVE_BIT)
 
     def _progressive_is_unserved(self, run_index: int) -> bool:
-        state = self._progressive_state[run_index]
+        state = self._continuations.ready[run_index]
         return bool(state & _PROGRESSIVE_ACTIVE_BIT) and (
-            bool(state & _PROGRESSIVE_SERVED_BIT) != self._progressive_round_epoch
+            bool(state & _PROGRESSIVE_SERVED_BIT) != self._continuations.round_epoch
         )
 
     def _mark_progressive_active(self, run_index: int) -> None:
         if self._progressive_is_active(run_index):
             return
-        self._progressive_active_count += 1
+        self._continuations.active_count += 1
         self._mark_progressive_unserved(run_index)
 
     def _mark_progressive_unserved(self, run_index: int) -> None:
-        served_marker = 0 if self._progressive_round_epoch else _PROGRESSIVE_SERVED_BIT
-        self._progressive_state[run_index] = _PROGRESSIVE_ACTIVE_BIT | served_marker
-        self._progressive_remaining_cursor = min(
-            self._progressive_remaining_cursor,
+        served_marker = 0 if self._continuations.round_epoch else _PROGRESSIVE_SERVED_BIT
+        self._continuations.ready[run_index] = _PROGRESSIVE_ACTIVE_BIT | served_marker
+        self._continuations.remaining_cursor = min(
+            self._continuations.remaining_cursor,
             run_index,
         )
 
@@ -1967,11 +1964,11 @@ class TrustedWorkCoordinator:
         run_index: int,
         snapshot: SchedulerSnapshot,
     ) -> None:
-        served_marker = _PROGRESSIVE_SERVED_BIT if self._progressive_round_epoch else 0
-        self._progressive_state[run_index] = _PROGRESSIVE_ACTIVE_BIT | served_marker
+        served_marker = _PROGRESSIVE_SERVED_BIT if self._continuations.round_epoch else 0
+        self._continuations.ready[run_index] = _PROGRESSIVE_ACTIVE_BIT | served_marker
         if self._tier_for_snapshot(snapshot, run_index) is TrustedRunTier.REMAINING:
-            self._progressive_remaining_cursor = max(
-                self._progressive_remaining_cursor,
+            self._continuations.remaining_cursor = max(
+                self._continuations.remaining_cursor,
                 run_index + 1,
             )
 

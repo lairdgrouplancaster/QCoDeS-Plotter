@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import errno
 import hmac
-import json
 import math
 import os
 import secrets
@@ -41,16 +40,22 @@ from qplot._shutdown_protocol import (
     _DEADLINE_PAYLOAD,
     _FRAME_SIZE,
     _HELLO,
+    _LOOPBACK_HOST,
     _NONCE_BYTES,
     _PID_PAYLOAD,
-    _PROTOCOL_VERSION,
     _STARTUP_READY,
     _TERMINATION_DIAGNOSTIC_LIMIT,
     ShutdownSupervisorError,
+    _ApiLauncherBootstrap,
+    _Bootstrap,
+    _decode_api_launcher_bootstrap,
     _decode_api_launcher_outcome,
+    _decode_bootstrap,
     _decode_frame,
+    _encode_api_launcher_bootstrap,
     _encode_api_launcher_outcome,
     _encode_arm,
+    _encode_bootstrap,
     _encode_frame,
     _exact_error,
     _SupervisionOutcome,
@@ -61,35 +66,12 @@ _BOOTSTRAP_ENVIRONMENT_KEY = "_QPLOT_SHUTDOWN_SUPERVISOR_V1"
 _API_LAUNCHER_BOOTSTRAP_ENVIRONMENT_KEY = "_QPLOT_API_LAUNCHER_V1"
 _GUI_CHILD_SENTINEL = "_qplot_supervised_gui_v1"
 _API_LAUNCHER_SENTINEL = "_qplot_public_api_launcher_v1"
-_LOOPBACK_HOST = "127.0.0.1"
 _DEFAULT_STARTUP_TIMEOUT_SECONDS = 5.0
 _OBSERVATION_INTERVAL_SECONDS = 0.01
 _TERMINATION_RETRY_SECONDS = 0.005
 _DIAGNOSTIC_PUBLISH_BUDGET_SECONDS = 0.025
 _API_RESULT_IO_TIMEOUT_SECONDS = 1.0
 _POSIX_KILL_STABILITY_PASSES = 3
-
-
-@dataclass(frozen=True)
-class _Bootstrap:
-    host: str
-    port: int
-    authentication_key: bytes
-    session_nonce: bytes
-    startup_timeout: float
-    database_path: str | None
-
-
-@dataclass(frozen=True)
-class _ApiLauncherBootstrap:
-    host: str
-    port: int
-    authentication_key: bytes
-    session_nonce: bytes
-    startup_deadline: float
-    caller_pid: int
-    child_argv: tuple[str, ...]
-    database_path: str | None
 
 
 def _outcome_with_diagnostics(
@@ -961,79 +943,7 @@ class ShutdownSupervisorClient:
             raise ShutdownSupervisorError(
                 "private shutdown-launcher bootstrap marker is missing"
             )
-        try:
-            raw = json.loads(encoded)
-        except (TypeError, ValueError) as error:
-            raise ShutdownSupervisorError(
-                _exact_error("shutdown-launcher bootstrap decoding", error)
-            ) from error
-        expected_fields = {
-            "version",
-            "host",
-            "port",
-            "authentication_key",
-            "session_nonce",
-            "startup_timeout",
-            "database_path",
-        }
-        if not isinstance(raw, dict) or set(raw) != expected_fields:
-            raise ShutdownSupervisorError(
-                "shutdown-launcher bootstrap fields are invalid"
-            )
-        if raw["version"] != _PROTOCOL_VERSION:
-            raise ShutdownSupervisorError(
-                "shutdown-launcher bootstrap version is unsupported"
-            )
-        host = raw["host"]
-        port = raw["port"]
-        startup_timeout = raw["startup_timeout"]
-        database_path = raw["database_path"]
-        if host != _LOOPBACK_HOST:
-            raise ShutdownSupervisorError(
-                "shutdown-launcher bootstrap endpoint is not loopback"
-            )
-        if type(port) is not int or not 0 < port < 65536:
-            raise ShutdownSupervisorError("shutdown-launcher bootstrap port is invalid")
-        if not isinstance(startup_timeout, (int, float)) or isinstance(
-            startup_timeout, bool
-        ):
-            raise ShutdownSupervisorError(
-                "shutdown-launcher bootstrap timeout is invalid"
-            )
-        startup_timeout = float(startup_timeout)
-        if not math.isfinite(startup_timeout) or startup_timeout <= 0.0:
-            raise ShutdownSupervisorError(
-                "shutdown-launcher bootstrap timeout is invalid"
-            )
-        if database_path is not None and not isinstance(database_path, str):
-            raise ShutdownSupervisorError(
-                "shutdown-launcher database-path override is invalid"
-            )
-        try:
-            authentication_key = bytes.fromhex(raw["authentication_key"])
-            session_nonce = bytes.fromhex(raw["session_nonce"])
-        except (TypeError, ValueError) as error:
-            raise ShutdownSupervisorError(
-                _exact_error("shutdown-launcher bootstrap nonce decoding", error)
-            ) from error
-        if len(authentication_key) != _AUTHENTICATION_BYTES:
-            raise ShutdownSupervisorError(
-                "shutdown-launcher bootstrap authentication key has the wrong length"
-            )
-        if len(session_nonce) != _NONCE_BYTES:
-            raise ShutdownSupervisorError(
-                "shutdown-launcher bootstrap session nonce has the wrong length"
-            )
-        return cls(
-            _Bootstrap(
-                host=host,
-                port=port,
-                authentication_key=authentication_key,
-                session_nonce=session_nonce,
-                startup_timeout=startup_timeout,
-                database_path=database_path,
-            )
-        )
+        return cls(_decode_bootstrap(encoded))
 
     @property
     def database_path(self) -> str | None:
@@ -1198,20 +1108,14 @@ def _bootstrap_payload(
 ) -> str:
     address = listener.getsockname()
     path_override = None if database_path is None else os.fsdecode(database_path)
-    return json.dumps(
-        {
-            "version": _PROTOCOL_VERSION,
-            "host": _LOOPBACK_HOST,
-            "port": int(address[1]),
-            "authentication_key": authentication_key.hex(),
-            "session_nonce": session_nonce.hex(),
-            "startup_timeout": startup_timeout,
-            "database_path": path_override,
-        },
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
+    return _encode_bootstrap(_Bootstrap(
+        host=_LOOPBACK_HOST,
+        port=int(address[1]),
+        authentication_key=authentication_key,
+        session_nonce=session_nonce,
+        startup_timeout=startup_timeout,
+        database_path=path_override,
+    ))
 
 
 def _api_launcher_bootstrap_payload(
@@ -1228,22 +1132,16 @@ def _api_launcher_bootstrap_payload(
 
     address = listener.getsockname()
     path_override = None if database_path is None else os.fsdecode(database_path)
-    return json.dumps(
-        {
-            "version": _PROTOCOL_VERSION,
-            "host": _LOOPBACK_HOST,
-            "port": int(address[1]),
-            "authentication_key": authentication_key.hex(),
-            "session_nonce": session_nonce.hex(),
-            "startup_deadline": float(startup_deadline),
-            "caller_pid": int(caller_pid),
-            "child_argv": [os.fsdecode(argument) for argument in child_argv],
-            "database_path": path_override,
-        },
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
+    return _encode_api_launcher_bootstrap(_ApiLauncherBootstrap(
+        host=_LOOPBACK_HOST,
+        port=int(address[1]),
+        authentication_key=authentication_key,
+        session_nonce=session_nonce,
+        startup_deadline=float(startup_deadline),
+        caller_pid=int(caller_pid),
+        child_argv=tuple(os.fsdecode(argument) for argument in child_argv),
+        database_path=path_override,
+    ))
 
 
 def _api_launcher_bootstrap_from_environment() -> _ApiLauncherBootstrap:
@@ -1254,91 +1152,7 @@ def _api_launcher_bootstrap_from_environment() -> _ApiLauncherBootstrap:
         raise ShutdownSupervisorError(
             "private public-API launcher bootstrap marker is missing"
         )
-    try:
-        raw = json.loads(encoded)
-    except (TypeError, ValueError) as error:
-        raise ShutdownSupervisorError(
-            _exact_error("public-API launcher bootstrap decoding", error)
-        ) from error
-    expected_fields = {
-        "version",
-        "host",
-        "port",
-        "authentication_key",
-        "session_nonce",
-        "startup_deadline",
-        "caller_pid",
-        "child_argv",
-        "database_path",
-    }
-    if not isinstance(raw, dict) or set(raw) != expected_fields:
-        raise ShutdownSupervisorError(
-            "public-API launcher bootstrap fields are invalid"
-        )
-    if raw["version"] != _PROTOCOL_VERSION:
-        raise ShutdownSupervisorError(
-            "public-API launcher bootstrap version is unsupported"
-        )
-    host = raw["host"]
-    port = raw["port"]
-    startup_deadline = raw["startup_deadline"]
-    caller_pid = raw["caller_pid"]
-    child_argv = raw["child_argv"]
-    database_path = raw["database_path"]
-    if host != _LOOPBACK_HOST:
-        raise ShutdownSupervisorError(
-            "public-API launcher bootstrap endpoint is not loopback"
-        )
-    if type(port) is not int or not 0 < port < 65536:
-        raise ShutdownSupervisorError("public-API launcher bootstrap port is invalid")
-    if not isinstance(startup_deadline, (int, float)) or isinstance(
-        startup_deadline, bool
-    ):
-        raise ShutdownSupervisorError(
-            "public-API launcher bootstrap deadline is invalid"
-        )
-    startup_deadline = float(startup_deadline)
-    if not math.isfinite(startup_deadline):
-        raise ShutdownSupervisorError(
-            "public-API launcher bootstrap deadline is invalid"
-        )
-    if type(caller_pid) is not int or caller_pid <= 0:
-        raise ShutdownSupervisorError("public-API launcher caller PID is invalid")
-    if (
-        not isinstance(child_argv, list)
-        or not child_argv
-        or not all(isinstance(argument, str) for argument in child_argv)
-    ):
-        raise ShutdownSupervisorError("public-API launcher child arguments are invalid")
-    if database_path is not None and not isinstance(database_path, str):
-        raise ShutdownSupervisorError(
-            "public-API launcher database-path override is invalid"
-        )
-    try:
-        authentication_key = bytes.fromhex(raw["authentication_key"])
-        session_nonce = bytes.fromhex(raw["session_nonce"])
-    except (TypeError, ValueError) as error:
-        raise ShutdownSupervisorError(
-            _exact_error("public-API launcher bootstrap nonce decoding", error)
-        ) from error
-    if len(authentication_key) != _AUTHENTICATION_BYTES:
-        raise ShutdownSupervisorError(
-            "public-API launcher authentication key has the wrong length"
-        )
-    if len(session_nonce) != _NONCE_BYTES:
-        raise ShutdownSupervisorError(
-            "public-API launcher session nonce has the wrong length"
-        )
-    return _ApiLauncherBootstrap(
-        host=host,
-        port=port,
-        authentication_key=authentication_key,
-        session_nonce=session_nonce,
-        startup_deadline=startup_deadline,
-        caller_pid=caller_pid,
-        child_argv=tuple(child_argv),
-        database_path=database_path,
-    )
+    return _decode_api_launcher_bootstrap(encoded)
 
 
 def _posix_child_exit_observed(

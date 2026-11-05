@@ -1,6 +1,7 @@
 """Ready overlays keep a shared, renderable scale while a new host loads."""
 
 import sys
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -175,13 +176,19 @@ def test_ready_overlay_survives_missing_primary_and_retry(promotion_plot, monkey
     _wait_for(lambda: bool(publications))
     monkeypatch.setattr(plot2d, "refreshPlot", original)
     host, finished, worker = publications[-1]
+    assert worker.result is not None
     if first_result == "cancelled":
         worker.cancel()
     elif first_result == "empty":
-        worker.axis_data = {"x": np.array([]), "y": np.array([])}
-        worker.dataGrid = np.empty((0, 0))
+        worker.result = replace(
+            worker.result,
+            axis_data={"x": np.array([]), "y": np.array([])},
+            dataGrid=np.empty((0, 0)),
+        )
     elif first_result == "nonfinite":
-        worker.dataGrid = np.full_like(worker.dataGrid, np.nan)
+        worker.result = replace(
+            worker.result, dataGrid=np.full_like(worker.result.dataGrid, np.nan),
+        )
     # This controlled publication models a failed/cancelled/empty first load;
     # retry below uses the original real QCoDeS data without an injected result.
     promoted._refresh_pending = False

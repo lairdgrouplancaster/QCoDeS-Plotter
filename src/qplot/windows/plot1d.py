@@ -6,7 +6,7 @@ from PyQt6 import (
     QtCore,
 )
 
-from qplot.datahandling.parameter_data import numeric_isfinite
+from qplot.datahandling.numeric_samples import numeric_isfinite
 
 from ._mixed_plots import MixedPlotMixin
 from ._native_transforms import NativePlotDataItem
@@ -243,7 +243,7 @@ class plot1d(Plot1DSnapMixin, MixedPlotMixin, plotWidget):
                     plot_worker,
                 )
                 if (
-                    getattr(plot_worker, "dataset_completed", None) is True
+                    plot_worker.result.dataset_completed is True
                     and not display_synchronized
                 ):
                     return

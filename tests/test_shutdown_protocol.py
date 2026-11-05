@@ -8,6 +8,8 @@ import pytest
 
 from qplot import _shutdown_protocol as protocol
 
+pytestmark = pytest.mark.pure
+
 _KEY = bytes(range(32))
 _SESSION = bytes(range(32, 64))
 _MESSAGE = bytes(range(64, 96))

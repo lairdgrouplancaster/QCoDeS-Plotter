@@ -38,6 +38,7 @@ from ._dataset_handle import (
     close_dataset_connection,
     dataset_key_matches_current_source,
 )
+from ._dataset_registry import dataset_registry
 from ._export_paths import choose_export_path, write_export_atomically
 from ._plot2d_layers import _heatmap_layer_compatibility, _window_display_unit
 from ._plot_drop_axes import plan_drop_axes
@@ -363,16 +364,11 @@ class PlotActionsMixin:
 
     def _discard_dataset_handle(self, dataset_key, handle):
         """Remove and close one handle that cannot represent its key safely."""
-        if self.dataset_holder.get(dataset_key) is handle:
-            self.dataset_holder.pop(dataset_key, None)
         if handle.dataset is getattr(self, "ds", None):
             self.ds = None
             self._selected_dataset_key = None
             self.selected_run_id = None
-        try:
-            handle.close()
-        except Exception as err:
-            log_exception("Stale plot dataset cleanup failed", err, __name__)
+        dataset_registry(self).discard(dataset_key, handle)
 
 
     def _dataset_handle_for_key(self, dataset_key):
@@ -418,22 +414,11 @@ class PlotActionsMixin:
         return handle
 
     def _dataset_is_held(self, dataset):
-        return dataset is not None and any(
-            handle.dataset is dataset
-            for handle in self.dataset_holder.values()
-            )
+        return dataset_registry(self).holds(dataset)
 
 
     def _close_dataset_if_unowned(self, dataset, context="Dataset cleanup failed"):
-        if dataset is None or dataset is getattr(self, "ds", None):
-            return False
-        if self._dataset_is_held(dataset):
-            return False
-        try:
-            return close_dataset_connection(dataset)
-        except Exception as err:
-            log_exception(context, err, __name__)
-            return False
+        return dataset_registry(self).close_unowned(dataset, context=context)
 
 
     def _replace_selected_dataset(self, dataset, dataset_key):
@@ -523,28 +508,11 @@ class PlotActionsMixin:
 
 
     def _evict_dataset_handle(self, dataset_key):
-        handle = self.dataset_holder.pop(dataset_key, None)
-        if handle is None:
-            return False
-
-        handle.cancel_delete_timer()
-        if handle.dataset is getattr(self, "ds", None):
-            return True
-        try:
-            handle.close()
-        except Exception as err:
-            log_exception("Plot dataset cleanup failed", err, __name__)
-        return True
+        return dataset_registry(self).evict(dataset_key)
 
 
     def _close_all_dataset_handles(self):
-        handles = list(self.dataset_holder.values())
-        self.dataset_holder.clear()
-        for handle in handles:
-            try:
-                handle.close()
-            except Exception as err:
-                log_exception("Plot dataset cleanup failed", err, __name__)
+        dataset_registry(self).close_all()
 
 
     @staticmethod
@@ -724,7 +692,7 @@ class PlotActionsMixin:
         del win
 
 
-    def _publish_displayed_plot_preview(self, plot, worker):
+    def _publish_displayed_plot_preview(self, plot, result):
         """Show one displayed measurement while run previews are queued."""
 
         preview = getattr(getattr(self, "infoBox", None), "preview", None)
@@ -733,12 +701,12 @@ class PlotActionsMixin:
         key = getattr(plot, "_dataset_key", None)
         if not isinstance(key, DatasetKey) or key.guid not in preview.run_metadata:
             return
-        if getattr(worker, "dataset_completed", None) is not True:
+        if getattr(result, "dataset_completed", None) is not True:
             # For an active run, reuse only the same row prefix currently
             # advertised by the run list. Its next metadata update will
             # discard the provisional image and request fresh derived work.
             try:
-                displayed_count = int(worker.dataset_length_at_start)
+                displayed_count = int(result.dataset_length_at_start)
                 listed_count = int(
                     preview.run_metadata[key.guid]["result_count"]
                 )
@@ -767,7 +735,7 @@ class PlotActionsMixin:
         from ._widgets.preview import render_displayed_plot_preview
 
         plot_preview = render_displayed_plot_preview(
-            worker,
+            result,
             getattr(plot, "param", None),
             preview.preview_size,
         )
@@ -2625,11 +2593,7 @@ class PlotActionsMixin:
                 raise RuntimeError(
                     "The database was replaced while its dataset was being acquired."
                 )
-            self.dataset_holder[dataset_key] = DatasetHandle(
-                dataset=ds,
-                database_identity=dataset_key.database_identity,
-                sidecar_identities=dataset_key.sidecar_identities,
-            )
+            dataset_registry(self).add(dataset_key, ds)
         else:
             handle.retain()
 
@@ -2640,27 +2604,10 @@ class PlotActionsMixin:
         Decreases the user count for a cached plot dataset.
 
         """
-        handle = self.dataset_holder.get(dataset_key)
-        if handle is None:
+        if not dataset_registry(self).release(
+            dataset_key, lambda: self.config.get("runtime_settings.del_grace_period"),
+        ):
             self.show_status("Trying to remove dataset that does not exist.", 5000)
-            return
-
-        handle.release()
-
-        if handle.users <= 0:
-            del_time = self.config.get("runtime_settings.del_grace_period")
-
-            if del_time == 0:
-                self._evict_dataset_handle(dataset_key)
-
-            elif handle.delete_timer is None:
-                del_timer = QtCore.QTimer()
-                del_timer.setSingleShot(True)
-                handle.delete_timer = del_timer
-                del_timer.timeout.connect(
-                    lambda key=dataset_key: self._evict_dataset_handle(key)
-                )
-                del_timer.start(int(del_time * 1000))
 
 
     def _current_dataset_key(self, guid: str) -> DatasetKey:

@@ -23,6 +23,7 @@ from qplot.datahandling.database import (
     database_path_from_mime_data,
 )
 from qplot.diagnostics import log_user_error
+from qplot.windows._database_detail_state import detail_channel
 
 from ._commands import create_action
 from ._config_persistence import (
@@ -176,19 +177,15 @@ class MainWindow(
         )
         self.databaseDetailThreadPool = resources.create_pool(
             "databaseDetailThreadPool", parent=self,
-            worker_attribute="_database_detail_worker",
         )
+        resources.watch_worker("basic details", cancel=detail_channel(self).cancel_worker)
         self.databaseExpensiveDetailThreadPool = resources.create_pool(
             "databaseExpensiveDetailThreadPool", parent=self,
-            worker_attribute="_database_expensive_detail_worker",
         )
+        resources.watch_worker("expensive details", cancel=detail_channel(self, True).cancel_worker)
         self.databaseRefreshThreadPool = resources.create_pool(
             "databaseRefreshThreadPool", parent=self,
             worker_attribute="_database_refresh_worker",
-        )
-        self.databaseSelectedRunThreadPool = resources.create_pool(
-            "databaseSelectedRunThreadPool", parent=self,
-            worker_attribute="_database_selected_run_worker",
         )
         # Information jobs share the detail pool but have a separate cancellation
         # hook that invalidates their own generation before later work is closed.
@@ -210,14 +207,6 @@ class MainWindow(
         self._database_info_active = False
         self._loaded_database_identity = None
         self._loaded_database_instance = None  # type: ignore[assignment]
-        self._database_detail_generation = 0
-        self._database_detail_active = False
-        self._database_detail_worker = None
-        self._database_detail_instance = None
-        self._database_expensive_detail_generation = 0
-        self._database_expensive_detail_active = False
-        self._database_expensive_detail_worker = None
-        self._database_expensive_detail_instance = None
         self._database_refresh_generation = 0
         self._database_refresh_active = False
         self._database_refresh_pending = False
@@ -227,14 +216,9 @@ class MainWindow(
         self._database_refresh_staged_new_runs = {}
         self._database_refresh_publication_active = False
         self._database_selected_run_generation = 0
-        self._database_selected_run_worker: DatabaseSelectedRunWorker | None = None
-        self._database_selected_run_instance = None
-        self._database_selected_run_mode = None
         self._restoring_selected_run_publication = False
         self._selected_run_restore_pending = False
         self._selected_run_guid = None
-        self._selected_run_detail_cache = {}
-        self._selected_run_partial_detail_keys = set()
         self._snapshot_setpoint_summary_cache = {}
         self._trusted_read_service = None
         self._pending_trusted_read_services = {}

@@ -7,6 +7,8 @@ from packaging.version import Version
 from qplot._update_presentation import update_message
 from qplot.updates import UpdateResult
 
+pytestmark = pytest.mark.pure
+
 
 @pytest.mark.parametrize("executable", [
     "/opt/qplot/bin/python",

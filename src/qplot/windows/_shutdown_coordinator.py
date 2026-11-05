@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Protocol
 from PyQt6 import QtGui
 from PyQt6 import QtWidgets as qtw
 
+from ._database_detail_state import detail_channel
 from ._shutdown_resources import ShutdownResources
 
 if TYPE_CHECKING:
@@ -149,18 +150,8 @@ class ShutdownCoordinator:
         window._database_load_active = False
         window._database_load_state = None
         window._database_load_worker = None
-        window._database_detail_generation = (
-            getattr(window, "_database_detail_generation", 0) + 1
-        )
-        window._database_detail_active = False
-        window._database_detail_worker = None
-        window._database_detail_instance = None
-        window._database_expensive_detail_generation = (
-            getattr(window, "_database_expensive_detail_generation", 0) + 1
-        )
-        window._database_expensive_detail_active = False
-        window._database_expensive_detail_worker = None
-        window._database_expensive_detail_instance = None
+        detail_channel(window).invalidate()
+        detail_channel(window, True).invalidate()
         window._database_refresh_generation = (
             getattr(window, "_database_refresh_generation", 0) + 1
         )
@@ -172,9 +163,6 @@ class ShutdownCoordinator:
         window._database_selected_run_generation = (
             getattr(window, "_database_selected_run_generation", 0) + 1
         )
-        window._database_selected_run_worker = None
-        window._database_selected_run_instance = None
-        window._database_selected_run_mode = None
         window._restoring_selected_run_publication = False
         window._selected_run_restore_pending = False
         window._test_database_generation_active = False

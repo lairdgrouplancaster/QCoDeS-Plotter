@@ -1,5 +1,7 @@
 import os
 from copy import deepcopy
+from dataclasses import dataclass
+from typing import Any
 
 from PyQt6 import (
     QtCore,
@@ -52,34 +54,89 @@ COLORBAR_WIDTH_KEY = "user_preference.colorbar_width"
 AXIS_TICK_WIDTH_KEY = "user_preference.axis_tick_width"
 AXIS_MAJOR_TICK_COUNT_KEY = "user_preference.axis_major_tick_count"
 
-PREFERENCE_KEYS = (
-    "user_preference.theme",
-    FONT_SIZE_KEY,
-    SHOW_SOURCE_ANNOTATION_KEY,
-    CURSOR_SIGNIFICANT_FIGURES_KEY,
-    COLORBAR_WIDTH_KEY,
-    AXIS_TICK_WIDTH_KEY,
-    AXIS_MAJOR_TICK_COUNT_KEY,
-    "GUI.preview_size",
-    PLOT_TILE_ROWS_KEY,
-    PLOT_TILE_COLUMNS_KEY,
-    MOUSE_MODE_KEY,
-    COPY_PLOT_IMAGE_RESOLUTION_KEY,
-    CSV_FILENAME_FORMAT_KEY,
-    "file.default_load_path",
-    "user_preference.default_refresh_rate",
-    CONFIRM_CLOSE_ALL_KEY,
-    CONFIRM_INCOMPATIBLE_AXES_KEY,
-    CONFIRM_QUIT_KEY,
-    "runtime_settings.max_threads",
-    "runtime_settings.max_full_heatmap_points",
-    "runtime_settings.max_heatmap_grid_cells",
-    "runtime_settings.max_heatmap_grid_side",
-    "runtime_settings.del_grace_period",
-    "runtime_settings.cloud_sync_timeout",
-    CHECK_ON_LAUNCH_KEY,
-    INCLUDE_PRERELEASES_KEY,
-    )
+_PREFERENCE_CONTROLS = (
+    ("user_preference.theme", "themeCombo"),
+    (FONT_SIZE_KEY, "fontSizeSpin"),
+    (SHOW_SOURCE_ANNOTATION_KEY, "showSourceAnnotationCheck"),
+    (CURSOR_SIGNIFICANT_FIGURES_KEY, "cursorSignificantFiguresSpin"),
+    (COLORBAR_WIDTH_KEY, "colorbarWidthSpin"),
+    (AXIS_TICK_WIDTH_KEY, "axisTickWidthSpin"),
+    (AXIS_MAJOR_TICK_COUNT_KEY, "axisMajorTickCountSpin"),
+    ("GUI.preview_size", "previewSizeSpin"),
+    (PLOT_TILE_ROWS_KEY, "plotTileRowsSpin"),
+    (PLOT_TILE_COLUMNS_KEY, "plotTileColumnsSpin"),
+    (MOUSE_MODE_KEY, "mouseModeCombo"),
+    (COPY_PLOT_IMAGE_RESOLUTION_KEY, "copyPlotImageResolutionCombo"),
+    (CSV_FILENAME_FORMAT_KEY, "csvFilenameFormatCombo"),
+    ("file.default_load_path", "defaultLoadPathEdit"),
+    ("user_preference.default_refresh_rate", "refreshRateSpin"),
+    (CONFIRM_CLOSE_ALL_KEY, "confirmCloseAllCheck"),
+    (CONFIRM_INCOMPATIBLE_AXES_KEY, "confirmIncompatibleAxesCheck"),
+    (CONFIRM_QUIT_KEY, "confirmQuitCheck"),
+    ("runtime_settings.max_threads", "maxThreadsSpin"),
+    ("runtime_settings.max_full_heatmap_points", "maxFullHeatmapPointsSpin"),
+    ("runtime_settings.max_heatmap_grid_cells", "maxHeatmapGridCellsSpin"),
+    ("runtime_settings.max_heatmap_grid_side", "maxHeatmapGridSideSpin"),
+    ("runtime_settings.del_grace_period", "delGracePeriodSpin"),
+    ("runtime_settings.cloud_sync_timeout", "cloudSyncTimeoutSpin"),
+    (CHECK_ON_LAUNCH_KEY, "checkUpdatesOnLaunchCheck"),
+    (INCLUDE_PRERELEASES_KEY, "includePrereleasesCheck"),
+)
+PREFERENCE_KEYS = tuple(key for key, _control_name in _PREFERENCE_CONTROLS)
+
+_PreferenceControl = (
+    qtw.QComboBox | qtw.QSpinBox | qtw.QDoubleSpinBox | qtw.QCheckBox | qtw.QLineEdit
+)
+
+
+@dataclass(frozen=True)
+class _PreferenceBinding:
+    """Keep a preference's control, value conversion, and edit tracking together."""
+
+    key: str
+    control: _PreferenceControl
+
+    def read(self) -> Any:
+        control = self.control
+        if isinstance(control, qtw.QComboBox):
+            return control.currentData()
+        if isinstance(control, qtw.QCheckBox):
+            return control.isChecked()
+        if isinstance(control, qtw.QLineEdit):
+            return control.text().strip()
+        return control.value()
+
+    def write(self, value: Any) -> None:
+        control = self.control
+        if isinstance(control, qtw.QComboBox):
+            control.setCurrentIndex(max(control.findData(value), 0))
+        elif isinstance(control, qtw.QCheckBox):
+            control.setChecked(bool(value))
+        elif isinstance(control, qtw.QLineEdit):
+            control.setText(str(value))
+        elif isinstance(control, qtw.QSpinBox):
+            control.setValue(int(value))
+        else:
+            control.setValue(float(value))
+
+    def track_edits(self, edited_keys: set[str]) -> None:
+        def mark_edited(_value):
+            edited_keys.add(self.key)
+
+        control = self.control
+        if isinstance(control, (qtw.QSpinBox, qtw.QDoubleSpinBox)):
+            control.valueChanged.connect(mark_edited)
+            line_edit = control.lineEdit()
+            if line_edit is not None:
+                # The same rounded text is still an explicit edit even when
+                # valueChanged remains silent.
+                line_edit.textEdited.connect(mark_edited)
+        elif isinstance(control, qtw.QComboBox):
+            control.currentIndexChanged.connect(mark_edited)
+        elif isinstance(control, qtw.QLineEdit):
+            control.textChanged.connect(mark_edited)
+        else:
+            control.toggled.connect(mark_edited)
 
 
 class PreferencesDialog(qtw.QDialog):
@@ -98,23 +155,13 @@ class PreferencesDialog(qtw.QDialog):
         self.setMinimumWidth(420)
 
         self._build_ui()
+        self._bindings = tuple(
+            _PreferenceBinding(key, getattr(self, control_name))
+            for key, control_name in _PREFERENCE_CONTROLS
+        )
         self._edited_preference_keys: set[str] = set()
-        for key, widget in zip(PREFERENCE_KEYS, self._preference_controls(), strict=True):
-            mark_edited = lambda _value, key=key: self._edited_preference_keys.add(key)
-            if isinstance(widget, (qtw.QSpinBox, qtw.QDoubleSpinBox)):
-                signal = widget.valueChanged
-                line_edit = widget.lineEdit()
-                if line_edit is not None:
-                    # Typing the same rounded display is still an explicit
-                    # edit, even when the numeric valueChanged signal is silent.
-                    line_edit.textEdited.connect(mark_edited)
-            elif isinstance(widget, qtw.QComboBox):
-                signal = widget.currentIndexChanged
-            elif isinstance(widget, qtw.QLineEdit):
-                signal = widget.textChanged
-            else:
-                signal = widget.toggled
-            signal.connect(mark_edited)
+        for binding in self._bindings:
+            binding.track_edits(self._edited_preference_keys)
         self.load_from_config()
 
     def _build_ui(self):
@@ -525,151 +572,15 @@ class PreferencesDialog(qtw.QDialog):
         self._loaded_control_values = self.preference_values()
         self._edited_preference_keys.clear()
 
-    def _preference_controls(self):
-        """Return the controls in the same order as their preference keys."""
-        return (
-            self.themeCombo,
-            self.fontSizeSpin,
-            self.showSourceAnnotationCheck,
-            self.cursorSignificantFiguresSpin,
-            self.colorbarWidthSpin,
-            self.axisTickWidthSpin,
-            self.axisMajorTickCountSpin,
-            self.previewSizeSpin,
-            self.plotTileRowsSpin,
-            self.plotTileColumnsSpin,
-            self.mouseModeCombo,
-            self.copyPlotImageResolutionCombo,
-            self.csvFilenameFormatCombo,
-            self.defaultLoadPathEdit,
-            self.refreshRateSpin,
-            self.confirmCloseAllCheck,
-            self.confirmQuitCheck,
-            self.confirmIncompatibleAxesCheck,
-            self.maxThreadsSpin,
-            self.maxFullHeatmapPointsSpin,
-            self.maxHeatmapGridCellsSpin,
-            self.maxHeatmapGridSideSpin,
-            self.delGracePeriodSpin,
-            self.cloudSyncTimeoutSpin,
-            self.checkUpdatesOnLaunchCheck,
-            self.includePrereleasesCheck,
-            )
-
     def set_preference_values(self, values):
-        """
-        Loads preference values into the dialog widgets.
-
-        """
-        widgets = self._preference_controls()
-        with blocked_signals(*widgets):
-            theme_index = self.themeCombo.findData(values["user_preference.theme"])
-            self.themeCombo.setCurrentIndex(max(theme_index, 0))
-            self.fontSizeSpin.setValue(int(values[FONT_SIZE_KEY]))
-            self.showSourceAnnotationCheck.setChecked(values[SHOW_SOURCE_ANNOTATION_KEY])
-            self.cursorSignificantFiguresSpin.setValue(
-                int(values[CURSOR_SIGNIFICANT_FIGURES_KEY])
-                )
-
-            self.colorbarWidthSpin.setValue(int(values[COLORBAR_WIDTH_KEY]))
-            self.axisTickWidthSpin.setValue(float(values[AXIS_TICK_WIDTH_KEY]))
-            self.axisMajorTickCountSpin.setValue(
-                int(values[AXIS_MAJOR_TICK_COUNT_KEY])
-                )
-
-            self.previewSizeSpin.setValue(int(values["GUI.preview_size"]))
-            self.plotTileRowsSpin.setValue(int(values[PLOT_TILE_ROWS_KEY]))
-            self.plotTileColumnsSpin.setValue(int(values[PLOT_TILE_COLUMNS_KEY]))
-            mouse_mode_index = self.mouseModeCombo.findData(values[MOUSE_MODE_KEY])
-            self.mouseModeCombo.setCurrentIndex(max(mouse_mode_index, 0))
-            copy_resolution_index = self.copyPlotImageResolutionCombo.findData(
-                values[COPY_PLOT_IMAGE_RESOLUTION_KEY]
-                )
-            self.copyPlotImageResolutionCombo.setCurrentIndex(
-                max(copy_resolution_index, 0)
-                )
-            self.csvFilenameFormatCombo.setCurrentIndex(max(
-                self.csvFilenameFormatCombo.findData(values[CSV_FILENAME_FORMAT_KEY]), 0
-            ))
-            self.defaultLoadPathEdit.setText(str(values["file.default_load_path"]))
-            self.refreshRateSpin.setValue(
-                float(values["user_preference.default_refresh_rate"])
-                )
-            self.confirmCloseAllCheck.setChecked(
-                bool(values[CONFIRM_CLOSE_ALL_KEY])
-                )
-            self.confirmQuitCheck.setChecked(
-                bool(values[CONFIRM_QUIT_KEY])
-                )
-            self.confirmIncompatibleAxesCheck.setChecked(
-                bool(values[CONFIRM_INCOMPATIBLE_AXES_KEY])
-            )
-            self.maxThreadsSpin.setValue(
-                int(values["runtime_settings.max_threads"])
-                )
-            self.maxFullHeatmapPointsSpin.setValue(
-                int(values["runtime_settings.max_full_heatmap_points"])
-                )
-            self.maxHeatmapGridCellsSpin.setValue(
-                int(values["runtime_settings.max_heatmap_grid_cells"])
-                )
-            self.maxHeatmapGridSideSpin.setValue(
-                int(values["runtime_settings.max_heatmap_grid_side"])
-                )
-            self.delGracePeriodSpin.setValue(
-                float(values["runtime_settings.del_grace_period"])
-                )
-            self.cloudSyncTimeoutSpin.setValue(
-                float(values["runtime_settings.cloud_sync_timeout"])
-                )
-            self.checkUpdatesOnLaunchCheck.setChecked(values[CHECK_ON_LAUNCH_KEY])
-            self.includePrereleasesCheck.setChecked(values[INCLUDE_PRERELEASES_KEY])
+        """Load values without recording programmatic updates as edits."""
+        with blocked_signals(*(binding.control for binding in self._bindings)):
+            for binding in self._bindings:
+                binding.write(values[binding.key])
 
     def preference_values(self):
-        """
-        Returns the current widget values keyed by config path.
-
-        """
-        values = {
-            "user_preference.theme": self.themeCombo.currentData(),
-            FONT_SIZE_KEY: int(self.fontSizeSpin.value()),
-            SHOW_SOURCE_ANNOTATION_KEY: self.showSourceAnnotationCheck.isChecked(),
-            CURSOR_SIGNIFICANT_FIGURES_KEY: int(self.cursorSignificantFiguresSpin.value()),
-            COLORBAR_WIDTH_KEY: int(self.colorbarWidthSpin.value()),
-            AXIS_TICK_WIDTH_KEY: float(self.axisTickWidthSpin.value()),
-            AXIS_MAJOR_TICK_COUNT_KEY: int(self.axisMajorTickCountSpin.value()),
-            "GUI.preview_size": int(self.previewSizeSpin.value()),
-            PLOT_TILE_ROWS_KEY: int(self.plotTileRowsSpin.value()),
-            PLOT_TILE_COLUMNS_KEY: int(self.plotTileColumnsSpin.value()),
-            MOUSE_MODE_KEY: self.mouseModeCombo.currentData(),
-            COPY_PLOT_IMAGE_RESOLUTION_KEY: (
-                self.copyPlotImageResolutionCombo.currentData()
-                ),
-            CSV_FILENAME_FORMAT_KEY: self.csvFilenameFormatCombo.currentData(),
-            "file.default_load_path": self.defaultLoadPathEdit.text().strip(),
-            "user_preference.default_refresh_rate": self.refreshRateSpin.value(),
-            CONFIRM_CLOSE_ALL_KEY: self.confirmCloseAllCheck.isChecked(),
-            CONFIRM_QUIT_KEY: self.confirmQuitCheck.isChecked(),
-            CONFIRM_INCOMPATIBLE_AXES_KEY: self.confirmIncompatibleAxesCheck.isChecked(),
-            "runtime_settings.max_threads": int(self.maxThreadsSpin.value()),
-            "runtime_settings.max_full_heatmap_points": int(
-                self.maxFullHeatmapPointsSpin.value()
-                ),
-            "runtime_settings.max_heatmap_grid_cells": int(
-                self.maxHeatmapGridCellsSpin.value()
-                ),
-            "runtime_settings.max_heatmap_grid_side": int(
-                self.maxHeatmapGridSideSpin.value()
-                ),
-            "runtime_settings.del_grace_period": self.delGracePeriodSpin.value(),
-            "runtime_settings.cloud_sync_timeout": self.cloudSyncTimeoutSpin.value(),
-            CHECK_ON_LAUNCH_KEY: self.checkUpdatesOnLaunchCheck.isChecked(),
-            INCLUDE_PRERELEASES_KEY: self.includePrereleasesCheck.isChecked(),
-            }
-        return {
-            key: values[key]
-            for key in PREFERENCE_KEYS
-            }
+        """Return the current control values in preference registry order."""
+        return {binding.key: binding.read() for binding in self._bindings}
 
     def default_preference_values(self):
         """

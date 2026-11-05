@@ -7,7 +7,7 @@ record flattening; joining the records must not round stored integer values.
 
 import numpy as np
 
-from qplot.datahandling.parameter_data import concatenate_record_samples
+from qplot.datahandling.numeric_samples import concatenate_record_samples
 
 
 def exportable_measurement_params(dataset):

@@ -23,8 +23,9 @@ interactive users.
 
 `_shutdown_supervisor.py` owns process containment and the launcher lifecycle.
 `_shutdown_protocol.py` owns its authenticated byte layouts, frame validation,
-and immutable outcomes, without sockets, threads, or Qt. Keep protocol changes
-there so both endpoints use the same rules.
+bootstrap schemas/codecs, and immutable outcomes, without sockets, threads, or
+Qt. Keep protocol changes there so both endpoints use the same rules. The
+supervisor retains environment-marker consumption and socket/path extraction.
 
 `_process_shutdown.py` owns the GUI process's deadline fail-safe and diagnostic
 persistence. The entry point supplies the persistence callback explicitly;
@@ -62,6 +63,10 @@ and restarting progressive work after the transaction has released its gates.
 `_database_observation.py` shares the directional source check: newly created
 WAL/SHM files are allowed, but an already accepted sidecar cannot disappear or be
 replaced. These comparisons use `DatabaseInstance` throughout.
+
+`_database_detail_state.py` groups generation, worker, source instance, and
+activity for the basic and expensive snapshot-detail channels. Their callbacks
+share lifecycle operations while retaining source checks around publication.
 
 `src/qplot/windows/_plot_actions.py` contains the plot-facing main window
 actions. It handles:
@@ -146,6 +151,10 @@ data and completion signals remain separate from this GUI-owned rollback state.
 `src/qplot/windows/_dataset_handle.py` defines the small `DatasetHandle`
 structure used by the main window and plot windows to track an open dataset,
 its active plot-window user count, and any delayed-release timer.
+`_dataset_registry.py` owns retained-handle creation, release, eviction, and
+unowned connection cleanup. It resolves the current selected dataset at each
+close boundary, including after database-view rollback; action methods retain
+source identity validation and selection/UI changes.
 
 `src/qplot/windows/_plot_export.py` contains shared plot output behavior:
 native printing, pyqtgraph export-dialog setup, PDF rendering, clipboard image
@@ -389,6 +398,12 @@ selection action, not the whole fallback session: fallback metadata and retained
 preview paths can still create private snapshots. Fallback plot actions
 (including Auto-plot) and CSV actions can materialise a DataSet.
 
+Trusted selection is owned by the derived-work bridge. Its detail publication
+rechecks selection and source identity after each widget update. A per-attempt
+token prevents an older reentrant callback from discarding a newer publication
+or snapshot session; bounded restoration repairs rows, detail tabs, and preview
+selection from the current accepted state.
+
 Trusted Auto-plot owns a deduplicated queue independently of selected-detail
 and refresh requests. It submits one bounded plot-metadata request at a time,
 then uses the same asynchronous plot pipeline as manual plotting. Unavailable
@@ -416,6 +431,10 @@ deadline; one coalesced timer wakes the earliest retry. Cancelled and stale
 outcomes are silent. Append reconciliation and reused-coordinator database
 switches install the current selected and visible priority before the first new
 claim is allowed to start.
+
+The coordinator keeps continuation readiness/fairness in `_ContinuationState`
+and retry attempts/deadlines in `_RetryState`. Reset and append paths share these
+records without expanding compact per-run arrays into individual objects.
 
 A progressive full-prefix verifier consumes at most one 4,096-row page per
 owner turn and re-evaluates the exact base priority at every boundary.
@@ -951,6 +970,12 @@ stopped during that individual Python call, so cancellation takes effect as soon
 as it returns. Threads are never terminated forcibly, and cancelled results are
 not applied to plot windows.
 
+`tools/plot_result.py` defines the successful `PlotLoadResult`, its source
+identity, and optional cache update. The worker snapshots output mappings once
+processing succeeds; arrays keep their existing buffers. GUI publication reads
+this result while the worker retains cancellation and progress state. Existing
+source fences and publication rollback still govern acceptance.
+
 `datahandling/LoadFromDB.py` prepares shaped and unshaped cache merges through
 separate helpers. A `_PreparedMerge` record keeps columns, insertion shape, and
 any planned-overflow sample count together. Shaped preparation owns private
@@ -962,6 +987,10 @@ sample counts.
 plot operation functions. `src/qplot/tools/operation_registry.py` maps those
 operation functions to the plot-window surfaces and input controls that expose
 them.
+
+`datahandling/numeric_samples.py` shares precision-preserving dtype selection,
+concatenation, and missing-value classification without importing QCoDeS.
+`parameter_data.py` retains acquisition-record decoding and database integration.
 
 ## Configuration
 
@@ -983,7 +1012,8 @@ database publication and shutdown retain their separate lifecycle gates.
 
 `src/qplot/windows/_preferences.py` exposes the common config keys through the
 main-window preferences dialog and emits a signal when applied settings need to
-be synced into the open UI.
+be synced into the open UI. One keyed binding registry drives value conversion,
+loading, reading, and edit tracking, including explicit edits to rounded values.
 
 Theme files live in `src/qplot/configuration/themes`. The shared stylesheet
 builder and plot-item helpers live in `themes/_base.py`; light, dark, and PyQt
@@ -1004,3 +1034,7 @@ Tests are grouped by area:
   general helper behavior.
 
 Shared pytest and Qt setup lives in `tests/conftest.py`.
+Integration isolation is the default: Qt initialization, QCoDeS location
+restoration, and snapshot-connection leak auditing apply to every unmarked test.
+Only audited `pure` tests bypass that setup; their fixtures import neither Qt
+nor QCoDeS. Subprocess policy tests exercise both sides of this boundary.

@@ -14,11 +14,11 @@ import numpy.typing as npt
 from qcodes.dataset.data_set_cache import _merge_data
 from qcodes.dataset.sqlite.queries import completed
 
+from qplot.datahandling.numeric_samples import integer_preserving_dtype
 from qplot.datahandling.parameter_data import (
     _check_noop,
     flatten_record_columns,
     get_parameter_data_for_one_paramtree,
-    integer_preserving_dtype,
 )
 from qplot.datahandling.qcodes_cache import (
     cache_data,

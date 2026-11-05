@@ -19,6 +19,7 @@ from qplot.datahandling.qcodes_cache import (
     snapshot_cache_parameter_publication_state,
 )
 from qplot.windows import main as main_window
+from qplot.windows._database_detail_state import detail_channel
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
 
@@ -89,7 +90,7 @@ def test_complex_measurement_actual_plot_error_export_and_recovery(tmp_path, mon
         window.config.config["user_preference"]["confirm_close_all"] = False
         window.close_database(status=False)
         assert window.load_file(str(path))
-        wait_for(lambda: not window._database_load_active and not window._database_detail_active)
+        wait_for(lambda: not window._database_load_active and not detail_channel(window).active)
         window.monitor.stop()
         assert window.selected_run_id == run_id
         with warnings.catch_warnings(record=True) as caught:

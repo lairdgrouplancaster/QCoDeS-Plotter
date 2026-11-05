@@ -492,8 +492,6 @@ def _collect_owner_database_sources(
         "_database_refresh_instance",
         "_database_load_worker",
         "_database_refresh_worker",
-        "_database_detail_worker",
-        "_database_expensive_detail_worker",
         "_test_database_generation_worker",
         "worker",
     ):
@@ -503,6 +501,15 @@ def _collect_owner_database_sources(
             # Deleted Qt owners cannot supply more paths; continue collecting the
             # remaining independent source attributes.
             pass
+
+    try:
+        channels = getattr(owner, "_database_detail_channels", None)
+        if channels is not None:
+            for channel in (channels.basic, channels.expensive):
+                add_source(channel.worker)
+                add_source(channel.instance)
+    except RuntimeError:
+        pass
 
     for holder_name in ("_dataset_holder", "dataset_holder"):
         try:

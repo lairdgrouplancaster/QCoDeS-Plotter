@@ -107,7 +107,6 @@ def timed_plots(tmp_path, monkeypatch, qapplication, request):
         wait_for(
             lambda: (
                 window._selected_run_guid == guid
-                and window._database_selected_run_worker is None
             )
         )
         for parameter in ("signal", "other"):

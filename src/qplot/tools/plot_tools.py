@@ -20,7 +20,7 @@ from fractions import Fraction
 
 import numpy as np
 
-from qplot.datahandling.parameter_data import numeric_isfinite, numeric_isnan
+from qplot.datahandling.numeric_samples import numeric_isfinite, numeric_isnan
 from qplot.tools.sample_statistics import sample_fraction
 
 

@@ -14,6 +14,7 @@ import json
 import math
 import struct
 from dataclasses import dataclass
+from typing import Any
 
 _API_RESULT_MAX_BYTES = 256 * 1024
 _TERMINATION_DIAGNOSTIC_LIMIT = 64
@@ -30,6 +31,7 @@ _API_LAUNCHER_RESULT = 7
 _API_LAUNCHER_CANCEL = 8
 _NONCE_BYTES = 32
 _AUTHENTICATION_BYTES = 32
+_LOOPBACK_HOST = "127.0.0.1"
 
 # Control records have one strict, fixed size. The eight-byte payload is
 # an unsigned PID for HELLO/READY and an IEEE-754 deadline for ARM/ARM_ACK.
@@ -47,6 +49,28 @@ class ShutdownSupervisorError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class _Bootstrap:
+    host: str
+    port: int
+    authentication_key: bytes
+    session_nonce: bytes
+    startup_timeout: float
+    database_path: str | None
+
+
+@dataclass(frozen=True)
+class _ApiLauncherBootstrap:
+    host: str
+    port: int
+    authentication_key: bytes
+    session_nonce: bytes
+    startup_deadline: float
+    caller_pid: int
+    child_argv: tuple[str, ...]
+    database_path: str | None
+
+
+@dataclass(frozen=True)
 class _SupervisionOutcome:
     """The immutable outcome shared by a launcher and its API caller."""
 
@@ -60,6 +84,144 @@ def _exact_error(context: str, error: BaseException) -> str:
     """Preserve exception type and detail in launcher diagnostics."""
 
     return f"{context} raised {type(error).__name__}: {error}"
+
+
+_BOOTSTRAP_COMMON_FIELDS = frozenset({
+    "version", "host", "port", "authentication_key", "session_nonce", "database_path",
+})
+
+
+def _decode_bootstrap_object(
+    encoded: str, extra_fields: set[str], context: str,
+) -> dict[str, Any]:
+    try:
+        raw = json.loads(encoded)
+    except (TypeError, ValueError) as error:
+        raise ShutdownSupervisorError(
+            _exact_error(f"{context} bootstrap decoding", error)
+        ) from error
+    if not isinstance(raw, dict) or set(raw) != _BOOTSTRAP_COMMON_FIELDS | extra_fields:
+        raise ShutdownSupervisorError(f"{context} bootstrap fields are invalid")
+    if raw["version"] != _PROTOCOL_VERSION:
+        raise ShutdownSupervisorError(f"{context} bootstrap version is unsupported")
+    return raw
+
+
+def _bootstrap_endpoint(raw: dict[str, Any], context: str) -> tuple[str, int]:
+    host, port = raw["host"], raw["port"]
+    if host != _LOOPBACK_HOST:
+        raise ShutdownSupervisorError(f"{context} bootstrap endpoint is not loopback")
+    if type(port) is not int or not 0 < port < 65536:
+        raise ShutdownSupervisorError(f"{context} bootstrap port is invalid")
+    return host, port
+
+
+def _bootstrap_database_path(value: Any, context: str) -> str | None:
+    if value is not None and not isinstance(value, str):
+        raise ShutdownSupervisorError(f"{context} database-path override is invalid")
+    return value
+
+
+def _bootstrap_credentials(
+    raw: dict[str, Any], context: str, *, length_context: str,
+) -> tuple[bytes, bytes]:
+    try:
+        authentication_key = bytes.fromhex(raw["authentication_key"])
+        session_nonce = bytes.fromhex(raw["session_nonce"])
+    except (TypeError, ValueError) as error:
+        raise ShutdownSupervisorError(
+            _exact_error(f"{context} bootstrap nonce decoding", error)
+        ) from error
+    if len(authentication_key) != _AUTHENTICATION_BYTES:
+        raise ShutdownSupervisorError(
+            f"{length_context} authentication key has the wrong length"
+        )
+    if len(session_nonce) != _NONCE_BYTES:
+        raise ShutdownSupervisorError(
+            f"{length_context} session nonce has the wrong length"
+        )
+    return authentication_key, session_nonce
+
+
+def _decode_bootstrap(encoded: str) -> _Bootstrap:
+    """Decode the GUI bootstrap while retaining version-one validation order."""
+    context = "shutdown-launcher"
+    raw = _decode_bootstrap_object(encoded, {"startup_timeout"}, context)
+    host, port = _bootstrap_endpoint(raw, context)
+    timeout = raw["startup_timeout"]
+    if not isinstance(timeout, (int, float)) or isinstance(timeout, bool):
+        raise ShutdownSupervisorError("shutdown-launcher bootstrap timeout is invalid")
+    timeout = float(timeout)
+    if not math.isfinite(timeout) or timeout <= 0.0:
+        raise ShutdownSupervisorError("shutdown-launcher bootstrap timeout is invalid")
+    database_path = _bootstrap_database_path(raw["database_path"], context)
+    authentication_key, session_nonce = _bootstrap_credentials(
+        raw, context, length_context="shutdown-launcher bootstrap",
+    )
+    return _Bootstrap(host, port, authentication_key, session_nonce, timeout, database_path)
+
+
+def _decode_api_launcher_bootstrap(encoded: str) -> _ApiLauncherBootstrap:
+    """Decode the caller bootstrap; its deadline is absolute, not a timeout."""
+    context = "public-API launcher"
+    raw = _decode_bootstrap_object(
+        encoded, {"startup_deadline", "caller_pid", "child_argv"}, context,
+    )
+    host, port = _bootstrap_endpoint(raw, context)
+    deadline = raw["startup_deadline"]
+    if not isinstance(deadline, (int, float)) or isinstance(deadline, bool):
+        raise ShutdownSupervisorError("public-API launcher bootstrap deadline is invalid")
+    deadline = float(deadline)
+    if not math.isfinite(deadline):
+        raise ShutdownSupervisorError("public-API launcher bootstrap deadline is invalid")
+    caller_pid, child_argv = raw["caller_pid"], raw["child_argv"]
+    if type(caller_pid) is not int or caller_pid <= 0:
+        raise ShutdownSupervisorError("public-API launcher caller PID is invalid")
+    if (
+        not isinstance(child_argv, list)
+        or not child_argv
+        or not all(isinstance(argument, str) for argument in child_argv)
+    ):
+        raise ShutdownSupervisorError("public-API launcher child arguments are invalid")
+    database_path = _bootstrap_database_path(raw["database_path"], context)
+    authentication_key, session_nonce = _bootstrap_credentials(
+        raw, context, length_context=context,
+    )
+    return _ApiLauncherBootstrap(
+        host, port, authentication_key, session_nonce, deadline, caller_pid,
+        tuple(child_argv), database_path,
+    )
+
+
+def _encode_bootstrap_fields(
+    bootstrap: _Bootstrap | _ApiLauncherBootstrap, extra_fields: dict[str, Any],
+) -> str:
+    return json.dumps(
+        {
+            "version": _PROTOCOL_VERSION,
+            "host": bootstrap.host,
+            "port": bootstrap.port,
+            "authentication_key": bootstrap.authentication_key.hex(),
+            "session_nonce": bootstrap.session_nonce.hex(),
+            "database_path": bootstrap.database_path,
+            **extra_fields,
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _encode_bootstrap(bootstrap: _Bootstrap) -> str:
+    return _encode_bootstrap_fields(bootstrap, {"startup_timeout": bootstrap.startup_timeout})
+
+
+def _encode_api_launcher_bootstrap(bootstrap: _ApiLauncherBootstrap) -> str:
+    return _encode_bootstrap_fields(bootstrap, {
+        "startup_deadline": bootstrap.startup_deadline,
+        "caller_pid": bootstrap.caller_pid,
+        "child_argv": list(bootstrap.child_argv),
+    })
 
 
 def _encode_frame(

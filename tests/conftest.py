@@ -1,4 +1,4 @@
-"""Shared pytest setup for qPlot's Qt-based tests."""
+"""Default integration isolation, with an explicit lightweight pure-test scope."""
 
 import os
 import runpy
@@ -8,8 +8,6 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-import qcodes
-from PyQt6 import QtWidgets as qtw
 
 pytest_plugins = ["tests._ci_scheduling"]
 
@@ -23,20 +21,32 @@ def pytest_sessionstart(session):
 
 def ensure_qapplication():
     """Return the process-wide QApplication, creating it for headless tests."""
+    from PyQt6 import QtWidgets as qtw
+
     app = qtw.QApplication.instance()
     if app is None:
         app = qtw.QApplication([])
     return app
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def qapplication():
     return ensure_qapplication()
 
 
 @pytest.fixture(autouse=True)
+def integration_state(request):
+    """Keep database isolation mandatory unless the test is explicitly pure."""
+    if request.node.get_closest_marker("pure") is None:
+        request.getfixturevalue("qapplication")
+        request.getfixturevalue("restore_qcodes_database_location")
+        request.getfixturevalue("assert_qcodes_snapshot_connections_closed")
+
+
+@pytest.fixture
 def restore_qcodes_database_location():
     """Keep QCoDeS's process-wide default database isolated per test."""
+    import qcodes
 
     original_database_path = qcodes.config.core.db_location
     try:
@@ -45,7 +55,7 @@ def restore_qcodes_database_location():
         qcodes.config.core.db_location = original_database_path
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def assert_qcodes_snapshot_connections_closed(monkeypatch):
     """Require every test-owned QCoDeS snapshot to be explicitly closed."""
     from qplot.datahandling import readonly as readonly_module

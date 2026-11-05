@@ -3,7 +3,7 @@
 import numpy as np
 
 from qplot._number_formatting import format_number
-from qplot.datahandling.parameter_data import numeric_isfinite
+from qplot.datahandling.numeric_samples import numeric_isfinite
 from qplot.tools.sample_statistics import (
     finite_mean,
     finite_standard_deviation,
