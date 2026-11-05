@@ -82,6 +82,11 @@ multiple windows, start in `main.py`; put database-specific behavior in
 `_database_actions.py`, plot-opening/export behavior in `_plot_actions.py`, and
 run-selection or refresh-control behavior in `_run_controls.py`.
 
+`_refresh_interval.py` keeps each control's accepted interval, displayed value,
+and pending text edit in one `_RefreshIntervalState` record. The state is
+transient and works with ordinary Qt spin boxes as well as the custom control;
+rounded display values do not silently replace the accepted timer precision.
+
 `_shutdown_coordinator.py` owns confirmed GUI shutdown: one typed state tracks
 the phase, fixed deadlines, cleanup escalation, and diagnostic snapshots.
 `MainWindow` retains exit confirmation and Qt entry points, with read-only status
@@ -901,7 +906,12 @@ should call helpers such as `cache_data`, `cache_rundescriber`, and
 `set_parameter_complete` instead of reaching into `_data`, `_dataset`, or
 `_complete` directly.
 
-`src/qplot/testdata.py` validates spreadsheet-friendly CSV specifications,
+`src/qplot/_testdata_specifications.py` owns the synthetic-data CSV schema,
+specification records, and parsing. Named declaration records carry source row
+numbers through forward-reference resolution. The parser imports no QCoDeS or
+GUI modules and probes SQL identifiers only in an in-memory SQLite database.
+
+`src/qplot/testdata.py` retains the public specification imports,
 exports the cumulative instruction collection packaged under
 `src/qplot/resources/testdata`, and writes synthetic QCoDeS databases for
 testing. It backs the
@@ -921,6 +931,13 @@ stopped during that individual Python call, so cancellation takes effect as soon
 as it returns. Threads are never terminated forcibly, and cancelled results are
 not applied to plot windows.
 
+`datahandling/LoadFromDB.py` prepares shaped and unshaped cache merges through
+separate helpers. A `_PreparedMerge` record keeps columns, insertion shape, and
+any planned-overflow sample count together. Shaped preparation owns private
+C-contiguous arrays; precision promotion and cancellation finish before the
+worker publishes its result. Database row counts remain separate from acquired
+sample counts.
+
 `src/qplot/tools/general.py` and `plot_tools.py` contain small data helpers and
 plot operation functions. `src/qplot/tools/operation_registry.py` maps those
 operation functions to the plot-window surfaces and input controls that expose
@@ -930,10 +947,19 @@ them.
 
 `src/qplot/configuration/config.py` loads, validates, updates, and resets
 `~/.qplot/config.json` using `config_schema.json`.
+Validated user edits and resets share `_commit_config`, which restores the
+previous in-memory state if persistence fails. Startup recovery deliberately
+keeps usable defaults even when they cannot be saved.
 
 `src/qplot/configuration/scripts.py` backs the `qplot-cfg` command-line helper.
 Dispatch and help share an explicit command registry. Adding a public method
 does not expose a new command, and help/version do not load user settings.
+
+`windows/_signal_blocking.py` provides scoped suppression for synchronous
+control updates. It restores every control's previous state in reverse order,
+including nested scopes and failed updates. The config setter, preferences
+reload, menu synchronization, and picker population share this helper;
+database publication and shutdown retain their separate lifecycle gates.
 
 `src/qplot/windows/_preferences.py` exposes the common config keys through the
 main-window preferences dialog and emits a signal when applied settings need to

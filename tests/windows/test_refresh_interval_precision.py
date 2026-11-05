@@ -17,13 +17,66 @@ from qplot.configuration.config import config
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._preferences import PreferencesDialog
 from qplot.windows._refresh_interval import (
+    connect_refresh_interval_edits,
     refresh_interval_value,
+    remember_refresh_interval,
     set_refresh_interval,
 )
 from qplot.windows.main import MainWindow
 from qplot.windows.plot1d import plot1d
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_plot_integration import wait_for
+
+
+def test_plain_spin_box_edits_before_and_after_precise_interval_load():
+    spin = qtw.QDoubleSpinBox()
+    spin.setDecimals(1)
+    accepted = []
+
+    def accept(interval):
+        accepted.append(interval)
+        remember_refresh_interval(spin, interval)
+
+    connect_refresh_interval_edits(spin, accept)
+    try:
+        # Connecting before a settings load must not swallow ordinary edits.
+        spin.setValue(.2)
+        assert accepted == [.2]
+        assert refresh_interval_value(spin) == .2
+
+        set_refresh_interval(spin, .049)
+        assert accepted == [.2]
+        assert spin.value() == 0
+        assert refresh_interval_value(spin) == .049
+        # An unedited Return can emit the displayed value on some Qt styles.
+        spin.valueChanged.emit(0.)
+        spin.editingFinished.emit()
+        assert accepted == [.2]
+
+        spin.lineEdit().textEdited.emit("0.0")
+        spin.editingFinished.emit()
+        assert accepted == [.2, 0.]
+        assert refresh_interval_value(spin) == 0.
+        spin.editingFinished.emit()
+        assert accepted == [.2, 0.]
+    finally:
+        spin.deleteLater()
+
+
+def test_new_precision_load_discards_an_unfinished_text_edit():
+    spin = qtw.QDoubleSpinBox()
+    spin.setDecimals(1)
+    accepted = []
+    connect_refresh_interval_edits(spin, accepted.append)
+    try:
+        set_refresh_interval(spin, .049)
+        spin.lineEdit().textEdited.emit("0.0")
+        set_refresh_interval(spin, .149)
+        spin.editingFinished.emit()
+        assert accepted == []
+        assert refresh_interval_value(spin) == .149
+    finally:
+        spin.deleteLater()
 
 
 @contextmanager

@@ -1,6 +1,8 @@
 """Keep timer precision independent of the refresh control's display precision."""
 
 from collections.abc import Callable
+from dataclasses import dataclass
+from typing import cast
 
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
@@ -32,16 +34,19 @@ class RefreshIntervalSpinBox(qtw.QDoubleSpinBox):
         self.initStyleOption(option)
         option.rect = QtCore.QRect(QtCore.QPoint(), size)
         edit_rect = self._editor_rect(option)
-        editor = self.lineEdit()
+        # QDoubleSpinBox constructs its editor and inherits an active style;
+        # Qt's generic widget stubs permit None for both accessors.
+        editor = cast(qtw.QLineEdit, self.lineEdit())
+        style = cast(qtw.QStyle, editor.style())
         frame = qtw.QStyleOptionFrame()
         frame.initFrom(editor)
         frame.state |= qtw.QStyle.StateFlag.State_Sunken
         if editor.hasFrame():
-            frame.lineWidth = editor.style().pixelMetric(
+            frame.lineWidth = style.pixelMetric(
                 qtw.QStyle.PixelMetric.PM_DefaultFrameWidth, frame, editor
             )
         frame.rect = QtCore.QRect(QtCore.QPoint(), edit_rect.size())
-        contents = editor.style().subElementRect(
+        contents = style.subElementRect(
             qtw.QStyle.SubElement.SE_LineEditContents, frame, editor
         )
         text_width = max(
@@ -61,7 +66,7 @@ class RefreshIntervalSpinBox(qtw.QDoubleSpinBox):
         return self.sizeHint()
 
     def _editor_rect(self, option):
-        style = self.style()
+        style = cast(qtw.QStyle, self.style())
         rect = style.subControlRect(
             qtw.QStyle.ComplexControl.CC_SpinBox, option,
             qtw.QStyle.SubControl.SC_SpinBoxEditField, self,
@@ -83,7 +88,7 @@ class RefreshIntervalSpinBox(qtw.QDoubleSpinBox):
     def _fit_editor(self):
         option = qtw.QStyleOptionSpinBox()
         self.initStyleOption(option)
-        self.lineEdit().setGeometry(self._editor_rect(option))
+        cast(qtw.QLineEdit, self.lineEdit()).setGeometry(self._editor_rect(option))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -105,27 +110,46 @@ class RefreshIntervalSpinBox(qtw.QDoubleSpinBox):
             self._fit_editor()
 
 
+@dataclass
+class _RefreshIntervalState:
+    """One control's accepted precision, displayed value, and pending edit."""
+
+    interval: float | None = None
+    displayed: float | None = None
+    text_edited: bool = False
+
+
+def _refresh_state(spin_box: qtw.QDoubleSpinBox) -> _RefreshIntervalState:
+    # Some callers supply ordinary Qt spin boxes, so state belongs to the
+    # specific control rather than requiring the custom widget subclass.
+    state = spin_box.__dict__.get("_qplot_refresh_state")
+    if state is None:
+        state = _RefreshIntervalState()
+        spin_box.__dict__["_qplot_refresh_state"] = state
+    return state
+
+
 def refresh_interval_value(spin_box: qtw.QDoubleSpinBox) -> float:
     """Return the accepted interval unless the control has actually changed."""
     displayed = float(spin_box.value())
-    previous_display = spin_box.__dict__.get("_qplot_refresh_display")
-    if displayed == previous_display:
-        return float(spin_box.__dict__["_qplot_refresh_interval"])
+    state = _refresh_state(spin_box)
+    if displayed == state.displayed and state.interval is not None:
+        return state.interval
     return displayed
 
 
 def remember_refresh_interval(spin_box: qtw.QDoubleSpinBox, interval: float) -> None:
     """Record a successful settings load or explicit edit without rounding it."""
-    state = spin_box.__dict__
-    state["_qplot_refresh_interval"] = float(interval)
-    state["_qplot_refresh_display"] = float(spin_box.value())
-    state["_qplot_refresh_text_edited"] = False
+    state = _refresh_state(spin_box)
+    state.interval = float(interval)
+    state.displayed = float(spin_box.value())
+    state.text_edited = False
     tooltip = getattr(
         spin_box, "_refresh_tooltip",
         "Automatic refresh interval in seconds.\n"
         "Set to 0 to disable automatic refresh.",
     )
-    if state["_qplot_refresh_display"] != interval:
+    if state.displayed != interval:
         tooltip += f"\nConfigured interval: {interval!r} s"
     spin_box.setToolTip(tooltip)
 
@@ -142,11 +166,11 @@ def connect_refresh_interval_edits(
 ) -> None:
     """Include typing the already displayed zero as an explicit manual edit."""
     def value_changed(interval: float) -> None:
-        state = spin_box.__dict__
+        state = _refresh_state(spin_box)
         if (
-            interval == state.get("_qplot_refresh_display")
-            and interval != state.get("_qplot_refresh_interval")
-            and not state.get("_qplot_refresh_text_edited", False)
+            interval == state.displayed
+            and interval != state.interval
+            and not state.text_edited
         ):
             # Qt emits the displayed value on an unedited Return as well.
             return
@@ -158,15 +182,16 @@ def connect_refresh_interval_edits(
         return
 
     def mark_edited(_text: str) -> None:
-        spin_box.__dict__["_qplot_refresh_text_edited"] = True
+        _refresh_state(spin_box).text_edited = True
 
     def finish_edit() -> None:
-        if not spin_box.__dict__.get("_qplot_refresh_text_edited", False):
+        state = _refresh_state(spin_box)
+        if not state.text_edited:
             return
         displayed = float(spin_box.value())
         if refresh_interval_value(spin_box) != displayed:
             spin_box.valueChanged.emit(displayed)
-        spin_box.__dict__["_qplot_refresh_text_edited"] = False
+        state.text_edited = False
 
     editor.textEdited.connect(mark_edited)
     spin_box.editingFinished.connect(finish_edit)

@@ -42,6 +42,7 @@ from ._preferences import (
 )
 from ._run_controls import AUTO_PLOT_KEY, RunControlsMixin
 from ._shutdown_coordinator import ShutdownCoordinator
+from ._signal_blocking import blocked_signals
 from ._status import StatusLabel
 from ._trusted_derived_qt import TrustedDerivedQtBridge
 from ._window_controls import (
@@ -677,21 +678,10 @@ class MainWindow(
             actions = list(getattr(self, "themes", []))
             if action not in actions:
                 actions.append(action)
-            blocked_states = [
-                theme_action.blockSignals(True)
-                for theme_action in actions
-                ]
-            try:
+            with blocked_signals(*actions):
                 for theme_action in actions:
                     action_theme = theme_action.text().replace("&", "").lower()
                     theme_action.setChecked(action_theme == current_theme)
-            finally:
-                for theme_action, signals_were_blocked in zip(
-                        actions,
-                        blocked_states,
-                        strict=True,
-                        ):
-                    theme_action.blockSignals(signals_were_blocked)
 
         if not persist_config_value(
                 self,
@@ -873,17 +863,9 @@ class MainWindow(
 
         def rollback():
             actions = list(getattr(self, "previewSizeActions", []))
-            blocked_states = [action.blockSignals(True) for action in actions]
-            try:
+            with blocked_signals(*actions):
                 for action in actions:
                     action.setChecked(action.data() == previous_size)
-            finally:
-                for action, signals_were_blocked in zip(
-                        actions,
-                        blocked_states,
-                        strict=True,
-                        ):
-                    action.blockSignals(signals_were_blocked)
 
         return persist_config_value(
             self,

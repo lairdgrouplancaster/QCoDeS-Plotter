@@ -236,13 +236,7 @@ class config:
             target[keys[-1]] = value
 
         self.validate(updated_config)
-        previous_config = self.config
-        self.config = updated_config
-        try:
-            self.save_config(self.default_file)
-        except Exception:
-            self.config = previous_config
-            raise
+        self._commit_config(updated_config)
     
     
     def load_config(self, path: str):
@@ -342,18 +336,19 @@ class config:
             
     
     def reset_to_defaults(self):
-        """
-        Resets the config.json file to default determined by the config_schema
+        """Validate and persist fresh schema defaults as one settings change."""
+        self._commit_config(self.build_default_config())
 
-        Needs adjusting if nesting of config increases
+
+    def _commit_config(self, candidate):
+        """Publish validated settings, restoring the prior state on failure.
+
+        This transaction is for user-requested edits and resets. Startup
+        recovery deliberately retains usable defaults even if saving fails.
         """
-        config = self.build_default_config()
-        
-        # Save reset to file. Keep the last persisted configuration
-        # authoritative if any part of the atomic write fails.
         had_previous_config = hasattr(self, "config")
         previous_config = getattr(self, "config", {})
-        self.config = config
+        self.config = candidate
         try:
             self.save_config(self.default_file)
         except Exception:

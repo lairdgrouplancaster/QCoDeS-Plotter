@@ -17,6 +17,7 @@ from ._config_persistence import persist_config_values
 from ._csv_filenames import CSV_FILENAME_FORMAT_KEY, CSV_FILENAME_FORMAT_OPTIONS
 from ._plot_annotation import SHOW_SOURCE_ANNOTATION_KEY
 from ._plot_tiling import PLOT_TILE_COLUMNS_KEY, PLOT_TILE_ROWS_KEY
+from ._signal_blocking import blocked_signals
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_INCOMPATIBLE_AXES_KEY,
@@ -561,8 +562,7 @@ class PreferencesDialog(qtw.QDialog):
 
         """
         widgets = self._preference_controls()
-        blocked_states = [widget.blockSignals(True) for widget in widgets]
-        try:
+        with blocked_signals(*widgets):
             theme_index = self.themeCombo.findData(values["user_preference.theme"])
             self.themeCombo.setCurrentIndex(max(theme_index, 0))
             self.fontSizeSpin.setValue(int(values[FONT_SIZE_KEY]))
@@ -624,13 +624,6 @@ class PreferencesDialog(qtw.QDialog):
                 )
             self.checkUpdatesOnLaunchCheck.setChecked(values[CHECK_ON_LAUNCH_KEY])
             self.includePrereleasesCheck.setChecked(values[INCLUDE_PRERELEASES_KEY])
-        finally:
-            for widget, signals_were_blocked in zip(
-                    widgets,
-                    blocked_states,
-                    strict=True,
-                    ):
-                widget.blockSignals(signals_were_blocked)
 
     def preference_values(self):
         """

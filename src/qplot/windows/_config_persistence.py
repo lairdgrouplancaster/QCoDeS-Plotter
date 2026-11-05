@@ -5,6 +5,8 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.diagnostics import log_exception
 
+from ._signal_blocking import blocked_signals
+
 
 def set_widget_value_without_signals(
         widget: Any,
@@ -13,11 +15,8 @@ def set_widget_value_without_signals(
         ) -> None:
     """Set a Qt control value while preserving its signal-blocking state."""
 
-    signals_were_blocked = widget.blockSignals(True)
-    try:
+    with blocked_signals(widget):
         setter(value)
-    finally:
-        widget.blockSignals(signals_were_blocked)
 
 
 def persist_config_action(

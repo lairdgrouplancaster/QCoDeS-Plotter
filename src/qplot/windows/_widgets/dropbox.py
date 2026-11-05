@@ -3,6 +3,8 @@ from PyQt6 import QtWidgets as qtw
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
+from .._signal_blocking import blocked_signals
+
 
 class picker_1d(qtw.QWidget):
     """
@@ -82,24 +84,23 @@ class picker_1d(qtw.QWidget):
             the displayed text is also used as the identity.
 
         """
-        self.option_box.blockSignals(True)
+        with blocked_signals(self.option_box):
         
-        # Reset selection
-        self.option_box.clear()
-        if items:
-            identities = items if item_data is None else item_data
-            for label, identity in zip(items, identities, strict=True):
-                self.option_box.addItem(label, userData=identity)
+            # Reset selection
+            self.option_box.clear()
+            if items:
+                identities = items if item_data is None else item_data
+                for label, identity in zip(items, identities, strict=True):
+                    self.option_box.addItem(label, userData=identity)
         
-        # Reset display
-        self.option_box.setEditable(True)
-        line_edit = self.option_box.lineEdit()
-        if line_edit is not None:
-            line_edit.setReadOnly(True)
-            line_edit.setPlaceholderText("Add to Plot")
-        self.option_box.setCurrentIndex(-1) # set to placeholder
+            # Reset display
+            self.option_box.setEditable(True)
+            line_edit = self.option_box.lineEdit()
+            if line_edit is not None:
+                line_edit.setReadOnly(True)
+                line_edit.setPlaceholderText("Add to Plot")
+            self.option_box.setCurrentIndex(-1) # set to placeholder
         
-        self.option_box.blockSignals(False)
         
         
     @QtCore.pyqtSlot(int)
