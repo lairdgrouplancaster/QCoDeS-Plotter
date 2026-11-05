@@ -52,6 +52,65 @@ def _interpreter_executable() -> Path:
     return Path(os.fsdecode(buffer.value)).resolve(strict=True)
 
 
+def install_file_open_handler(app, window, startup_database_path=None):
+    """Forward warm Finder opens through a new, independently supervised applet."""
+    if sys.platform != "darwin":
+        return None
+    from PyQt6 import QtCore
+
+    try:
+        executable = _interpreter_executable()
+    except (OSError, ValueError) as error:
+        logging.getLogger("qplot").warning("Could not prepare macOS document handling: %s", error)
+        return None
+    bundle = executable.parents[2]
+    if bundle.suffix != ".app" or not (bundle / "Contents/Resources/launch.sh").is_file():
+        return None  # The cosmetic-bundle fallback is running in Python.app.
+
+    class FileOpenHandler(QtCore.QObject):
+        def __init__(self):
+            super().__init__(app)
+            self.starting = True
+            # Qt may repeat the command-line document as a native FileOpen
+            # event during startup. It is already being loaded by MainWindow.
+            self.startup_path = (os.path.abspath(startup_database_path)
+                                 if startup_database_path else None)
+            QtCore.QTimer.singleShot(0, self.finish_startup)
+
+        def finish_startup(self):
+            self.starting = False
+
+        def eventFilter(self, watched, event):
+            if event.type() != QtCore.QEvent.Type.FileOpen:
+                return False
+            url = event.url()
+            if not url.isLocalFile():
+                return False
+            filename = url.toLocalFile()
+            if not filename or not filename.lower().endswith(".db"):
+                return False
+            if self.starting and os.path.abspath(filename) == self.startup_path:
+                return True
+            try:
+                # Without -n, Launch Services sends the event back to this GUI.
+                # The applet retains the normal bootstrap and shutdown owner;
+                # no Python process is spawned as a child of the existing GUI.
+                environment = {key: value for key, value in os.environ.items()
+                               if not key.startswith(("_QPLOT_", "QPLOT_"))
+                               and key != "__PYVENV_LAUNCHER__"}
+                subprocess.run(["/usr/bin/open", "-n", "-a", str(bundle), filename],
+                               check=True, capture_output=True, timeout=5, env=environment)
+            except (OSError, subprocess.SubprocessError) as error:
+                window.show_error("Database Open Failed", "qPlot could not start another viewer.",
+                                  str(error))
+            return True
+
+    handler = FileOpenHandler()
+    app.installEventFilter(handler)
+    app._qplot_file_open_handler = handler
+    return handler
+
+
 def _installed_executable(bundle: Path) -> Path:
     """Use the desktop app itself, so its shortcut and GUI share a Dock tile."""
     import qplot

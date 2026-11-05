@@ -149,6 +149,10 @@ def _run_gui(
         if database_path is None:
             database_path = _database_path_from_arguments(sys.argv[1:])
         w = MainWindow(startup_database_path=database_path)
+        if sys.platform == "darwin":
+            from qplot._macos_identity import install_file_open_handler
+
+            install_file_open_handler(app, w, database_path)
         process_fail_safe = None
         if hasattr(w, "_shutdown_process_fail_safe"):
             process_fail_safe = _ProcessShutdownFailSafe(

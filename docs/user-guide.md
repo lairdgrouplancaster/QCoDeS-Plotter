@@ -276,8 +276,10 @@ want to change the default for all `.db` files. Selecting multiple files on
 macOS opens a separate supervised qPlot instance for each. Paths containing
 spaces and Unicode are supported.
 
-Setup records the Python environment that ran the command; it does not copy
-Python or bundle qPlot. Keep that environment installed at its original path.
+Setup records the Python environment that ran the command. The macOS launcher
+copies the interpreter executable for its Dock identity, but still depends on
+that environment and its installed libraries; it is not a standalone qPlot
+bundle. Keep the environment installed at its original path.
 Upgrading qPlot in the same environment normally needs no launcher changes.
 If Python or qPlot is removed or moved, a launch error explains how to recreate
 the launcher. After recreating a moved environment, run setup from its Python.
