@@ -48,7 +48,9 @@ def create_desktop_shortcut(destination: Path) -> dict | None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if sys.platform == "darwin":
         path.symlink_to(destination, target_is_directory=True)
-        return {"path": str(path), "target": str(destination), "kind": "symlink"}
+        # Record the spelling stored by the filesystem. Some hosts return an
+        # extended path prefix from readlink even when the input omitted it.
+        return {"path": str(path), "target": os.readlink(path), "kind": "symlink"}
     payload = (destination / "qPlot.lnk").read_bytes()
     with path.open("xb") as stream:
         try:

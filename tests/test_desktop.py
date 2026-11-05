@@ -72,6 +72,7 @@ def test_mac_setup_and_remove(tmp_path, monkeypatch, fake_tools, isolated_deskto
     assert shortcut.is_symlink()
     assert shortcut.resolve() == destination.resolve()
     assert record["desktop_shortcut"]["path"] == str(shortcut)
+    assert record["desktop_shortcut"]["target"] == os.readlink(shortcut)
     with (destination / "Contents/Info.plist").open("rb") as stream:
         properties = plistlib.load(stream)
     assert "CFBundleDocumentTypes" not in properties
@@ -509,22 +510,64 @@ def test_native_windows_shortcut_and_arguments(tmp_path, isolated_desktop):
     assert shortcut.is_file()
     desktop_link = isolated_desktop / "qPlot.lnk"
     assert desktop_link.read_bytes() == shortcut.read_bytes()
-    # Read the saved link through Windows Script Host's native shell-link
-    # accessor. A Unicode text file avoids console-code-page loss in CI.
-    icon_result = tmp_path / "shortcut-icon.txt"
-    inspect_link = tmp_path / "inspect-shortcut.vbs"
-    inspect_link.write_text(
-        'Set shell = CreateObject("WScript.Shell")\n'
-        f'Set shortcut = shell.CreateShortcut({desktop._vbs_string(str(shortcut))})\n'
-        'Set fs = CreateObject("Scripting.FileSystemObject")\n'
-        f'Set output = fs.CreateTextFile({desktop._vbs_string(str(icon_result))}, True, True)\n'
-        'output.Write shortcut.IconLocation\noutput.Close\n',
-        encoding="utf-16",
-    )
-    subprocess.run(["cscript.exe", "//B", "//nologo", str(inspect_link)], check=True, timeout=20)
-    icon_file, icon_index = icon_result.read_text(encoding="utf-16").rsplit(",", 1)
-    assert Path(icon_file.strip('"')) == destination / "qplot.ico"
-    assert int(icon_index) == 0
+    # Load the saved Desktop link through the Unicode shell interface used by
+    # Explorer. Unlike WScript.Shell.CreateShortcut, this explicitly requires
+    # loading an existing link and preserves Unicode throughout inspection.
+    import ctypes
+    import uuid
+
+    pointer = ctypes.c_void_p
+    hresult = ctypes.c_long
+    ole = ctypes.WinDLL("ole32")
+    ole.CoInitializeEx.argtypes = [pointer, ctypes.c_uint32]
+    ole.CoInitializeEx.restype = hresult
+    ole.CoCreateInstance.argtypes = [pointer, pointer, ctypes.c_uint32, pointer,
+                                    ctypes.POINTER(pointer)]
+    ole.CoCreateInstance.restype = hresult
+    ole.CoUninitialize.argtypes = []
+    ole.CoUninitialize.restype = None
+
+    def guid(value):
+        return ctypes.create_string_buffer(uuid.UUID(value).bytes_le)
+
+    def check(result):
+        assert result >= 0, f"Shell-link inspection failed: HRESULT 0x{result & 0xffffffff:08x}"
+
+    def method(interface, slot, *arguments):
+        vtable = ctypes.cast(interface, ctypes.POINTER(ctypes.POINTER(pointer))).contents
+        return ctypes.WINFUNCTYPE(hresult, pointer, *arguments)(vtable[slot])
+
+    initialized = ole.CoInitializeEx(None, 2)
+    if initialized != -2147417850:  # RPC_E_CHANGED_MODE: reuse the caller's apartment.
+        check(initialized)
+    link, persist = pointer(), pointer()
+    try:
+        check(ole.CoCreateInstance(
+            guid("00021401-0000-0000-c000-000000000046"), None, 1,
+            guid("000214f9-0000-0000-c000-000000000046"), ctypes.byref(link),
+        ))
+        check(method(link, 0, pointer, ctypes.POINTER(pointer))(
+            link, guid("0000010b-0000-0000-c000-000000000046"), ctypes.byref(persist),
+        ))
+        # IPersistFile::Load must succeed; unlike CreateShortcut it cannot
+        # silently create an empty link when the existing filename is lost.
+        check(method(persist, 5, ctypes.c_wchar_p, ctypes.c_uint32)(
+            persist, str(desktop_link), 0,  # STGM_READ
+        ))
+        icon_file = ctypes.create_unicode_buffer(32768)
+        icon_index = ctypes.c_int(-1)
+        check(method(link, 16, ctypes.c_wchar_p, ctypes.c_int,
+                     ctypes.POINTER(ctypes.c_int))(
+            link, icon_file, len(icon_file), ctypes.byref(icon_index),
+        ))
+        assert Path(icon_file.value) == destination / "qplot.ico"
+        assert icon_index.value == 0
+    finally:
+        for interface in (persist, link):
+            if interface:
+                method(interface, 2)(interface)  # IUnknown::Release
+        if initialized in (0, 1):
+            ole.CoUninitialize()
     # Also execute the shortcut itself: its saved arguments must preserve the
     # Unicode launcher path, not just the directly invoked VBS script above.
     import time

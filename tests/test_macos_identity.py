@@ -114,10 +114,12 @@ def test_file_open_handler_validates_and_forwards_each_document(tmp_path, monkey
         qapplication.processEvents()
         for path in (first, tmp_path / "測定 second.db"):
             assert handler.eventFilter(qapplication, file_event(path))
-        assert [call[0] for call in calls] == [
-            ["/usr/bin/open", "-n", "-a", str(bundle), str(path)]
-            for path in (first, tmp_path / "測定 second.db")
-        ]
+        assert len(calls) == 2
+        for (command, _options), path in zip(calls, (first, tmp_path / "測定 second.db"), strict=True):
+            assert command[:4] == ["/usr/bin/open", "-n", "-a", str(bundle)]
+            assert len(command) == 5
+            # Qt uses forward slashes for local URLs even on Windows hosts.
+            assert Path(command[4]) == path
         for _command, options in calls:
             assert options["timeout"] == 5
             assert options["check"] is True
