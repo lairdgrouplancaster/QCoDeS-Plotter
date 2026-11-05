@@ -12,11 +12,26 @@ import os
 import subprocess
 import sys
 import threading
-from datetime import datetime
 from time import monotonic, perf_counter
 
 from PyQt6 import QtCore
 
+from qplot.datahandling._database_info import (
+    _database_info_groups,
+    _format_database_info,
+)
+from qplot.datahandling._database_info import (
+    _display_value as _display_value,
+)
+from qplot.datahandling._database_info import (
+    _format_bytes as _format_bytes,
+)
+from qplot.datahandling._database_info import (
+    _timestamp_value as _timestamp_value,
+)
+from qplot.datahandling._database_probe import (
+    DATABASE_ACCESS_ERROR_PREFIX as _DATABASE_ACCESS_ERROR_PREFIX,
+)
 from qplot.datahandling._sqlite_identifiers import (
     quote_identifier_text as _sqlite_identifier,
 )
@@ -70,7 +85,6 @@ from qplot.datahandling.trusted_query_types import (
 from qplot.diagnostics import log_exception
 
 DATABASE_ACCESS_TIMEOUT_SECONDS = 3
-_DATABASE_ACCESS_ERROR_PREFIX = "QPLOT_DATABASE_ACCESS_ERROR:"
 
 
 def _bounded_run_publication(fields):
@@ -198,34 +212,10 @@ def database_access_error(
     timeout = float(timeout)
     if deadline is not None:
         timeout = min(timeout, max(0.0, float(deadline) - monotonic()))
-    probe = (
-        "import json\n"
-        "import sys\n"
-        "from time import monotonic\n"
-        "from qplot.datahandling.readonly import probe_read_only_database\n"
-        "try:\n"
-        "    expected_database_identity = json.loads(sys.argv[4])\n"
-        "    if expected_database_identity is not None:\n"
-        "        expected_database_identity = tuple(expected_database_identity)\n"
-        "    deadline = monotonic() + max(0.0, float(sys.argv[3]))\n"
-        "    probe_read_only_database(\n"
-        "        sys.argv[1],\n"
-        "        ignore_unpaired_wal=(sys.argv[2] == '1'),\n"
-        "        expected_database_identity=expected_database_identity,\n"
-        "        deadline=deadline,\n"
-        "        _check_sqlite_lock_bytes=True,\n"
-        "    )\n"
-        "except Exception as err:\n"
-        "    payload = {'type': type(err).__name__, 'message': str(err)}\n"
-        f"    print('{_DATABASE_ACCESS_ERROR_PREFIX}' + json.dumps(payload), "
-        "file=sys.stderr)\n"
-        "    raise SystemExit(1)\n"
-        )
-
     command = [
         sys.executable,
-        "-c",
-        probe,
+        "-m",
+        "qplot.datahandling._database_probe",
         database_path,
         "1" if ignore_unpaired_wal else "0",
         repr(timeout),
@@ -1943,82 +1933,3 @@ def _latest_run(cursor):
         "is_completed": value[4],
         "guid": value[5],
         }
-
-
-def _database_info_groups(summary):
-    latest_run = summary["latest_run"]
-    latest_run_rows = [("Latest run", "None")]
-    if latest_run:
-        status = "completed" if latest_run.get("is_completed") else "running or incomplete"
-        latest_run_rows = [
-            ("Latest run ID", _display_value(latest_run.get("run_id"))),
-            ("Latest run name", _display_value(latest_run.get("name"))),
-            ("Latest run status", status),
-            ("Latest run started", _timestamp_value(latest_run.get("run_timestamp"))),
-            ("Latest run completed", _timestamp_value(latest_run.get("completed_timestamp"))),
-            ("Latest run GUID", _display_value(latest_run.get("guid"))),
-            ]
-
-    page_bytes = None
-    if summary["page_count"] is not None and summary["page_size"] is not None:
-        page_bytes = int(summary["page_count"]) * int(summary["page_size"])
-
-    return [
-        [
-            ("Database", summary["filename"]),
-            ("Path", summary["path"]),
-            ("Folder", summary["folder"]),
-            ("File size", _format_bytes(summary["file_size"])),
-            ("Last modified", _timestamp_value(summary["file_modified"])),
-            ("SQLite allocated size", _format_bytes(page_bytes)),
-            ],
-        [
-            ("Database schema version", _display_value(summary["user_version"])),
-            ("SQLite application_id", _display_value(summary["application_id"])),
-            ],
-        [
-            ("Tables", _display_value(summary["table_count"])),
-            ("Experiments", _display_value(summary["experiment_count"])),
-            ("Runs", _display_value(summary["run_count"])),
-            ],
-        latest_run_rows,
-        ]
-
-
-def _format_database_info(summary):
-    groups = _database_info_groups(summary)
-    sections = [
-        "\n".join(f"{label}: {_display_value(value)}" for label, value in group)
-        for group in groups
-        ]
-    return "\n\n".join(sections)
-
-
-def _format_bytes(value):
-    if value is None:
-        return "Unknown"
-
-    value = int(value)
-    units = ("B", "KB", "MB", "GB", "TB")
-    size = float(value)
-    for unit in units[:-1]:
-        if size < 1024:
-            return f"{size:.1f} {unit}" if unit != "B" else f"{value} B"
-        size /= 1024
-    return f"{size:.1f} {units[-1]}"
-
-
-def _timestamp_value(value):
-    if value in (None, ""):
-        return "Not recorded"
-
-    try:
-        return datetime.fromtimestamp(float(value)).strftime("%Y-%m-%d %H:%M:%S")
-    except (TypeError, ValueError, OSError):
-        return str(value)
-
-
-def _display_value(value):
-    if value in (None, ""):
-        return "Unknown"
-    return str(value)

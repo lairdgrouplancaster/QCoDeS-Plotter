@@ -132,12 +132,22 @@ def install_interpreter(bundle: Path) -> None:
     shutil.copy2(_interpreter_executable(), executable)
     subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(executable)],
                    check=True, capture_output=True, timeout=2)
+    _verify_interpreter(
+        executable, prefix=sys.prefix, python=str(Path(sys.executable).absolute()),
+        package=str(Path(qplot.__file__).absolute()), launcher_python=sys.executable,
+    )
+
+
+def _verify_interpreter(
+    executable: Path, *, prefix: str, python: str, package: str, launcher_python: str,
+) -> None:
+    """Require a signed interpreter copy to start the expected installation."""
     subprocess.run(
         [str(executable), "-I", "-c",
          "import sys, qplot; from pathlib import Path; "
          "assert (sys.prefix, sys.executable, str(Path(qplot.__file__).absolute())) == tuple(sys.argv[1:])",
-         sys.prefix, str(Path(sys.executable).absolute()), str(Path(qplot.__file__).absolute())],
-        env=dict(os.environ, __PYVENV_LAUNCHER__=sys.executable),
+         prefix, python, package],
+        env=dict(os.environ, __PYVENV_LAUNCHER__=launcher_python),
         check=True, capture_output=True, timeout=2,
     )
 
@@ -207,13 +217,9 @@ def _runtime_executable(cache_root: Path | None = None) -> Path:
             )
         # Some Python distributions use relative library paths. Verify that
         # this copy can still start the exact installation before publishing it.
-        subprocess.run(
-            [str(executable), "-I", "-c",
-             "import sys, qplot; from pathlib import Path; "
-             "assert (sys.prefix, sys.executable, str(Path(qplot.__file__).absolute())) == tuple(sys.argv[1:])",
-             record["prefix"], record["python"], record["package"]],
-            env=dict(os.environ, __PYVENV_LAUNCHER__=str(python)),
-            check=True, capture_output=True, timeout=2,
+        _verify_interpreter(
+            executable, prefix=record["prefix"], python=record["python"],
+            package=record["package"], launcher_python=str(python),
         )
         try:
             staged.rename(bundle)
