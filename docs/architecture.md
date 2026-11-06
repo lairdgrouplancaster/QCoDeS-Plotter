@@ -305,10 +305,44 @@ reusable UI controls used inside plot windows.
 `datahandling/export_data.py` selects exportable measurements and expands CSV
 columns within each acquisition record. Keep its singleton broadcasting and
 nested object-cell handling separate from plot flattening: the two paths have
-different input contracts. GUI actions retain source validation and file writes.
+different input contracts. GUI actions retain destination approval and publication.
 The same module assembles dataframes with precision-preserving pandas dtypes.
 The controller supplies aligned measurement columns lazily, so each frame is
 assembled before the next measurement is read.
+
+`datahandling/csv_export.py` streams raw CSV from a fixed run prefix. Trusted
+exports request the descriptor and prefix from the existing broker; fallback
+exports acquire and close their own read-only dataset. Physical row-ID paging
+and bounded NPY slices avoid materialising every measurement as a dataframe.
+Each parameter tree expands acquisition records independently before the trees
+are joined side by side. Exact integers, extended floats, complex values,
+singleton broadcasting, and missing trailing cells retain their CSV semantics.
+
+`windows/_run_csv_export.py` captures the run identity and measurement selector
+without a GUI-thread data read. It prepares single or batch destinations before
+queuing work. Batch requests retain the selected GUIDs through modal dialogs;
+each run gets its own committed prefix when its worker starts. Switching or
+closing the main database cancels its pending raw exports.
+
+Thumbnail group exports capture `(GUID, parameter name)` targets from the run
+table or selected-run Preview pane. They use the same batch destination
+approval and source validation as row exports, with one measurement per file.
+Filename allocation disambiguates collisions before any writer starts,
+including measurements sharing the optional QCoDeS run-based filename format.
+
+`windows/_export_tasks.py` owns one bounded serialization pool and a nonmodal
+progress window. Writers receive only frozen inputs, cancellation, progress,
+and the owned stage path. `StagedExport` in `_export_paths.py` separates worker
+serialization from GUI-thread publication: source, destination, and active
+database protections are revalidated before the atomic replace. Cancellation
+discards the stage and retains an existing destination. Shutdown counts tasks
+until GUI cleanup finishes, including cancelled queued tasks; completed history
+releases callbacks and Qt/data owners.
+
+Plot CSV captures copies of loaded arrays and operation flags on the GUI thread.
+`tools/plot_csv.py` transforms and serializes those detached values in the worker.
+Line exports explicitly select underlying or native-transformed samples;
+heatmaps export their current primary grid. Neither mode triggers a source read.
 
 `_numeric_arrays.py` shares NPY header inspection and bounded numeric BLOB
 slices. The worker retains ownership of its read-only SQLite handle; preview
@@ -429,7 +463,7 @@ and prepares no additional selected-detail snapshot. A trusted detail failure
 also does not trigger an automatic fallback copy. This is a property of the
 selection action, not the whole fallback session: fallback metadata and retained
 preview paths can still create private snapshots. Fallback plot actions
-(including Auto-plot) and CSV actions can materialise a DataSet.
+(including Auto-plot) and fallback raw CSV actions can materialise a DataSet.
 
 Both selection paths share generation invalidation, metadata capture, selected
 ID updates, dataset release, and run-ID control synchronization. Their source
@@ -895,8 +929,9 @@ path; unsupported runs receive bounded nonfatal unavailable cards. The derived
 lanes use `(run tier, work kind, stable index)`: selected metadata (with
 detail), thumbnail, and preview; then visible metadata/thumbnail/preview lanes;
 then the equivalent remaining lanes. Explicit trusted plots use connection-free `TrustedPlotDataset` metadata and
-broker-owned prefix capture or numeric aggregation. CSV and fallback plot
-actions remain snapshot consumers. All address the selected GUID and exact
+broker-owned prefix capture or numeric aggregation. Trusted raw CSV uses the
+same prefix capture, while fallback CSV and plot actions remain snapshot
+consumers. All address the selected GUID and exact
 `DatabaseInstance`; snapshot fallback sessions may keep their existing preview
 behavior. Trusted selection never creates an automatic
 fallback copy.

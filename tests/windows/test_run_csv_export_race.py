@@ -3,7 +3,6 @@
 import csv
 import os
 import sqlite3
-from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -15,62 +14,51 @@ from qcodes.dataset import (
 )
 from qcodes.parameters import ManualParameter
 
+from qplot.datahandling import csv_export as csv_export_module
+from qplot.datahandling.export_data import exportable_measurement_params
 from qplot.datahandling.file_identity import (
-    SQLITE_SIDECAR_SUFFIXES,
     database_file_identity,
     logical_database_path,
 )
 from qplot.datahandling.trusted_live_service import TRUSTED_LIVE_MODE
-from qplot.windows import _plot_actions as plot_actions_module
+from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._dataset_handle import close_dataset_connection
-from qplot.windows._export_paths import prepare_export_destination
-from qplot.windows._plot_actions import PlotActionsMixin
+from qplot.windows._export_paths import StagedExport, prepare_export_destination
+from qplot.windows.main import MainWindow
+from tests._window_lifecycle import close_main_window
+from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
 
 
-class _Field:
-    def __init__(self, value):
-        self.value = str(value)
+class _RunCsvWindow(MainWindow):
+    """Exercise the real Qt owner, trusted reader and asynchronous task pool."""
 
-    def text(self):
-        return self.value
+    instances = []
 
-
-class _RunList:
-    def __init__(self, run_id, guid):
-        self._runs = {
-            run_id: {
-                "guid": guid,
-                "measure_parameters": ["signal"],
-                "sweep_parameters": ["x"],
-            }
-        }
-
-    def all_run_metadata(self):
-        return self._runs
-
-    def run_id_for_guid(self, guid):
-        for run_id, metadata in self._runs.items():
-            if metadata["guid"] == guid:
-                return run_id
-        return None
-
-
-class _RunCsvHarness(PlotActionsMixin):
     def __init__(self, database_path, destination, run_id, guid):
-        self.fileTextbox = _Field(database_path)
-        self.measurementBox = _Field("*")
-        self.selected_run_id = run_id
-        self.ds = None
-        self._selected_dataset_key = None
-        self.dataset_holder = {}
-        self.RunList = _RunList(run_id, guid)
         self.destination = destination
         self.destination_callback = None
-        self._loaded_database_identity = database_file_identity(database_path)
         self.status_messages = []
         self.errors = []
         self.reload_requests = []
         self.loaded_datasets = []
+        super().__init__()
+        self.instances.append(self)
+        self.startupDatabaseTimer.stop()
+        self.monitor.stop()
+        self.config.config["user_preference"]["confirm_close"] = False
+        self.config.config["user_preference"]["confirm_close_all"] = False
+        self.close_database(status=False)
+        assert self.load_file(str(database_path))
+        wait_for(lambda: (
+            not self._database_load_active
+            and not detail_channel(self).active
+            and not detail_channel(self, True).active
+        ))
+        self.monitor.stop()
+        assert self.selected_run_id == run_id
+        assert self.RunList.run_id_for_guid(guid) == run_id
+        assert self._database_access_mode == TRUSTED_LIVE_MODE
+        self.measurementBox.setText("*")
 
     def _choose_csv_export_filename(self, default_name):
         if self.destination_callback is not None:
@@ -79,8 +67,7 @@ class _RunCsvHarness(PlotActionsMixin):
                 self.show_status("CSV export cancelled.", 3000)
             return destination
         return prepare_export_destination(
-            self,
-            str(self.destination),
+            self, str(self.destination),
             replacement_confirmed=self.destination.exists(),
         )
 
@@ -89,20 +76,32 @@ class _RunCsvHarness(PlotActionsMixin):
         self.loaded_datasets.append(dataset)
         return dataset
 
-    def _reload_if_database_instance_changed(self, database_path):
-        changed = (
-            database_file_identity(database_path)
-            != self._loaded_database_identity
-        )
-        if changed:
-            self.reload_requests.append(str(database_path))
-        return changed
+    def _reload_replaced_database(self, database_path, **_kwargs):
+        # Observe recovery requests without racing a second UI load against
+        # assertions about the replacement's untouched on-disk contents.
+        self.reload_requests.append(str(database_path))
 
     def show_status(self, message, timeout=5000):
         self.status_messages.append((message, timeout))
 
     def show_error(self, title, message, details=None):
         self.errors.append((title, message, details))
+
+    def wait_export(self):
+        manager = getattr(self, "_export_task_manager", None)
+        assert manager is not None, (self.errors, self.status_messages)
+        wait_for(lambda: not manager.tasks)
+        return manager.history[-1]
+
+
+@pytest.fixture(autouse=True)
+def isolated_export_windows(monkeypatch, tmp_path):
+    configure_temp_qplot(monkeypatch, tmp_path)
+    _RunCsvWindow.instances = []
+    yield
+    for window in _RunCsvWindow.instances:
+        close_main_window(window)
+    _RunCsvWindow.instances = []
 
 
 def _create_run(database_path: Path, row_count: int):
@@ -183,9 +182,9 @@ def test_run_csv_exports_real_measurements_consistently(
     database_path = tmp_path / f"{kind}.db"
     run_id, guid = _create_measurement_run(database_path, kind)
     destination = tmp_path / "export.csv"
-    harness = _RunCsvHarness(database_path, destination, run_id, guid)
-    harness.RunList._runs[run_id]["measure_parameters"] = names
-    harness.measurementBox.value = selection
+    harness = _RunCsvWindow(database_path, destination, run_id, guid)
+    harness.RunList._item_for_guid(guid).run_metadata["measure_parameters"] = names
+    harness.measurementBox.setText(selection)
     selected = None
     try:
         if loaded:
@@ -197,8 +196,9 @@ def test_run_csv_exports_real_measurements_consistently(
 
         request = harness._run_csv_export_request()
         expected_names = names if selection == "*" else [names[int(selection) - 1]]
-        assert request[1] == tuple(expected_names)
+        assert request[1] == (None if selection == "*" else int(selection))
         harness.exportRunCsv()
+        assert harness.wait_export().error is None
         assert harness.errors == []
         with destination.open(newline="", encoding="utf-8") as csv_file:
             rows = list(csv.reader(csv_file))
@@ -222,42 +222,52 @@ def test_run_csv_exports_real_measurements_consistently(
             close_dataset_connection(selected)
 
 
+@pytest.mark.parametrize("selection", ("*", "2"))
 def test_trusted_csv_export_recovers_standalone_before_metadata_finishes(
-        tmp_path
+        tmp_path, monkeypatch, selection,
         ):
     database_path = tmp_path / "progressive.db"
     run_id, guid = _create_measurement_run(database_path, "mixed")
     destination = tmp_path / "progressive.csv"
-    harness = _RunCsvHarness(database_path, destination, run_id, guid)
-    harness._database_access_mode = TRUSTED_LIVE_MODE
-    harness.RunList._runs[run_id]["measure_parameters"] = ["signal"]
+    harness = _RunCsvWindow(database_path, destination, run_id, guid)
+    harness.RunList._item_for_guid(guid).run_metadata["measure_parameters"] = ["signal"]
+    harness.measurementBox.setText(selection)
+    captures = []
+    original_capture = harness._trusted_read_service.submit_plot_dataset
 
-    def choose_after_preflight(_default_name):
-        assert len(harness.loaded_datasets) == 1
-        with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
-            harness.loaded_datasets[0].conn.cursor()
-        return str(destination)
+    def record_capture(*args, **kwargs):
+        captures.append(True)
+        return original_capture(*args, **kwargs)
 
-    harness.destination_callback = choose_after_preflight
+    monkeypatch.setattr(harness._trusted_read_service, "submit_plot_dataset", record_capture)
+
+    def choose_before_capture(_default_name):
+        assert captures == []
+        assert harness.loaded_datasets == []
+        return prepare_export_destination(harness, str(destination))
+
+    harness.destination_callback = choose_before_capture
     harness.exportRunCsv()
-
+    assert harness.wait_export().error is None
+    assert captures
+    assert harness.loaded_datasets == []
     assert harness.errors == []
     with destination.open(newline="", encoding="utf-8") as csv_file:
         rows = list(csv.reader(csv_file))
-    assert rows == [
-        ["signal.signal", "signal.x", "temperature.temperature"],
-        ["10.0", "0.0", "20.0"],
-        ["11.0", "1.0", "21.0"],
-        ["12.0", "2.0", ""],
-    ]
-    assert len(harness.loaded_datasets) == 2
-    with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
-        harness.loaded_datasets[1].conn.cursor()
+    if selection == "2":
+        assert rows == [["temperature"], ["20.0"], ["21.0"]]
+    else:
+        assert rows == [
+            ["signal.signal", "signal.x", "temperature.temperature"],
+            ["10.0", "0.0", "20.0"],
+            ["11.0", "1.0", "21.0"],
+            ["12.0", "2.0", ""],
+        ]
 
 
 def _artifact_state(database_path: Path):
     state = {}
-    for suffix in ("", *SQLITE_SIDECAR_SUFFIXES):
+    for suffix in ("", "-wal", "-journal"):
         path = Path(f"{database_path}{suffix}")
         if not path.exists():
             state[suffix] = None
@@ -313,17 +323,22 @@ def test_run_csv_preserves_exact_array_integers(
         for suffix, state in protected.items() if state is not None
     }
     destination = tmp_path / "integers.csv"
-    harness = _RunCsvHarness(source, destination, run_id, guid)
-    harness.RunList._runs[run_id]["measure_parameters"] = ["z1", "z2"]
-    harness.measurementBox.value = selection
+    harness = _RunCsvWindow(source, destination, run_id, guid)
+    descriptor = harness._trusted_read_service.submit_plot_dataset(guid).wait(5)
+    # QCoDeS serializes standalone ordering from a frozenset. Match the
+    # persisted descriptor, rather than assuming registration order survives.
+    names = [parameter.name for parameter in exportable_measurement_params(descriptor)]
+    harness.measurementBox.setText(
+        "*" if selection == "*" else str(names.index("z1") + 1)
+    )
 
     harness.exportRunCsv()
+    task = harness.wait_export()
 
+    assert task.error is None
     assert harness.errors == []
-    assert harness.status_messages[-1][0] == f"Exported CSV: {destination}"
-    assert len(harness.loaded_datasets) == 1
-    with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
-        harness.loaded_datasets[0].conn.cursor()
+    assert str(destination) in harness.status_messages[-1][0]
+    assert harness.loaded_datasets == []
     assert _artifact_state(source) == protected
     assert {
         suffix: Path(f"{source}{suffix}").stat().st_mtime_ns
@@ -335,16 +350,16 @@ def test_run_csv_preserves_exact_array_integers(
     if selection == "1":
         assert rows == [["z1"], *[[str(value)] for value in z1_values]]
     else:
+        expected = {"z1": z1_values, "z2": z2_values}
         assert rows == [
-            ["z1.z1", "z2.z2"],
+            [f"{name}.{name}" for name in names],
             *[
-                [
-                    str(z1_values[index]) if index < len(z1_values) else "",
-                    str(z2_values[index]) if index < len(z2_values) else "",
-                ]
+                [str(expected[name][index]) if index < len(expected[name]) else ""
+                 for name in names]
                 for index in range(max(len(z1_values), len(z2_values)))
             ],
         ]
+
 
 
 @pytest.mark.parametrize("export_path", ("run", "selected_preview", "run_preview"))
@@ -391,10 +406,10 @@ def test_array_csv_exports_every_sample(tmp_path, export_path, mixed, kind):
     experiment.conn.close()
 
     destination = tmp_path / "export.csv"
-    harness = _RunCsvHarness(source, destination, run_id, guid)
+    harness = _RunCsvWindow(source, destination, run_id, guid)
     harness._selected_run_guid = guid
     if mixed:
-        harness.RunList._runs[run_id]["measure_parameters"].append("temperature")
+        harness.RunList._item_for_guid(guid).run_metadata["measure_parameters"].append("temperature")
     source_before = _artifact_state(source)
     if export_path == "run":
         harness.exportRunCsv()
@@ -403,8 +418,9 @@ def test_array_csv_exports_every_sample(tmp_path, export_path, mixed, kind):
     else:
         harness.export_run_preview_csv(guid, "signal")
 
+    assert harness.wait_export().error is None
     assert harness.errors == []
-    assert "exported csv" in harness.status_messages[-1][0].lower()
+    assert "exported run" in harness.status_messages[-1][0].lower()
     with destination.open(newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file)
         rows = list(reader)
@@ -435,13 +451,16 @@ def _assert_no_staging_artifacts(destination: Path):
     )
 
 
-def _replacement_fixture(tmp_path):
+@pytest.fixture
+def replacement_fixture(tmp_path):
+    if os.name == "nt":
+        pytest.skip("Windows locks the trusted reader's open SQLite main file against replacement.")
     source = tmp_path / "source.db"
     replacement = tmp_path / "replacement.db"
     run_id, guid = _create_run(source, 1)
     _create_run(replacement, 2)
     destination = tmp_path / "export.csv"
-    harness = _RunCsvHarness(source, destination, run_id, guid)
+    harness = _RunCsvWindow(source, destination, run_id, guid)
     replacement_states = []
 
     def replace_source():
@@ -449,22 +468,6 @@ def _replacement_fixture(tmp_path):
         replacement_states.append(_artifact_state(source))
 
     return harness, source, destination, replace_source, replacement_states
-
-
-def _track_dataset_closes(monkeypatch):
-    close_calls = Counter()
-    original_close = plot_actions_module.close_dataset_connection
-
-    def counted_close(dataset):
-        close_calls[id(dataset)] += 1
-        return original_close(dataset)
-
-    monkeypatch.setattr(
-        plot_actions_module,
-        "close_dataset_connection",
-        counted_close,
-    )
-    return close_calls
 
 
 def _assert_replacement_was_rejected(
@@ -475,7 +478,8 @@ def _assert_replacement_was_rejected(
         ):
     assert replacement_states
     assert _artifact_state(source) == replacement_states[-1]
-    assert harness.reload_requests == [logical_database_path(source)]
+    assert harness.reload_requests
+    assert set(harness.reload_requests) == {logical_database_path(source)}
     assert harness.errors == []
     assert "database was replaced" in harness.status_messages[-1][0].lower()
     assert "no csv was written" in harness.status_messages[-1][0].lower()
@@ -483,8 +487,7 @@ def _assert_replacement_was_rejected(
 
 
 def test_run_csv_replacement_while_save_dialog_is_open_publishes_nothing(
-        tmp_path,
-        monkeypatch,
+        replacement_fixture,
         ):
     (
         harness,
@@ -492,10 +495,9 @@ def test_run_csv_replacement_while_save_dialog_is_open_publishes_nothing(
         destination,
         replace_source,
         replacement_states,
-    ) = _replacement_fixture(tmp_path)
+    ) = replacement_fixture
     sentinel = b"existing destination sentinel"
     destination.write_bytes(sentinel)
-    close_calls = _track_dataset_closes(monkeypatch)
 
     def choose_after_replacement(_default_name):
         replace_source()
@@ -510,7 +512,6 @@ def test_run_csv_replacement_while_save_dialog_is_open_publishes_nothing(
 
     assert destination.read_bytes() == sentinel
     assert harness.loaded_datasets == []
-    assert close_calls == Counter()
     _assert_replacement_was_rejected(
         harness,
         source,
@@ -519,110 +520,66 @@ def test_run_csv_replacement_while_save_dialog_is_open_publishes_nothing(
     )
 
 
-def test_run_csv_replacement_during_dataframe_extraction_rejects_stale_frame(
-        tmp_path,
-        monkeypatch,
+def test_run_csv_replacement_during_serialization_rejects_stale_capture(
+        replacement_fixture, monkeypatch,
         ):
-    (
-        harness,
-        source,
-        destination,
-        replace_source,
-        replacement_states,
-    ) = _replacement_fixture(tmp_path)
-    close_calls = _track_dataset_closes(monkeypatch)
-    original_dataframe = harness._measurement_dataframe
+    harness, source, destination, replace_source, states = replacement_fixture
+    original_write = csv_export_module._write_rows
 
-    def dataframe_after_replacement(dataset, params):
+    def write_after_replacement(*args, **kwargs):
         replace_source()
-        return original_dataframe(dataset, params)
+        return original_write(*args, **kwargs)
 
-    monkeypatch.setattr(
-        harness,
-        "_measurement_dataframe",
-        dataframe_after_replacement,
-    )
+    monkeypatch.setattr(csv_export_module, "_write_rows", write_after_replacement)
     harness.exportRunCsv()
-
+    assert harness.wait_export().error is not None
     assert not destination.exists()
-    assert len(harness.loaded_datasets) == 1
-    assert close_calls == Counter({id(harness.loaded_datasets[0]): 1})
-    _assert_replacement_was_rejected(
-        harness,
-        source,
-        destination,
-        replacement_states,
-    )
+    assert harness.loaded_datasets == []
+    _assert_replacement_was_rejected(harness, source, destination, states)
 
 
 def test_run_csv_replacement_immediately_before_publication_preserves_sentinel(
-        tmp_path,
-        monkeypatch,
+        replacement_fixture, monkeypatch,
         ):
-    (
-        harness,
-        source,
-        destination,
-        replace_source,
-        replacement_states,
-    ) = _replacement_fixture(tmp_path)
+    harness, source, destination, replace_source, states = replacement_fixture
     sentinel = b"existing destination sentinel"
     destination.write_bytes(sentinel)
-    close_calls = _track_dataset_closes(monkeypatch)
-    original_atomic_write = plot_actions_module.write_export_atomically
+    original_publish = StagedExport.publish
 
-    def replace_in_before_publish(destination_transaction, writer, *, before_publish):
-        def validate_replacement():
-            replace_source()
-            before_publish()
+    def replace_before_publish(stage, before_publish=None):
+        replace_source()
+        return original_publish(stage, before_publish)
 
-        return original_atomic_write(
-            destination_transaction,
-            writer,
-            before_publish=validate_replacement,
-        )
-
-    monkeypatch.setattr(
-        plot_actions_module,
-        "write_export_atomically",
-        replace_in_before_publish,
-    )
+    monkeypatch.setattr(StagedExport, "publish", replace_before_publish)
     harness.exportRunCsv()
-
+    assert harness.wait_export().error is not None
     assert destination.read_bytes() == sentinel
-    assert len(harness.loaded_datasets) == 1
-    assert close_calls == Counter({id(harness.loaded_datasets[0]): 1})
-    _assert_replacement_was_rejected(
-        harness,
-        source,
-        destination,
-        replacement_states,
-    )
+    assert harness.loaded_datasets == []
+    _assert_replacement_was_rejected(harness, source, destination, states)
 
 
-def test_run_csv_unchanged_source_exports_and_closes_dataset_once(
+def test_run_csv_unchanged_source_exports_without_a_dataset_snapshot(
         tmp_path,
         monkeypatch,
         ):
     source = tmp_path / "source.db"
     run_id, guid = _create_run(source, 2)
     destination = tmp_path / "export.csv"
-    harness = _RunCsvHarness(source, destination, run_id, guid)
+    harness = _RunCsvWindow(source, destination, run_id, guid)
     source_before = _artifact_state(source)
-    close_calls = _track_dataset_closes(monkeypatch)
 
     harness.exportRunCsv()
+    assert harness.wait_export().error is None
 
     assert destination.read_text().splitlines() == [
         "signal,x",
         "10.0,0.0",
         "11.0,1.0",
     ]
-    assert len(harness.loaded_datasets) == 1
-    assert close_calls == Counter({id(harness.loaded_datasets[0]): 1})
+    assert harness.loaded_datasets == []
     assert harness.reload_requests == []
     assert harness.errors == []
-    assert "exported csv" in harness.status_messages[-1][0].lower()
+    assert "exported run" in harness.status_messages[-1][0].lower()
     assert _artifact_state(source) == source_before
     _assert_no_staging_artifacts(destination)
 
@@ -634,18 +591,38 @@ def test_run_csv_dialog_cancellation_opens_no_dataset_and_changes_nothing(
     source = tmp_path / "source.db"
     run_id, guid = _create_run(source, 1)
     destination = tmp_path / "export.csv"
-    harness = _RunCsvHarness(source, destination, run_id, guid)
+    harness = _RunCsvWindow(source, destination, run_id, guid)
     source_before = _artifact_state(source)
-    close_calls = _track_dataset_closes(monkeypatch)
     harness.destination_callback = lambda _default_name: None
 
     harness.exportRunCsv()
 
     assert not destination.exists()
     assert harness.loaded_datasets == []
-    assert close_calls == Counter()
     assert harness.reload_requests == []
     assert harness.errors == []
     assert "cancelled" in harness.status_messages[-1][0].lower()
     assert _artifact_state(source) == source_before
+    _assert_no_staging_artifacts(destination)
+
+
+def test_run_csv_write_failure_preserves_existing_destination(tmp_path, monkeypatch):
+    source = tmp_path / "source.db"
+    run_id, guid = _create_run(source, 2)
+    destination = tmp_path / "export.csv"
+    destination.write_text("sentinel", encoding="utf-8")
+    harness = _RunCsvWindow(source, destination, run_id, guid)
+    protected = _artifact_state(source)
+
+    def fail_write(filename, *_args, **_kwargs):
+        Path(filename).write_text("partial", encoding="utf-8")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(csv_export_module, "_write_rows", fail_write)
+    harness.exportRunCsv()
+    task = harness.wait_export()
+    assert isinstance(task.error, OSError)
+    assert "disk full" in harness.status_messages[-1][0]
+    assert destination.read_text(encoding="utf-8") == "sentinel"
+    assert _artifact_state(source) == protected
     _assert_no_staging_artifacts(destination)

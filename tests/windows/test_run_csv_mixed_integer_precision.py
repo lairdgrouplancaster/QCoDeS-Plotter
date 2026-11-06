@@ -14,10 +14,9 @@ from qcodes.dataset import (
     load_or_create_experiment,
 )
 
-from qplot.windows import _plot_actions as actions
 from qplot.windows import main as main_window
 from qplot.windows._database_detail_state import detail_channel
-from tests._window_lifecycle import close_main_window
+from tests._window_lifecycle import close_main_window, wait_for_exports
 from tests.windows.test_complex_line_data import database_state
 from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
 
@@ -80,20 +79,6 @@ def test_actual_run_csv_preserves_mixed_integers(tmp_path, monkeypatch, layout, 
     path = tmp_path / "mixed.db"
     run_id, expected = _create_mixed_run(path, layout, lengths, second_dtype)
     protected = database_state(path)
-    extracted = []
-    original_extract = actions.parameter_data_for_export
-
-    def track_extract(dataset, name):
-        # Run CSV uses a fresh reader and must leave its raw cache untouched.
-        assert dataset.cache._data == {}
-        data = original_extract(dataset, name)
-        assert dataset.cache._data == {}
-        copies = {key: [np.asarray(record).copy() for record in column]
-                  for key, column in data.items()}
-        extracted.append((data, copies))
-        return data
-
-    monkeypatch.setattr(actions, "parameter_data_for_export", track_extract)
     errors = []
     window = main_window.MainWindow()
     try:
@@ -115,6 +100,7 @@ def test_actual_run_csv_preserves_mixed_integers(tmp_path, monkeypatch, layout, 
             )
             window.measurementBox.setText(selection)
             window.exportRunCsv()
+            wait_for_exports(window)
             assert errors == []
             with target.open(newline="", encoding="utf-8") as csv_file:
                 reader = csv.DictReader(csv_file)
@@ -129,12 +115,6 @@ def test_actual_run_csv_preserves_mixed_integers(tmp_path, monkeypatch, layout, 
                 values = [str(value) for value in expected[name]]
                 assert [row[column] for row in rows] == values + [""] * (count - len(values))
 
-        # Neither flattening nor CSV alignment may alter the extracted arrays.
-        for data, copies in extracted:
-            for name, records in copies.items():
-                for actual, saved in zip(data[name], records, strict=True):
-                    assert np.asarray(actual).dtype == saved.dtype
-                    np.testing.assert_array_equal(actual, saved)
     finally:
         close_main_window(window)
     assert database_state(path) == protected

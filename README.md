@@ -84,9 +84,11 @@ safely. Ordinary fallback selection is basic-only: it renders cached run-list
 fields and an unavailable detail state without starting a selected-detail
 reader or preparing an additional selected-detail snapshot. That claim applies
 only to row selection: fallback metadata and retained preview paths can still
-create private snapshots. CSV and fallback plot actions acquire action-owned
-snapshots. Trusted plots instead capture or aggregate the selected run through
-the broker, without copying the whole database. Trusted live previews and thumbnails load progressively through a bounded
+create private snapshots. Fallback CSV and plot actions retain that read-only
+path. Trusted plots and raw CSV exports capture the selected run through
+the broker, without copying the whole database. CSV exports run in the
+background with progress, cancellation, and one-file-per-run batch export.
+Plot CSV offers explicit underlying or transformed values. Trusted live previews and thumbnails load progressively through a bounded
 scheduler and application cache. See
 [Trusted live QCoDeS reader](docs/trusted-live-reader.md).
 

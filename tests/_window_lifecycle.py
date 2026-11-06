@@ -5,6 +5,18 @@ import time
 from PyQt6 import QtCore, QtWidgets, sip
 
 
+def wait_for_exports(window, timeout_ms=12_000):
+    """Wait for worker serialization and GUI publication, reporting failures."""
+    manager = window._export_task_manager
+    deadline = time.monotonic() + timeout_ms / 1000
+    while manager.tasks:
+        if time.monotonic() >= deadline:
+            raise AssertionError("CSV exports did not finish before the deadline")
+        QtWidgets.QApplication.processEvents()
+        time.sleep(0.01)
+    assert not [task.error for task in manager.history if task.error is not None]
+
+
 def close_main_window(window, timeout_ms=12_000):
     """Cancel and join window work before releasing its database snapshots."""
 

@@ -1,7 +1,5 @@
 """qPlot's coordinate-safe mapping for PyQtGraph's native line controls."""
 
-from fractions import Fraction
-
 import numpy as np
 import pyqtgraph as pg
 from PyQt6 import QtCore
@@ -14,10 +12,8 @@ from qplot.tools.native_transform_math import (
     _center_integer_samples,
     _center_object_samples,
     _FFTCoordinatesError,
-    _normalized_real_fft,
-    _prepare_fft_coordinates,
-    _resample_fft_samples,
     _safe_secant,
+    native_fourier_transform,
 )
 from qplot.tools.native_transform_math import _fft_sample_ratio as _fft_sample_ratio
 from qplot.tools.native_transform_math import (
@@ -28,7 +24,6 @@ from qplot.tools.native_transform_math import (
     native_fft_coordinate_error as native_fft_coordinate_error,
 )
 from qplot.tools.plot_tools import _center_float_samples
-from qplot.tools.sample_statistics import finite_mean, sample_fraction
 
 from ._display_precision import (
     DISPLAY_PRECISION_MESSAGE,
@@ -177,100 +172,13 @@ class NativePlotDataItem(pg.PlotDataItem):
         return x, y
 
     def _fourierTransform(self, x, y):
-        """Prepare increasing FFT coordinates without changing source data.
-
-        PyQtGraph's resampling assumes increasing coordinates. Reverse paired
-        samples only for strictly decreasing sweeps; sorting a reversing sweep
-        would merge different acquisition branches into a fictitious signal.
-        The window preflights all traces before enabling FFT. This defensive
-        empty mapping also keeps setData safe until its change signal lets the
-        window roll back FFT after a refresh introduces unsupported coordinates.
-        Mean subtraction has already run in the mapped dataset before this hook.
-        """
+        """Share the exact native FFT arithmetic with numeric exports."""
         self._qplot_fft_error = None
-        recorded_coordinates = x
         try:
-            x, dx, frequency_step, reverse = _prepare_fft_coordinates(x)
+            return native_fourier_transform(x, y)
         except _FFTCoordinatesError as error:
             self._qplot_fft_error = str(error)
             return np.array([], dtype=float), np.array([], dtype=float)
-        if len(x) == 1:
-            # abs(minimum signed integer) wraps in the recorded dtype.
-            # The FFT spectrum uses floating magnitudes, including its DC bin.
-            return np.array([0.]), np.abs(y.astype(np.float64))
-        if reverse:
-            y = y[::-1]
-            recorded_coordinates = recorded_coordinates[::-1]
-        if y.dtype.kind == "f" and y.dtype.itemsize < 8:
-            # NumPy's FFT retains float32 precision. Widen before its internal
-            # unnormalized sum can overflow, not just before normalization.
-            y = y.astype(np.float64)
-        dc_offset = None
-        if y.dtype.kind in "iu":
-            dc_offset = Fraction(sum(map(int, y)), len(y))
-            y = _center_integer_samples(y)
-        elif y.dtype.kind == "O":
-            numeric = y.astype(np.float64)
-            if (np.all(np.isfinite(numeric))
-                    and np.max(np.abs(numeric)) <= np.finfo(float).max / 2.):
-                # FFT converts integer/object arrays to float. Remove their
-                # exact offset first so adjacent recorded integers survive;
-                # restore only DC after any nonuniform interpolation.
-                exact = [sample_fraction(value)
-                         for value in y]
-                dc_offset = sum(exact, Fraction()) / len(exact)
-                y = np.array([float(value - dc_offset) for value in exact])
-            else:
-                y = numeric
-        # Keep the ordinary interpolation semantics: nonuniform sweeps have
-        # the mean of the resampled signal, not the acquired sample mean.
-        resampled = np.any(np.abs(dx - dx[0]) > abs(dx[0]) / 1000)
-        float_dc = None
-        if dc_offset is None and np.all(np.isfinite(y)) and not resampled:
-            # FFT accumulation can erase a measured cancellation residual.
-            # Compute DC before amplitude scaling can round that residual.
-            float_dc = finite_mean(y)
-        float_anchor = None
-        if dc_offset is None and y.dtype.kind == "f" and np.all(np.isfinite(y)):
-            # A large floating DC offset can leak into small AC bins during
-            # FFT accumulation. Nearby same-sign values satisfy Sterbenz's
-            # lemma: subtracting this recorded anchor retains every source
-            # difference exactly, including subnormals. Wider signals keep
-            # their existing scaling path so anchoring cannot erase samples.
-            anchor = float(y[0])
-            absolute = np.abs(y)
-            if (anchor != 0. and np.all(np.signbit(y) == np.signbit(anchor))
-                    and np.min(absolute) >= abs(anchor) / 2.
-                    and np.max(absolute) / 2. <= abs(anchor)):
-                float_anchor = Fraction(anchor)
-                y = y - anchor
-        # Match PyQtGraph's uniformity tolerance and normalized real FFT.
-        if resampled:
-            y = _resample_fft_samples(x, y, recorded_coordinates)
-            if dc_offset is None and np.all(np.isfinite(y)):
-                if float_anchor is None:
-                    float_dc = finite_mean(y)
-                else:
-                    # Resampling changes the centered mean. Restore its sign
-                    # and the exact anchor before rounding the resulting DC.
-                    centered_mean = sum((Fraction(float(value)) for value in y), Fraction()) / len(y)
-                    float_dc = float(float_anchor + centered_mean)
-        magnitudes = np.abs(_normalized_real_fft(y))
-        if np.all(np.isfinite(y)):
-            # The normalized magnitude cannot exceed the largest source cell.
-            # Retain that bound when hypot's final rounding reaches overflow.
-            magnitudes = np.minimum(magnitudes, np.max(np.abs(y)))
-        if dc_offset is not None:
-            # Resampling may change the centered mean. Restore its signed
-            # value before taking the magnitude, retaining the exact offset.
-            if resampled:
-                resampled_mean = sum((Fraction(float(value)) for value in y), Fraction()) / len(y)
-                dc_offset += resampled_mean
-            magnitudes[0] = abs(float(dc_offset))
-        elif float_dc is not None:
-            magnitudes[0] = abs(float_dc)
-        frequencies = np.arange(len(magnitudes), dtype=float) * frequency_step
-        return frequencies, magnitudes
 
     def _getDisplayDataset(self) -> PlotDataset | None:
         if self._datasetMapped is None:

@@ -49,6 +49,8 @@ from qplot.windows._widgets.preview import (
     generate_run_previews,
 )
 from qplot.windows._widgets.run_list_items import RunPreviewCell
+from tests._shutdown_harness import attach_shutdown
+from tests._window_lifecycle import wait_for_exports
 
 
 def _write_csv(path, rows):
@@ -466,12 +468,16 @@ def test_high_dimension_csv_and_stats_actions_read_every_sample_and_axis(
 
     monkeypatch.setattr(_plot_marquee, "new_statistics_dialog", capture_dialog)
     host = Host()
+    host.fileTextbox = SimpleNamespace(text=lambda: str(path))
+    host.RunList = SimpleNamespace(run_id_for_guid=lambda guid: 1)
+    attach_shutdown(host)
     try:
         for measured in specs[0].measurements:
             if measured.dimensions <= 2:
                 continue
             host.destination = tmp_path / f"{measured.name}.csv"
             host._export_preview_csv(key, measured.name)
+            wait_for_exports(host)
             assert not errors
             frame = pd.read_csv(host.destination)
             assert len(frame) == measured.point_count
@@ -495,6 +501,7 @@ def test_high_dimension_csv_and_stats_actions_read_every_sample_and_axis(
         host._export_measurement_csv(
             key, tuple(m.name for m in specs[0].measurements), run_id=1
         )
+        wait_for_exports(host)
         assert not errors
         frame = pd.read_csv(host.destination)
         assert len(frame) == 48

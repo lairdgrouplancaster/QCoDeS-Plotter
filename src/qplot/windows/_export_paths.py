@@ -252,106 +252,127 @@ def prepare_export_destination(
     )
 
 
+class StagedExport:
+    """An approved output whose serialization may run outside the GUI thread.
+
+    Create, prepare, publish and close on the GUI thread. Only ``write`` runs in a
+    worker; its protection checks use the immutable approval observation and
+    never inspect Qt objects. Publication repeats all current protections.
+    Close only after the writer has returned.
+    """
+
+    def __init__(self, destination: ExportDestinationTransaction | str | os.PathLike[str],
+                 *, defer: bool = False):
+        if not isinstance(destination, ExportDestinationTransaction):
+            destination = prepare_export_destination(None, os.fspath(destination))
+        self.destination = destination
+        self.parent_fd: int | None = None
+        self.stage_fd: int | None = None
+        self.stage_path = ""
+        self.stage_name = ""
+        self.stage_identity: tuple[int, ...] | None = None
+        self.ready = False
+        self.published = False
+        self.closed = False
+        self._prepared = False
+        if not defer:
+            self.prepare()
+
+    def prepare(self) -> None:
+        """Allocate the active export's stage, rechecking its queued approval."""
+        if self.closed:
+            raise RuntimeError("The export stage is closed.")
+        if self._prepared:
+            return
+        destination = self.destination
+        try:
+            self.parent_fd = _open_parent_directory(destination)
+            destination.validate(parent_fd=self.parent_fd)
+            self.stage_fd, self.stage_path = tempfile.mkstemp(
+                prefix=f".{os.path.basename(destination.filename)}.",
+                suffix=os.path.splitext(destination.filename)[1] or ".tmp",
+                dir=destination.parent_path,
+            )
+            self.stage_name = os.path.basename(self.stage_path)
+            self.stage_identity = _stage_identity(os.fstat(self.stage_fd))
+            self._verify()
+            self._prepared = True
+        except BaseException:
+            self.close()
+            raise
+
+    def _verify(self, *, worker: bool = False) -> None:
+        _verify_owned_stage(
+            self.destination, self.stage_path, self.stage_name,
+            self.stage_identity, parent_fd=self.parent_fd,
+            protected_files=(self.destination.protected_database_files if worker else None),
+        )
+
+    def write(self, writer: Callable[[str], Any]) -> Any:
+        if self.closed or self.ready or self.stage_fd is None:
+            raise RuntimeError("The export stage is not writable.")
+        self._verify(worker=True)
+        result = writer(self.stage_path)
+        if result is False:
+            return False
+        self._verify(worker=True)
+        os.fsync(self.stage_fd)
+        os.close(self.stage_fd)
+        self.stage_fd = None
+        self.ready = True
+        return result
+
+    def publish(self, before_publish: Callable[[], Any] | None = None) -> bool:
+        if self.closed or not self.ready or self.published:
+            raise RuntimeError("The export stage is not ready for publication.")
+        if before_publish is not None:
+            before_publish()
+        self._verify()
+        publish = (_replace_approved_target if self.destination.target_existed
+                   else _publish_new_target)
+        publish(
+            self.destination, self.stage_path, self.stage_name,
+            self.stage_identity, parent_fd=self.parent_fd,
+        )
+        self.stage_path = ""
+        self.published = True
+        _sync_parent_directory(self.parent_fd)
+        return True
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        try:
+            if self.stage_fd is not None:
+                os.close(self.stage_fd)
+                self.stage_fd = None
+            if self.stage_path:
+                _unlink_owned_stage(
+                    self.destination, self.stage_path, self.stage_name,
+                    self.stage_identity, parent_fd=self.parent_fd,
+                )
+                self.stage_path = ""
+        finally:
+            if self.parent_fd is not None:
+                os.close(self.parent_fd)
+                self.parent_fd = None
+            self.closed = True
+
+
 def write_export_atomically(
     destination: ExportDestinationTransaction | str | os.PathLike[str],
     writer: Callable[[str], Any],
     *,
     before_publish: Callable[[], Any] | None = None,
 ) -> bool:
-    """Stage beside an approved target and publish without widening consent.
-
-    Raw paths remain accepted only for a target that is absent at approval.
-    Replacing an existing target requires an ``ExportDestinationTransaction``
-    whose confirmation flag came from the user-facing approval step.
-    """
-    if not isinstance(destination, ExportDestinationTransaction):
-        destination = prepare_export_destination(None, os.fspath(destination))
-
-    parent_fd = _open_parent_directory(destination)
-    stage_fd: int | None = None
-    stage_path = ""
-    stage_name = ""
-    stage_identity: tuple[int, ...] | None = None
+    """Synchronously stage and publish one exactly approved output."""
+    stage = StagedExport(destination)
     try:
-        # This is deliberately the last operation before staging begins.
-        destination.validate(parent_fd=parent_fd)
-        suffix = os.path.splitext(destination.filename)[1] or ".tmp"
-        stage_fd, stage_path = tempfile.mkstemp(
-            prefix=f".{os.path.basename(destination.filename)}.",
-            suffix=suffix,
-            dir=destination.parent_path,
-        )
-        stage_name = os.path.basename(stage_path)
-        stage_identity = _stage_identity(os.fstat(stage_fd))
-        _verify_owned_stage(
-            destination,
-            stage_path,
-            stage_name,
-            stage_identity,
-            parent_fd=parent_fd,
-        )
-
-        if writer(stage_path) is False:
+        if stage.write(writer) is False:
             return False
-
-        _verify_owned_stage(
-            destination,
-            stage_path,
-            stage_name,
-            stage_identity,
-            parent_fd=parent_fd,
-        )
-        os.fsync(stage_fd)
-        os.close(stage_fd)
-        stage_fd = None
-
-        if before_publish is not None:
-            before_publish()
-
-        # A callback can replace the private pathname just as it can replace
-        # the public target. Revalidate the owned stage after every callback,
-        # then leave destination validation immediately adjacent to publish.
-        _verify_owned_stage(
-            destination,
-            stage_path,
-            stage_name,
-            stage_identity,
-            parent_fd=parent_fd,
-        )
-        if destination.target_existed:
-            _replace_approved_target(
-                destination,
-                stage_path,
-                stage_name,
-                stage_identity,
-                parent_fd=parent_fd,
-            )
-            stage_path = ""
-        else:
-            _publish_new_target(
-                destination,
-                stage_path,
-                stage_name,
-                stage_identity,
-                parent_fd=parent_fd,
-            )
-            stage_path = ""
-
-        _sync_parent_directory(parent_fd)
-        return True
+        return stage.publish(before_publish)
     finally:
-        if stage_fd is not None:
-            os.close(stage_fd)
-        if stage_path:
-            _unlink_owned_stage(
-                destination,
-                stage_path,
-                stage_name,
-                stage_identity,
-                parent_fd=parent_fd,
-            )
-        if parent_fd is not None:
-            os.close(parent_fd)
+        stage.close()
 
 
 def collect_protected_database_files(
@@ -485,6 +506,15 @@ def _collect_owner_database_sources(
 ) -> None:
     """Inspect the bounded set of qPlot state holders used by its windows."""
     add_source(owner)
+    # These references are plain Python state and remain available when a Qt
+    # wrapper is retiring; avoid invoking its native attribute lookup here.
+    owner_state = getattr(owner, "__dict__", {})
+    manager = owner_state.get("_export_task_manager")
+    tasks = set(owner_state.get("_export_tasks", ()))
+    tasks.update(getattr(manager, "tasks", ()))
+    for task in tasks:
+        for source in task.source_keys:
+            add_source(source)
     for attribute in (
         "_dataset_key",
         "_selected_dataset_key",
@@ -975,10 +1005,13 @@ def _stage_refers_to_protected_database(
     destination: ExportDestinationTransaction,
     stage_path: str,
     stage_stat: os.stat_result,
+    *,
+    protected_files: ProtectedDatabaseFiles | None = None,
 ) -> bool:
-    protected_files = destination.protected_database_files.merged(
-        collect_protected_database_files(destination.owner)
-    )
+    if protected_files is None:
+        protected_files = destination.protected_database_files.merged(
+            collect_protected_database_files(destination.owner)
+        )
     stage_database_identity = _stage_database_identity(stage_path, stage_stat)
     return (
         stage_database_identity is None
@@ -993,6 +1026,7 @@ def _verify_owned_stage(
     stage_identity: tuple[int, ...] | None,
     *,
     parent_fd: int | None,
+    protected_files: ProtectedDatabaseFiles | None = None,
 ) -> None:
     if stage_identity is None:
         raise UnsafeExportDestinationError(
@@ -1016,6 +1050,7 @@ def _verify_owned_stage(
         destination,
         stage_path,
         stage_stat,
+        protected_files=protected_files,
     ):
         raise UnsafeExportDestinationError(
             "The private export staging file refers to an input database."

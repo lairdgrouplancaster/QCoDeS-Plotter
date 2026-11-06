@@ -6,21 +6,30 @@ Rendering, display-range checks and PyQtGraph hooks stay in
 
 from fractions import Fraction
 from math import lcm
-from typing import cast
 
 import numpy as np
 
 from qplot.datahandling.numeric_samples import numeric_isfinite
 from qplot.tools.plot_tools import (
+    _check_cancelled,
     _fraction_as_extended_float,
     _fraction_as_float,
     _integer_differences,
     _integer_samples,
 )
-from qplot.tools.sample_statistics import sample_fraction
+from qplot.tools.sample_statistics import finite_mean, sample_fraction
 
 
-def _safe_difference(values: np.ndarray) -> np.ndarray:
+def _checked_items(values, cancelled_callback):
+    """Bound cancellation latency inside precision-preserving Python loops."""
+    for index, value in enumerate(values):
+        if index % 1024 == 0:
+            _check_cancelled(cancelled_callback)
+        yield value
+    _check_cancelled(cancelled_callback)
+
+
+def _safe_difference(values: np.ndarray, *, cancelled_callback=None) -> np.ndarray:
     """Subtract samples before narrowing arithmetic can overflow or wrap."""
     if values.dtype.kind == "b":
         # NumPy's Boolean diff reports changes, losing their direction.
@@ -35,7 +44,7 @@ def _safe_difference(values: np.ndarray) -> np.ndarray:
     if values.dtype.kind == "O":
         # Limit operations retain integers alongside fractional clipped cells.
         # Subtract adjacent integer cells before their float view is made.
-        return _integer_differences(values)
+        return _integer_differences(values, cancelled_callback=cancelled_callback)
     if values.dtype.kind == "f" and values.dtype.itemsize < 8:
         # np.diff retains float16/float32, so even finite operands can
         # overflow before the derivative divides or FFT validates the span.
@@ -43,45 +52,47 @@ def _safe_difference(values: np.ndarray) -> np.ndarray:
     return np.diff(values)
 
 
-def _center_integer_samples(values: np.ndarray) -> np.ndarray:
+def _center_integer_samples(values: np.ndarray, *, cancelled_callback=None) -> np.ndarray:
     """Center integer samples before float conversion can erase their steps."""
     if not len(values):
         return np.array([], dtype=np.float64)
     # Python integers avoid both uint64 wraparound and int64 overflow. Using
     # the exact numerator also retains fractional means above float's integer
     # precision (for example, four adjacent samples near 2**63).
-    total = sum(map(int, values))
+    total = sum(map(int, _checked_items(values, cancelled_callback)))
     count = len(values)
     return np.fromiter(
-        ((count * int(value) - total) / count for value in values),
+        ((count * int(value) - total) / count
+         for value in _checked_items(values, cancelled_callback)),
         dtype=np.float64, count=count,
     )
 
 
-def _center_object_samples(values: np.ndarray) -> np.ndarray:
+def _center_object_samples(values: np.ndarray, *, cancelled_callback=None) -> np.ndarray:
     """Keep integer steps when a limit leaves mixed integer/float cells."""
     numeric = values.astype(np.float64)
     if not np.all(np.isfinite(numeric)):
         return numeric - np.mean(numeric)
-    exact = [sample_fraction(value) for value in values]
-    mean = sum(exact) / len(exact)
+    exact = [sample_fraction(value) for value in _checked_items(values, cancelled_callback)]
+    mean = sum(_checked_items(exact, cancelled_callback)) / len(exact)
     return np.fromiter(
-        (_fraction_as_float(value - mean) for value in exact),
+        (_fraction_as_float(value - mean) for value in _checked_items(exact, cancelled_callback)),
         dtype=np.float64, count=len(exact),
     )
 
 
-def _safe_secant(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+def _safe_secant(x: np.ndarray, y: np.ndarray, *, cancelled_callback=None) -> np.ndarray:
     """Recover finite quotients when either finite difference overflows."""
     with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
-        numerator, denominator = _safe_difference(y), _safe_difference(x)
+        numerator = _safe_difference(y, cancelled_callback=cancelled_callback)
+        denominator = _safe_difference(x, cancelled_callback=cancelled_callback)
         result = numerator / denominator
-    mixed_objects = ((x.dtype.kind == "O" and not _integer_samples(x))
-                     or (y.dtype.kind == "O" and not _integer_samples(y)))
+    mixed_objects = ((x.dtype.kind == "O" and not _integer_samples(x, cancelled_callback))
+                     or (y.dtype.kind == "O" and not _integer_samples(y, cancelled_callback)))
     repair = ((~np.isfinite(numerator) | ~np.isfinite(denominator) | mixed_objects)
               & numeric_isfinite(x[:-1]) & numeric_isfinite(x[1:])
               & numeric_isfinite(y[:-1]) & numeric_isfinite(y[1:]))
-    for index in np.flatnonzero(repair):
+    for index in _checked_items(np.flatnonzero(repair), cancelled_callback):
         # This is a rare fallback. Exact fractions avoid both difference
         # overflow and underflow while dividing by a huge coordinate span.
         cells = [value.item() if isinstance(value, np.generic) else value
@@ -101,7 +112,7 @@ class _FFTCoordinatesError(ValueError):
     """Coordinates cannot define a native coordinate-domain FFT."""
 
 
-def _interpolate_fft_samples(targets, coordinates, samples):
+def _interpolate_fft_samples(targets, coordinates, samples, *, cancelled_callback=None):
     """Retain extended samples and repair overflowing interpolation segments."""
     segments = np.searchsorted(coordinates, targets, side="right") - 1
     segments = np.clip(segments, 0, len(coordinates) - 2)
@@ -166,7 +177,7 @@ def _interpolate_fft_samples(targets, coordinates, samples):
                                     | (np.abs(before_weight) < np.finfo(float).tiny)
                                     | (np.abs(after_weight) < np.finfo(float).tiny)))
     repair &= finite_endpoints & (coordinates[segments] != coordinates[segments + 1])
-    for index in np.flatnonzero(repair):
+    for index in _checked_items(np.flatnonzero(repair), cancelled_callback):
         segment = segments[index]
         left, right, target = map(sample_fraction, (
             coordinates[segment], coordinates[segment + 1], targets[index],
@@ -217,10 +228,11 @@ def _fft_sample_ratio(value):
     return value.as_integer_ratio()
 
 
-def _resample_fft_samples(coordinates, samples, recorded_coordinates):
+def _resample_fft_samples(coordinates, samples, recorded_coordinates, *, cancelled_callback=None):
     """Recover interpolation whose signal is sensitive to grid rounding."""
     targets = np.linspace(coordinates[0], coordinates[-1], len(coordinates))
-    result = _interpolate_fft_samples(targets, coordinates, samples)
+    result = _interpolate_fft_samples(targets, coordinates, samples,
+                                      cancelled_callback=cancelled_callback)
     result[0], result[-1] = samples[0], samples[-1]
     if np.all(samples == samples[0]):
         return result
@@ -306,7 +318,7 @@ def _resample_fft_samples(coordinates, samples, recorded_coordinates):
     denominator = common * (len(coordinates) - 1)
     start = first_numerator * (len(coordinates) - 1)
 
-    for position in positions:
+    for position in _checked_items(positions, cancelled_callback):
         numerator = start + delta * int(position)
         segment = int(segments[position])
         left, left_d = _fft_sample_ratio(recorded_coordinates[segment])
@@ -350,7 +362,9 @@ def _resample_fft_samples(coordinates, samples, recorded_coordinates):
     return result
 
 
-def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, float, bool]:
+def _prepare_fft_coordinates(
+    x: np.ndarray, *, cancelled_callback=None,
+) -> tuple[np.ndarray, np.ndarray, float, bool]:
     """Return increasing interpolation coordinates and the frequency step."""
     message = "FFT requires finite, strictly monotonic coordinates with a nonzero span."
     if x.dtype.kind == "b":
@@ -360,7 +374,7 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
         # uniformity check must all operate beyond the source dtype's range.
         x = x.astype(np.float64)
     with np.errstate(over="ignore", invalid="ignore"):
-        dx = _safe_difference(x)
+        dx = _safe_difference(x, cancelled_callback=cancelled_callback)
     if not np.all(numeric_isfinite(x)) or len(x) == 0:
         raise _FFTCoordinatesError(message)
     # Retain PyQtGraph's supported one-sample DC spectrum.
@@ -376,15 +390,18 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
         # Rebase before float conversion to retain nearby steps above 2**53
         # without unsigned/signed overflow.
         exact: np.ndarray = x.astype(object)
-        if x.dtype.kind == "O" and not _integer_samples(x):
-            exact = cast(np.ndarray, np.frompyfunc(sample_fraction, 1, 1)(exact))
+        if x.dtype.kind == "O" and not _integer_samples(x, cancelled_callback):
+            exact = np.array([sample_fraction(value)
+                              for value in _checked_items(exact, cancelled_callback)], dtype=object)
         with np.errstate(over="ignore", invalid="ignore"):
             try:
                 rebased = (exact - exact[0]).astype(np.float64)
             except (TypeError, OverflowError):
-                exact = cast(np.ndarray, np.frompyfunc(sample_fraction, 1, 1)(exact))
+                exact = np.array([sample_fraction(value)
+                                  for value in _checked_items(exact, cancelled_callback)], dtype=object)
                 rebased = np.fromiter(
-                    (_fraction_as_float(value - exact[0]) for value in exact),
+                    (_fraction_as_float(value - exact[0])
+                     for value in _checked_items(exact, cancelled_callback)),
                     dtype=np.float64, count=len(exact),
                 )
         if np.all(np.isfinite(rebased)):
@@ -397,7 +414,8 @@ def _prepare_fft_coordinates(x: np.ndarray) -> tuple[np.ndarray, np.ndarray, flo
             anchor = sample_fraction(exact[0])
             scale = Fraction(coordinate_scale)
             x = np.fromiter(
-                (float((sample_fraction(value) - anchor) / scale) for value in exact),
+                (float((sample_fraction(value) - anchor) / scale)
+                 for value in _checked_items(exact, cancelled_callback)),
                 dtype=np.float64, count=len(exact),
             )
             dx = np.diff(x)
@@ -448,3 +466,92 @@ def native_fft_coordinate_error(x: np.ndarray | None) -> str | None:
     except _FFTCoordinatesError as error:
         return str(error)
     return None
+
+
+def native_fourier_transform(x: np.ndarray, y: np.ndarray, *, cancelled_callback=None):
+    """Return the full normalized spectrum in physical frequency coordinates."""
+    recorded_coordinates = x
+    _check_cancelled(cancelled_callback)
+    x, dx, frequency_step, reverse = _prepare_fft_coordinates(x, cancelled_callback=cancelled_callback)
+    if len(x) == 1:
+        # abs(minimum signed integer) wraps in the recorded dtype.
+        # The FFT spectrum uses floating magnitudes, including its DC bin.
+        return np.array([0.]), np.abs(y.astype(np.float64))
+    if reverse:
+        y = y[::-1]
+        recorded_coordinates = recorded_coordinates[::-1]
+    if y.dtype.kind == "f" and y.dtype.itemsize < 8:
+        # NumPy's FFT retains float32 precision. Widen before its internal
+        # unnormalized sum can overflow, not just before normalization.
+        y = y.astype(np.float64)
+    dc_offset = None
+    if y.dtype.kind in "iu":
+        dc_offset = Fraction(sum(map(int, _checked_items(y, cancelled_callback))), len(y))
+        y = _center_integer_samples(y, cancelled_callback=cancelled_callback)
+    elif y.dtype.kind == "O":
+        numeric = y.astype(np.float64)
+        if (np.all(np.isfinite(numeric))
+                and np.max(np.abs(numeric)) <= np.finfo(float).max / 2.):
+            # FFT converts integer/object arrays to float. Remove their
+            # exact offset first so adjacent recorded integers survive;
+            # restore only DC after any nonuniform interpolation.
+            exact = [sample_fraction(value)
+                     for value in _checked_items(y, cancelled_callback)]
+            dc_offset = sum(_checked_items(exact, cancelled_callback), Fraction()) / len(exact)
+            y = np.array([float(value - dc_offset)
+                          for value in _checked_items(exact, cancelled_callback)])
+        else:
+            y = numeric
+    # Keep the ordinary interpolation semantics: nonuniform sweeps have
+    # the mean of the resampled signal, not the acquired sample mean.
+    resampled = np.any(np.abs(dx - dx[0]) > abs(dx[0]) / 1000)
+    float_dc = None
+    if dc_offset is None and np.all(np.isfinite(y)) and not resampled:
+        # FFT accumulation can erase a measured cancellation residual.
+        # Compute DC before amplitude scaling can round that residual.
+        float_dc = finite_mean(y, check_cancelled=lambda: _check_cancelled(cancelled_callback))
+    float_anchor = None
+    if dc_offset is None and y.dtype.kind == "f" and np.all(np.isfinite(y)):
+        # A large floating DC offset can leak into small AC bins during
+        # FFT accumulation. Nearby same-sign values satisfy Sterbenz's
+        # lemma: subtracting this recorded anchor retains every source
+        # difference exactly, including subnormals. Wider signals keep
+        # their existing scaling path so anchoring cannot erase samples.
+        anchor = float(y[0])
+        absolute = np.abs(y)
+        if (anchor != 0. and np.all(np.signbit(y) == np.signbit(anchor))
+                and np.min(absolute) >= abs(anchor) / 2.
+                and np.max(absolute) / 2. <= abs(anchor)):
+            float_anchor = Fraction(anchor)
+            y = y - anchor
+    # Match PyQtGraph's uniformity tolerance and normalized real FFT.
+    if resampled:
+        y = _resample_fft_samples(x, y, recorded_coordinates, cancelled_callback=cancelled_callback)
+        if dc_offset is None and np.all(np.isfinite(y)):
+            if float_anchor is None:
+                float_dc = finite_mean(y, check_cancelled=lambda: _check_cancelled(cancelled_callback))
+            else:
+                # Resampling changes the centered mean. Restore its sign
+                # and the exact anchor before rounding the resulting DC.
+                centered_mean = sum((Fraction(float(value))
+                                     for value in _checked_items(y, cancelled_callback)), Fraction()) / len(y)
+                float_dc = float(float_anchor + centered_mean)
+    _check_cancelled(cancelled_callback)
+    magnitudes = np.abs(_normalized_real_fft(y))
+    _check_cancelled(cancelled_callback)
+    if np.all(np.isfinite(y)):
+        # The normalized magnitude cannot exceed the largest source cell.
+        # Retain that bound when hypot's final rounding reaches overflow.
+        magnitudes = np.minimum(magnitudes, np.max(np.abs(y)))
+    if dc_offset is not None:
+        # Resampling may change the centered mean. Restore its signed
+        # value before taking the magnitude, retaining the exact offset.
+        if resampled:
+            resampled_mean = sum((Fraction(float(value))
+                                 for value in _checked_items(y, cancelled_callback)), Fraction()) / len(y)
+            dc_offset += resampled_mean
+        magnitudes[0] = abs(float(dc_offset))
+    elif float_dc is not None:
+        magnitudes[0] = abs(float_dc)
+    frequencies = np.arange(len(magnitudes), dtype=float) * frequency_step
+    return frequencies, magnitudes

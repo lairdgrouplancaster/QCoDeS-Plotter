@@ -11,6 +11,7 @@ from PyQt6 import QtWidgets as qtw
 from PyQt6.QtTest import QTest
 
 from qplot.datahandling.readonly import sqlite_read_only_connection
+from qplot.tools.plot_csv import CsvColumns
 from qplot.windows import main as main_window
 from qplot.windows._plot_data_viewbox import coordinate_viewbox
 from tests._window_lifecycle import close_main_window
@@ -396,20 +397,19 @@ def test_secondary_axis_csv_failure_preserves_existing_export(
     original = b"existing export\n"
     target.write_bytes(original)
     files_before = set(tmp_path.iterdir())
-    native_export = window._write_line_csv_stage
+    native_export = CsvColumns.write
     staging_paths = []
-    errors = []
-    monkeypatch.setattr(window, "show_error", lambda *error: errors.append(error))
-
-    def fail_after_serialization(staging_path, exporter, *, separator=None):
+    statuses = []
+    monkeypatch.setattr(window, "show_status", lambda *args: statuses.append(args))
+    def fail_after_serialization(snapshot, staging_path, *args, **kwargs):
         staging_paths.append(staging_path)
         assert staging_path != str(target)
-        native_export(staging_path, exporter, separator=separator)
+        native_export(snapshot, staging_path, *args, **kwargs)
         raise RuntimeError("CSV writer failed after serialization")
 
-    monkeypatch.setattr(window, "_write_line_csv_stage", fail_after_serialization)
+    monkeypatch.setattr(CsvColumns, "write", fail_after_serialization)
     assert not export_real_plot_csv(monkeypatch, window, target)
-    assert errors[0][0] == "Plot Export Failed"
+    assert "CSV writer failed" in statuses[-1][0]
     assert len(staging_paths) == 1
     assert target.read_bytes() == original
     assert set(tmp_path.iterdir()) == files_before

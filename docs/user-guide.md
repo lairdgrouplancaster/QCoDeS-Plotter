@@ -67,8 +67,8 @@ detail state: row selection starts no selected-detail reader, prepares no
 additional selected-detail snapshot, and creates no QCoDeS `DataSet`. A trusted
 detail error likewise does not trigger an automatic fallback copy. This applies
 only to ordinary selection: fallback metadata and retained preview paths can
-still create private snapshots. Fallback plot actions and CSV actions still
-materialise their action-owned snapshots; trusted plots use the broker.
+still create private snapshots. Fallback plot and raw CSV actions use that
+read-only path; trusted plots and raw CSV exports use the broker.
 
 The indexed result `id` watermark counts physical QCoDeS rows, which can exceed
 scientific points when dependents are interleaved or stored in blocks. A valid
@@ -123,7 +123,7 @@ state.
 ### Snapshot fallback and deferred actions
 
 The retained snapshot path is used for the narrow fallback above, fallback plot
-actions, CSV actions, and the deferred Database Information diagnostic. A quiescent
+actions, fallback raw CSV actions, and the deferred Database Information diagnostic. A quiescent
 rollback-format source can use SQLite's normal read-only locking. A checkpointed
 WAL-format source is copied to a private snapshot before immutable read-only
 mode is used. An observed rollback `-journal` is copied with the main database
@@ -143,9 +143,9 @@ legacy preview or thumbnail snapshot workers during a trusted live session.
 Snapshot fallback sessions may retain their current preview behavior. The
 trusted Stage 5C scheduler instead produces bounded derived thumbnails and
 previews through the persistent helper and version-3 derived cache. Explicit
-trusted plots capture or aggregate the selected run through the broker. CSV
-actions retain their action-owned snapshots. Both address the selected GUID and
-exact database instance.
+trusted plots capture or aggregate the selected run through the broker. Raw CSV
+exports capture that run's committed prefix through the same broker. Both
+address the selected GUID and exact database instance.
 
 Generated test databases carry provenance for snapshot consumers that ordinary
 SQLite files lack: a unique generation token and a bounded chain of random,
@@ -461,8 +461,8 @@ Trusted plot actions request a connection-free run description, then capture
 that run’s result prefix or aggregate a large numeric heatmap through the broker.
 Private prefix staging contains the selected run, not a whole-database snapshot.
 Trusted plotting needs neither a writer checkpoint nor generation provenance.
-CSV and fallback plot actions still use action-owned snapshots and materialise a
-QCoDeS dataset. All actions remain bound to the selected GUID and exact database
+Trusted raw CSV exports also capture only the selected run. Fallback CSV and
+plot actions retain the read-only snapshot path. All actions remain bound to the selected GUID and exact database
 instance. See [explicit plotting](trusted-live-reader.md#explicit-plotting) for
 capture limits and progress reporting.
 
@@ -630,11 +630,55 @@ secondary axes, and the axis labels follow the displayed quantities.
 
 ## Export
 
-The main window can export measurement data as CSV:
+The main-window **CSV…** button exports raw measurement values, including their
+setpoints, without plot operations. Select or enter a Run ID and choose a
+measurement number, or `*` for all measurements. Preview context menus can also
+export one measurement. Independent measurements are placed side by side, with
+parameter names prefixed when exporting several measurements; shorter columns
+have blank trailing cells. Array records are expanded into their individual
+samples without rounding stored integer or extended-precision values.
 
-* Select a run and use the CSV button.
-* In a snapshot fallback session, right-click a preview and choose the export
-  action.
+To export several runs, use Shift-click or Ctrl-click (Cmd-click on macOS) to
+select rows, then **CSV…**, the selected rows' context menu, or
+`File -> Export Selected Runs as CSV…`. Choose all measurements or a named
+measurement shared by the selected runs, then choose an output folder. qPlot
+writes one file per run and asks before replacing an existing file. Each run
+captures the committed data available when its export starts; a batch is not
+a common acquisition instant across all runs. Later live appends are excluded
+from that run's captured export. Trusted live exports use the run-prefix reader
+and do not need a writer checkpoint or a whole-database copy.
+
+You can also select individual measurement thumbnails in the run table or the
+Preview pane. Ctrl-click (Cmd-click on macOS) toggles a thumbnail; Shift-click
+selects a range in the current display order. Right-click a selected thumbnail
+and choose **Export Selected Thumbnails as CSV…**, then choose a folder. This
+writes one raw CSV per selected measurement, including its setpoints. Selecting
+two measurements from the same run produces two files. Selection is local to
+the run table or Preview pane, and remains highlighted as previews finish
+loading. Existing double-click plotting and thumbnail dragging still work.
+
+CSV capture and writing run in the background. The **CSV exports** window shows
+progress and lets you cancel selected or all pending exports. Hide it to keep
+working, and reopen it from `File -> CSV Export Progress…`. A failed or cancelled
+export leaves its destination unchanged; files already completed remain saved.
+Switching or closing the database cancels pending raw exports. Closing a plot
+cancels its pending plot exports.
+
+In a plot's export dialog, select **CSV data** and check **Values**:
+
+* **Underlying plot samples** includes applied Operations-panel processing,
+  before native FFT, differentiation, phase-map, or mean-subtraction controls.
+* **Transformed plot values** also includes those native controls. Both line
+  modes export all loaded samples in physical coordinates, including secondary
+  traces; zoom, rendering downsampling, and logarithmic axis display do not
+  change their values. Transformed export does not support error bars.
+* **Current primary heatmap grid** exports the currently loaded primary grid,
+  including applied operations and spatial averaging. It retains the loaded
+  extent and resolution and excludes other heatmap layers.
+
+Plot CSV values are captured from the plot after the destination is chosen;
+later refreshes do not change the queued export. No plot CSV mode reads fresh
+database data. Use the main-window CSV action for raw measurements.
 
 Plot windows can export plot images and data through `File -> Export Plot...` or
 `Ctrl+E`, using pyqtgraph's export dialog. Use `File -> Save Plot as PDF...` or

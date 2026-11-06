@@ -17,6 +17,7 @@ from qcodes.dataset import (
 from qcodes.dataset.sqlite.database import connect
 from qcodes.parameters import ManualParameter
 
+from qplot.tools import plot_csv as plot_csv_module
 from qplot.windows import _plot_export as plot_export_module
 from qplot.windows import main as main_window
 from tests._window_lifecycle import close_main_window
@@ -158,6 +159,9 @@ def _export_from_dialog(monkeypatch, plot, dialog, target, delimiter):
         lambda *_args, **_kwargs: (str(target), ""),
     )
     dialog.ui.exportBtn.click()
+    tasks = tuple(plot._export_tasks)
+    wait_for(lambda: all(task.done for task in tasks))
+    assert all(task.error is None and not task.cancelled for task in tasks)
     assert errors == []
     assert statuses[-1][0] == f"Exported plot: {target}"
     assert not list(target.parent.glob(f".{target.name}.*"))
@@ -340,21 +344,26 @@ def test_dialog_retry_after_partial_csv_write_has_fresh_state(
         return FailAfterFirstDataRow()
 
     with monkeypatch.context() as failure:
-        failure.setattr(plot_export_module.csv, "writer", partial_writer)
+        failure.setattr(plot_csv_module.csv, "writer", partial_writer)
         dialog.ui.exportBtn.click()  # Declined replacement does not serialize.
         assert written_rows == []
         assert errors == []
         dialog.ui.exportBtn.click()  # Approved replacement fails midway.
+        task, = plot._export_tasks
+        wait_for(lambda: task.done)
     assert len(written_rows) == 2
-    assert errors[0][0] == "Plot Export Failed"
-    assert statuses[-1][0] == "Could not export plot."
+    assert isinstance(task.error, OSError)
+    assert "Simulated CSV failure" in statuses[-1][0]
     assert target.read_bytes() == original
     assert set(tmp_path.iterdir()) == entries_before
     assert exporter.params.saveState() == selected_options
 
     dialog.ui.exportBtn.click()  # Retry in the same dialog and exporter.
+    task, = plot._export_tasks
+    wait_for(lambda: task.done)
+    assert task.error is None and not task.cancelled
     assert len(prompts) == 3
-    assert len(errors) == 1
+    assert errors == []
     assert statuses[-1][0] == f"Exported plot: {target}"
     assert dialog.currentExporter is exporter
     assert exporter.params.saveState() == selected_options

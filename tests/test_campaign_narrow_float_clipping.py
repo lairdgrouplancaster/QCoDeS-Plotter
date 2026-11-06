@@ -16,6 +16,7 @@ from tests.windows.test_differentiation_integration import (
 )
 from tests.windows.test_numeric_sample_preservation import array_plot
 from tests.windows.test_plot_csv_precision import _export_from_dialog, _open_csv_dialog
+from tests.windows.test_plot_integration import wait_for
 
 _BOUNDS = [
     (np.float16, "Limit Minimum", "70000"),
@@ -60,8 +61,12 @@ def test_real_narrow_float_clipping_controls_plot_and_export(
 
         # Export Run must retain the acquired data despite the displayed operation.
         destination = tmp_path / "raw.csv"
-        monkeypatch.setattr(window, "_choose_csv_export_filename", lambda _default: str(destination))
+        monkeypatch.setattr(window, "_choose_csv_export_filename",
+                            lambda _default, **_kwargs: str(destination))
         window._export_measurement_csv(plot._dataset_key, ["signal"])
+        task, = window._export_tasks
+        wait_for(lambda: task.done)
+        assert task.error is None and not task.cancelled
         with destination.open(newline="", encoding="utf-8") as stream:
             raw = [float(row["signal"]) for row in csv.DictReader(stream)]
         np.testing.assert_array_equal(raw, original.ravel())

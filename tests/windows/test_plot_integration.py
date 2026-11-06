@@ -223,7 +223,12 @@ def export_real_plot_csv(monkeypatch, plot_window, target):
         "question",
         lambda *_args, **_kwargs: qtw.QMessageBox.StandardButton.Yes,
     )
-    return plot_window._export_pyqtgraph_exporter(CSVExporter(plot_window.plot))
+    accepted = plot_window._export_pyqtgraph_exporter(CSVExporter(plot_window.plot))
+    if accepted:
+        tasks = tuple(getattr(plot_window, "_export_tasks", ()))
+        wait_for(lambda: all(task.done for task in tasks))
+        return all(task.error is None and not task.cancelled for task in tasks)
+    return False
 
 
 def csv_rows(csv_path):
@@ -276,7 +281,7 @@ def test_mixed_run_csv_is_identical_before_and_after_opening_plot(
         assert window.selected_run_id == run_id
         # Export enumerates the full run even while progressive metadata may
         # still omit standalone measurements from the run list.
-        assert window._run_csv_export_request()[1] == ("signal", "temperature")
+        assert window._run_csv_export_request()[1] is None
 
         destinations = iter((tmp_path / "before.csv", tmp_path / "after.csv"))
         monkeypatch.setattr(
@@ -285,6 +290,8 @@ def test_mixed_run_csv_is_identical_before_and_after_opening_plot(
         )
         window.measurementBox.setText("*")
         window.exportRunCsv()
+        wait_for(lambda: not window._export_task_manager.tasks)
+        assert window._export_task_manager.history[-1].error is None
 
         window.openPlot(guid=guid, show=False)
         wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
@@ -293,6 +300,8 @@ def test_mixed_run_csv_is_identical_before_and_after_opening_plot(
         held_dataset = window.dataset_holder[plot._dataset_key].dataset
         window._replace_selected_dataset(held_dataset, plot._dataset_key)
         window.exportRunCsv()
+        wait_for(lambda: not window._export_task_manager.tasks)
+        assert window._export_task_manager.history[-1].error is None
 
         expected = [
             ["signal.signal", "signal.x", "temperature.temperature"],
@@ -1064,6 +1073,9 @@ def test_real_plot_export_format_controls_suffix_and_delimiter(
             assert len(prompts) == 1
 
             assert plot_window._export_pyqtgraph_exporter(exporter)
+            tasks = tuple(getattr(plot_window, "_export_tasks", ()))
+            wait_for(lambda pending=tasks: all(task.done for task in pending))
+            assert all(task.error is None and not task.cancelled for task in tasks)
             assert len(prompts) == 2
             with target.open(newline="", encoding="utf-8") as exported_file:
                 rows = list(csv.reader(
@@ -2599,10 +2611,12 @@ def test_live_wal_update_keeps_real_qcodes_instance_and_cached_handle(
             qcodes.config.core.db_location = original_database_path
 
 
-def test_live_wal_preview_exports_use_fresh_action_local_datasets(
+def test_live_wal_preview_exports_use_fresh_per_run_captures(
     tmp_path,
     monkeypatch,
 ):
+    from qplot.datahandling import csv_export as raw_csv
+
     configure_temp_qplot(monkeypatch, tmp_path)
     original_database_path = qcodes.config.core.db_location
     source_directory = tmp_path / "source"
@@ -2670,20 +2684,16 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
             source_artifacts = trusted_database_artifact_state(database_path)
             source_entries = set(source_directory.iterdir())
 
-            action_datasets = []
-            action_snapshot_directories = []
-            load_calls = []
-            real_loader = plot_actions_module.load_by_guid_read_only
+            captures = []
+            service = window._trusted_read_service
+            real_capture = service.submit_plot_prefix
 
-            def record_action_dataset(*args, **kwargs):
-                dataset = real_loader(*args, **kwargs)
-                snapshot_path = Path(
-                    dataset.conn.execute("PRAGMA database_list").fetchone()[2]
-                )
-                action_datasets.append(dataset)
-                action_snapshot_directories.append(snapshot_path.parent)
-                load_calls.append((args, kwargs))
-                return dataset
+            def capture_run(dataset, *args, **kwargs):
+                captures.append((dataset.guid, dataset.path_to_db))
+                return real_capture(dataset, *args, **kwargs)
+
+            def reject_snapshot(*_args, **_kwargs):
+                pytest.fail("Trusted CSV export must not create a database snapshot")
 
             export_paths = iter((selected_export_path, run_export_path))
 
@@ -2692,10 +2702,9 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
 
             with monkeypatch.context() as scoped_monkeypatch:
                 scoped_monkeypatch.setattr(
-                    plot_actions_module,
-                    "load_by_guid_read_only",
-                    record_action_dataset,
+                    raw_csv, "load_by_guid_read_only", reject_snapshot,
                 )
+                scoped_monkeypatch.setattr(service, "submit_plot_prefix", capture_run)
                 scoped_monkeypatch.setattr(
                     qtw.QFileDialog,
                     "getSaveFileName",
@@ -2703,26 +2712,15 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
                 )
                 window.export_preview_csv("signal")
                 window.export_run_preview_csv(guid, "signal")
+                wait_for(lambda: not window._export_task_manager.tasks)
+                assert all(task.error is None for task in window._export_task_manager.history)
 
             for export_path in (selected_export_path, run_export_path):
                 frame = pd.read_csv(export_path)
                 assert frame["gate"].tolist() == [1.0, 2.0]
                 assert frame["signal"].tolist() == [11.0, 12.0]
 
-            assert len(load_calls) == 2
-            for args, kwargs in load_calls:
-                assert args == (guid, dataset_key.database_path)
-                assert kwargs == {
-                    "expected_database_identity": dataset_key.database_identity,
-                }
-            assert all(dataset is not held_dataset for dataset in action_datasets)
-            for dataset in action_datasets:
-                with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
-                    dataset.conn.cursor()
-            assert all(
-                not snapshot_directory.exists()
-                for snapshot_directory in action_snapshot_directories
-            )
+            assert captures == [(guid, dataset_key.database_path)] * 2
 
             # Trusted selection remains DB-free and the explicit plot retains
             # its last displayed data; exporting must neither refresh nor
@@ -2745,7 +2743,7 @@ def test_live_wal_preview_exports_use_fresh_action_local_datasets(
         qcodes.config.core.db_location = original_database_path
 
 
-def test_preview_export_dialog_replacement_precedes_fresh_dataset_acquisition(
+def test_preview_export_dialog_replacement_precedes_fresh_run_capture(
     tmp_path,
     monkeypatch,
 ):
@@ -2793,17 +2791,16 @@ def test_preview_export_dialog_replacement_precedes_fresh_dataset_acquisition(
         held_handle = window.dataset_holder[dataset_key]
         held_dataset = held_handle.dataset
 
-        action_datasets = []
+        captures = []
+        service = window._trusted_read_service
+        real_capture = service.submit_plot_dataset
         replacement_loads = []
         errors = []
         replacement_state = None
         replacement_entries = None
-        real_loader = plot_actions_module.load_by_guid_read_only
-
-        def record_action_dataset(*args, **kwargs):
-            dataset = real_loader(*args, **kwargs)
-            action_datasets.append(dataset)
-            return dataset
+        def record_capture(*args, **kwargs):
+            captures.append((args, kwargs))
+            return real_capture(*args, **kwargs)
 
         def record_load(*args, **kwargs):
             replacement_loads.append((args, kwargs))
@@ -2814,7 +2811,7 @@ def test_preview_export_dialog_replacement_precedes_fresh_dataset_acquisition(
             nonlocal replacement_state
             # The regression: an action-owned dataset must not exist while
             # the modal dialog is allowing the source path to change.
-            assert action_datasets == []
+            assert captures == []
             release_windows_database_locks(window, database_path)
             os.replace(replacement_path, database_path)
             replacement_state = database_artifact_state(database_path)
@@ -2823,9 +2820,7 @@ def test_preview_export_dialog_replacement_precedes_fresh_dataset_acquisition(
 
         with monkeypatch.context() as scoped_monkeypatch:
             scoped_monkeypatch.setattr(
-                plot_actions_module,
-                "load_by_guid_read_only",
-                record_action_dataset,
+                service, "submit_plot_dataset", record_capture,
             )
             scoped_monkeypatch.setattr(window, "load_file", record_load)
             scoped_monkeypatch.setattr(
@@ -2851,11 +2846,9 @@ def test_preview_export_dialog_replacement_precedes_fresh_dataset_acquisition(
         )
         window.monitor.stop()
 
-        assert action_datasets == []
+        assert captures == []
         assert not export_path.exists()
-        assert errors
-        assert errors[-1][0] == "Run Load Failed"
-        assert "replaced" in errors[-1][2].lower()
+        assert errors == []
         assert replacement_loads
         assert replacement_loads[0][1] == {"force": True, "replacement": True}
         assert held_handle.closed
@@ -2879,10 +2872,12 @@ def test_preview_export_dialog_replacement_precedes_fresh_dataset_acquisition(
         qcodes.config.core.db_location = original_database_path
 
 
-def test_preview_export_extraction_replacement_preserves_existing_csv(
+def test_preview_export_capture_replacement_preserves_existing_csv(
     tmp_path,
     monkeypatch,
 ):
+    from qplot.windows._export_paths import StagedExport
+
     configure_temp_qplot(monkeypatch, tmp_path)
     original_database_path = qcodes.config.core.db_location
     source_directory = tmp_path / "source"
@@ -2928,45 +2923,27 @@ def test_preview_export_extraction_replacement_preserves_existing_csv(
         dataset_key = plot._dataset_key
         held_handle = window.dataset_holder[dataset_key]
 
-        action_datasets = []
         replacement_loads = []
         errors = []
         replacement_state = None
         replacement_entries = None
-        real_loader = plot_actions_module.load_by_guid_read_only
-        real_extraction = window._measurement_dataframe
+        real_publish = StagedExport.publish
 
-        def record_action_dataset(*args, **kwargs):
-            dataset = real_loader(*args, **kwargs)
-            action_datasets.append(dataset)
-            return dataset
-
-        def replace_during_extraction(dataset, params):
-            nonlocal replacement_entries
-            nonlocal replacement_state
-            frame = real_extraction(dataset, params)
-            assert frame["signal"].tolist() == [10.0]
-            release_windows_database_locks(window, database_path, dataset)
+        def replace_after_capture(stage, before_publish=None):
+            nonlocal replacement_entries, replacement_state
+            assert csv_rows(Path(stage.stage_path)) == [["signal", "gate"], ["10.0", "0.0"]]
+            release_windows_database_locks(window, database_path)
             os.replace(replacement_path, database_path)
             replacement_state = database_artifact_state(database_path)
             replacement_entries = set(source_directory.iterdir())
-            return frame
+            return real_publish(stage, before_publish)
 
         def record_load(*args, **kwargs):
             replacement_loads.append((args, kwargs))
             return original_load_file(*args, **kwargs)
 
         with monkeypatch.context() as scoped_monkeypatch:
-            scoped_monkeypatch.setattr(
-                plot_actions_module,
-                "load_by_guid_read_only",
-                record_action_dataset,
-            )
-            scoped_monkeypatch.setattr(
-                window,
-                "_measurement_dataframe",
-                replace_during_extraction,
-            )
+            scoped_monkeypatch.setattr(StagedExport, "publish", replace_after_capture)
             scoped_monkeypatch.setattr(window, "load_file", record_load)
             scoped_monkeypatch.setattr(
                 window,
@@ -2987,6 +2964,8 @@ def test_preview_export_extraction_replacement_preserves_existing_csv(
                 lambda *_args, **_kwargs: qtw.QMessageBox.StandardButton.Yes,
             )
             window.export_run_preview_csv(guid, "signal")
+            wait_for(lambda: not window._export_task_manager.tasks)
+            assert window._export_task_manager.history[-1].error is not None
 
         wait_for(
             lambda: (
@@ -2999,14 +2978,9 @@ def test_preview_export_extraction_replacement_preserves_existing_csv(
         )
         window.monitor.stop()
 
-        assert len(action_datasets) == 1
-        with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
-            action_datasets[0].conn.cursor()
         assert export_path.read_bytes() == original_export
         assert set(export_directory.iterdir()) == {export_path}
-        assert errors
-        assert errors[-1][0] == "CSV Export Failed"
-        assert "replaced" in errors[-1][2].lower()
+        assert errors == []
         assert replacement_loads
         assert replacement_loads[0][1] == {"force": True, "replacement": True}
         assert held_handle.closed
@@ -3032,7 +3006,7 @@ def test_preview_export_extraction_replacement_preserves_existing_csv(
     os.name == "nt",
     reason="Windows does not permit replacing a database during an open SQLite read.",
 )
-def test_preview_export_rejects_database_replacement_during_fresh_load(
+def test_preview_export_rejects_database_replacement_during_fresh_capture(
     tmp_path,
     monkeypatch,
 ):
@@ -3070,43 +3044,35 @@ def test_preview_export_rejects_database_replacement_during_fresh_load(
         window.monitor.stop()
         assert window.ds is None
         assert window._selected_run_guid == guid
+        # Isolate this export from thumbnail work and periodic plot refreshes
+        # that can independently retire the replaced source on a slow runner.
+        wait_for_trusted_derived_work(window)
         window.openPlot(guid=guid, show=False)
         wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         plot = window.windows[-1]
         wait_for(lambda: not getattr(plot.worker, "running", False))
+        plot.monitor.stop()
         dataset_key = plot._dataset_key
         held_handle = window.dataset_holder[dataset_key]
         held_dataset = held_handle.dataset
 
-        real_require = readonly_module._require_expected_database_instance
-        real_connect = readonly_module.connect
+        service = window._trusted_read_service
+        real_submit = service.submit_plot_dataset
         replacement_state = None
         replacement_entries = None
         replacement_happened = False
-        opened_connections = []
         errors = []
         dialog_opened = False
 
-        def replace_after_initial_identity_check(path, expected_identity):
-            nonlocal replacement_entries
-            nonlocal replacement_happened
-            nonlocal replacement_state
-            result = real_require(path, expected_identity)
-            if (
-                not replacement_happened
-                and Path(path) == database_path.resolve()
-                and expected_identity == dataset_key.database_identity
-            ):
-                os.replace(replacement_path, database_path)
-                replacement_state = database_artifact_state(database_path)
-                replacement_entries = set(source_directory.iterdir())
-                replacement_happened = True
-            return result
-
-        def record_connection(*args, **kwargs):
-            connection = real_connect(*args, **kwargs)
-            opened_connections.append(connection)
-            return connection
+        def replace_after_descriptor(*args, **kwargs):
+            nonlocal replacement_entries, replacement_happened, replacement_state
+            request = real_submit(*args, **kwargs)
+            request.wait(5)
+            os.replace(replacement_path, database_path)
+            replacement_state = database_artifact_state(database_path)
+            replacement_entries = set(source_directory.iterdir())
+            replacement_happened = True
+            return request
 
         def unexpected_save_dialog(*_args, **_kwargs):
             nonlocal dialog_opened
@@ -3114,16 +3080,7 @@ def test_preview_export_rejects_database_replacement_during_fresh_load(
             return str(export_path), "CSV files (*.csv)"
 
         with monkeypatch.context() as scoped_monkeypatch:
-            scoped_monkeypatch.setattr(
-                readonly_module,
-                "_require_expected_database_instance",
-                replace_after_initial_identity_check,
-            )
-            scoped_monkeypatch.setattr(
-                readonly_module,
-                "connect",
-                record_connection,
-            )
+            scoped_monkeypatch.setattr(service, "submit_plot_dataset", replace_after_descriptor)
             scoped_monkeypatch.setattr(
                 window,
                 "_reload_if_database_instance_changed",
@@ -3140,18 +3097,16 @@ def test_preview_export_rejects_database_replacement_during_fresh_load(
                 unexpected_save_dialog,
             )
             window.export_run_preview_csv(guid, "signal")
+            wait_for(lambda: not window._export_task_manager.tasks)
+            task = window._export_task_manager.history[-1]
 
         assert replacement_happened
         assert dialog_opened
         assert not export_path.exists()
-        assert errors
-        assert errors[-1][0] == "Run Load Failed"
-        assert "replaced" in errors[-1][2].lower()
-        # The replacement may now be rejected before SQLite is opened. If it
-        # happens after opening, every provisional connection must be closed.
-        for connection in opened_connections:
-            with pytest.raises((sqlite3.ProgrammingError, RuntimeError)):
-                connection.cursor()
+        assert errors == []
+        assert task.error is not None
+        assert "replaced" in str(task.error).lower()
+        assert not list(export_directory.glob(f".{export_path.name}.*"))
 
         # The failed action neither exported the replacement nor disposed of
         # the plot-owned snapshot from the original database instance.

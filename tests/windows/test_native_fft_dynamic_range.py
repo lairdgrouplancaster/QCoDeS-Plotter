@@ -11,12 +11,12 @@ from qcodes.dataset import (
     load_or_create_experiment,
 )
 
-from qplot.windows import main as main_window
-from qplot.windows._native_transforms import (
-    NativePlotDataItem,
+from qplot.tools.native_transform_math import (
     _interpolate_fft_samples,
     _normalized_real_fft,
 )
+from qplot.windows import main as main_window
+from qplot.windows._native_transforms import NativePlotDataItem
 from tests._window_lifecycle import close_main_window
 from tests.windows.test_complex_line_data import database_state
 from tests.windows.test_native_transform_labels import click_control

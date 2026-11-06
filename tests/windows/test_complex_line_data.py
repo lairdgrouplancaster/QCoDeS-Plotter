@@ -20,7 +20,7 @@ from qplot.datahandling.qcodes_cache import (
 )
 from qplot.windows import main as main_window
 from qplot.windows._database_detail_state import detail_channel
-from tests._window_lifecycle import close_main_window
+from tests._window_lifecycle import close_main_window, wait_for_exports
 from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
 
 
@@ -117,6 +117,7 @@ def test_complex_measurement_actual_plot_error_export_and_recovery(tmp_path, mon
         monkeypatch.setattr(qtw.QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
         window.measurementBox.setText("1")
         window.exportRunCsv()
+        wait_for_exports(window)
         with target.open(newline="", encoding="utf-8") as csv_file:
             rows = list(csv.DictReader(csv_file))
         np.testing.assert_array_equal([complex(row["x"]) for row in rows], x)

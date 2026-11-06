@@ -41,7 +41,7 @@ from ._dataset_handle import (
 )
 from ._dataset_registry import dataset_registry
 from ._export_names import suggested_export_filename
-from ._export_paths import choose_export_path, write_export_atomically
+from ._export_paths import choose_export_path
 from ._plot2d_layers import _heatmap_layer_compatibility, _window_display_unit
 from ._plot_drop_axes import plan_drop_axes
 from ._plot_source_promotion import promote_plot_source
@@ -467,7 +467,7 @@ class PlotActionsMixin:
         )
 
 
-    def _clear_selected_run_state(self):
+    def _clear_selected_run_state(self, *, clear_table_selection=True):
         """Clear run actions and UI after a selected dataset cannot be loaded."""
         cancel_detail = getattr(self, "_cancel_selected_run_detail", None)
         if callable(cancel_detail):
@@ -485,7 +485,7 @@ class PlotActionsMixin:
                 run_id_box.blockSignals(signals_blocked)
 
         run_list = getattr(self, "RunList", None)
-        if run_list is not None:
+        if run_list is not None and clear_table_selection:
             signals_blocked = run_list.blockSignals(True)
             try:
                 run_list.clearSelection()
@@ -506,7 +506,7 @@ class PlotActionsMixin:
     @QtCore.pyqtSlot()
     def clear_non_single_run_selection(self):
         """Drop the single-run action target for an empty or multi-selection."""
-        self._clear_selected_run_state()
+        self._clear_selected_run_state(clear_table_selection=False)
 
 
     def _evict_dataset_handle(self, dataset_key):
@@ -1085,6 +1085,10 @@ class PlotActionsMixin:
                 operation="exporting run data",
                 ):
             return
+        selected_ids = getattr(self.RunList, "selected_run_ids", lambda: [])()
+        if len(selected_ids) > 1:
+            self.export_selected_runs_csv()
+            return
         request = self._run_csv_export_request()
         if request is None:
             return
@@ -1094,6 +1098,27 @@ class PlotActionsMixin:
             parameter_names,
             run_id=run_id,
         )
+
+
+    @QtCore.pyqtSlot()
+    def export_selected_runs_csv(self):
+        from ._run_csv_export import export_selected_runs
+
+        export_selected_runs(self)
+
+
+    @QtCore.pyqtSlot(object)
+    def export_selected_previews_csv(self, targets):
+        from ._run_csv_export import export_selected_previews
+
+        export_selected_previews(self, targets)
+
+
+    @QtCore.pyqtSlot()
+    def show_csv_exports(self):
+        from ._run_csv_export import show_exports
+
+        show_exports(self)
 
 
     @QtCore.pyqtSlot(str)
@@ -1194,154 +1219,19 @@ class PlotActionsMixin:
 
 
     def _export_preview_csv(self, dataset_key, parameter_name):
-        """Export one preview through a fresh, action-owned dataset view."""
-        default_name = self._default_preview_export_filename(
-            dataset_key,
-            parameter_name,
-        )
-        filename = self._choose_csv_export_filename(default_name)
-        if filename is None:
-            return
+        """Export the preview's raw measurements in the background."""
+        from ._run_csv_export import queue_raw_export
 
-        dataset = None
-        original_dataset_key = dataset_key
-        try:
-            # Preview and plot datasets intentionally remain frozen at their
-            # original read-only WAL snapshots.  Export needs the newest
-            # committed rows, so choose the destination first and only then
-            # bypass DatasetHandle caching.  No action-owned snapshot waits
-            # behind the modal save dialog.
-            try:
-                dataset_key = self._bind_one_shot_dataset_key(dataset_key)
-                dataset = self._load_run_csv_dataset(dataset_key)
-                param = self._measurement_param_by_name(dataset, parameter_name)
-            except DatabaseInstanceChangedError as err:
-                self._handle_run_csv_source_replaced(
-                    dataset_key or original_dataset_key,
-                )
-                log_exception("Preview CSV run load failed", err, __name__)
-                self.show_error(
-                    "Run Load Failed",
-                    f"Could not load run with GUID {original_dataset_key.guid}.",
-                    str(err),
-                )
-                return
-            except Exception as err:
-                log_exception("Preview CSV run load failed", err, __name__)
-                self.show_error(
-                    "Run Load Failed",
-                    f"Could not load run with GUID {dataset_key.guid}.",
-                    str(err),
-                )
-                return
-
-            if param is None:
-                self.show_status(
-                    f"No preview export found for {parameter_name}.",
-                    5000,
-                )
-                return
-
-            try:
-                frame = self._measurement_dataframe(dataset, [param])
-                # The read-only connection intentionally keeps its original
-                # SQLite snapshot readable if the path is replaced.  Reject
-                # that obsolete frame before it reaches the destination.
-                self._require_run_csv_source_current(dataset_key)
-                self._publish_preview_csv(frame, filename, dataset_key)
-            except DatabaseInstanceChangedError as err:
-                self._handle_run_csv_source_replaced(dataset_key)
-                log_exception("Preview CSV export failed", err, __name__)
-                self.show_error(
-                    "CSV Export Failed",
-                    "Could not export the selected measurement data.",
-                    str(err),
-                )
-                return
-            except Exception as err:
-                log_exception("Preview CSV export failed", err, __name__)
-                self.show_error(
-                    "CSV Export Failed",
-                    "Could not export the selected measurement data.",
-                    str(err),
-                )
-                return
-
-            self.show_status(f"Exported CSV: {filename}", 5000)
-        finally:
-            if dataset is not None:
-                try:
-                    close_dataset_connection(dataset)
-                except Exception as err:
-                    log_exception(
-                        "Preview CSV dataset cleanup failed",
-                        err,
-                        __name__,
-                    )
+        return queue_raw_export(self, dataset_key, (parameter_name,))
 
 
     def _export_measurement_csv(
-            self,
-            dataset_key,
-            parameter_names,
-            *,
-            run_id=None,
+            self, dataset_key, parameter_names, *, run_id=None,
             ):
-        """Export a captured run request through a fresh read-only dataset."""
-        parameter_names = tuple(str(name) for name in parameter_names)
-        if not parameter_names:
-            self.show_status("No plottable measurements to export for this run.", 5000)
-            return
+        """Queue an exact run selection for cancellable raw CSV export."""
+        from ._run_csv_export import queue_raw_export
 
-        default_name = self._default_run_csv_export_filename(
-            dataset_key,
-            parameter_names,
-            run_id=run_id,
-        )
-        filename = self._choose_csv_export_filename(default_name)
-        if filename is None:
-            return
-
-        dataset = None
-        original_dataset_key = dataset_key
-        try:
-            # The destination is approved before this action-owned view is
-            # opened, so a modal save dialog cannot retain an obsolete SQLite
-            # snapshot. The read layer also binds acquisition to the database
-            # identity captured in ``dataset_key``.
-            dataset_key = self._bind_one_shot_dataset_key(dataset_key)
-            dataset = self._load_run_csv_dataset(dataset_key)
-            params = self._measurement_params_by_names(dataset, parameter_names)
-            frame = self._measurement_dataframe(dataset, params)
-            self._require_run_csv_source_current(dataset_key)
-            write_export_atomically(
-                filename,
-                lambda temporary: frame.to_csv(temporary, index=False),
-                before_publish=(
-                    lambda: self._require_run_csv_source_current(dataset_key)
-                ),
-            )
-        except DatabaseInstanceChangedError:
-            self._handle_run_csv_source_replaced(
-                dataset_key or original_dataset_key,
-            )
-            return
-        except Exception as err:
-            log_exception("CSV export failed", err, __name__)
-            self.show_error(
-                "CSV Export Failed",
-                "Could not export the selected measurement data.",
-                str(err),
-            )
-            return
-        finally:
-            if dataset is not None:
-                try:
-                    close_dataset_connection(dataset)
-                except Exception as err:
-                    log_exception("CSV dataset cleanup failed", err, __name__)
-
-        self.show_status(f"Exported CSV: {filename}", 5000)
+        return queue_raw_export(self, dataset_key, parameter_names, run_id=run_id)
 
 
     def _load_run_csv_dataset(self, dataset_key):
@@ -1408,7 +1298,7 @@ class PlotActionsMixin:
         try:
             destination = choose_export_path(
                 self,
-                caption="Export CSV",
+                caption="Export Raw Measurement Values as CSV",
                 suggested_path=default_name,
                 name_filter="CSV files (*.csv)",
                 required_suffix=".csv",
@@ -1427,19 +1317,6 @@ class PlotActionsMixin:
             self.show_status("CSV export cancelled.", 3000)
             return None
         return destination
-
-
-    def _publish_preview_csv(self, frame, filename, dataset_key):
-        """Stage a preview CSV and publish it only for the requested source."""
-        # The source must still be the captured database instance immediately
-        # before the staged file atomically replaces the requested destination.
-        write_export_atomically(
-            filename,
-            lambda temporary: frame.to_csv(temporary, index=False),
-            before_publish=(
-                lambda: self._require_run_csv_source_current(dataset_key)
-            ),
-        )
 
 
     @QtCore.pyqtSlot(str)
@@ -2205,112 +2082,10 @@ class PlotActionsMixin:
 
 
     def _run_csv_export_request(self):
-        """Capture a run key and names without opening an export dataset."""
-        database_path = self.fileTextbox.text()
-        if not database_path:
-            self.show_status("Load a database before plotting or exporting.", 5000)
-            return None
+        """Capture the raw export selector without synchronous database reads."""
+        from ._run_csv_export import run_export_request
 
-        run_id = self.selected_run_id
-        if run_id is None:
-            self.show_status("Enter a Run ID before plotting or exporting.", 5000)
-            return None
-
-        reload_if_changed = getattr(
-            self,
-            "_reload_if_database_instance_changed",
-            None,
-        )
-        if callable(reload_if_changed) and reload_if_changed(database_path):
-            self.show_status(
-                "Database was replaced; reloading before exporting the run.",
-                5000,
-            )
-            return None
-
-        selected_dataset = getattr(self, "ds", None)
-        selected_key = getattr(self, "_selected_dataset_key", None)
-        if (
-                selected_dataset is not None
-                and getattr(selected_dataset, "run_id", None) == run_id
-                and selected_key is not None
-                and selected_key.database_path
-                == logical_database_path(database_path)
-                ):
-            try:
-                parameter_names = tuple(
-                    param.name
-                    for param in exportable_measurement_params(selected_dataset)
-                )
-            except Exception as error:
-                log_exception("Run parameter enumeration failed", error, __name__)
-                self.show_error(
-                    "Run Load Failed",
-                    "Could not read the selected run's measurements.",
-                    str(error),
-                )
-                return None
-            # Parameter enumeration may reuse an explicit-action dataset, but
-            # this new export request is rebound to the currently accepted full
-            # DatabaseInstance after the replacement guard above.
-            dataset_key = self._current_dataset_key(selected_key.guid)
-        else:
-            metadata = self._run_metadata_for_id(run_id)
-            guid = metadata.get("guid")
-            if not guid:
-                self.show_status(
-                    f"Run {run_id} is not available in the loaded database.",
-                    5000,
-                )
-                return None
-            dataset_key = self._current_dataset_key(str(guid))
-            parameter_names = tuple(
-                str(name)
-                for name in metadata.get("measure_parameters") or ()
-            )
-            if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
-                # The trusted run list is populated progressively. Its initial
-                # measurement names may omit standalones until derived metadata
-                # arrives. An explicit export can enumerate a short-lived
-                # action view now, before the modal destination dialog.
-                dataset = None
-                try:
-                    dataset_key = self._bind_one_shot_dataset_key(dataset_key)
-                    dataset = self._load_run_csv_dataset(dataset_key)
-                    parameter_names = tuple(
-                        param.name
-                        for param in exportable_measurement_params(dataset)
-                    )
-                    self._require_run_csv_source_current(dataset_key)
-                except DatabaseInstanceChangedError:
-                    self._handle_run_csv_source_replaced(dataset_key)
-                    return None
-                except Exception as error:
-                    log_exception("Run parameter enumeration failed", error, __name__)
-                    self.show_error(
-                        "Run Load Failed",
-                        "Could not read the selected run's measurements.",
-                        str(error),
-                    )
-                    return None
-                finally:
-                    if dataset is not None:
-                        try:
-                            close_dataset_connection(dataset)
-                        except Exception as error:
-                            log_exception(
-                                "CSV parameter dataset cleanup failed",
-                                error,
-                                __name__,
-                            )
-
-        requested_names = self._selected_measurement_names(
-            parameter_names,
-            run_id,
-        )
-        if requested_names is None:
-            return None
-        return dataset_key, requested_names, run_id
+        return run_export_request(self)
 
 
     def _run_metadata_for_id(self, run_id):

@@ -26,7 +26,7 @@ def test_plot_csv_preserves_float_samples_on_both_axes(tmp_path, qapplication, d
     try:
         plot.addItem(NativePlotDataItem(values, values[::-1]))
         destination = tmp_path / "floats.csv"
-        PlotExportMixin._write_line_csv_stage(None, str(destination), CSVExporter(plot))
+        PlotExportMixin()._write_line_csv_stage(str(destination), CSVExporter(plot))
         with destination.open(newline="", encoding="utf-8") as exported:
             rows = list(csv.reader(exported))[1:]
         # Ordinary float32 values must also retain their exact stored value when
@@ -79,7 +79,7 @@ def test_real_qcodes_extended_float_plot_csv_preserves_recorded_steps(tmp_path, 
         np.testing.assert_array_equal(curve.getOriginalDataset()[1], signal)
 
         destination = tmp_path / "extended.csv"
-        PlotExportMixin._write_line_csv_stage(None, str(destination), CSVExporter(plot))
+        PlotExportMixin()._write_line_csv_stage(str(destination), CSVExporter(plot))
         with destination.open(newline="", encoding="utf-8") as exported:
             rows = list(csv.reader(exported))
         recovered = np.asarray([row[1] for row in rows[1:]], dtype=np.longdouble)

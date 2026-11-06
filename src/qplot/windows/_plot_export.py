@@ -1,8 +1,5 @@
-import csv
 import os
 import weakref
-from decimal import Decimal
-from itertools import zip_longest
 from os import path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -26,6 +23,14 @@ except ImportError:  # pragma: no cover - fail-closed compatibility path
     _FormatExportListWidgetItem = None
 
 from qplot.diagnostics import log_exception
+from qplot.tools.plot_csv import (
+    CsvColumns,
+    HeatmapCsv,
+    TransformedCsv,
+    TransformedTrace,
+    frozen_array,
+    shared_coordinates_match,
+)
 
 from ._csv_filenames import csv_filename
 from ._export_names import suggested_export_filename
@@ -39,6 +44,7 @@ from ._export_paths import (
     prepare_export_destination,
     write_export_atomically,
 )
+from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
@@ -61,40 +67,14 @@ _UnsafePrintDestinationError = UnsafeExportDestinationError
 _PrintPdfDestination = ExportDestinationTransaction
 _SAFE_PYQTGRAPH_FILE_EXPORTERS = (ImageExporter, CSVExporter, SVGExporter)
 _SAFE_PYQTGRAPH_COPY_EXPORTERS = (ImageExporter, SVGExporter)
-
-
-def _csv_numeric_text(value: Any) -> str:
-    """Preserve extended array samples without narrowing them to binary64."""
-    if isinstance(value, np.longdouble):
-        return np.format_float_scientific(value, unique=True, trim="-")
-    if isinstance(value, (float, np.floating)):
-        return repr(float(value))
-    return str(value)
-
-
-def _csv_coordinate_is_nan(value: Any) -> bool:
-    """Recognize NaN without narrowing exact integers or extended floats."""
-    if isinstance(value, Decimal):
-        return value.is_nan()
-    if isinstance(value, (float, complex, np.inexact)):
-        return bool(np.isnan(value))
-    return False
+CSV_UNDERLYING_VALUES = "Underlying plot samples"
+CSV_TRANSFORMED_VALUES = "Transformed plot values"
+CSV_HEATMAP_VALUES = "Current primary heatmap grid"
 
 
 def _csv_shared_coordinates_match(reference: Any, candidate: Any) -> bool:
-    """Check an exact coordinate prefix without NumPy mixed-type coercion."""
-    reference = np.asarray(reference)
-    candidate = np.asarray(candidate)
-    if reference.ndim != 1 or candidate.ndim != 1 or candidate.size > reference.size:
-        return False
-    for left, right in zip(reference, candidate, strict=False):
-        if isinstance(left, np.generic):
-            left = left.item()
-        if isinstance(right, np.generic):
-            right = right.item()
-        if left != right and not (_csv_coordinate_is_nan(left) and _csv_coordinate_is_nan(right)):
-            return False
-    return True
+    """Keep the existing validation seam backed by the shared CSV writer."""
+    return shared_coordinates_match(reference, candidate)
 
 
 class _PrintPdfExportCancelled(RuntimeError):
@@ -121,6 +101,17 @@ if (
         def __init__(self, scene: Any, owner: Any):
             self._qplot_owner_ref = weakref.ref(owner)
             super().__init__(scene)
+            self.csv_scope = qtw.QLabel(self)
+            self.csv_scope.setObjectName("csvExportScope")
+            self.csv_scope.setWordWrap(True)
+            self.csv_scope.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+            self.csv_scope.setContentsMargins(8, 8, 8, 8)
+            self.csv_scope.hide()
+            for column, button in enumerate((self.ui.copyBtn, self.ui.exportBtn, self.ui.closeBtn)):
+                self.ui.gridLayout.removeWidget(button)
+                self.ui.gridLayout.addWidget(button, 7, column)
+            self.ui.gridLayout.addWidget(self.csv_scope, 6, 0, 1, 3)
+            self.resize(460, 620)
             owner.destroyed.connect(self._qplot_owner_destroyed)
 
         @property
@@ -138,7 +129,7 @@ if (
                     exporter_class,
                     QtCore.QCoreApplication.translate(
                         "Exporter",
-                        exporter_class.Name,
+                        "CSV data" if exporter_class is CSVExporter else exporter_class.Name,
                     ),
                 )
                 self.ui.formatList.addItem(item)
@@ -149,6 +140,9 @@ if (
         def exportFormatChanged(self, item: Any, previous: Any) -> None:
             """Instantiate only an exact allowlisted exporter class."""
             exporter_class = getattr(item, "expClass", None)
+            scope = getattr(self, "csv_scope", None)
+            if scope is not None:
+                scope.hide()
             if exporter_class not in _SAFE_PYQTGRAPH_FILE_EXPORTERS:
                 self.currentExporter = None
                 self.ui.paramTree.clear()
@@ -161,13 +155,35 @@ if (
                 # Numeric exports always retain the original precision. The
                 # upstream decimal-place control is unused by both our writers.
                 params = self.currentExporter.parameters()
+                params.setOpts(title="CSV options")
+                params.child("separator").setOpts(title="Separator")
+                params.child("columnMode").setOpts(title="Columns")
                 params.removeChild(params.child("precision"))
+                heatmap = getattr(self._qplot_owner, "operation_kind", None) == "plot2d"
+                modes = ([CSV_HEATMAP_VALUES] if heatmap else
+                         [CSV_UNDERLYING_VALUES, CSV_TRANSFORMED_VALUES])
+                values = params.insertChild(0, {
+                    "name": "values", "title": "Values", "type": "list",
+                    "limits": modes, "value": modes[0],
+                })
+                if heatmap:
+                    params.removeChild(params.child("columnMode"))
+                values.sigValueChanged.connect(self._update_csv_scope)
+                self._update_csv_scope()
             self.ui.exportBtn.setEnabled(
                 exporter_type in _SAFE_PYQTGRAPH_FILE_EXPORTERS
             )
             self.ui.copyBtn.setEnabled(
                 exporter_type in _SAFE_PYQTGRAPH_COPY_EXPORTERS
             )
+
+        def _update_csv_scope(self, *_args) -> None:
+            scope = getattr(self, "csv_scope", None)
+            owner = self._qplot_owner
+            if scope is None or owner is None or type(self.currentExporter) is not CSVExporter:
+                return
+            scope.setText(owner._csv_export_scope(self.currentExporter))
+            scope.show()
 
         @QtCore.pyqtSlot()
         def exportClicked(self) -> None:
@@ -696,6 +712,119 @@ class PlotExportMixin(_PlotExportBase):
         scene.exportDialog = _DisabledPyqtgraphExportDialog()
 
 
+    def _csv_export_scope(self, exporter: CSVExporter) -> str:
+        """Describe the exact values selected by the numeric export option."""
+        if getattr(self, "operation_kind", None) == "plot2d":
+            grid = np.asarray(getattr(self, "dataGrid", []))
+            shape = f" ({grid.shape[1]:,} × {grid.shape[0]:,} cells)" if grid.ndim == 2 else ""
+            return (
+                f"Current primary heatmap grid{shape}, including applied operations and "
+                "any spatial averaging. Retains the currently loaded extent and resolution; "
+                "other layers are not included. No fresh database read. "
+                "Use the main-window CSV action for raw measurement values."
+            )
+        values = exporter.parameters().names.get("values")
+        transformed = values is not None and values.value() == CSV_TRANSFORMED_VALUES
+        if transformed:
+            return (
+                "Plot values including applied operations and native FFT, differentiation, "
+                "phase-map or mean-subtraction controls. All loaded samples, in physical "
+                "coordinates: no zoom clipping, rendering downsampling or logarithmic "
+                "coordinate conversion. No fresh database read."
+            )
+        return (
+            "Underlying plot samples, including applied Operations-panel processing, "
+            "before native FFT, differentiation, phase-map or mean subtraction. "
+            "All loaded samples; zoom and rendering downsampling do not limit the export. "
+            "Use the main-window CSV action for raw measurement values."
+        )
+
+
+    def _capture_line_csv(self, exporter: CSVExporter, *, transformed: bool = False):
+        """Detach numeric values and metadata while their Qt items are alive."""
+        if not isinstance(exporter.item, PlotItem):
+            raise TypeError("Must have a PlotItem selected for CSV export.")
+        shared_x = exporter.params["columnMode"] == "(x,y,y,y) for all plots"
+        if transformed:
+            traces: list[TransformedTrace] = []
+            for item in exporter.item.items:
+                if isinstance(item, ErrorBarItem):
+                    raise ValueError(
+                        "Transformed export does not transform error bars. "
+                        "Choose Underlying plot samples to retain their original values."
+                    )
+                if not (hasattr(item, "implements") and item.implements("plotData")):
+                    continue
+                x, y = (item.getOriginalDataset() if hasattr(item, "getOriginalDataset")
+                        else item.getData())
+                if x is None:
+                    continue
+                options = dict(getattr(item, "opts", {}))
+                parameter = getattr(self, "_trace_input_axis_parameter", None)
+                axis_params = getattr(self, "axis_param", {})
+                x_param = parameter(item, "x") if callable(parameter) else axis_params.get("x")
+                y_param = parameter(item, "y") if callable(parameter) else axis_params.get("y")
+                label_options = dict(options)
+                if label_options.get("derivativeMode"):
+                    # NativePlotDataItem's secant branch resets to input X.
+                    label_options["fftMode"] = False
+                quantities = native_axis_quantities(x_param, y_param, label_options)
+                name = item.name() or f"trace{len(traces):04}"
+                labels = [
+                    f"{name}: {quantities[axis].label or axis}"
+                    + (f" [{quantities[axis].unit}]" if quantities[axis].unit else "")
+                    for axis in ("x", "y")
+                ]
+                headers = (labels[0], labels[1])
+                traces.append(TransformedTrace(
+                    frozen_array(x), frozen_array(y), headers,
+                    fft=bool(options.get("fftMode")),
+                    derivative=bool(options.get("derivativeMode")),
+                    phase=bool(options.get("phasemapMode")),
+                    subtract_mean=bool(options.get("subtractMeanMode")),
+                ))
+            return TransformedCsv(tuple(traces), shared_x)
+
+        collector = CSVExporter(exporter.item)
+        collector.params.restoreState(exporter.params.saveState())
+        coordinates = []
+        for item in exporter.item.items:
+            if isinstance(item, ErrorBarItem):
+                collector._exportErrorBarItem(item)
+            elif hasattr(item, "implements") and item.implements("plotData"):
+                dataset = (item.getOriginalDataset() if hasattr(item, "getOriginalDataset")
+                           else item.getData())
+                if dataset[0] is not None:
+                    coordinates.append(frozen_array(dataset[0]))
+                collector._exportPlotDataItem(item)
+        columns = tuple(frozen_array(column) for dataset in collector.data for column in dataset)
+        if shared_x and collector.data:
+            # Error bars can supply the first coordinate column too.
+            coordinates.insert(0, frozen_array(collector.data[0][0]))
+        return CsvColumns(tuple(collector.header), columns, tuple(coordinates), shared_x)
+
+
+    def _capture_heatmap_csv(self) -> HeatmapCsv:
+        """Freeze the current primary grid without another source read."""
+        axis_data = self.__dict__.get("axis_data")
+        if not isinstance(axis_data, dict):
+            raise ValueError("Heatmap coordinate data is not available.")
+        x = np.asarray(axis_data.get("x", []), dtype=float)
+        y = np.asarray(axis_data.get("y", []), dtype=float)
+        grid = np.asarray(self.__dict__.get("dataGrid", []))
+        if x.ndim != 1 or y.ndim != 1:
+            raise ValueError("Heatmap coordinate axes must be one-dimensional.")
+        if grid.ndim != 2 or grid.shape != (y.size, x.size):
+            raise ValueError(
+                f"Heatmap data shape {grid.shape} does not match "
+                f"axis shape {(y.size, x.size)}."
+            )
+        if grid.size == 0:
+            raise ValueError("The currently plotted heatmap is empty.")
+        return HeatmapCsv(self._heatmap_csv_column_names(), frozen_array(x), frozen_array(y),
+                          frozen_array(grid))
+
+
     def _export_pyqtgraph_exporter(self, exporter: Any) -> bool:
         """Route an allowlisted PyQtGraph file exporter through staging."""
         if _window_is_retired(self):
@@ -748,14 +877,26 @@ class PlotExportMixin(_PlotExportBase):
             if type(exporter) is SVGExporter:
                 writer = lambda staging_path: write_svg_stage(staging_path, exporter)
             elif type(exporter) is CSVExporter:
+                from ._export_tasks import start_export_task
+
                 if getattr(self, "operation_kind", None) == "plot2d":
-                    writer = lambda staging_path: self._write_heatmap_csv_stage(
-                        staging_path, exporter, separator=csv_separator,
-                    )
+                    snapshot = self._capture_heatmap_csv()
                 else:
-                    writer = lambda staging_path: self._write_line_csv_stage(
-                        staging_path, exporter, separator=csv_separator,
+                    mode = exporter.parameters().names.get("values")
+                    snapshot = self._capture_line_csv(
+                        exporter, transformed=(mode is not None and mode.value() == CSV_TRANSFORMED_VALUES),
                     )
+                separator = "\t" if csv_separator == "tab" else ","
+                start_export_task(
+                    self, title="Export plot CSV", destination=destination,
+                    writer=lambda filename, cancelled, progress: snapshot.write(
+                        filename, cancelled, progress, separator=separator,
+                    ),
+                    on_success=lambda _result: self.show_status(
+                        f"Exported plot: {destination.filename}", 5000,
+                    ),
+                )
+                return True
             saved = write_export_atomically(
                 destination,
                 writer,
@@ -785,56 +926,10 @@ class PlotExportMixin(_PlotExportBase):
             *,
             separator: str | None = None,
             ) -> bool:
-        """Retain original line data with round-trip-safe numeric text.
-
-        Reuse PyQtGraph's column/header collection, including error bars and
-        original (unmapped, non-downsampled) datasets, but never its positional
-        decimal-place formatter. Python's float representation round-trips
-        QCoDeS's binary64 numbers; extended array samples retain their precision
-        and integers are written without float coercion.
-        Every attempt owns a fresh collector: copy only parameter settings,
-        never the dialog exporter's counter, headers or accumulated data. This
-        also isolates failures and leaves options intact for a retry or mode
-        switch.
-        """
-        if not isinstance(exporter.item, PlotItem):
-            raise TypeError("Must have a PlotItem selected for CSV export.")
-
-        collector = CSVExporter(exporter.item)
-        collector.params.restoreState(exporter.params.saveState())
-        if separator is not None:
-            collector.params["separator"] = separator
-        coordinates = []
-        for item in exporter.item.items:
-            if isinstance(item, ErrorBarItem):
-                collector._exportErrorBarItem(item)
-            elif hasattr(item, "implements") and item.implements("plotData"):
-                dataset = (
-                    item.getOriginalDataset() if hasattr(item, "getOriginalDataset")
-                    else item.getData()
-                )
-                if dataset[0] is not None:
-                    coordinates.append(dataset[0])
-                collector._exportPlotDataItem(item)
-
-        if collector.params["columnMode"] == "(x,y,y,y) for all plots" and collector.data:
-            reference = collector.data[0][0]
-            if any(not _csv_shared_coordinates_match(reference, values) for values in coordinates):
-                raise ValueError(
-                    "The traces have different X coordinates and cannot share one "
-                    "CSV coordinate column. Select '(x,y) per plot' to retain "
-                    "each trace's recorded coordinates."
-                )
-
-        columns = [column for dataset in collector.data for column in dataset]
-        delimiter = "\t" if collector.params["separator"] == "tab" else ","
-        with open(staging_path, "w", encoding="utf-8", newline="") as csv_file:
-            csv_writer = csv.writer(
-                csv_file, delimiter=delimiter, quoting=csv.QUOTE_MINIMAL,
-            )
-            csv_writer.writerow(collector.header)
-            for row in zip_longest(*columns, fillvalue=""):
-                csv_writer.writerow([_csv_numeric_text(value) for value in row])
+        """Write underlying samples using the same frozen writer as the UI."""
+        snapshot = self._capture_line_csv(exporter)
+        chosen_separator = exporter.params["separator"] if separator is None else separator
+        snapshot.write(staging_path, separator="\t" if chosen_separator == "tab" else ",")
         return True
 
 
@@ -845,55 +940,10 @@ class PlotExportMixin(_PlotExportBase):
             *,
             separator: str | None = None,
             ) -> bool:
-        """Write the canonical, currently plotted heatmap as long-form rows.
-
-        ``dataGrid[row, column]`` is paired with the Y centre at ``row`` and
-        the X centre at ``column``.  This deliberately snapshots the displayed
-        grid, so a viewport-loaded or downsampled large heatmap exports that
-        current resolution without initiating another database read.
-        """
-        axis_data = self.__dict__.get("axis_data")
-        if not isinstance(axis_data, dict):
-            raise ValueError("Heatmap coordinate data is not available.")
-
-        x_centres = np.asarray(axis_data.get("x", []), dtype=float)
-        y_centres = np.asarray(axis_data.get("y", []), dtype=float)
-        data_grid = np.asarray(self.__dict__.get("dataGrid", []))
-        expected_shape = (y_centres.size, x_centres.size)
-        if x_centres.ndim != 1 or y_centres.ndim != 1:
-            raise ValueError("Heatmap coordinate axes must be one-dimensional.")
-        if data_grid.ndim != 2 or data_grid.shape != expected_shape:
-            raise ValueError(
-                f"Heatmap data shape {data_grid.shape} does not match "
-                f"axis shape {expected_shape}."
-            )
-        if data_grid.size == 0:
-            raise ValueError("The currently plotted heatmap is empty.")
-
-        if separator is None:
-            separator = exporter.params["separator"]
-        delimiter = "\t" if separator == "tab" else ","
-        column_names = self._heatmap_csv_column_names()
-        rows_written = 0
-        with open(staging_path, "w", encoding="utf-8", newline="") as csv_file:
-            csv_writer = csv.writer(
-                csv_file,
-                delimiter=delimiter,
-                quoting=csv.QUOTE_MINIMAL,
-                lineterminator="\n",
-            )
-            csv_writer.writerow(column_names)
-            for y_index, y_centre in enumerate(y_centres):
-                for x_index, x_centre in enumerate(x_centres):
-                    csv_writer.writerow((
-                        float(x_centre),
-                        float(y_centre),
-                        _csv_numeric_text(data_grid[y_index, x_index]),
-                    ))
-                    rows_written += 1
-
-        if rows_written != data_grid.size or os.path.getsize(staging_path) == 0:
-            raise RuntimeError("Heatmap CSV serialization produced no usable data.")
+        """Write the current primary grid, at its loaded extent and resolution."""
+        snapshot = self._capture_heatmap_csv()
+        chosen_separator = exporter.params["separator"] if separator is None else separator
+        snapshot.write(staging_path, separator="\t" if chosen_separator == "tab" else ",")
         return True
 
 
