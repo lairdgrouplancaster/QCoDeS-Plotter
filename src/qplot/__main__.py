@@ -164,6 +164,9 @@ def _run_gui(
                 startup_diagnostic=shutdown_supervisor_diagnostic,
             )
             w._shutdown_process_fail_safe = process_fail_safe
+        from qplot.windows._desktop_prompt import schedule_first_launch_invitation
+
+        schedule_first_launch_invitation(w)
         exit_code = app.exec()
     except Exception as err:
         log_exception("qPlot startup failed", err)

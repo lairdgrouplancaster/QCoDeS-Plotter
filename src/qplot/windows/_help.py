@@ -89,6 +89,11 @@ def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
     update_action.triggered.connect(lambda: check_for_updates(window))
     help_menu.addAction(update_action)
 
+    desktop_action = QtGui.QAction("Desktop integration…", window)
+    desktop_action.setObjectName("desktopIntegrationAction")
+    desktop_action.triggered.connect(lambda: show_desktop_integration(window))
+    help_menu.addAction(desktop_action)
+
     about_action = QtGui.QAction("&About qPlot", window)
     about_action.setObjectName("aboutQplotAction")
     # Keep this window-owned action in Help. Cocoa's AboutRole rewrites its
@@ -106,6 +111,16 @@ def check_for_updates(window):
     from ._updates import check_for_updates as check
 
     return check(window)
+
+
+def show_desktop_integration(parent: qtw.QWidget | None = None) -> qtw.QDialog:
+    from ._desktop_integration import DesktopIntegrationDialog
+
+    dialog = DesktopIntegrationDialog(parent)
+    dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
+    _remember_help_dialog(parent, dialog)
+    dialog.show()
+    return dialog
 
 
 def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
@@ -233,6 +248,11 @@ def _show_help_dialog(
     layout.addWidget(browser)
 
     buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
+    if object_name == "qplotAboutDialog":
+        desktop_button = qtw.QPushButton("Desktop integration…")
+        buttons.addButton(desktop_button, qtw.QDialogButtonBox.ButtonRole.ActionRole)
+        desktop_button.setObjectName("desktopIntegrationButton")
+        desktop_button.clicked.connect(lambda: show_desktop_integration(dialog))
     buttons.rejected.connect(dialog.close)
     layout.addWidget(buttons)
 

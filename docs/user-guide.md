@@ -204,6 +204,25 @@ or uncommitted data. Finish the transaction or refresh after the writer pauses.
 
 ### Opening Databases from the File Manager
 
+On macOS and Windows, open **Help → Desktop integration…**, or use the
+**Desktop integration…** button in **About qPlot**. Choose whether to add a
+desktop shortcut and register file associations/icons, then click
+**Install/update**. File registration does not change your default opener;
+WAL and SHM files receive icons but are not opened. Use **Remove** in the same
+dialog to remove integration. For a custom installation, enter its launcher
+location first. Updates remove the previous owned launcher before installing
+the replacement; if installation fails, the dialog shows details and allows
+you to retry. Setup is never run automatically at startup.
+
+On the first interactive launch on macOS or Windows, qPlot offers **Set up…**,
+**Later**, and **Don’t ask again**. **Set up…** opens the same dialog; nothing is
+installed until you click **Install/update**. **Later** (or closing the invitation)
+asks again on the next launch. Choosing **Set up…** or **Don’t ask again** dismisses
+the invitation for this user across updates and Python environments. An existing
+qPlot launcher at the default location also suppresses the invitation. The choice
+is stored separately from viewer preferences, so resetting those preferences does
+not bring the invitation back. Custom launchers remain manageable through Help.
+
 **Recommended if you mainly work with QCoDeS databases:** create the desktop
 launcher and register the database, WAL and SHM icons with the command below.
 Run it from the same Python virtual environment used for installation:

@@ -200,6 +200,8 @@ files = [
     "src/qplot/windows/_error_dialog.py",
     "src/qplot/windows/_dragdrop.py",
     "src/qplot/windows/_help.py",
+    "src/qplot/windows/_desktop_integration.py",
+    "src/qplot/windows/_desktop_prompt.py",
     "src/qplot/windows/_updates.py",
     "src/qplot/windows/_export_names.py",
     "src/qplot/windows/_mixed_plots.py",
