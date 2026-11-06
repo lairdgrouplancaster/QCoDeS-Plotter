@@ -128,12 +128,10 @@ class plot3d(plot2d):
         self.navigator.addWidget(self.slice_slider)
         self.navigator.addWidget(qtw.QLabel(" Index: "))
         self.slice_index = qtw.QSpinBox()
-        self.slice_index.setToolTip("Zero-based slice index; the total number of slices is shown alongside.")
+        self.slice_index.setToolTip("Zero-based slice index.")
         self.slice_index.setKeyboardTracking(False)
         self.slice_index.valueChanged.connect(self.select_slice)
         self.navigator.addWidget(self.slice_index)
-        self.slice_count = qtw.QLabel(" · 0 slices ")
-        self.navigator.addWidget(self.slice_count)
         self.navigator.addSeparator()
         self.navigator.addWidget(self.depth_label)
         self.depth_entry = qtw.QLineEdit()
@@ -453,7 +451,9 @@ class plot3d(plot2d):
                 widget.setRange(0, max(0, len(depths) - 1))
                 widget.setValue(frame.index)
             widget.setEnabled(bool(depths.size) and not self._frozen)
-        self.slice_count.setText(f" · {len(depths)} {'slice' if len(depths) == 1 else 'slices'} ")
+        index_range = f"Slice index: 0–{len(depths) - 1} (zero-based)." if depths.size else "No recorded slices."
+        self.slice_slider.setToolTip(f"{index_range}\nDrag to browse slices; scroll to step through them.")
+        self.slice_index.setToolTip(index_range)
         self.depth_entry.setText(self._depth_text(frame.depth, self._depth_name()))
         self.depth_entry.setToolTip(
             f"Depth: {self.param_dict[self._depth_name()].label or self._depth_name()}\n"

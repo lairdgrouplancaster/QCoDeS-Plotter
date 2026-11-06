@@ -608,8 +608,9 @@ Color-scale controls:
 
 Select any two independent parameters as X and Y. The remaining parameter is
 Depth. The default uses the last declared dependency as X, the preceding one
-as Y, and the first as Depth. The navigator shows a zero-based index, the total
-slice count, and its actual coordinate and unit. Recorded depth coordinates
+as Y, and the first as Depth. The navigator shows a zero-based index and its
+actual coordinate and unit. Hover over the slider or index control to see the
+valid index range. Recorded depth coordinates
 are ordered numerically, independently of acquisition order.
 
 The compact cursor readout shows `[X index, Y index, depth index]` followed by

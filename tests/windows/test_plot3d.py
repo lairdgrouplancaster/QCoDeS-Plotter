@@ -263,6 +263,9 @@ def test_slice_navigation_all_planes_and_global_colours(tmp_path, main, array):
         wait_for(lambda x=x, y=y: loaded(plot) and plot.axis_param["x"].name == x and plot.axis_param["y"].name == y)
         assert plot.axis_options == {"x": x, "y": y}
         depth = plot._depth_name()
+        index_range = f"Slice index: 0–{len(plot.volume.axes[depth]) - 1}"
+        assert index_range in plot.slice_slider.toolTip()
+        assert index_range in plot.slice_index.toolTip()
         point = {x: plot.axis_data["x"][0], y: plot.axis_data["y"][0], depth: plot._depth_value}
         assert plot.dataGrid[0, 0] == 100 * point["field"] + 10 * point["bias"] + point["gate"]**2
     assert not errors
