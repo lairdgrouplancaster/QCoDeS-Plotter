@@ -615,6 +615,7 @@ are ordered numerically, independently of acquisition order.
 The compact cursor readout shows `[X index, Y index, depth index]` followed by
 `(X, Y, depth, value)`. Hover over it for parameter names, units and the ordering.
 Copy Coordinates includes all four values.
+An em dash (`—`) marks an unavailable or nonfinite cursor value.
 
 * Use the slider, previous/next buttons, or Page Up/Page Down to step. Home/End
   select the first/last slice. Scroll over the slider to step; scrolling over

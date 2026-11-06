@@ -121,6 +121,16 @@ def test_cursor_includes_depth_in_readout_tooltip_and_copy(tmp_path, main):
     copied = qtw.QApplication.clipboard().text()
     assert copied.startswith("[1,1,2]")
     assert [float(value) for value in copied.split("(")[1].rstrip(")").split(",")] == [0., 3., 4., 430.]
+    plot.vb.setRange(xRange=(-3, 10), yRange=(-1, 4), padding=0)
+    qtw.QApplication.processEvents()
+    plot.mouseMoved(plot.vb.mapViewToScene(QtCore.QPointF(9., 3.)))
+    assert [float(plot.pos_labels[role].text()) for role in roles[:3]] == [9., 3., 4.]
+    assert plot.pos_labels["z"].text() == "—"
+    assert "—)" in plot.cursor_readout.toolTip()
+    assert plot.copy_coordinates()
+    assert qtw.QApplication.clipboard().text().endswith(", —)")
+    plot.mouseMoved(plot.vb.mapViewToScene(QtCore.QPointF(0., 3.)))
+    assert float(plot.pos_labels["z"].text()) == 430.
     plot.set_plot_axes_swapped(True)
     wait_for(lambda: loaded(plot) and plot.axis_options["x"] == "bias")
     assert "X: bias (V)" in plot.cursor_readout.toolTip()
@@ -376,6 +386,9 @@ def test_live_refresh_preserves_coordinate_and_follow_latest_acquisition(tmp_pat
             plot.follow_latest.setChecked(True)
             wait_for(lambda: loaded(plot) and plot._depth_value == 1.)
             assert plot.follow_latest.isChecked()
+            plot.mouseMoved(plot.vb.mapViewToScene(QtCore.QPointF(0., 0.)))
+            assert plot.pos_labels["z"].text() == "—"
+            assert float(plot.pos_labels["depth"].text()) == 1.
             assert_database_artifacts_unchanged_except_trusted_shm(path, before)
             plot._selected_coordinates.update(gate=0., bias=0.)
             plot.openSweep("d")

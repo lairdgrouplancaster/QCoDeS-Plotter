@@ -206,7 +206,8 @@ class plot3d(plot2d):
         parameters = (("X", axes["x"]), ("Y", axes["y"]),
                       ("Depth", self.param_dict[self._displayed_depth_name()]),
                       ("Value", self.__dict__.get("display_param", self.param)))
-        lines = ["Indices: [X, Y, depth] (zero-based).", "Values: (X, Y, depth, value)."]
+        lines = ["Indices: [X, Y, depth] (zero-based).", "Values: (X, Y, depth, value).",
+                 "— means no finite value is available at this position."]
         for role, parameter in parameters:
             label = parameter.name
             if parameter.label and parameter.label != parameter.name:
@@ -219,6 +220,9 @@ class plot3d(plot2d):
             lines.append(f"Current: {self.pos_labels['index'].text()} ({', '.join(values)})")
         self.cursor_readout.setToolTip("\n".join(lines))
 
+    def format_cursor_number(self, value):
+        return super().format_cursor_number(value) if np.isfinite(value) else "—"
+
     def mouseMoved(self, pos):
         super().mouseMoved(pos)
         depth_label = self.pos_labels.get("depth")
@@ -228,8 +232,14 @@ class plot3d(plot2d):
         depth_label.setVisible(visible)
         self._cursor_depth_separator.setVisible(visible)
         value = self.slice_frame.depth if self.slice_frame is not None else None
+        inside = self.plot.sceneBoundingRect().contains(pos)
         depth_label.setText(self.format_cursor_number(value)
-                           if visible and value is not None and self.plot.sceneBoundingRect().contains(pos) else "")
+                           if visible and value is not None and inside else "")
+        if inside:
+            for role in ("x", "y", "depth", "z"):
+                label = self.pos_labels[role]
+                if not label.isHidden() and not label.text().strip():
+                    label.setText("—")
         self._update_cursor_tooltip()
 
     def initContextMenu(self):
