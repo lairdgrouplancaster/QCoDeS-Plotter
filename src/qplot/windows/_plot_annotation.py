@@ -130,7 +130,7 @@ class PlotSourceLabel(pg.GraphicsWidget):
             ))
 
         painter.setBrush(tint(0.05))
-        painter.setPen(QtGui.QPen(tint(0.18), 1))
+        painter.setPen(QtGui.QPen(tint(0.10), 1))
         painter.drawRect(self.boundingRect().adjusted(0.5, 0.5, -0.5, -4.5))
 
     def _wrap(self):
