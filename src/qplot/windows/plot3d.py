@@ -115,8 +115,6 @@ class plot3d(plot2d):
         self.navigator.setObjectName("sliceNavigator")
         self.navigator.setMovable(False)
         self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, self.navigator)
-        self.previous_slice = self._navigator_action("◀", lambda: self.step_slice(-1))
-        self.previous_slice.setToolTip("Previous slice (Page Up)")
         self.slice_slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.slice_slider.setMinimumWidth(140)
         self.slice_slider.setTracking(True)
@@ -128,8 +126,6 @@ class plot3d(plot2d):
             lambda: self.slice_slider.setCursor(QtCore.Qt.CursorShape.OpenHandCursor))
         self.slice_slider.valueChanged.connect(self.select_slice)
         self.navigator.addWidget(self.slice_slider)
-        self.next_slice = self._navigator_action("▶", lambda: self.step_slice(1))
-        self.next_slice.setToolTip("Next slice (Page Down)")
         self.navigator.addWidget(qtw.QLabel(" Index: "))
         self.slice_index = qtw.QSpinBox()
         self.slice_index.setToolTip("Zero-based slice index; the total number of slices is shown alongside.")
@@ -171,12 +167,6 @@ class plot3d(plot2d):
         self.slice_index.setEnabled(False)
         self.slice_slider.setEnabled(False)
         self._update_depth_label()
-
-    def _navigator_action(self, text, callback) -> QtGui.QAction:
-        action = QtGui.QAction(text, self)
-        action.triggered.connect(callback)
-        self.navigator.addAction(action)
-        return action
 
     def initLabels(self):
         super().initLabels()
@@ -463,8 +453,6 @@ class plot3d(plot2d):
                 widget.setRange(0, max(0, len(depths) - 1))
                 widget.setValue(frame.index)
             widget.setEnabled(bool(depths.size) and not self._frozen)
-        self.previous_slice.setEnabled(frame.index > 0 and not self._frozen)
-        self.next_slice.setEnabled(frame.index + 1 < len(depths) and not self._frozen)
         self.slice_count.setText(f" · {len(depths)} {'slice' if len(depths) == 1 else 'slices'} ")
         self.depth_entry.setText(self._depth_text(frame.depth, self._depth_name()))
         self.depth_entry.setToolTip(

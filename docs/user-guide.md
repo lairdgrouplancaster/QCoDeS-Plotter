@@ -617,7 +617,7 @@ The compact cursor readout shows `[X index, Y index, depth index]` followed by
 Copy Coordinates includes all four values.
 An em dash (`—`) marks an unavailable or nonfinite cursor value.
 
-* Use the slider, previous/next buttons, or Page Up/Page Down to step. Home/End
+* Use the slider, index spinbox arrows, or Page Up/Page Down to step. Home/End
   select the first/last slice. Scroll over the slider to step; scrolling over
   the heatmap continues to zoom. Navigation does not wrap.
 * Enter an index or a coordinate; coordinate entry selects the nearest recorded

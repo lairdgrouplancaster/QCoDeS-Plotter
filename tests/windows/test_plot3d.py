@@ -196,8 +196,12 @@ def test_keyboard_coordinate_and_mouse_navigation(tmp_path, main):
                              QtCore.Qt.ScrollPhase.NoScrollPhase, False)
     qtw.QApplication.sendEvent(plot.slice_slider, wheel)
     wait_for(lambda: loaded(plot) and plot.slice_frame.depth == 1.)
-    button = plot.navigator.widgetForAction(plot.next_slice)
-    QtTest.QTest.mouseClick(button, QtCore.Qt.MouseButton.LeftButton)
+    spin_option = qtw.QStyleOptionSpinBox()
+    plot.slice_index.initStyleOption(spin_option)
+    up_button = plot.slice_index.style().subControlRect(
+        qtw.QStyle.ComplexControl.CC_SpinBox, spin_option,
+        qtw.QStyle.SubControl.SC_SpinBoxUp, plot.slice_index)
+    QtTest.QTest.mouseClick(plot.slice_index, QtCore.Qt.MouseButton.LeftButton, pos=up_button.center())
     wait_for(lambda: loaded(plot) and plot.slice_frame.depth == 2.5)
     slider = plot.slice_slider
     assert slider.cursor().shape() == QtCore.Qt.CursorShape.OpenHandCursor
