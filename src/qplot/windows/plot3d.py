@@ -83,7 +83,9 @@ class plot3d(plot2d):
         self.addToolBarBreak(QtCore.Qt.ToolBarArea.TopToolBarArea)
         self.slice_toolbar = qtw.QToolBar("3D slice", self)
         self.slice_toolbar.setObjectName("sliceControls")
-        self.slice_toolbar.setMovable(False)
+        self.slice_toolbar.setMovable(True)
+        self.slice_toolbar.setAllowedAreas(
+            QtCore.Qt.ToolBarArea.TopToolBarArea | QtCore.Qt.ToolBarArea.BottomToolBarArea)
         self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, self.slice_toolbar)
         self.slice_panel = qtw.QGroupBox()
         self.slice_panel.setAccessibleName("3D slice controls")
