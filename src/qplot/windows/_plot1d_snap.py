@@ -221,6 +221,8 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
         self.trace_label = qtw.QLabel("")
         self.trace_label.setMinimumWidth(0)
+        self.trace_label.setSizePolicy(qtw.QSizePolicy.Policy.Expanding, qtw.QSizePolicy.Policy.Preferred)
+        self.trace_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.toolbarCo_ord.addWidget(self.trace_label)
         self._update_coordinate_context()
 
@@ -360,7 +362,6 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             message += f" (snapped to point {point_number - 1})"
         trace_label.setText(message)
         trace_label.setToolTip(tooltip)
-        trace_label.adjustSize()
         trace_label.updateGeometry()
         self.toolbarCo_ord.updateGeometry()
 
