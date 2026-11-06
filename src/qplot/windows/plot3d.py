@@ -76,7 +76,7 @@ class plot3d(plot2d):
 
     def initFrame(self):
         super().initFrame()
-        self.setMinimumSize(760, 560)
+        self.setMinimumHeight(560)
         for action in self.toolbarRef.actions():
             if self.toolbarRef.widgetForAction(action) is self.relevel_refresh:
                 action.setVisible(False)
@@ -97,8 +97,10 @@ class plot3d(plot2d):
         controls = qtw.QGridLayout()
         controls.setHorizontalSpacing(6)
         controls.setVerticalSpacing(4)
-        controls.setColumnMinimumWidth(1, 20)
-        controls.setColumnMinimumWidth(3, 20)
+        for column in (1, 3):
+            controls.addItem(qtw.QSpacerItem(
+                20, 0, qtw.QSizePolicy.Policy.Preferred, qtw.QSizePolicy.Policy.Minimum,
+            ), 0, column, 2, 1)
         controls.setColumnStretch(4, 1)
         panel_layout.addLayout(controls)
         axis_controls = qtw.QGridLayout()
@@ -133,11 +135,13 @@ class plot3d(plot2d):
         self.navigator = qtw.QGridLayout()
         self.navigator.setHorizontalSpacing(6)
         self.navigator.setVerticalSpacing(4)
-        self.navigator.setColumnMinimumWidth(3, 12)
+        self.navigator.addItem(qtw.QSpacerItem(
+            12, 0, qtw.QSizePolicy.Policy.Preferred, qtw.QSizePolicy.Policy.Minimum,
+        ), 0, 3, 2, 1)
         self.navigator.setColumnStretch(4, 1)
         controls.addLayout(self.navigator, 0, 4, 2, 1)
         self.slice_slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.slice_slider.setMinimumWidth(140)
+        self.slice_slider.setMinimumWidth(60)
         self.slice_slider.setTracking(True)
         self.slice_slider.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
         self.slice_slider.setToolTip("Slice index")
