@@ -73,6 +73,44 @@ def loaded(plot):
     return hasattr(plot, "worker") and not plot.worker.running and plot.worker.result is not None
 
 
+def test_color_dialog_scope_sync_and_symmetric_lock(tmp_path, main):
+    window, errors = main
+    path = tmp_path / "colour.db"
+    guid = build_volume(path)
+    window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(guid)
+    wait_for(lambda: bool(window.windows))
+    plot = window.windows[0]
+    wait_for(lambda: loaded(plot) and plot._range_complete)
+    plot.open_colorbar_scale_dialog()
+    assert not plot.slice_panel.isAncestorOf(plot.symmetric_color)
+    plot.colorbar_scope.setCurrentIndex(1)
+    assert plot.color_mode.currentData() == plot._color_mode == "slice"
+    plot.symmetric_color.setChecked(True)
+    assert plot.bar.levels()[0] == -plot.bar.levels()[1]
+    plot.color_mode.setCurrentIndex(2)
+    assert plot.colorbar_scope.currentData() == "locked"
+    levels = tuple(plot.bar.levels())
+    plot.symmetric_color.setChecked(False)
+    plot.symmetric_color.setChecked(True)
+    assert plot._color_mode == "locked"
+    assert tuple(plot.bar.levels()) == levels
+    plot.select_slice(1)
+    wait_for(lambda: loaded(plot) and plot.slice_frame.index == 1)
+    assert tuple(plot.bar.levels()) == levels
+    plot.colorbar_max_text.setText("10")
+    plot.colorbar_max_text.editingFinished.emit()
+    assert plot.bar.levels() == (-10., 10.)
+    plot.colorbar_auto_radio.click()
+    assert plot.colorbar_scope.currentData() == plot.color_mode.currentData() == "slice"
+    plot.color_mode.setCurrentIndex(0)
+    wait_for(lambda: plot._range_complete)
+    assert plot.colorbar_scope.currentData() == "volume"
+    assert plot.bar.levels()[0] == -plot.bar.levels()[1]
+    assert not errors
+
+
 def test_compact_depth_display_retains_distinct_planes():
     depths = np.array([-.023999999999999994, 1., np.nextafter(1., 2.), 1.00000000001])
     zeros = np.zeros(depths.size)

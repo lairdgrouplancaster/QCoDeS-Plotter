@@ -99,11 +99,14 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
 
         vmin, vmax = data_range
         if vmin == vmax:
-            return self._constant_colorbar_levels(vmin)
+            if self.__dict__.get("_colorbar_symmetric", False) and vmin != 0:
+                return self._symmetric_colorbar_levels(vmin, vmax)
+            levels = self._constant_colorbar_levels(vmin)
+            return None if levels is None else self._symmetric_colorbar_levels(*levels)
         if vmin > vmax:
             return None
 
-        return vmin, vmax
+        return self._symmetric_colorbar_levels(vmin, vmax)
 
     @staticmethod
     def _constant_colorbar_levels(value):
@@ -191,6 +194,7 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         Apply levels to the colorbar and mirror them in the menu fields.
 
         """
+        vmin, vmax = self._symmetric_colorbar_levels(vmin, vmax)
         if not np.isfinite(float(vmax) - float(vmin)):
             self._reject_heatmap_color_range()
             return False
@@ -211,6 +215,7 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             bar.setLevels((vmin, vmax))
             self._sync_colorbar_axis_scaling()
 
+        self._colorbar_last_levels = (vmin, vmax)
         self._sync_colorbar_level_fields(vmin, vmax)
         return True
 
@@ -956,6 +961,14 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         if levels is None:
             return
 
+        if self.__dict__.get("_colorbar_symmetric", False):
+            previous = self.__dict__.get("_colorbar_last_levels", levels)
+            changed = [i for i in (0, 1) if levels[i] != previous[i]]
+            extent = abs(levels[changed[0]]) if len(changed) == 1 else max(map(abs, levels))
+            levels = (-extent, extent) if extent > 0 and np.isfinite(2 * extent) else previous
+            with QtCore.QSignalBlocker(bar):
+                bar.setLevels(levels)
+        self._colorbar_last_levels = levels
         self._sync_colorbar_axis_scaling()
         self._sync_colorbar_level_fields(*levels)
 
@@ -964,6 +977,8 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         Persist interactively adjusted colorbar levels as manual scaling.
 
         """
+        if self.__dict__.get("_colorbar_symmetric", False):
+            self._colorbar_interactive_levels_changed(bar)
         levels = self._colorbar_levels_from_bar(bar)
         if levels is None:
             return

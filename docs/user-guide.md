@@ -585,6 +585,10 @@ Color-scale controls:
 * Double-click the color scale bar to open the color scaling dialog.
   Its range controls offer the same `Min / Max` and `Center / Span` formats as
   the plot axes.
+* **Symmetric** in the dialog keeps limits equally spaced around zero, for both
+  2D plots and 3D slices. It is off by default. Automatic limits use the larger
+  absolute endpoint; editing either manual limit mirrors the other. In
+  `Center / Span` mode, the centre stays at zero. Locked limits remain locked.
 * Drag one color-scale handle to adjust a limit.
 * Drag between handles to slide the range.
 * Drag outside the handles to widen or narrow the range.
@@ -632,8 +636,9 @@ An em dash (`—`) marks an unavailable or nonfinite cursor value.
   Whole-volume limits include slice operations and are calculated in the
   background, with an explicitly provisional range and scan progress. Live
   limits expand without shrinking. Press C to recalculate; dragging the
-  colourbar or using marquee colour zoom locks the limits. Symmetric limits
-  about zero are also available.
+  colourbar or using marquee colour zoom locks the limits. The **Colour** dropdown
+  is also available in the colour-scale dialog and stays in sync with the toolbar.
+  **Symmetric** is available in that dialog.
 * **Slice operations** run independently on each full plane, regardless of
   zoom or marquee bounds. Swapping X/Y preserves the physical operation.
   Changing the depth parameter restores that plane's own operation settings,

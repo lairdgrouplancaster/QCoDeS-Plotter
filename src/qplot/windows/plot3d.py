@@ -127,10 +127,6 @@ class plot3d(plot2d):
         controls.addLayout(color_row, 1, 0)
         color_row.addWidget(qtw.QLabel("Colour:"))
         color_row.addWidget(self.color_mode)
-        self.symmetric_color = qtw.QCheckBox("Symmetric")
-        self.symmetric_color.setToolTip("Keep the colour limits equally spaced above and below zero.")
-        self.symmetric_color.toggled.connect(lambda _: self.scaleColorbar())
-        color_row.addWidget(self.symmetric_color)
         color_row.addStretch()
         self.navigator = qtw.QGridLayout()
         self.navigator.setHorizontalSpacing(6)
@@ -570,6 +566,28 @@ class plot3d(plot2d):
             progress = task.progress
             self._set_range_status(f"Provisional range · {progress.completed}/{progress.total or '?'} slices")
 
+    def _init_colorbar_scope_controls(self, layout):
+        self.colorbar_scope = qtw.QComboBox()
+        for index in range(self.color_mode.count()):
+            self.colorbar_scope.addItem(self.color_mode.itemText(index), self.color_mode.itemData(index))
+        self.colorbar_scope.setToolTip(self.color_mode.toolTip())
+        self.colorbar_scope.setCurrentIndex(self.color_mode.currentIndex())
+        self.colorbar_scope.currentIndexChanged.connect(self.color_mode.setCurrentIndex)
+        layout.addWidget(qtw.QLabel("Colour:"))
+        layout.addWidget(self.colorbar_scope)
+
+    def _sync_color_mode_controls(self):
+        scope = self.__dict__.get("colorbar_scope")
+        if scope is not None:
+            with QtCore.QSignalBlocker(scope):
+                scope.setCurrentIndex(self.color_mode.currentIndex())
+        manual = self._color_mode == "locked"
+        for name, checked in (("colorbar_manual_radio", manual), ("colorbar_auto_radio", not manual)):
+            widget = self.__dict__.get(name)
+            if widget is not None:
+                with QtCore.QSignalBlocker(widget):
+                    widget.setChecked(checked)
+
     def _color_mode_changed(self):
         mode = self.color_mode.currentData()
         self._color_mode = mode
@@ -590,6 +608,7 @@ class plot3d(plot2d):
             self._colorbar_manual_levels = None
             self.scaleColorbar()
         self._start_volume_range()
+        self._sync_color_mode_controls()
 
     def _finite_data_colorbar_range(self):
         if self._color_mode == "volume" and self._shared_levels is not None:
@@ -599,20 +618,13 @@ class plot3d(plot2d):
             self._shared_levels = levels  # a stable provisional range
         return levels
 
-    def _data_colorbar_levels(self):
-        levels = super()._data_colorbar_levels()
-        if levels is not None and self.__dict__.get("symmetric_color") is not None and self.symmetric_color.isChecked():
-            extent = max(abs(levels[0]), abs(levels[1]))
-            if extent and np.isfinite(2 * extent):
-                return -extent, extent
-        return levels
-
     def scaleColorbar(self, event=None):
         if self._color_mode == "locked":
             with QtCore.QSignalBlocker(self.color_mode):
                 self.color_mode.setCurrentIndex(0 if self._last_auto_mode == "volume" else 1)
             self._color_mode = self._last_auto_mode
         super().scaleColorbar(event)
+        self._sync_color_mode_controls()
 
     def autoscale_color(self, event=None):
         """An explicit autoscale may tighten live limits or retry a stopped scan."""

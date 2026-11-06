@@ -3694,6 +3694,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             _fallback_colorbar_colormap_name = plot2d._fallback_colorbar_colormap_name
             _colorbar_colormap = plot2d._colorbar_colormap
             _init_colorbar_scale_controls = plot2d._init_colorbar_scale_controls
+            _init_colorbar_scope_controls = plot2d._init_colorbar_scope_controls
+            _colorbar_symmetric_changed = plot2d._colorbar_symmetric_changed
+            _symmetric_colorbar_levels = plot2d._symmetric_colorbar_levels
             _init_colorbar_filter_controls = plot2d._init_colorbar_filter_controls
             _init_colorbar_colormap_table = plot2d._init_colorbar_colormap_table
             _populate_colorbar_colormap_table = plot2d._populate_colorbar_colormap_table

@@ -6,6 +6,9 @@ All notable user-facing changes are recorded here.
 
 ### Added
 
+- Add symmetric colour limits around zero to the shared 2D/3D colour-scale dialog,
+  including mirrored manual endpoint edits. Keep 3D colour scope controls in sync
+  between the toolbar and dialog.
 - Plot real-valued 3D QCoDeS measurements as selectable 2D slices. Choose X/Y
   parameters, step by index or coordinate, retain zoom and selections, and use
   shared whole-volume, per-slice or locked colour limits.

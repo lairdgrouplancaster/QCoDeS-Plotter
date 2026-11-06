@@ -130,6 +130,13 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         self.colorbar_manual_radio = qtw.QRadioButton("Manual")
         self.colorbar_auto_radio = qtw.QRadioButton("Auto")
+        self.symmetric_color = qtw.QCheckBox("Symmetric")
+        self.symmetric_color.setChecked(self.__dict__.get("_colorbar_symmetric", False))
+        self.symmetric_color.setToolTip(
+            "Keep colour limits equally spaced above and below zero. "
+            "Automatic limits use the larger absolute value; editing either limit mirrors the other."
+        )
+        self.symmetric_color.toggled.connect(self._colorbar_symmetric_changed)
         self.colorbar_min_label = qtw.QLabel("Minimum")
         self.colorbar_max_label = qtw.QLabel("Maximum")
         self.colorbar_min_text = qtw.QLineEdit()
@@ -188,6 +195,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             accessible_prefix="Color scale", parent=controls,
         )
         self.colorbar_range_entry.setFixedWidth(200)
+        self.colorbar_range_entry.group.idClicked.connect(self._sync_colorbar_scale_controls)
 
         self.colorbar_button_group = qtw.QButtonGroup(cast(QtCore.QObject, self))
         self.colorbar_button_group.addButton(self.colorbar_manual_radio)
@@ -224,6 +232,11 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         layout.addWidget(filter_controls)
         layout.addWidget(self.colorbar_colormap_table, 1)
         layout.addWidget(range_controls)
+        options = qtw.QHBoxLayout()
+        self._init_colorbar_scope_controls(options)
+        options.addWidget(self.symmetric_color)
+        options.addStretch()
+        layout.addLayout(options)
 
         self.colorbar_scale_controls = controls
 
@@ -263,6 +276,32 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             self._copy_colorbar_auto_limits
         )
 
+        self._sync_colorbar_scale_controls()
+
+    def _init_colorbar_scope_controls(self, layout):
+        """Allow volume plots to expose their automatic colour scope here."""
+
+    def _symmetric_colorbar_levels(self, vmin, vmax):
+        if self.__dict__.get("_colorbar_symmetric", False):
+            extent = max(abs(float(vmin)), abs(float(vmax)))
+            return -extent, extent
+        return vmin, vmax
+
+    def _colorbar_symmetric_changed(self, enabled):
+        levels = self._current_colorbar_levels()
+        if enabled and levels is not None:
+            extent = max(abs(float(value)) for value in levels)
+            if not np.isfinite(2 * extent):
+                self.show_status("The symmetric color scale range is too wide to display safely.", 5000)
+                with QtCore.QSignalBlocker(self.symmetric_color):
+                    self.symmetric_color.setChecked(False)
+                return
+        self._colorbar_symmetric = enabled
+        manual_levels = self.__dict__.get("_colorbar_manual_levels")
+        if manual_levels is not None:
+            self.setColorbarManualRange(*manual_levels)
+        else:
+            self.scaleColorbar()
         self._sync_colorbar_scale_controls()
 
     def _init_colorbar_filter_controls(self):
@@ -494,6 +533,9 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         self.colorbar_manual_radio.setChecked(manual)
         self.colorbar_auto_radio.setChecked(not manual)
+        fixed_center = self.__dict__.get("_colorbar_symmetric", False) and self.colorbar_range_entry.center_span
+        self.colorbar_min_text.setEnabled(not fixed_center)
+        self.colorbar_min_label.setEnabled(not fixed_center)
         self._update_colorbar_auto_limits_tooltip()
 
         for widget in (self.colorbar_manual_radio, self.colorbar_auto_radio):
@@ -662,7 +704,22 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         if entry.unchanged() and not self.colorbar_manual_radio.isChecked():
             return
         try:
-            vmin, vmax = entry.limits_from_fields()
+            if self.__dict__.get("_colorbar_symmetric", False) and not entry.center_span:
+                fields = (self.colorbar_min_text, self.colorbar_max_text)
+                if not all(field.hasAcceptableInput() for field in fields):
+                    raise ValueError("Invalid numeric input")
+                values = tuple(float(field.text()) for field in fields)
+                if not all(np.isfinite(value) for value in values):
+                    raise ValueError("Invalid numeric input")
+                previous = self._current_colorbar_levels()
+                changed = [i for i in (0, 1) if previous is None or values[i] != previous[i]]
+                extent = abs(values[changed[0]]) if len(changed) == 1 else max(map(abs, values))
+                vmin, vmax = -extent, extent
+            else:
+                vmin, vmax = entry.limits_from_fields()
+                if self.__dict__.get("_colorbar_symmetric", False) and entry.center_span:
+                    extent = (vmax - vmin) / 2
+                    vmin, vmax = -extent, extent
         except ValueError:
             self.show_status(
                 "Color scale ranges must use finite numbers with a positive span."
@@ -722,6 +779,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             self._sync_colorbar_scale_controls()
             return False
 
+        vmin, vmax = self._symmetric_colorbar_levels(vmin, vmax)
         if not np.isfinite(float(vmax) - float(vmin)):
             self.show_status("The color scale range is too wide to display safely.", 5000)
             self._sync_colorbar_scale_controls()
