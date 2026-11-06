@@ -81,6 +81,7 @@ def _finalize_confirmed_process_shutdown(
     from PyQt6 import sip
 
     from qplot.windows import MainWindow
+    from qplot.windows._plotWin import plotWidget
 
     if not process_fail_safe.armed:
         return
@@ -108,11 +109,26 @@ def _finalize_confirmed_process_shutdown(
         process_fail_safe.wait_for_forced_exit()
         return
 
-    # The launcher remains armed through both destructors in the quiescent path.
+    # The launcher remains armed through all destructors in the quiescent path.
     if not process_fail_safe.watchdog_operational():
         process_fail_safe.wait_for_forced_exit()
         return
     try:
+        # Closing plots removes them from window.windows but Python references
+        # and cycles can keep their native trees alive. Destroy those owners
+        # before QApplication's unordered SIP wrapper sweep: deleting scene
+        # children independently there can invalidate wrappers mid-traversal.
+        # Include hidden and previously closed plots; leave menus and embedded
+        # widgets to their Qt parents.
+        for widget in app.topLevelWidgets():
+            if isinstance(widget, plotWidget) and not sip.isdeleted(widget):
+                if not process_fail_safe.watchdog_operational():
+                    process_fail_safe.wait_for_forced_exit()
+                    return
+                sip.delete(widget)
+        if not process_fail_safe.watchdog_operational():
+            process_fail_safe.wait_for_forced_exit()
+            return
         sip.delete(window)
         if not process_fail_safe.watchdog_operational():
             process_fail_safe.wait_for_forced_exit()
