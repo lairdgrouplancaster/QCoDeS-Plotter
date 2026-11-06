@@ -607,8 +607,8 @@ Color-scale controls:
 ### 3D Slice Viewer
 
 The bordered panel groups axis, colour and navigation controls in two rows.
-Axes and colour controls sit on the left; the slider sits above the slice index,
-depth coordinate and **Follow latest** controls on the right.
+Axes and colour controls sit on the left. On the right, the slice index sits above
+the depth coordinate, beside the slider and **Follow latest** controls.
 Drag its handle to move both rows together; the panel docks at the top or bottom
 of the window.
 Select any two independent parameters as X and Y. The remaining parameter is
