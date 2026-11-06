@@ -451,7 +451,10 @@ def _assert_no_staging_artifacts(destination: Path):
     )
 
 
-def _replacement_fixture(tmp_path):
+@pytest.fixture
+def replacement_fixture(tmp_path):
+    if os.name == "nt":
+        pytest.skip("Windows locks the trusted reader's open SQLite main file against replacement.")
     source = tmp_path / "source.db"
     replacement = tmp_path / "replacement.db"
     run_id, guid = _create_run(source, 1)
@@ -484,8 +487,7 @@ def _assert_replacement_was_rejected(
 
 
 def test_run_csv_replacement_while_save_dialog_is_open_publishes_nothing(
-        tmp_path,
-        monkeypatch,
+        replacement_fixture,
         ):
     (
         harness,
@@ -493,7 +495,7 @@ def test_run_csv_replacement_while_save_dialog_is_open_publishes_nothing(
         destination,
         replace_source,
         replacement_states,
-    ) = _replacement_fixture(tmp_path)
+    ) = replacement_fixture
     sentinel = b"existing destination sentinel"
     destination.write_bytes(sentinel)
 
@@ -519,9 +521,9 @@ def test_run_csv_replacement_while_save_dialog_is_open_publishes_nothing(
 
 
 def test_run_csv_replacement_during_serialization_rejects_stale_capture(
-        tmp_path, monkeypatch,
+        replacement_fixture, monkeypatch,
         ):
-    harness, source, destination, replace_source, states = _replacement_fixture(tmp_path)
+    harness, source, destination, replace_source, states = replacement_fixture
     original_write = csv_export_module._write_rows
 
     def write_after_replacement(*args, **kwargs):
@@ -537,9 +539,9 @@ def test_run_csv_replacement_during_serialization_rejects_stale_capture(
 
 
 def test_run_csv_replacement_immediately_before_publication_preserves_sentinel(
-        tmp_path, monkeypatch,
+        replacement_fixture, monkeypatch,
         ):
-    harness, source, destination, replace_source, states = _replacement_fixture(tmp_path)
+    harness, source, destination, replace_source, states = replacement_fixture
     sentinel = b"existing destination sentinel"
     destination.write_bytes(sentinel)
     original_publish = StagedExport.publish

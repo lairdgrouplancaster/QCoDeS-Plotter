@@ -86,13 +86,14 @@ def _wait_request(request, check_cancelled, progress):
             try:
                 result = request.wait(0.05)
             except TimeoutError:
-                # A finished request can itself report a deadline failure.
-                # Do not turn that failure into another wait or a fallback.
-                if request.done:
-                    raise
-            else:
-                check_cancelled()
-                return result
+                if not request.done:
+                    continue
+                # Completion can race the timed wait. Read the terminal result
+                # instead of mistaking that polling timeout for a failed read;
+                # a real request deadline still propagates from this wait.
+                result = request.wait(0)
+            check_cancelled()
+            return result
     finally:
         if not request.done:
             request.cancel()

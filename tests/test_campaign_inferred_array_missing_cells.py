@@ -29,7 +29,7 @@ from qplot.datahandling.trusted_live_service import TrustedLiveReadService
 from qplot.tools import worker as workers
 from qplot.windows import MainWindow
 from qplot.windows._plotWin import plotWidget
-from tests._window_lifecycle import close_main_window
+from tests._window_lifecycle import close_main_window, wait_for_exports
 from tests.windows.test_complex_line_data import database_state
 from tests.windows.test_native_transform_labels import (
     no_callback_errors as _no_callback_errors,
@@ -258,6 +258,7 @@ def test_inferred_arrays_plot_and_raw_csv_through_actual_controls(
             target = tmp_path / "raw.csv"
             monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", lambda *args, **kwargs: (str(target), ""))
             window.export_run_preview_csv(guid, "converted")
+            wait_for_exports(window)
             assert errors == [] and target.exists()
             with target.open(newline="") as source:
                 rows = list(csv.DictReader(source))
@@ -278,6 +279,7 @@ def test_mixed_basis_raw_csv_keeps_blank_fields_and_recorded_text(
             target = tmp_path / "mixed.csv"
             monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", lambda *args, **kwargs: (str(target), ""))
             window.export_run_preview_csv(guid, "converted")
+            wait_for_exports(window)
             assert errors == [] and target.exists()
             with target.open(newline="") as source:
                 rows = list(csv.DictReader(source))

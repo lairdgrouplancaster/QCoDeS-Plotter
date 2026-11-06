@@ -56,6 +56,44 @@ def forbid_snapshot(monkeypatch):
     monkeypatch.setattr(csv_export, "load_by_guid_read_only", forbidden)
 
 
+@pytest.mark.parametrize("outcome", ["success", "deadline", "failure"])
+def test_capture_completion_racing_poll_timeout_reads_terminal_result(outcome):
+    result = object()
+    terminal_error = {
+        "success": None,
+        "deadline": TimeoutError("capture deadline expired"),
+        "failure": RuntimeError("capture failed"),
+    }[outcome]
+    waits = []
+
+    class CompletingRequest:
+        done = False
+        progress = None
+
+        def wait(self, timeout):
+            waits.append(timeout)
+            if len(waits) == 1:
+                # The timed wait expires, then the broker publishes before
+                # the caller can inspect done. Its terminal outcome is ready.
+                self.done = True
+                raise TimeoutError("polling wait expired")
+            if terminal_error is not None:
+                raise terminal_error
+            return result
+
+        def cancel(self):
+            pytest.fail("A completed capture must not be cancelled")
+
+    request = CompletingRequest()
+    if terminal_error is None:
+        assert csv_export._wait_request(request, lambda: None, lambda *_args: None) is result
+    else:
+        with pytest.raises(type(terminal_error)) as caught:
+            csv_export._wait_request(request, lambda: None, lambda *_args: None)
+        assert caught.value is terminal_error
+    assert waits == [.05, 0]
+
+
 @pytest.mark.parametrize("trusted", [False, True])
 def test_wide_export_aligns_independent_trees_and_standalones(tmp_path, monkeypatch, trusted):
     parameters = [("x", "numeric", (), ()), ("signal", "numeric", ("x",), ()),

@@ -3044,10 +3044,14 @@ def test_preview_export_rejects_database_replacement_during_fresh_capture(
         window.monitor.stop()
         assert window.ds is None
         assert window._selected_run_guid == guid
+        # Isolate this export from thumbnail work and periodic plot refreshes
+        # that can independently retire the replaced source on a slow runner.
+        wait_for_trusted_derived_work(window)
         window.openPlot(guid=guid, show=False)
         wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         plot = window.windows[-1]
         wait_for(lambda: not getattr(plot.worker, "running", False))
+        plot.monitor.stop()
         dataset_key = plot._dataset_key
         held_handle = window.dataset_holder[dataset_key]
         held_dataset = held_handle.dataset
