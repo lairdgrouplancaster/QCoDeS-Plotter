@@ -1265,6 +1265,7 @@ class PreviewCard(qtw.QWidget):
                 "previewUnsupported",
                 )
             label.guid = str(guid or "")
+            label.plotRequested.connect(self.plotRequested)
             label.exportRequested.connect(self.exportRequested)
             label.statsRequested.connect(self.statsRequested)
             layout = qtw.QHBoxLayout()
@@ -1841,7 +1842,7 @@ def _unsupported_preview(parameter, axes):
         "parameter": str(parameter),
         "axes": axes,
         "dimension_count": len(axes),
-        "title": unsupported_plot_message(parameter, axes),
+        "title": ("Open the 3D slice viewer" if len(axes) == 3 else unsupported_plot_message(parameter, axes)),
         "unsupported": True,
         }
 
@@ -1867,14 +1868,15 @@ def _dependencies_from_result_layout(cursor, table_name):
 
 def unsupported_preview_label(preview, size, object_name):
     dimensions = int(preview.get("dimension_count") or len(preview.get("axes") or []))
-    label = PreviewImageLabel(preview.get("parameter", ""), plot_supported=False)
+    label = PreviewImageLabel(preview.get("parameter", ""), plot_supported=dimensions == 3)
     label.setText(f"{dimensions}D")
     label.setObjectName(object_name)
-    label.setAccessibleName(f"{dimensions}D measurement unsupported")
+    label.setAccessibleName("Open 3D slice viewer" if dimensions == 3 else f"{dimensions}D measurement unsupported")
     label.setFixedSize(int(size), int(size))
     label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
     label.setWordWrap(True)
-    label.setToolTip(preview_tooltip_text(preview) or "Unsupported measurement dimensionality")
+    label.setToolTip("Open the 3D slice viewer" if dimensions == 3 else
+                     preview_tooltip_text(preview) or "Unsupported measurement dimensionality")
     label.setFrameShape(qtw.QFrame.Shape.Box)
     label.setFrameShadow(qtw.QFrame.Shadow.Plain)
     return label

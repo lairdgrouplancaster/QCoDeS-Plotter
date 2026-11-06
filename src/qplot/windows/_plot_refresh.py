@@ -209,7 +209,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 "dataGrid",
                 "display_param",
                 "last_ds_len",
-                ):
+                ) + tuple(getattr(self, "_extra_publication_fields", ())):
             fields[name] = (name in self.__dict__, self.__dict__.get(name))
         try:
             prior_cache = (
@@ -465,7 +465,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
         if database_identity is not None:
             loader_kwargs["database_identity"] = database_identity
 
-        worker: Any = loader(
+        worker_factory = getattr(self, "_create_plot_loader", loader)
+        worker: Any = worker_factory(
             self.ds.cache,
             self.param,
             self.param_dict,
@@ -759,6 +760,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
             if result is None:
                 raise AttributeError("The completed plot worker has no result.")
             self._begin_refresh_publication(worker)
+            prepare_publication = getattr(self, "_prepare_plot_publication", None)
+            if callable(prepare_publication):
+                prepare_publication(worker, result)
             # Update qcodes dataset variables if db read happened
             cache_update = result.cache_update
             if cache_update is not None:

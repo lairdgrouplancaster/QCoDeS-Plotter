@@ -10,7 +10,8 @@
 
 QCoDeS-Plotter, or qPlot, is a PyQt-based data viewer for QCoDeS databases. It
 is designed for inspecting completed and running experiments, with live refresh,
-line plots, heatmaps, 1D cut extraction, CSV export, and simple data operations.
+line plots, heatmaps, 3D slice viewing, 1D cut extraction, CSV export, and simple
+data operations.
 
 ## Requirements
 

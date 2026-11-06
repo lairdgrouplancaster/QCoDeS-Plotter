@@ -376,6 +376,26 @@ COMMANDS: dict[str, CommandSpec] = {
         "V",
         help_section="2D Heatmap Windows",
     ),
+    "slice.depth_cut": CommandSpec(
+        "slice.depth_cut", "Depth Cut", "Open a cut versus the depth coordinate", "D",
+        help_section="3D Slice Windows",
+    ),
+    "slice.previous": CommandSpec(
+        "slice.previous", "Previous Slice", "Show the previous recorded depth coordinate", "PgUp",
+        help_section="3D Slice Windows",
+    ),
+    "slice.next": CommandSpec(
+        "slice.next", "Next Slice", "Show the next recorded depth coordinate", "PgDown",
+        help_section="3D Slice Windows",
+    ),
+    "slice.first": CommandSpec(
+        "slice.first", "First Slice", "Show the lowest recorded depth coordinate", "Home",
+        help_section="3D Slice Windows",
+    ),
+    "slice.last": CommandSpec(
+        "slice.last", "Last Slice", "Show the highest recorded depth coordinate", "End",
+        help_section="3D Slice Windows",
+    ),
     "plot.clear_selection": CommandSpec(
         "plot.clear_selection",
         "Clear Rectangular Selection",
@@ -414,6 +434,7 @@ SHORTCUT_HELP_SECTIONS = (
     "All Plot Windows (1D, 2D, and Cuts)",
     "Cut Windows",
     "2D Heatmap Windows",
+    "3D Slice Windows",
     "Context Menus",
 )
 

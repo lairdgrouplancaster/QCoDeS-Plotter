@@ -465,12 +465,12 @@ There are several ways to open plots:
   selected run.
 
 Parameters with one independent variable open as line plots, and parameters
-with two independent variables open as heatmaps. Measurements with three or
-more independent variables are not projected or averaged implicitly: qPlot
-shows a `3D`, `4D`, etc. placeholder in the run table and preview tab. Right-click
-the placeholder to export CSV or generate statistics, including ranges for all
-setpoint axes. Plotting and dragging these quantities are unavailable. Mixed
-runs can still plot their 1D and 2D quantities.
+with two independent variables open as heatmaps. Three independent variables
+open a 3D slice viewer; double-click a `3D` placeholder or use its Plot action.
+Measurements with four or more independent variables retain placeholders with
+CSV export and statistics, including ranges for all setpoint axes. No dimension
+is projected or averaged implicitly. Mixed runs plot each supported quantity
+according to its own dependencies.
 
 Line plots require real-valued measurements and coordinates, including samples
 stored in QCoDeS array parameters. Complex values produce a `Plot Error` naming
@@ -603,6 +603,73 @@ Color-scale controls:
 * Cut plots are live-data compatible.
 * Cut plots can be added to compatible 1D plots when their X axis matches the
   1D plot's independent variable.
+
+### 3D Slice Viewer
+
+Select any two independent parameters as X and Y. The remaining parameter is
+Depth. The default uses the last declared dependency as X, the preceding one
+as Y, and the first as Depth. The navigator shows a zero-based index, the total
+slice count, and its actual coordinate and unit. Recorded depth coordinates
+are ordered numerically, independently of acquisition order.
+
+The compact cursor readout shows `[X index, Y index, depth index]` followed by
+`(X, Y, depth, value)`. Hover over it for parameter names, units and the ordering.
+Copy Coordinates includes all four values.
+
+* Use the slider, previous/next buttons, or Page Up/Page Down to step. Home/End
+  select the first/last slice. Scroll over the slider to step; scrolling over
+  the heatmap continues to zoom. Navigation does not wrap.
+* Enter an index or a coordinate; coordinate entry selects the nearest recorded
+  plane and shows the selected value. X/Y zoom and marquee bounds persist.
+* Choose **Whole volume**, **Current slice**, or **Locked** colour limits.
+  Whole-volume limits include slice operations and are calculated in the
+  background, with an explicitly provisional range and scan progress. Live
+  limits expand without shrinking. Press C to recalculate; dragging the
+  colourbar or using marquee colour zoom locks the limits. Symmetric limits
+  about zero are also available.
+* **Slice operations** run independently on each full plane, regardless of
+  zoom or marquee bounds. Swapping X/Y preserves the physical operation.
+  Changing the depth parameter restores that plane's own operation settings,
+  initially empty. Derivative labels and units follow the named parameter.
+* H/V cuts follow the current slice unless **Pin to this slice** is checked.
+  D opens a depth cut at the selected X/Y position. Drag its point marker to
+  move the position, or move the depth marker in the cut window to select a
+  slice. Missing coordinates produce gaps, without snapping to another point
+  independently in each plane.
+* Cuts use the processed slice values by default. **Raw data** bypasses the
+  slice pipeline; the cut's own operations run after extraction. Switching
+  planes preserves cuts' physical meanings and pins H/V cuts from the old
+  plane. Cuts retain their live source if its viewing window is closed.
+* The marquee menu offers **Mean within selection versus depth**. This averages
+  finite cells in the same physical rectangle in each plane. **Coverage…** lists
+  the count for each depth; ordinary two-column mean-cut CSV exports also
+  include those counts.
+* **Freeze Slice as 2D Plot** creates an independent processed snapshot with
+  ordinary appearance, operations, H/V cuts and exports.
+
+Refresh preserves the selected physical depth, even when new coordinates
+change its index. **Follow latest** instead selects the most recently acquired
+depth, which need not be the largest coordinate. Manual navigation disables
+following. Incomplete slices show how many cells are missing; complete slices
+omit this indicator. The navigator also reports repeated samples and planned
+slice counts when known. Identical coordinate triples use a finite mean, with
+repeat counts shown; missing cells remain missing unless an explicit fill
+operation is applied.
+
+Scalar and compatible numeric array storage are supported, including nonuniform
+spacing, descending/snake sweeps and incomplete grids. Complex data and
+coordinates that cannot be displayed without rounding are refused explicitly.
+Each plane's cell count and acquired sample count must fit
+`max_full_heatmap_points`; oversized planes report the limit instead of silently
+downsampling. The viewer builds a private disk index, caches a few planes and
+prefetches neighbours, without allocating a dense 3D cube. An initial capture
+and index of the acquired run is required; live refresh rebuilds that index.
+
+Slice/cut CSV exports include the
+source GUID/revision, fixed coordinates, units and applied operations. The
+normal run CSV export continues to provide all recorded measurement samples.
+The first version uses one volume per viewer; use frozen slices for existing
+2D comparison workflows.
 
 ### Data Operations
 

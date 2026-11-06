@@ -5,7 +5,7 @@ from inspect import signature
 from PyQt6 import QtCore
 
 from qplot.datahandling.dimensions import (
-    MAX_SUPPORTED_PLOT_DIMENSIONS,
+    MAX_VIEWER_DIMENSIONS,
     unsupported_plot_message,
 )
 from qplot.datahandling.export_data import (
@@ -54,6 +54,7 @@ from ._subplots.subplot1d import (
 )
 from .plot1d import plot1d
 from .plot2d import plot2d
+from .plot3d import plot3d
 
 
 def _trusted_plot_action(method):
@@ -1412,12 +1413,12 @@ class PlotActionsMixin:
                     continue
 
                 depends_on = param.depends_on_
-                if len(depends_on) > MAX_SUPPORTED_PLOT_DIMENSIONS:
+                if len(depends_on) > MAX_VIEWER_DIMENSIONS:
                     unsupported.append(
                         unsupported_plot_message(param.name, depends_on)
                         )
                     continue
-                widget = plot1d if len(depends_on) == 1 else plot2d
+                widget = {1: plot1d, 2: plot2d, 3: plot3d}[len(depends_on)]
                 skip = False
                 for win in self.windows:
                     if (
