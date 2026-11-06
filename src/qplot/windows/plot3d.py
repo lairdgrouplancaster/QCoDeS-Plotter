@@ -124,7 +124,7 @@ class plot3d(plot2d):
         self.color_mode.currentIndexChanged.connect(self._color_mode_changed)
         color_row = qtw.QHBoxLayout()
         color_row.setSpacing(6)
-        controls.addLayout(color_row, 0, 2, 2, 1, QtCore.Qt.AlignmentFlag.AlignVCenter)
+        controls.addLayout(color_row, 0, 2, 2, 1, QtCore.Qt.AlignmentFlag.AlignTop)
         color_row.addWidget(qtw.QLabel("Colour:"))
         color_row.addWidget(self.color_mode)
         self.navigator = qtw.QGridLayout()
