@@ -22,6 +22,8 @@ All notable user-facing changes are recorded here.
 
 ### Changed
 
+- Remove the redundant heatmap resolution text from the coordinate toolbar;
+  downsampled plots retain their warning button and details dialog.
 - Make plot source annotations selectable and copyable. Add compact 3D cursor
   readouts with depth, coordinate tooltips and stable, dataset-sized index fields.
 - Raise the application minimum to Python 3.12. Standard CPython 3.12–3.14

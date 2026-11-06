@@ -2871,12 +2871,12 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 )
             self.assertFalse(hasattr(host, "heatmap_downsample_button_action"))
             self.assertFalse(hasattr(host, "heatmap_downsample_side_button"))
-            self.assertEqual(host.heatmap_resolution_label.text(), "Resolution: pending")
+            self.assertFalse(hasattr(host, "heatmap_resolution_label"))
             widgets = [
                 host.toolbarCo_ord.widgetForAction(action)
                 for action in host.toolbarCo_ord.actions()
                 ]
-            self.assertEqual(widgets, [host.heatmap_resolution_label])
+            self.assertEqual(widgets, [])
 
             host._update_heatmap_downsample_state(Worker())
 
@@ -2884,10 +2884,6 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             self.assertEqual(
                 host.heatmap_downsample_button.pos(),
                 QtCore.QPoint(264, 164),
-                )
-            self.assertEqual(
-                host.heatmap_resolution_label.text(),
-                "Resolution: downsampled 500 x 400 of 2,000 x 1,000",
                 )
 
             opened = []
@@ -2952,10 +2948,6 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
             self.assertFalse(host.heatmap_downsample_button.isHidden())
             self.assertTrue(host._heatmap_downsample_info["grid_binned"])
-            self.assertEqual(
-                host.heatmap_resolution_label.text(),
-                "Resolution: downsampled 176 x 176 of 3,501 x 801",
-                )
 
             text = host._heatmap_downsample_dialog_text()
             self.assertIn("3,501 x 801 = 2,804,301 cells", text)
@@ -3019,10 +3011,6 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 "unique_y_count": None,
             })
             host._update_heatmap_downsample_state(Worker())
-            self.assertEqual(
-                host.heatmap_resolution_label.text(),
-                "Resolution: downsampled 500 x 400; exact source dimensions not retained",
-            )
             for details in (host._heatmap_downsample_dialog_text(), host._heatmap_downsample_dialog_message()):
                 self.assertIn("not retained during downsampling", details)
                 self.assertIn("keep memory use bounded", details)
@@ -3076,10 +3064,6 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             host._update_heatmap_downsample_state(Worker())
 
             self.assertFalse(host.heatmap_downsample_button.isHidden())
-            self.assertEqual(
-                host.heatmap_resolution_label.text(),
-                "Resolution: downsampled 176 x 176 of 3,501 x 801",
-                )
             text = host._heatmap_downsample_dialog_text()
             self.assertIn("3,501 x 801 = 2,804,301 cells", text)
             self.assertIn("full-resolution heatmap limit is 1,000,000", text)
