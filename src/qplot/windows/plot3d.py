@@ -118,7 +118,7 @@ class plot3d(plot2d):
         self.follow_latest.setToolTip("Follow the last acquired depth coordinate; manual navigation turns this off.")
         self.follow_latest.toggled.connect(self._follow_latest_changed)
         self.color_mode = qtw.QComboBox()
-        self.color_mode.setMinimumContentsLength(16)
+        self.color_mode.setMinimumContentsLength(12)
         self.color_mode.setSizeAdjustPolicy(
             qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         for label, mode in (("Whole volume", "volume"), ("Current slice", "slice"), ("Locked", "locked")):
@@ -570,7 +570,7 @@ class plot3d(plot2d):
 
     def _init_colorbar_scope_controls(self, layout):
         self.colorbar_scope = qtw.QComboBox()
-        self.colorbar_scope.setMinimumContentsLength(16)
+        self.colorbar_scope.setMinimumContentsLength(12)
         self.colorbar_scope.setSizeAdjustPolicy(
             qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         for index in range(self.color_mode.count()):
