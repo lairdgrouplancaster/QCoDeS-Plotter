@@ -606,6 +606,7 @@ Color-scale controls:
 
 ### 3D Slice Viewer
 
+The **3D slice** panel groups axis, colour and navigation controls in two rows.
 Select any two independent parameters as X and Y. The remaining parameter is
 Depth. The default uses the last declared dependency as X, the preceding one
 as Y, and the first as Depth. The navigator shows a zero-based index and its
