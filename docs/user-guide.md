@@ -609,7 +609,7 @@ Color-scale controls:
 Select any two independent parameters as X and Y. The remaining parameter is
 Depth. The default uses the last declared dependency as X, the preceding one
 as Y, and the first as Depth. The navigator shows a zero-based index and its
-actual coordinate and unit. Hover over the slider or index control to see the
+actual coordinate and unit. Hover over the slider or Slice control to see the
 valid index range. Recorded depth coordinates
 are ordered numerically, independently of acquisition order.
 
@@ -618,7 +618,7 @@ The compact cursor readout shows `[X index, Y index, depth index]` followed by
 Copy Coordinates includes all four values.
 An em dash (`—`) marks an unavailable or nonfinite cursor value.
 
-* Use the slider, index spinbox arrows, or Page Up/Page Down to step. Home/End
+* Use the slider, Slice spinbox arrows, or Page Up/Page Down to step. Home/End
   select the first/last slice. Scroll over the slider to step; scrolling over
   the heatmap continues to zoom. Navigation does not wrap.
 * Enter an index or a coordinate; coordinate entry selects the nearest recorded

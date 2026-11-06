@@ -119,16 +119,16 @@ class plot3d(plot2d):
         self.slice_slider.setMinimumWidth(140)
         self.slice_slider.setTracking(True)
         self.slice_slider.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
-        self.slice_slider.setToolTip("Drag to browse slices; scroll to step through them.")
+        self.slice_slider.setToolTip("Slice index")
         self.slice_slider.sliderPressed.connect(
             lambda: self.slice_slider.setCursor(QtCore.Qt.CursorShape.ClosedHandCursor))
         self.slice_slider.sliderReleased.connect(
             lambda: self.slice_slider.setCursor(QtCore.Qt.CursorShape.OpenHandCursor))
         self.slice_slider.valueChanged.connect(self.select_slice)
         self.navigator.addWidget(self.slice_slider)
-        self.navigator.addWidget(qtw.QLabel(" Index: "))
+        self.navigator.addWidget(qtw.QLabel(" Slice: "))
         self.slice_index = qtw.QSpinBox()
-        self.slice_index.setToolTip("Zero-based slice index.")
+        self.slice_index.setToolTip("Slice index")
         self.slice_index.setKeyboardTracking(False)
         self.slice_index.valueChanged.connect(self.select_slice)
         self.navigator.addWidget(self.slice_index)
@@ -451,8 +451,8 @@ class plot3d(plot2d):
                 widget.setRange(0, max(0, len(depths) - 1))
                 widget.setValue(frame.index)
             widget.setEnabled(bool(depths.size) and not self._frozen)
-        index_range = f"Slice index: 0–{len(depths) - 1} (zero-based)." if depths.size else "No recorded slices."
-        self.slice_slider.setToolTip(f"{index_range}\nDrag to browse slices; scroll to step through them.")
+        index_range = f"Slice index: 0-{len(depths) - 1}" if depths.size else "No recorded slices"
+        self.slice_slider.setToolTip(index_range)
         self.slice_index.setToolTip(index_range)
         self.depth_entry.setText(self._depth_text(frame.depth, self._depth_name()))
         self.depth_entry.setToolTip(
