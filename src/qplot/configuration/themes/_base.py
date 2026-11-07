@@ -135,6 +135,9 @@ _STYLESHEET_TEMPLATE = Template(
     QToolBar QLabel {
         color: $text;
     }
+    QToolBar#plotRefreshToolbar {
+        spacing: 4px;
+    }
     QToolBar#plotRefreshToolbar,
     QToolBar#sliceControls {
         /* Qt uses the largest padding edge as the toolbar frame width. */

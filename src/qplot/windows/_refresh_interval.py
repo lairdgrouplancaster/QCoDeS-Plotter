@@ -13,6 +13,8 @@ from ._config_persistence import set_widget_value_without_signals
 class RefreshIntervalSpinBox(qtw.QDoubleSpinBox):
     """Fit the longest interval without the native spin box's surplus width."""
 
+    heightChanged = QtCore.pyqtSignal(int)
+
     def __init__(
         self, parent=None, *,
         refresh_description="How often this plot checks for new measurement data.",
@@ -100,6 +102,7 @@ class RefreshIntervalSpinBox(qtw.QDoubleSpinBox):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._fit_editor()
+        self.heightChanged.emit(event.size().height())
 
     def showEvent(self, event):
         super().showEvent(event)

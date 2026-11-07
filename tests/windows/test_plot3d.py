@@ -286,7 +286,7 @@ def test_slice_navigation_all_planes_and_global_colours(tmp_path, main, array):
     np.testing.assert_array_equal(plot.dataGrid, [[104, 100, 125], [134, 130, 155]])
     wait_for(lambda: plot._range_complete)
     assert plot.bar.levels() == (100., 455.)
-    assert plot.plot_status.message.startswith("Loaded 6 points for signal in ")
+    assert plot.plot_status.message.startswith("Loaded 6 points in ")
     assert "sampled" not in plot.plot_status.message
     assert plot.range_status.text() == ""
     assert plot.slice_status.text() == ""

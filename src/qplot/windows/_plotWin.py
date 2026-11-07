@@ -682,7 +682,10 @@ class plotWidget(
         )
         self.refreshPlotButton.setToolTip("Refresh plot data now (R)")
         self.refreshPlotButton.setAccessibleName("Refresh plot data")
-        self.refreshPlotButton.setFixedSize(28, 26)
+        button_height = self.spinBox.sizeHint().height()
+        self.refreshPlotButton.setFixedSize(button_height, button_height)
+        self.spinBox.heightChanged.connect(
+            lambda height: self.refreshPlotButton.setFixedSize(height, height))
         self.refreshPlotButton.clicked.connect(self.refresh_plot_data)
         self.toolbarRef.addWidget(self.refreshPlotButton)
         self.toolbarRef.addWidget(self.spinBox)

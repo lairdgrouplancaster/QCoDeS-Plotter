@@ -288,7 +288,6 @@ class plot2d(
         self.relevel_refresh.setToolTip("Autoscale the heatmap colour range on each refresh")
         self.relevel_refresh.toggled.connect(self._colorbar_auto_refresh_changed)
         self.toolbarRef.insertWidget(self.plotStatusAction, self.relevel_refresh)
-        self.toolbarRef.insertSeparator(self.plotStatusAction)
      
     
     def initContextMenu(self) -> None:

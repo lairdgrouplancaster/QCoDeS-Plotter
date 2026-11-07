@@ -852,8 +852,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                         else point_kind
                         )
                 self.show_status(
-                    f"Loaded {point_text} for {self.param.name} "
-                    f"in {elapsed:.2f} seconds.",
+                    f"Loaded {point_text} in {elapsed:.2f} s",
                     5000,
                     )
             else:
@@ -863,8 +862,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 if loaded_points is None:
                     loaded_points = self.ds.number_of_results
                 self.show_status(
-                    f"Loaded {loaded_points:,} points for {self.param.name} "
-                    f"in {elapsed:.2f} seconds.",
+                    f"Loaded {loaded_points:,} points in {elapsed:.2f} s",
                     5000,
                     )
             dataset_length = result.dataset_length_at_start

@@ -321,11 +321,11 @@ def test_trusted_launch_and_refresh_never_copy_database(tmp_path, monkeypatch, a
         if action != "aggregate":
             assert plot.worker.heatmap_full_resolution
             assert plot.heatmap_downsample_button.isHidden()
-            assert plot.plot_status.message.startswith("Loaded 12 points for z in ")
+            assert plot.plot_status.message.startswith("Loaded 12 points in ")
         else:
             assert not plot.worker.heatmap_full_resolution
             assert not plot.heatmap_downsample_button.isHidden()
-            assert "aggregated cells for z" in plot.plot_status.message
+            assert "aggregated cells in " in plot.plot_status.message
         if action in ("live", "switch", "aggregate"):
             if action == "switch":
                 second = tmp_path / "second.db"
