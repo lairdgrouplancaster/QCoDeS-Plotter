@@ -5,6 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PyQt6 import QtWidgets as qtw
+from PyQt6 import sip
 
 from qplot.datahandling.file_identity import database_sidecar_identities
 from qplot.tools import worker as worker_module
@@ -67,9 +69,25 @@ class _RefreshWorker:
         return False
 
 
-def _retained_plot(database_path: Path):
+@pytest.fixture
+def plot_stub(qapplication):
+    plots = []
+
+    def create(plot_type=plotWidget):
+        plot = plot_type.__new__(plot_type)
+        qtw.QMainWindow.__init__(plot)
+        plots.append(plot)
+        return plot
+
+    yield create
+
+    for plot in reversed(plots):
+        sip.delete(plot)
+
+
+def _retained_plot(database_path: Path, plot_stub):
     key = DatasetKey(database_path, "run-guid")
-    plot = plotWidget.__new__(plotWidget)
+    plot = plot_stub()
     plot._dataset_key = key
     plot._dataset_holder = {
         key: DatasetHandle(
@@ -89,9 +107,9 @@ def _retained_plot(database_path: Path):
     return plot
 
 
-def test_retained_plot_rejects_wal_shm_swap_before_automatic_refresh(tmp_path):
+def test_retained_plot_rejects_wal_shm_swap_before_automatic_refresh(tmp_path, plot_stub):
     database_path = _source_with_sidecars(tmp_path, "retained.db")
-    plot = _retained_plot(database_path)
+    plot = _retained_plot(database_path, plot_stub)
     accepted_sidecars = plot._dataset_key.sidecar_identities
     plot.load_calls = []
     plot.load_data = lambda *args, **kwargs: plot.load_calls.append((args, kwargs))
@@ -111,6 +129,7 @@ def test_retained_plot_rejects_wal_shm_swap_before_automatic_refresh(tmp_path):
 def test_sidecar_swap_during_worker_read_is_rejected_before_publication(
     tmp_path,
     monkeypatch,
+    plot_stub,
 ):
     database_path = _source_with_sidecars(tmp_path, "worker-race.db")
     key = DatasetKey(database_path, "run-guid")
@@ -172,7 +191,7 @@ def test_sidecar_swap_during_worker_read_is_rejected_before_publication(
 
     # Even a hypothetical late success callback cannot publish stale cache
     # state because the plot performs its own final exact source guard.
-    plot = _retained_plot(database_path)
+    plot = _retained_plot(database_path, plot_stub)
     plot._dataset_key = key
     plot.worker = plot_worker
     cache_updates = []
@@ -188,6 +207,7 @@ def test_sidecar_swap_during_worker_read_is_rejected_before_publication(
 def test_callback_swap_rolls_back_shared_cache_and_axis_state(
     tmp_path,
     monkeypatch,
+    plot_stub,
 ):
     database_path = _source_with_sidecars(tmp_path, "cache-callback.db")
     key = DatasetKey(database_path, "run-guid")
@@ -213,7 +233,7 @@ def test_callback_swap_rolls_back_shared_cache_and_axis_state(
     class Param:
         name = "signal"
 
-    plot = plotWidget.__new__(plotWidget)
+    plot = plot_stub()
     plot._dataset_key = key
     plot._dataset_holder = {
         key: DatasetHandle(
@@ -277,7 +297,7 @@ def test_callback_swap_rolls_back_shared_cache_and_axis_state(
     ) == _normalized_paths([database_path])
 
 
-def test_attribute_error_after_swap_rolls_back_before_soft_error(tmp_path):
+def test_attribute_error_after_swap_rolls_back_before_soft_error(tmp_path, plot_stub):
     database_path = _source_with_sidecars(tmp_path, "attribute-error-callback.db")
     key = DatasetKey(database_path, "run-guid")
     old_parameter_data = {"signal": {"signal": [1.0], "x": [0.0]}}
@@ -292,7 +312,7 @@ def test_attribute_error_after_swap_rolls_back_before_soft_error(tmp_path):
     )
     dataset = SimpleNamespace(cache=cache, number_of_results=1, running=True)
 
-    plot = plotWidget.__new__(plotWidget)
+    plot = plot_stub()
     plot._dataset_key = key
     plot._dataset_holder = {
         key: DatasetHandle(
@@ -352,7 +372,7 @@ def test_attribute_error_after_swap_rolls_back_before_soft_error(tmp_path):
     assert plot._refresh_publication_for(worker) is None
 
 
-def test_older_callback_rollback_cannot_clobber_reentrant_newer_publication():
+def test_older_callback_rollback_cannot_clobber_reentrant_newer_publication(plot_stub):
     class CacheDataset:
         _completed = False
 
@@ -370,7 +390,7 @@ def test_older_callback_rollback_cannot_clobber_reentrant_newer_publication():
     class Param:
         name = "signal"
 
-    plot = plotWidget.__new__(plotWidget)
+    plot = plot_stub()
     plot._dataset_key = DatasetKey("missing.db", "run-guid")
     plot._dataset_holder = {
         plot._dataset_key: DatasetHandle(Dataset()),
@@ -405,6 +425,7 @@ def test_older_callback_rollback_cannot_clobber_reentrant_newer_publication():
 
 def test_old_line_callback_cannot_render_after_reentrant_newer_publication(
     tmp_path,
+    plot_stub,
 ):
     database_path = _source_with_sidecars(tmp_path, "same-source-reentrant.db")
     key = DatasetKey(database_path, "run-guid")
@@ -435,7 +456,7 @@ def test_old_line_callback_cannot_render_after_reentrant_newer_publication(
         def setData(self, *args, **kwargs):
             self.calls.append((args, kwargs))
 
-    plot = plot1d.__new__(plot1d)
+    plot = plot_stub(plot1d)
     plot._dataset_key = key
     plot._dataset_holder = {
         key: DatasetHandle(
@@ -514,13 +535,14 @@ def test_old_line_callback_cannot_render_after_reentrant_newer_publication(
 
 def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
     monkeypatch,
+    plot_stub,
 ):
     older_worker = _RefreshWorker(running=True)
     older_worker.loaded_from_sql_heatmap = False
     older_worker.dataset_completed = False
     newer_worker = _RefreshWorker(running=True)
 
-    plot = plot2d.__new__(plot2d)
+    plot = plot_stub(plot2d)
     older_worker.result = capture_plot_result(SimpleNamespace(
         read_data=False, axis_data={}, axis_param={}, dataset_completed=False,
     ))
@@ -568,7 +590,7 @@ def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
     assert plot._refresh_publication_for(older_worker) is None
 
 
-def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path):
+def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path, plot_stub):
     database_path = _source_with_sidecars(tmp_path, "line-callback.db")
     key = DatasetKey(database_path, "run-guid")
 
@@ -600,7 +622,7 @@ def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path):
             if len(self.calls) == 1:
                 _replace_sidecars(database_path)
 
-    plot = plot1d.__new__(plot1d)
+    plot = plot_stub(plot1d)
     plot._dataset_key = key
     plot._dataset_holder = {
         key: DatasetHandle(
