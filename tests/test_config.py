@@ -69,13 +69,13 @@ class TemporaryConfigTestCase(unittest.TestCase):
 
     def test_update_preferences_and_check_timestamp_are_validated_and_saved(self):
         cfg = config()
-        self.assertFalse(cfg.get("updates.check_on_launch"))
+        self.assertTrue(cfg.get("updates.check_on_launch"))
         self.assertFalse(cfg.get("updates.include_prereleases"))
-        cfg.update_many({"updates.check_on_launch": True,
+        cfg.update_many({"updates.check_on_launch": False,
                          "updates.include_prereleases": True,
                          "updates.last_check": 1_700_000_000.25})
         reloaded = config()
-        self.assertTrue(reloaded.get("updates.check_on_launch"))
+        self.assertFalse(reloaded.get("updates.check_on_launch"))
         self.assertTrue(reloaded.get("updates.include_prereleases"))
         self.assertEqual(reloaded.get("updates.last_check"), 1_700_000_000.25)
         for key, value in (("updates.check_on_launch", 1),

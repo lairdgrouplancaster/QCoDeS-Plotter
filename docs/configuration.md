@@ -147,7 +147,7 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `runtime_settings.max_heatmap_grid_side` | integer | `800` | `1 <= value <= 2000000000` | Maximum bins on either axis of a downsampled heatmap display grid. |
 | `runtime_settings.del_grace_period` | number | `10` | `0 <= value <= 300` | Seconds to retain an unused plot dataset connection for quick reopening. |
 | `runtime_settings.cloud_sync_timeout` | number | `120` | `1 <= value <= 3600` | Seconds to wait for cloud storage to hydrate a database before failing. |
-| `updates.check_on_launch` | boolean | `false` | `true` or `false` | Check PyPI in the background after launch, at most once every 24 hours. |
+| `updates.check_on_launch` | boolean | `true` | `true` or `false` | Check PyPI in the background after launch, at most once every 24 hours. |
 | `updates.include_prereleases` | boolean | `false` | `true` or `false` | Include beta, release-candidate, and development releases in update checks. |
 | `updates.last_check` | number | `0` | `0 <= value <= 253402300799` | Unix timestamp of the last attempted update check; maintained automatically. |
 

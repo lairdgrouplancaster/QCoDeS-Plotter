@@ -323,7 +323,7 @@
             "properties": {
                 "check_on_launch": {
                     "type": "boolean",
-                    "default": false
+                    "default": true
                 },
                 "include_prereleases": {
                     "type": "boolean",
