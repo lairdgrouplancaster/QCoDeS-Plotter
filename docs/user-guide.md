@@ -140,7 +140,7 @@ private files are removed when their owning connection closes.
 
 Automatic default selection, scrolling, and metadata completion do not launch
 legacy preview or thumbnail snapshot workers during a trusted live session.
-Snapshot fallback sessions may retain their current preview behavior. The
+Snapshot fallback sessions may retain their current preview behaviour. The
 trusted Stage 5C scheduler instead produces bounded derived thumbnails and
 previews through the persistent helper and version-3 derived cache. Explicit
 trusted plots capture or aggregate the selected run through the broker. Raw CSV
@@ -524,11 +524,11 @@ Common plot controls:
 * Right-click inside a marquee selection for zoom and statistics actions.
 * Press `Esc` or double-click the plot to clear a marquee selection.
 * Double-click an X or Y axis to open its scaling dialog.
-* Range controls default to `Min / Max`. Select `Center / Span` to enter an
+* Range controls default to `Min / Max`. Select `Centre / Span` to enter an
   arithmetic midpoint and the full range width (`maximum - minimum`). Switching
   formats leaves the plotted range and Auto/Manual mode unchanged. The readout
   underneath shows the equivalent values without units; hover for full precision.
-  Each axis and color scale retains its own format while the plot window is open.
+  Each axis and colour scale retains its own format while the plot window is open.
   Values use data coordinates even on logarithmic axes, where both resulting
   limits must remain positive.
 * Use `Log Scale` in an axis-scaling tab to switch a line-plot axis between
@@ -569,27 +569,27 @@ hides that layer until its units match again.
 
 The left panel lists the heatmap layers. Added layers are translucent so that
 overlapping maps remain visible; use each layer's opacity control or remove
-button to adjust the composition. All layers share one colormap and color
+button to adjust the composition. All layers share one colour map and colour
 range, which is autoscaled across their combined finite values. A hidden source
 plot remains live while its layer is present, just as it does for an added line
 trace. Large hidden heatmap sources also follow the visible window's viewport
 when qPlot reloads zoomed data.
 
-Cursor readout, marquee statistics, color zoom, and 1D cut extraction continue
+Cursor readout, marquee statistics, colour zoom, and 1D cut extraction continue
 to use the original heatmap in the window. Heatmaps also add the following
-color-scale and cut controls.
+colour-scale and cut controls.
 
-Color-scale controls:
+Colour-scale controls:
 
-* Right-click the plot and choose `Autoscale Color`, or press `C`.
-* Double-click the color scale bar to open the color scaling dialog.
-  Its range controls offer the same `Min / Max` and `Center / Span` formats as
+* Right-click the plot and choose `Autoscale Colour`, or press `C`.
+* Double-click the colour scale bar to open the colour scaling dialog.
+  Its range controls offer the same `Min / Max` and `Centre / Span` formats as
   the plot axes.
 * **Symmetric** in the dialog keeps limits equally spaced around zero, for both
   2D plots and 3D slices. It is off by default. Automatic limits use the larger
   absolute endpoint; editing either manual limit mirrors the other. In
-  `Center / Span` mode, the centre stays at zero. Locked limits remain locked.
-* Drag one color-scale handle to adjust a limit.
+  `Centre / Span` mode, the centre stays at zero. Locked limits remain locked.
+* Drag one colour-scale handle to adjust a limit.
 * Drag between handles to slide the range.
 * Drag outside the handles to widen or narrow the range.
 
@@ -819,8 +819,8 @@ General shortcuts:
 | `Ctrl+W` / `Cmd+W` | Close the current qPlot window |
 | `Ctrl+Q` / `Cmd+Q` | Quit qPlot |
 | `Ctrl+,` | Open preferences |
-| `Ctrl+M` / `Alt+Space, N` | Minimize the current window |
-| `Alt+Space, X` / `Alt+Space, R` | Maximize or restore the current window on Windows |
+| `Ctrl+M` / `Alt+Space, N` | Minimise the current window |
+| `Alt+Space, X` / `Alt+Space, R` | Maximise or restore the current window on Windows |
 | `Ctrl+Cmd+F` / `F11` | Enter or leave full screen |
 | `Ctrl+C` / `Cmd+C` | Copy selected cells or rows in the run details pane |
 | `Ctrl+Shift+C` / `Cmd+Shift+C` | Copy the current cell or value in the run details pane |

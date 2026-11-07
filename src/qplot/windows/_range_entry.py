@@ -60,7 +60,7 @@ class RangeEntry(qtw.QWidget):
         layout.setSpacing(0)
         self.group = qtw.QButtonGroup(self)
         self.min_max_button = qtw.QPushButton("Min / Max", self)
-        self.center_span_button = qtw.QPushButton("Center / Span", self)
+        self.center_span_button = qtw.QPushButton("Centre / Span", self)
         for index, button in enumerate((self.min_max_button, self.center_span_button)):
             button.setCheckable(True)
             button.setAutoDefault(False)
@@ -76,7 +76,7 @@ class RangeEntry(qtw.QWidget):
         )
         self.setToolTip("Change the input format without changing the plotted range.")
         self.center_span_button.setToolTip(
-            "Center is the arithmetic midpoint; span is maximum minus minimum. "
+            "Centre is the arithmetic midpoint; span is maximum minus minimum. "
             "Both use data values, including on logarithmic axes."
         )
         self.group.idClicked.connect(self._change_format)
@@ -91,14 +91,14 @@ class RangeEntry(qtw.QWidget):
         self._limits = float(lower), float(upper)
         center, span = _center_span(*self._limits)
         if self.center_span:
-            names = "Center", "Span"
+            names = "Centre", "Span"
             values = center, span
             summary_names = "Minimum", "Maximum"
             summary_values = self._limits
         else:
             names = "Minimum", "Maximum"
             values = self._limits
-            summary_names = "Center", "Span"
+            summary_names = "Centre", "Span"
             summary_values = center, span
         self._displayed_values = values
         for field, label, name, value in zip(

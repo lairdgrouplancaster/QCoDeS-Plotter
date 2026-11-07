@@ -206,7 +206,7 @@ def _bounded_public_run_fields(fields: dict[str, Any]) -> dict[str, Any]:
     bounded = dict(bounded_selected_run_fields(fields))
     if _RAW_RUN_FIELDS.intersection(bounded):
         raise TrustedMetadataQueryError(
-            "A raw trusted run field escaped presentation normalization."
+            "A raw trusted run field escaped presentation normalisation."
         )
     return bounded
 

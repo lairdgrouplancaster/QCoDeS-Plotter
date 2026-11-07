@@ -347,7 +347,7 @@ get in the way of searches or file listings.
 
 ## Manual GUI Check
 
-For changes that affect runtime behavior or the GUI, run:
+For changes that affect runtime behaviour or the GUI, run:
 
 ```console
 python -m qplot

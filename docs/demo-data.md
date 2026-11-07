@@ -164,7 +164,7 @@ The committed screenshots below are generated from a small synthetic database.
 
 ![qPlot heatmap](assets/qplot-heatmap.png)
 
-![qPlot color scale dialog](assets/qplot-color-scale-dialog.png)
+![qPlot colour scale dialog](assets/qplot-color-scale-dialog.png)
 
 ## Regenerate Screenshots
 

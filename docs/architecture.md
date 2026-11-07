@@ -31,7 +31,7 @@ supervisor retains environment-marker consumption and socket/path extraction.
 persistence. The entry point supplies the persistence callback explicitly;
 the controller can run and be tested without importing the main window.
 
-`diagnostics.py` recognizes its guarded file handler and unavailable-log fallback
+`diagnostics.py` recognises its guarded file handler and unavailable-log fallback
 by concrete types. Reconfiguration and cleanup share one ownership snapshot,
 leaving handlers installed by callers attached and open.
 
@@ -100,9 +100,9 @@ controls owned by the main window. It handles:
 * run-action keyboard shortcuts
 
 When adding a new top-level command, menu action, or workflow that coordinates
-multiple windows, start in `main.py`; put database-specific behavior in
-`_database_actions.py`, plot-opening/export behavior in `_plot_actions.py`, and
-run-selection or refresh-control behavior in `_run_controls.py`.
+multiple windows, start in `main.py`; put database-specific behaviour in
+`_database_actions.py`, plot-opening/export behaviour in `_plot_actions.py`, and
+run-selection or refresh-control behaviour in `_run_controls.py`.
 
 `_refresh_interval.py` keeps each control's accepted interval, displayed value,
 and pending text edit in one `_RefreshIntervalState` record. The state is
@@ -136,11 +136,11 @@ stay in sync.
 ## Plot Windows
 
 `src/qplot/windows/_plotWin.py` is the shared base for plot windows. It owns
-common plotting behavior such as refresh timers, axis selection controls,
+common plotting behaviour such as refresh timers, axis selection controls,
 context menus, plot-area resizing, and operation panels.
 
 `_axis_ticks.py` owns bounded tick placement, label formatting, and installation
-on plot and colorbar axes. Named candidate records make the priority of count,
+on plot and colour bar axes. Named candidate records make the priority of count,
 coverage, centring, and spacing explicit while preserving deterministic ties.
 
 `qplot/_number_formatting.py` owns summary-number formatting and cursor field
@@ -169,7 +169,7 @@ unowned connection cleanup. It resolves the current selected dataset at each
 close boundary, including after database-view rollback; action methods retain
 source identity validation and selection/UI changes.
 
-`src/qplot/windows/_plot_export.py` contains shared plot output behavior:
+`src/qplot/windows/_plot_export.py` contains shared plot output behaviour:
 native printing, pyqtgraph export-dialog setup, PDF rendering, clipboard image
 copies, high-DPI copies, and SVG clipboard output.
 
@@ -198,8 +198,8 @@ assignment attributes, and tab help together.
 and FFT coordinate arithmetic. `windows/_native_transforms.py`
 retains the PyQtGraph item, display checks, and existing helper entry points.
 
-`src/qplot/windows/_range_entry.py` shares the Min / Max and Center / Span
-input selector between axis and color-scale dialogs. It retains canonical
+`src/qplot/windows/_range_entry.py` shares the Min / Max and Centre / Span
+input selector between axis and colour-scale dialogs. It retains canonical
 endpoints when changing the display format; each dialog continues to validate
 and apply range edits through its existing plotting methods.
 
@@ -229,11 +229,11 @@ refresh policy. `_plot_drop_axes.py` uses named axis identities and candidate
 priorities to select compatible axes before mutating the target plot.
 
 `src/qplot/windows/plot2d.py` extends the shared plot window for heatmaps. It
-owns heatmap rendering, hover pixel display, and marquee color scaling.
+owns heatmap rendering, hover pixel display, and marquee colour scaling.
 
 `src/qplot/windows/_plot2d_layers.py` owns secondary heatmap layers added by
 preview drag-and-drop, including per-layer renderers and opacity controls,
-hidden source-window refresh ownership, shared-colorbar membership, and layer
+hidden source-window refresh ownership, shared colour bar membership, and layer
 cleanup.
 
 `src/qplot/windows/_source_consumer.py` owns each secondary trace or heatmap's
@@ -241,27 +241,27 @@ shared source-consumer registration and hidden-source interval connection.
 Release is idempotent. The line and heatmap owners retain their distinct final
 monitor, reload-timer, and worker-cancellation policies.
 
-`src/qplot/windows/_plot2d_colorbar.py` contains the heatmap colorbar mixin. It
-owns color autoscaling, colorbar interaction handlers, and color-map selection
+`src/qplot/windows/_plot2d_colorbar.py` contains the heatmap colour bar mixin. It
+owns colour autoscaling, colour bar interaction handlers, and colour-map selection
 state used by `plot2d.py`.
 
-`src/qplot/windows/_plot2d_colorbar_dialog.py` owns the color scale dialog,
-color-map chooser table, and persistent color-map filter controls used by the
-heatmap colorbar mixin.
+`src/qplot/windows/_plot2d_colorbar_dialog.py` owns the colour scale dialog,
+colour-map chooser table, and persistent colour-map filter controls used by the
+heatmap colour bar mixin.
 
 `src/qplot/windows/_plot2d_sweeps.py` contains the heatmap sweep/cut mixin. It
-owns horizontal and vertical cut creation, cut-line cursor behavior, keyboard
-movement, grouped dragging, and synchronization with 1D sweep windows.
+owns horizontal and vertical cut creation, cut-line cursor behaviour, keyboard
+movement, grouped dragging, and synchronisation with 1D sweep windows.
 
-`src/qplot/windows/_colorbar.py` contains the heatmap color-map catalog,
-filtering helpers, preview rendering, and colorbar table items used by
+`src/qplot/windows/_colorbar.py` contains the heatmap colour-map catalogue,
+filtering helpers, preview rendering, and colour bar table items used by
 `_plot2d_colorbar.py`.
 
 Its filter specification registry is also the source of broad filter labels,
-settings keys, control names, and catalogue groups for the color scale dialog.
+settings keys, control names, and catalogue groups for the colour scale dialog.
 The existing subtype rules and transactional settings persistence stay separate.
 
-Use the shared base only for behavior that should apply to both line plots and
+Use the shared base only for behaviour that should apply to both line plots and
 heatmaps. Keep plot-type-specific interaction details in `plot1d.py` or
 `plot2d.py`.
 
@@ -330,17 +330,17 @@ approval and source validation as row exports, with one measurement per file.
 Filename allocation disambiguates collisions before any writer starts,
 including measurements sharing the optional QCoDeS run-based filename format.
 
-`windows/_export_tasks.py` owns one bounded serialization pool and a nonmodal
+`windows/_export_tasks.py` owns one bounded serialisation pool and a nonmodal
 progress window. Writers receive only frozen inputs, cancellation, progress,
 and the owned stage path. `StagedExport` in `_export_paths.py` separates worker
-serialization from GUI-thread publication: source, destination, and active
+serialisation from GUI-thread publication: source, destination, and active
 database protections are revalidated before the atomic replace. Cancellation
 discards the stage and retains an existing destination. Shutdown counts tasks
 until GUI cleanup finishes, including cancelled queued tasks; completed history
 releases callbacks and Qt/data owners.
 
 Plot CSV captures copies of loaded arrays and operation flags on the GUI thread.
-`tools/plot_csv.py` transforms and serializes those detached values in the worker.
+`tools/plot_csv.py` transforms and serialises those detached values in the worker.
 Line exports explicitly select underlying or native-transformed samples;
 heatmaps export their current primary grid. Neither mode triggers a source read.
 
@@ -379,7 +379,7 @@ It delegates to four modules with separate responsibilities:
   shared result budgets, and executor contract used by the broker, cache,
   rendering, and UI. Those consumers import the types directly instead of
   importing the metadata adapter. The adapter retains its public re-exports.
-* `_trusted_query_metadata.py` contains pure parameter normalization,
+* `_trusted_query_metadata.py` contains pure parameter normalisation,
   dependency/shape interpretation, and presentation limits. Snapshot readers
   use these functions directly; they do not call private adapter methods.
 * `_trusted_grid_sampling.py` chooses bounded grid samples and validates their
@@ -649,8 +649,8 @@ binary, and image fields are validated before retention. Unsupported, empty,
 malformed, non-finite/extreme numeric, or higher-dimensional sources become
 bounded descriptions.
 
-`_trusted_preview_raster.py` provides shared exact numeric normalization,
-Viridis colors, pixel/line drawing, and 1D rendering for scalar and array
+`_trusted_preview_raster.py` provides shared exact numeric normalisation,
+Viridis colours, pixel/line drawing, and 1D rendering for scalar and array
 previews. Neither renderer imports the other for these primitives. Payload
 validation and PNG encoding remain in `trusted_derived_rendering.py`.
 
@@ -763,7 +763,7 @@ Partial-frame timeouts therefore cannot reuse or replay the affected generation.
 After polling, decoding, or process inspection outside the supervisor lock,
 every reply path uses the same lock-held helper/job ownership check. Completed
 or superseded jobs cannot publish into a newer owner; each path retains its
-contextual error and existing cleanup behavior.
+contextual error and existing cleanup behaviour.
 
 Cancellation is cooperative first and uses a monotonic, generation-scoped
 control tombstone. An exact cancellation may arrive before its command or once
@@ -848,7 +848,7 @@ direction. A caller-side result reader owns all launcher framing, so a main
 thread `KeyboardInterrupt`, `SystemExit`, or other control-flow exception
 cannot corrupt a partially received outcome. The caller sends one fixed,
 authenticated cancellation record through a dedicated sole writer. That writer
-has a serialized `NOT_STARTED`/`STARTING`/`RUNNING`/`EOF_FALLBACK`/`COMPLETE`
+has a serialised `NOT_STARTED`/`STARTING`/`RUNNING`/`EOF_FALLBACK`/`COMPLETE`
 lifecycle, so concurrent cleanup and result-reader requests can create one
 thread object and attempt its start only once. A failed create/start transition
 commits one synchronous EOF owner. The owner identity, creation attempt, worker
@@ -933,7 +933,7 @@ broker-owned prefix capture or numeric aggregation. Trusted raw CSV uses the
 same prefix capture, while fallback CSV and plot actions remain snapshot
 consumers. All address the selected GUID and exact
 `DatabaseInstance`; snapshot fallback sessions may keep their existing preview
-behavior. Trusted selection never creates an automatic
+behaviour. Trusted selection never creates an automatic
 fallback copy.
 
 Database switching disarms publications before the old coordinator is made
@@ -1122,13 +1122,13 @@ in `docs/configuration.md`.
 Tests are grouped by area:
 
 * `tests/datahandling` covers database metadata helpers.
-* `tests/widgets` covers main-window widgets and preview behavior.
-* `tests/windows` covers main-window and plot-window behavior.
+* `tests/widgets` covers main-window widgets and preview behaviour.
+* `tests/windows` covers main-window and plot-window behaviour.
 * `tests/test_config.py` and `tests/test_tools.py` cover configuration and
-  general helper behavior.
+  general helper behaviour.
 
 Shared pytest and Qt setup lives in `tests/conftest.py`.
-Integration isolation is the default: Qt initialization, QCoDeS location
+Integration isolation is the default: Qt initialisation, QCoDeS location
 restoration, and snapshot-connection leak auditing apply to every unmarked test.
 Only audited `pure` tests bypass that setup; their fixtures import neither Qt
 nor QCoDeS. Subprocess policy tests exercise both sides of this boundary.

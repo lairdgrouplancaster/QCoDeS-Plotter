@@ -65,7 +65,7 @@ signalling its caller as `-signal_number`. If the caller receives
 waiting, it sends an irreversible authenticated cancellation and re-raises the
 original exception only after the launcher has killed and reaped its GUI/helper
 tree and exited. A dedicated cancellation writer retains partial-send progress;
-one serialized lifecycle permits exactly one worker creation and start attempt,
+one serialised lifecycle permits exactly one worker creation and start attempt,
 or one committed write-side-EOF fallback if startup fails. Later interrupts are
 absorbed until authenticated outcome, launcher EOF, and exit/reap observation
 are all complete, so they cannot replace the first exception or release a live

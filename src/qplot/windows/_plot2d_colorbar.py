@@ -219,7 +219,7 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         self._sync_colorbar_level_fields(vmin, vmax)
         return True
 
-    def _reject_heatmap_color_range(self, *, message=None, title="Unsupported heatmap color range"):
+    def _reject_heatmap_color_range(self, *, message=None, title="Unsupported heatmap colour range"):
         """Hide an unusable color display while retaining measured samples."""
         self._heatmap_color_range_rejected = True
         for item in self._heatmap_colorbar_items():
@@ -230,7 +230,7 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         self._reset_heatmap_hover()
         self._set_sweep_lines_visible(False)
         message = message or (
-            "The heatmap color range is too wide to display safely. "
+            "The heatmap colour range is too wide to display safely. "
             "Recorded samples remain available for CSV export and operations."
         )
         self.show_status(message, 10_000)

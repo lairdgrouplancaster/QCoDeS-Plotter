@@ -284,7 +284,7 @@ class plot2d(
     def initRefresh(self, refrate: float) -> None:
         super().initRefresh(refrate)
         
-        self.relevel_refresh = qtw.QCheckBox("Autoscale colors on refresh")
+        self.relevel_refresh = qtw.QCheckBox("Autoscale colours on refresh")
         self.relevel_refresh.setToolTip("Autoscale the heatmap colour range on each refresh")
         self.relevel_refresh.toggled.connect(self._colorbar_auto_refresh_changed)
         self.toolbarRef.insertWidget(self.plotStatusAction, self.relevel_refresh)
@@ -1779,7 +1779,7 @@ class plot2d(
     def _add_marquee_color_context_action(self, menu: qtw.QMenu) -> QtGui.QAction:
         action = self._add_marquee_context_action(
             menu,
-            "Zoom color",
+            "Zoom colour",
             self.zoom_marquee_color,
             )
         if self._marquee_color_levels() is None:

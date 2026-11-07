@@ -82,4 +82,4 @@ def test_symmetry_rejects_overflow_without_changing_manual_range(heatmap, monkey
     assert not heatmap.symmetric_color.isChecked()
     assert heatmap._colorbar_manual_levels == levels
     assert heatmap.bar.levels() == levels
-    assert messages == ["The symmetric color scale range is too wide to display safely."]
+    assert messages == ["The symmetric colour scale range is too wide to display safely."]

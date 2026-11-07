@@ -87,7 +87,7 @@ def assert_color_error(plot):
     assert not plot.heatmap_mesh.isVisible()
     assert not getattr(plot, "bar", plot.image).isVisible()
     assert plot.plot_state_overlay.frame.isVisible()
-    assert "color" in plot.plot_state_overlay.title_label.text().lower()
+    assert "colour" in plot.plot_state_overlay.title_label.text().lower()
     assert "range" in plot.plot_state_overlay.detail_label.text().lower()
 
 

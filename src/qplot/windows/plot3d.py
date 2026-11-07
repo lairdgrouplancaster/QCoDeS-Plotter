@@ -285,7 +285,7 @@ class plot3d(plot2d):
 
     def initContextMenu(self):
         super().initContextMenu()
-        auto_color = self._context_menu_action("Autoscale Color")
+        auto_color = self._context_menu_action("Autoscale Colour")
         auto_color.triggered.disconnect(self.scaleColorbar)
         auto_color.triggered.connect(self.autoscale_color)
         self._slice_action("slice.depth_cut", lambda: self.openSweep("d"))

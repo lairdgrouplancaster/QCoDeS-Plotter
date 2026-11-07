@@ -938,7 +938,7 @@ class plotWidget(
         insert_before = next(
             (
                 action for action in window_menu.actions()
-                if action.text().replace("&", "") == "Minimize"
+                if action.text().replace("&", "") == "Minimise"
                 ),
             None,
             )

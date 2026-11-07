@@ -248,13 +248,13 @@ class PreferencesDialog(qtw.QDialog):
 
         self.colorbarWidthSpin = qtw.QSpinBox(tab)
         self.colorbarWidthSpin.setObjectName("colorbarWidthPreferenceSpin")
-        self.colorbarWidthSpin.setAccessibleName("Color scale width")
+        self.colorbarWidthSpin.setAccessibleName("Colour scale width")
         self.colorbarWidthSpin.setRange(1, 500)
         self.colorbarWidthSpin.setSuffix(" px")
         self.colorbarWidthSpin.setToolTip(
             "Width of heatmap colour scale bars"
             )
-        self._add_row(form, "Color scale &width:", self.colorbarWidthSpin)
+        self._add_row(form, "Colour scale &width:", self.colorbarWidthSpin)
 
         self.axisTickWidthSpin = qtw.QDoubleSpinBox(tab)
         self.axisTickWidthSpin.setObjectName("axisTickWidthPreferenceSpin")

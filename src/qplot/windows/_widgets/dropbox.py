@@ -60,7 +60,7 @@ class picker_1d(qtw.QWidget):
         row_2.addWidget(self.axis_side)
         
         row_2.addStretch()
-        row_2.addWidget(qtw.QLabel("Color: "))
+        row_2.addWidget(qtw.QLabel("Colour: "))
         
         # Line colour picker
         self.color_box = colorBox(cfg)
@@ -252,7 +252,7 @@ class colorBox(qtw.QComboBox):
         # Allow user to select a custom colour
         if index and self.itemText(index) == "Custom":
             self.setCurrentText("") 
-            color = qtw.QColorDialog.getColor(parent=self)
+            color = qtw.QColorDialog.getColor(parent=self, title="Select colour")
 
             # Check user did note exit out
             if not color.isValid():

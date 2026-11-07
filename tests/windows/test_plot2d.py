@@ -38,7 +38,7 @@ def test_heatmap_refresh_controls_accept_base_class_keyword():
     try:
         window.initRefresh(refrate=1.5)
         assert window.spinBox.value() == 1.5
-        assert window.relevel_refresh.text() == "Autoscale colors on refresh"
+        assert window.relevel_refresh.text() == "Autoscale colours on refresh"
         assert window.toolbarRef.widgetForAction(window.plotStatusAction) is window.plot_status
     finally:
         sip.delete(window)
@@ -1998,7 +1998,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         menu = window._new_marquee_context_menu()
         action_texts = [action.text() for action in menu.actions()]
 
-        self.assertEqual(action_texts, ["Zoom", "Zoom X", "Zoom Y", "Zoom color", "Stats..."])
+        self.assertEqual(action_texts, ["Zoom", "Zoom X", "Zoom Y", "Zoom colour", "Stats..."])
 
     def test_context_menu_uses_short_cut_labels(self):
         class Host(plot2d):
@@ -2805,7 +2805,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             host.initContextMenu()
             auto_color = next(
                 action for action in host.vbMenu.actions()
-                if action.text().replace("&", "") == "Autoscale Color"
+                if action.text().replace("&", "") == "Autoscale Colour"
                 )
 
             self.assertEqual(auto_color.shortcut().toString(), "C")
@@ -3129,7 +3129,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
         self.assertFalse(applied)
         self.assertNotIn("none", _colorbar_colormaps())
-        self.assertEqual(window.status_messages, [("Unknown color map.", 5000)])
+        self.assertEqual(window.status_messages, [("Unknown colour map.", 5000)])
 
     def test_colorbar_colormap_config_filters_names_prefixes_and_groups(self):
         class Config:
