@@ -842,10 +842,14 @@ class PlotRefreshMixin(_PlotRefreshBase):
                         else "aggregated cells"
                         )
                 else:
+                    sampled = result.sampled_heatmap_source or bool(
+                        (result.heatmap_downsample_info or {}).get("source_sampled")
+                    )
+                    point_kind = "sampled points" if sampled else "points"
                     point_text = (
-                        f"{loaded_points:,} sampled points"
+                        f"{loaded_points:,} {point_kind}"
                         if loaded_points is not None
-                        else "sampled points"
+                        else point_kind
                         )
                 self.show_status(
                     f"Loaded {point_text} for {self.param.name} "

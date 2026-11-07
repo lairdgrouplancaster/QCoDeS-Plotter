@@ -242,8 +242,8 @@ class plot3d(plot2d):
     def format_cursor_number(self, value):
         return super().format_cursor_number(value) if np.isfinite(value) else "—"
 
-    def mouseMoved(self, pos):
-        super().mouseMoved(pos)
+    def _update_depth_readout(self):
+        """The displayed slice coordinate is known independently of the cursor."""
         depth_label = self.pos_labels.get("depth")
         if depth_label is None:
             return
@@ -251,9 +251,13 @@ class plot3d(plot2d):
         depth_label.setVisible(visible)
         self._cursor_depth_separator.setVisible(visible)
         value = self.slice_frame.depth if self.slice_frame is not None else None
-        inside = self.plot.sceneBoundingRect().contains(pos)
         depth_label.setText(self.format_cursor_number(value)
-                           if visible and value is not None and inside else "")
+                           if visible and value is not None else "")
+
+    def mouseMoved(self, pos):
+        super().mouseMoved(pos)
+        self._update_depth_readout()
+        inside = self.plot.sceneBoundingRect().contains(pos)
         if inside:
             for role in ("x", "y", "depth", "z"):
                 label = self.pos_labels[role]
@@ -462,6 +466,7 @@ class plot3d(plot2d):
                 and not getattr(worker, "_qplot_source_rejected", False)):
             self._update_plot_annotation()
             self.apply_cursor_label_widths()
+            self._update_depth_readout()
             self._update_cursor_tooltip()
             position = self.__dict__.get("_last_cursor_scene_pos")
             if position is not None:

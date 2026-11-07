@@ -137,6 +137,7 @@ def test_cursor_includes_depth_in_readout_tooltip_and_copy(tmp_path, main):
     wait_for(lambda: bool(window.windows))
     plot = window.windows[0]
     wait_for(lambda: loaded(plot) and plot._range_complete)
+    assert float(plot.pos_labels["depth"].text()) == plot.slice_frame.depth
     plot.mouseMoved(plot.vb.mapViewToScene(QtCore.QPointF(0., 3.)))
     roles = ("x", "y", "depth", "z")
     assert [float(plot.pos_labels[role].text()) for role in roles] == [0., 3., 1., 130.]
@@ -174,7 +175,10 @@ def test_cursor_includes_depth_in_readout_tooltip_and_copy(tmp_path, main):
     assert "X: bias (V)" in plot.cursor_readout.toolTip()
     assert "Y: gate (V)" in plot.cursor_readout.toolTip()
     plot.mouseMoved(QtCore.QPointF(-1000, -1000))
-    assert plot.pos_labels["depth"].text() == ""
+    assert float(plot.pos_labels["depth"].text()) == plot.slice_frame.depth
+    plot.select_slice(0)
+    wait_for(lambda: loaded(plot) and plot.slice_frame.index == 0)
+    assert float(plot.pos_labels["depth"].text()) == plot.slice_frame.depth
     assert not errors
 
 
@@ -282,6 +286,8 @@ def test_slice_navigation_all_planes_and_global_colours(tmp_path, main, array):
     np.testing.assert_array_equal(plot.dataGrid, [[104, 100, 125], [134, 130, 155]])
     wait_for(lambda: plot._range_complete)
     assert plot.bar.levels() == (100., 455.)
+    assert plot.plot_status.message.startswith("Loaded 6 points for signal in ")
+    assert "sampled" not in plot.plot_status.message
     assert plot.range_status.text() == ""
     assert plot.slice_status.text() == ""
     assert not plot.volume_status.isVisible()

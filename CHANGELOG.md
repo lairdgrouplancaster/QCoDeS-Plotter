@@ -37,6 +37,8 @@ All notable user-facing changes are recorded here.
 
 ### Fixed
 
+- Describe full-resolution database reads as points rather than sampled points,
+  and retain the selected 3D depth coordinate when the pointer leaves the plot.
 - Use declared setpoints for full-dataset statistics of inferred QCoDeS
   measurements. Numeric inference inputs no longer replace or swap the reported
   axes, and text or complex inference inputs no longer prevent statistics.
