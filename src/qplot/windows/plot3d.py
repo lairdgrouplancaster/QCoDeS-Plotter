@@ -191,6 +191,24 @@ class plot3d(plot2d):
         self.slice_index.setEnabled(False)
         self.slice_slider.setEnabled(False)
         self._update_depth_label()
+        self._refresh_alignment_timer = QtCore.QTimer(self)
+        self._refresh_alignment_timer.setSingleShot(True)
+        self._refresh_alignment_timer.timeout.connect(self._align_refresh_interval)
+        for control in (self.axis_dropdown["x"], self.spinBox, self.slice_toolbar, self.toolbarRef):
+            control.installEventFilter(self)
+
+    def _align_refresh_interval(self):
+        """Match local toolbar offsets without tying their docking positions together."""
+        axis = self.axis_dropdown["x"]
+        if not axis.isVisible() or not self.spinBox.isVisible():
+            return
+        origin = QtCore.QPoint()
+        target = axis.mapTo(self.slice_toolbar, origin).x()
+        current = self.spinBox.mapTo(self.toolbarRef, origin).x()
+        width = max(self.refreshPlotButton.iconSize().width(),
+                    self.refreshPlotButton.width() + target - current)
+        if width != self.refreshPlotButton.width():
+            self.refreshPlotButton.setFixedWidth(width)
 
     def initLabels(self):
         super().initLabels()
@@ -362,6 +380,13 @@ class plot3d(plot2d):
             self._navigate()
 
     def eventFilter(self, source, event):
+        alignment_timer = self.__dict__.get("_refresh_alignment_timer")
+        if alignment_timer is not None and event.type() in (
+                QtCore.QEvent.Type.Show, QtCore.QEvent.Type.Move,
+                QtCore.QEvent.Type.Resize, QtCore.QEvent.Type.LayoutRequest):
+            if any(source is control for control in (
+                    self.axis_dropdown["x"], self.spinBox, self.slice_toolbar, self.toolbarRef)):
+                alignment_timer.start(0)
         if source is self.__dict__.get("slice_slider") and event.type() == QtCore.QEvent.Type.Wheel:
             delta = event.angleDelta().y()
             if delta:

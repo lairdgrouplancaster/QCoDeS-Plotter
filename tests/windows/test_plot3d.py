@@ -293,6 +293,10 @@ def test_slice_navigation_all_planes_and_global_colours(tmp_path, main, array):
     assert not plot.volume_status.isVisible()
     assert not hasattr(plot, "heatmap_resolution_label")
     assert plot.heatmap_downsample_button.isHidden()
+    for width in (1100, 650):
+        plot.resize(width, 560)
+        wait_for(lambda: plot.spinBox.mapTo(plot.toolbarRef, QtCore.QPoint()).x()
+                 == plot.axis_dropdown["x"].mapTo(plot.slice_toolbar, QtCore.QPoint()).x())
     plot.vb.setRange(xRange=(-1, 2), yRange=(1, 2), padding=0)
     view = plot.vb.viewRange()
     plot.set_marquee_rect(QtCore.QRectF(-3, -1, 4, 3))
