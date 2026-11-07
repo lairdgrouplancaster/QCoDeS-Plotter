@@ -1,4 +1,4 @@
-"""Promote the bottom eligible dataset when a plot's source is removed."""
+"""Rebuild a composition when adding a volume or removing its primary source."""
 
 from copy import deepcopy
 from dataclasses import dataclass
@@ -6,7 +6,8 @@ from typing import Any, Literal
 
 from PyQt6 import QtWidgets as qtw
 
-from ._plot_drop_axes import DropAxisPlan
+from ._plot2d_layers import DEFAULT_OVERLAY_OPACITY
+from ._plot_drop_axes import DropAxisPlan, plan_drop_axes
 from ._refresh_interval import refresh_interval_value
 from ._signal_blocking import blocked_signals
 
@@ -32,15 +33,17 @@ def _remaining_datasets(
         if kind == "trace":
             item = owner.lines[key]
             style = deepcopy(owner._ensure_trace_styles()[key])
-            order = item.source_axis_order() or ("x", "y")
+            is_primary = item is owner.__dict__.get("line")
+            order = ("x", "y") if is_primary else item.source_axis_order() or ("x", "y")
             plan = DropAxisPlan(order, style.x_axis, style.y_axis, ())
-            datasets.append(_DatasetAppearance(kind, key, item.from_win, plan, style))
+            datasets.append(_DatasetAppearance(kind, key, owner if is_primary else item.from_win, plan, style))
         else:
             item = owner.heatmaps[key]
             sides = owner._heatmap_axis_sides(item)
-            plan = DropAxisPlan(item.source_axis_order() or ("x", "y"), sides[0], sides[1], ())
+            order = ("x", "y") if item is owner else item.source_axis_order() or ("x", "y")
+            plan = DropAxisPlan(order, sides[0], sides[1], ())
             datasets.append(_DatasetAppearance(
-                kind, key, item.from_win, plan,
+                kind, key, owner if item is owner else item.from_win, plan,
                 opacity=owner._heatmap_opacity(item), visible=owner._heatmap_is_visible(item),
             ))
     return datasets
@@ -113,10 +116,11 @@ def _restore_source_controls(replacement: Any, primary: _DatasetAppearance) -> N
         transpose=primary.plan.axis_order == ("y", "x"),
     ))
     order = primary.plan.axis_order
+    axis_options = dict(source.axis_options)
     for dimension, source_axis in zip(("x", "y"), order, strict=True):
         combo = replacement.axis_dropdown[dimension]
         with blocked_signals(combo):
-            combo.setCurrentText(source.axis_options[source_axis])
+            combo.setCurrentText(axis_options[source_axis])
     replacement._axis_selection = replacement.axis_options
 
 
@@ -135,6 +139,7 @@ def _restore_datasets(
             key = dataset.key
             if dataset.kind == "trace":
                 replacement.add_preview_trace(dataset.source, dataset.plan)
+                key = replacement._window_trace_key(dataset.source)
                 item = replacement.lines[key]
             else:
                 replacement.add_heatmap(dataset.source, axis_plan=dataset.plan)
@@ -186,16 +191,19 @@ def _restore_display(owner: Any, replacement: Any) -> None:
         getattr(replacement.plot.ctrl, name).setChecked(getattr(owner.plot.ctrl, name).isChecked())
 
 
-def promote_plot_source(main: Any, owner: Any, selected: list[tuple[str, Any]]) -> Any:
+def promote_plot_source(
+    main: Any, owner: Any, selected: list[tuple[str, Any]], *, volume=None,
+) -> Any:
     """Rebuild the source-specific controls and release the old plot owner.
 
     Construct the replacement before closing the old owner, so every surviving
     dataset stays retained and a construction failure leaves the plot intact.
-    Rebuilding also supports a change between trace and heatmap source types.
+    A newly added volume owns its controls and keeps all existing datasets as
+    overlays. Removing it promotes an ordinary source, removing slice controls.
     """
     datasets = _remaining_datasets(owner, selected)
-    primary = _promotion_primary(datasets)
-    source = primary.source
+    primary = _promotion_primary(datasets) if volume is None else None
+    source = primary.source if primary is not None else None
     dialog = owner.__dict__.get("_plot_appearance_dialog")
     show_dialog = dialog is not None and dialog.isVisible()
     dialog_geometry = dialog.saveGeometry() if show_dialog else None
@@ -203,14 +211,34 @@ def promote_plot_source(main: Any, owner: Any, selected: list[tuple[str, Any]]) 
     next_position = main._plot_tile_grid, main._next_plot_tile
     replacement = None
     try:
-        main.openWin(type(source), source._dataset_key, source.param,
+        if volume is None:
+            assert source is not None
+            widget, key, param = type(source), source._dataset_key, source.param
+        else:
+            from .plot3d import plot3d
+            widget, (key, param) = plot3d, volume
+        main.openWin(widget, key, param,
                      refrate=refresh_interval_value(owner.spinBox), show=True)
         replacement = next(win for win in main.windows if win not in previous_windows)
         _copy_window_layout(owner, replacement)
         replacement.snap_to_trace_action.setChecked(owner.snap_to_trace_action.isChecked())
+        if volume is not None:
+            plan = plan_drop_axes(owner, replacement)
+            if not plan.approve(owner, replacement):
+                replacement.close()
+                replacement.deleteLater()
+                return None
+            primary = _DatasetAppearance(
+                "heatmap", replacement._primary_heatmap_key, replacement, plan,
+                opacity=DEFAULT_OVERLAY_OPACITY,
+            )
+            datasets.insert(0, primary)
+        assert primary is not None
         _restore_source_controls(replacement, primary)
         _restore_datasets(replacement, datasets, primary)
         _restore_display(owner, replacement)
+        if volume is not None and replacement._colorbar_manual_levels is not None:
+            replacement._set_locked_mode()
         replacement.refreshWindow(force=True)
     except Exception:
         for win in list(main.windows):

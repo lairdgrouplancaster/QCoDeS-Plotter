@@ -322,6 +322,8 @@ def test_unsupported_preview_keeps_its_declared_position():
         ]
         assert widgets[0].parameter == "first"
         assert widgets[1].text() == "3D"
+        assert isinstance(widgets[1], DraggablePreviewImageLabel)
+        assert widgets[1].axes == ["x", "y", "z"]
         assert widgets[2].parameter == "signal"
     finally:
         cell.deleteLater()

@@ -650,13 +650,32 @@ class plot3d(plot2d):
         self._start_volume_range()
         self._sync_color_mode_controls()
 
+    def _sync_heatmap_colorbar_items(self, *, rescale=False):
+        # Overlay publications obey the volume's colour scope, rather than
+        # the ordinary heatmap's hidden refresh-autoscale checkbox.
+        super()._sync_heatmap_colorbar_items(rescale=rescale or self._color_mode != "locked")
+
+    def _heatmap_union_colorbar_levels(self):
+        return self._data_colorbar_levels()
+
     def _finite_data_colorbar_range(self):
-        if self._color_mode == "volume" and self._shared_levels is not None:
-            return self._shared_levels
         levels = super()._finite_data_colorbar_range()
-        if self._color_mode == "volume" and levels is not None:
-            self._shared_levels = levels  # a stable provisional range
-        return levels
+        if self._color_mode != "volume":
+            return levels
+        if self._shared_levels is None:
+            # Keep the provisional volume range independent of overlays so
+            # removing an overlay can shrink the shared colour scale again.
+            data = self.__dict__.get("dataGrid")
+            if data is not None:
+                values = np.asarray(data, dtype=float)
+                finite = values[np.isfinite(values)]
+                if finite.size:
+                    self._shared_levels = float(finite.min()), float(finite.max())
+        if self._shared_levels is None:
+            return levels
+        if levels is None:
+            return self._shared_levels
+        return min(levels[0], self._shared_levels[0]), max(levels[1], self._shared_levels[1])
 
     def scaleColorbar(self, event=None):
         if self._color_mode == "locked":
@@ -840,9 +859,6 @@ class plot3d(plot2d):
             return
         from ._volume_cut import FrozenSlice
         self.open_subplot.emit(FrozenSlice, self._dataset_key, (self.param, self))
-
-    def accepts_preview_trace_drop(self, payload):
-        return False
 
     def closeEvent(self, event):
         if self._range_task is not None:

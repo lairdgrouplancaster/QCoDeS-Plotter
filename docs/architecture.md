@@ -182,6 +182,11 @@ all publication protections.
 its controls, retained datasets, then rendering settings through named phases.
 The outer operation retains replacement-window ownership and rollback. Restore
 averages after layer mappings and viewport, and trace limits after averages.
+Adding a 3D dataset uses the same transaction to rebuild the composition with
+a `plot3d` owner and retain ordinary datasets as overlays. The new owner reads
+its own volume and owns its slice selection; it does not follow another visible
+viewer. Removing the volume promotes an ordinary source. A composition permits
+one volume, and volume plane changes leave ordinary overlay mappings fixed.
 
 `src/qplot/windows/_plot_feedback.py` contains shared plot-window status,
 state-overlay, error-dialog, and shortcut helpers. Keep common plot-window user

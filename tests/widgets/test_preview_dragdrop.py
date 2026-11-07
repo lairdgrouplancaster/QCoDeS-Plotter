@@ -188,7 +188,7 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
                 return QtCore.QEvent.Type.Drop
 
             def mimeData(self):
-                return make_run_preview_mime("source-guid", "signal", ["gate", "bias", "field"])
+                return make_run_preview_mime("source-guid", "signal", ["gate", "bias", "field", "time"])
 
             def ignore(self):
                 self.ignored = True
@@ -198,7 +198,7 @@ class RunPreviewDragDropTestCase(unittest.TestCase):
         self.assertTrue(plotWidget._handle_preview_drag_drop(target, event))
         self.assertTrue(event.ignored)
         self.assertEqual(messages, [(
-            "Cannot add signal; plots support 1D or 2D measurements.",
+            "Cannot add signal; plots support 1D, 2D or 3D measurements.",
             5000,
         )])
 

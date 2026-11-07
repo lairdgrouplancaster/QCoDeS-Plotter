@@ -1868,7 +1868,9 @@ def _dependencies_from_result_layout(cursor, table_name):
 
 def unsupported_preview_label(preview, size, object_name):
     dimensions = int(preview.get("dimension_count") or len(preview.get("axes") or []))
-    label = PreviewImageLabel(preview.get("parameter", ""), plot_supported=dimensions == 3)
+    label = (DraggablePreviewImageLabel(
+        preview.get("guid", ""), preview.get("parameter", ""), preview.get("axes") or [],
+    ) if dimensions == 3 else PreviewImageLabel(preview.get("parameter", ""), plot_supported=False))
     label.setText(f"{dimensions}D")
     label.setObjectName(object_name)
     label.setAccessibleName("Open 3D slice viewer" if dimensions == 3 else f"{dimensions}D measurement unsupported")

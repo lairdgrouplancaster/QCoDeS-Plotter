@@ -52,6 +52,7 @@ from ._subplots.subplot1d import (
     _subplot_axis_order,
     _subplot_shared_parameter,
 )
+from ._widgets.preview import preview_placeholder_dimensions
 from .plot1d import plot1d
 from .plot2d import plot2d
 from .plot3d import plot3d
@@ -1673,7 +1674,7 @@ class PlotActionsMixin:
             self.show_status(f"No preview plot found for {parameter_name}.", 5000)
             return False
 
-        if len(getattr(param, "depends_on_", ())) == 2:
+        if len(getattr(param, "depends_on_", ())) in (2, 3):
             return self.add_heatmap_to_plot(
                 target_win, source_key, parameter_name, param=param,
                 axes_from_drop=axes_from_drop or getattr(target_win, "operation_kind", None) == "plot1d",
@@ -1744,7 +1745,7 @@ class PlotActionsMixin:
         target_axes = tuple(
             getattr(getattr(target_win, "param", None), "depends_on_", ())
         )
-        if len(target_axes) not in (1, 2):
+        if len(target_axes) not in (1, 2, 3):
             return []
 
         run_list = getattr(self, "RunList", None)
@@ -1756,13 +1757,15 @@ class PlotActionsMixin:
         primary_trace_key = TraceKey(target_win._dataset_key, target_win.param.name)
         for run_id, metadata in all_run_metadata().items():
             axes = tuple(metadata.get("sweep_parameters") or ())
-            if len(axes) != 1:
-                continue
+            dimensions = preview_placeholder_dimensions(metadata)
             guid = metadata.get("guid")
             if not guid:
                 continue
             source_key = self._current_dataset_key(guid)
-            for parameter_name in metadata.get("measure_parameters") or ():
+            for index, parameter_name in enumerate(metadata.get("measure_parameters") or ()):
+                dimension = dimensions[index] if index < len(dimensions) else None
+                if (dimension if dimension is not None else len(axes)) != 1:
+                    continue
                 trace_key = TraceKey(source_key, parameter_name)
                 if (
                     trace_key == primary_trace_key
@@ -1774,12 +1777,12 @@ class PlotActionsMixin:
 
 
     def _heatmap_candidates_for_plot(self, target_win):
-        """Return loaded-database 2D measurements compatible with a heatmap."""
+        """Return eligible 2D and 3D measurements from the loaded database."""
 
         target_axes = tuple(
             getattr(getattr(target_win, "param", None), "depends_on_", ())
         )
-        if len(target_axes) not in (1, 2):
+        if len(target_axes) not in (1, 2, 3):
             return []
 
         run_list = getattr(self, "RunList", None)
@@ -1792,13 +1795,16 @@ class PlotActionsMixin:
         plotted = getattr(target_win, "heatmaps", {})
         for run_id, metadata in all_run_metadata().items():
             axes = tuple(metadata.get("sweep_parameters") or ())
-            if len(axes) != 2:
-                continue
+            dimensions = preview_placeholder_dimensions(metadata)
             guid = metadata.get("guid")
             if not guid:
                 continue
             source_key = self._current_dataset_key(guid)
-            for parameter_name in metadata.get("measure_parameters") or ():
+            for index, parameter_name in enumerate(metadata.get("measure_parameters") or ()):
+                dimension = dimensions[index] if index < len(dimensions) else None
+                dimension = dimension if dimension is not None else len(axes)
+                if dimension not in (2, 3) or (dimension == 3 and isinstance(target_win, plot3d)):
+                    continue
                 heatmap_key = TraceKey(source_key, parameter_name)
                 if heatmap_key == primary_key or heatmap_key in plotted:
                     continue
@@ -1818,7 +1824,7 @@ class PlotActionsMixin:
             *,
             axes_from_drop=False,
             ):
-        """Add a compatible 2D parameter as a layer on an existing heatmap."""
+        """Add a heatmap layer, or rebuild the composition with its own volume."""
 
         source_path = (
             source_identity.database_path
@@ -1867,6 +1873,13 @@ class PlotActionsMixin:
 
         source_axes = tuple(getattr(param, "depends_on_", ()))
         target_axes = tuple(getattr(target_win.param, "depends_on_", ()))
+        if len(source_axes) == 3:
+            if isinstance(target_win, plot3d):
+                self.show_status("Each plot window can contain only one 3D measurement.", 5000)
+                return False
+            return promote_plot_source(self, target_win, [], volume=(source_key, param)) is not None
+        if isinstance(target_win, plot3d):
+            axes_from_drop = True
         if len(source_axes) != 2:
             self.show_status("Only 2D measurements can be added as heatmaps.", 5000)
             return False

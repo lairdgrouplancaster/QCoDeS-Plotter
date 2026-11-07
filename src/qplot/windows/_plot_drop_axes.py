@@ -246,7 +246,7 @@ class DroppedAxisMapping:
         options = self._source_axis_options()
         names = self.source_names
         target_names = tuple(self.target.axis_options[axis] for axis in ("x", "y"))
-        if target_names == self.target_names[::-1]:
+        if not getattr(self.target, "cursor_has_depth", False) and target_names == self.target_names[::-1]:
             names = names[::-1]
         axes = tuple(next((axis for axis in ("x", "y") if options[axis] == name), "")
                      for name in names)

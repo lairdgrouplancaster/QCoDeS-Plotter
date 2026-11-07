@@ -67,7 +67,7 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         self.add_item_combo.setSizeAdjustPolicy(
             qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
-        self.add_item_combo.setToolTip("Choose a trace or heatmap to add.")
+        self.add_item_combo.setToolTip("Choose a 1D, 2D or 3D dataset to add.")
         self.add_item_button = qtw.QPushButton("Add", self)
         self.remove_item_button = qtw.QPushButton("Remove", self)
         actions = qtw.QHBoxLayout()

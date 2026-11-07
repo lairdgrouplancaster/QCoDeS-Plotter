@@ -586,3 +586,173 @@ def test_snapshot_fallback_array_volume_and_region_coverage(tmp_path, main, monk
     assert "finite_cells" in capture.headers
     np.testing.assert_array_equal(capture.columns[-1], [2, 2, 2])
     assert not errors
+
+
+def build_mixed_volume(path):
+    runs = {3: (build_volume(path), "signal")}
+    experiment = load_or_create_experiment("mixed", "synthetic")
+    try:
+        for dimension in (1, 2):
+            measurement = Measurement(exp=experiment)
+            axes = ("gate",) if dimension == 1 else ("bias", "gate")
+            for axis in axes:
+                measurement.register_custom_parameter(axis, unit="V")
+            name = f"signal{dimension}"
+            measurement.register_custom_parameter(name, unit="A", setpoints=axes)
+            with measurement.run(write_in_background=False) as saver:
+                for point in itertools.product(range(3), repeat=dimension):
+                    saver.add_result(*zip(axes, point, strict=True), (name, sum(point)))
+            runs[dimension] = (saver.dataset.guid, name)
+    finally:
+        experiment.conn.close()
+    return runs
+
+
+@pytest.mark.parametrize("order", list(itertools.permutations((1, 2, 3))))
+def test_mixed_dimensions_any_order(tmp_path, main, monkeypatch, order):
+    """Slice controls belong to the destination; ordinary layers stay fixed."""
+    from qplot.windows._dragdrop import make_run_preview_mime
+    from qplot.windows._plot_drop_axes import DropAxisPlan
+    from tests.windows.test_heatmap_layer_integration import _PreviewDropEvent
+
+    window, errors = main
+    monkeypatch.setattr(DropAxisPlan, "approve", lambda *args: True)
+    path = tmp_path / "mixed-volume.db"
+    runs = build_mixed_volume(path)
+    artifacts = trusted_database_artifact_state(path)
+    window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(runs[order[0]][0])
+    wait_for(lambda: bool(window.windows))
+    target = window.windows[-1]
+    wait_for(lambda: loaded(target))
+    # A run can contain measurements of different dimensionalities. The Add
+    # picker must use each measurement's dimensions, not their union of axes.
+    with monkeypatch.context() as patch:
+        patch.setattr(window.RunList, "all_run_metadata", lambda: {99: {
+            "guid": runs[3][0], "sweep_parameters": ["field", "bias", "gate", "time"],
+            "measure_parameters": ["line", "map", "volume", "unsupported"],
+            "preview_dimensions": [1, 2, 3, 4],
+        }})
+        assert [key.parameter_name for _, key in window._trace_candidates_for_plot(target)] == ["line"]
+        expected = ["map"] if isinstance(target, plot3d) else ["map", "volume"]
+        assert [key.parameter_name for _, key in window._heatmap_candidates_for_plot(target)] == expected
+    for count, dimension in enumerate(order[1:], start=2):
+        guid, name = runs[dimension]
+        axes = {1: ["gate"], 2: ["bias", "gate"], 3: ["field", "bias", "gate"]}[dimension]
+        event = _PreviewDropEvent(make_run_preview_mime(guid, name, axes))
+        assert target._handle_preview_drag_drop(event)
+        wait_for(lambda count=count: len(window.windows) == 1 and len(window.windows[0]._plot_item_order) == count)
+        target = window.windows[0]
+        wait_for(lambda target=target: loaded(target))
+    assert isinstance(target, plot3d)
+    assert target.slice_toolbar.isVisible()
+    wait_for(lambda: all(layer is target or layer.geometry is not None for layer in target.heatmaps.values()))
+    trace = next(iter(target.lines.values()))
+    heatmap = next(layer for layer in target.heatmaps.values() if layer is not target)
+    wait_for(lambda: trace.getData()[0] is not None)
+    wait_for(lambda: target._range_complete)
+    assert target.bar.levels() == (0., 455.)
+    line_before = tuple(np.copy(values) for values in trace.getData())
+    heatmap_before = heatmap.data_grid.copy()
+    target.select_slice(1)
+    wait_for(lambda: loaded(target) and target.slice_frame.index == 1)
+    for before, after in zip(line_before, trace.getData(), strict=True):
+        np.testing.assert_array_equal(before, after)
+    np.testing.assert_array_equal(heatmap.data_grid, heatmap_before)
+    target.oper_widget.restore_state(OperationsState((OperationEntry("row_mean", None),), 1))
+    target.refreshWindow(force=True)
+    wait_for(lambda: loaded(target) and target._applied_operation_state.entries)
+    # Swapping the selected plane axes must not transpose ordinary overlays.
+    target.axis_dropdown["x"].setCurrentText(target.axis_options["y"])
+    wait_for(lambda: loaded(target) and target.axis_param["x"].name == "bias")
+    for before, after in zip(line_before, trace.getData(), strict=True):
+        np.testing.assert_array_equal(before, after)
+    np.testing.assert_array_equal(heatmap.data_grid, heatmap_before)
+    # Reject another volume without creating a source or altering the window.
+    assert not window.add_trace_to_plot(target, *runs[3], axes_from_drop=True)
+    assert window.windows == [target]
+    assert len(target._plot_item_order) == 3
+    # A separate viewer of the same volume retains its own navigation.
+    window.openWin(plot3d, target._dataset_key, target.param)
+    independent = window.windows[-1]
+    wait_for(lambda: loaded(independent))
+    independent.select_slice(2)
+    wait_for(lambda: loaded(independent) and independent.slice_frame.index == 2)
+    assert target.slice_frame.index == 1
+    independent.close()
+    # Removing the volume keeps both ordinary datasets and removes its controls.
+    target.remove_plot_items([("heatmap", target._primary_heatmap_key)])
+    wait_for(lambda: len(window.windows) == 1 and not isinstance(window.windows[0], plot3d))
+    replacement = window.windows[0]
+    wait_for(lambda: loaded(replacement))
+    assert len(replacement._plot_item_order) == 2
+    assert not hasattr(replacement, "slice_toolbar")
+    assert_database_artifacts_unchanged_except_trusted_shm(path, artifacts)
+    assert errors == []
+
+
+@pytest.mark.parametrize("dimension", [1, 2])
+@pytest.mark.parametrize("failure", ["cancel", "restore"])
+def test_adding_volume_rolls_back_without_losing_existing_plot(tmp_path, main, monkeypatch, dimension, failure):
+    from qplot.windows import _plot_source_promotion as promotion
+    from qplot.windows._plot_drop_axes import DropAxisPlan
+
+    window, errors = main
+    path = tmp_path / "rollback-volume.db"
+    runs = build_mixed_volume(path)
+    window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(runs[dimension][0])
+    wait_for(lambda: bool(window.windows))
+    target = window.windows[0]
+    wait_for(lambda: loaded(target))
+    original_items = list(target._plot_item_order)
+    key = window._current_dataset_key(runs[3][0])
+    # Resolve broker metadata via a normal viewer before exercising the rebuild.
+    window.openPlot(runs[3][0])
+    wait_for(lambda: len(window.windows) == 2)
+    source = window.windows[-1]
+    wait_for(lambda: loaded(source))
+    param = source.param
+    source.close()
+    monkeypatch.setattr(DropAxisPlan, "approve", lambda *args: failure != "cancel")
+    if failure == "restore":
+        def fail_restore(*args):
+            raise RuntimeError("injected display restore failure")
+        monkeypatch.setattr(promotion, "_restore_display", fail_restore)
+        with pytest.raises(RuntimeError, match="injected display restore"):
+            promotion.promote_plot_source(window, target, [], volume=(key, param))
+    else:
+        assert promotion.promote_plot_source(window, target, [], volume=(key, param)) is None
+    assert window.windows == [target]
+    assert target.isVisible()
+    assert target._plot_item_order == original_items
+    assert target._merged_trace_users == 0
+    assert errors == []
+
+
+def test_adding_volume_preserves_manual_colour_limits(tmp_path, main, monkeypatch):
+    from qplot.windows._plot_drop_axes import DropAxisPlan
+
+    window, errors = main
+    monkeypatch.setattr(DropAxisPlan, "approve", lambda *args: True)
+    path = tmp_path / "locked-mixed-volume.db"
+    runs = build_mixed_volume(path)
+    window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(runs[2][0])
+    wait_for(lambda: bool(window.windows))
+    original = window.windows[0]
+    wait_for(lambda: loaded(original))
+    original.setColorbarManualRange(-10, 500)
+    window.add_trace_to_plot(original, *runs[3], axes_from_drop=True)
+    wait_for(lambda: len(window.windows) == 1 and isinstance(window.windows[0], plot3d))
+    target = window.windows[0]
+    wait_for(lambda: loaded(target))
+    assert target._color_mode == "locked"
+    assert target.bar.levels() == (-10., 500.)
+    target.select_slice(2)
+    wait_for(lambda: loaded(target) and target.slice_frame.index == 2)
+    assert target.bar.levels() == (-10., 500.)
+    assert errors == []

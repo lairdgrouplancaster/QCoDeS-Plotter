@@ -610,6 +610,15 @@ Colour-scale controls:
 
 ### 3D Slice Viewer
 
+A plot window can combine 1D traces, 2D heatmaps and one 3D measurement,
+added in any order using preview dragging or Appearance → Add. Adding a 3D
+measurement brings up its slice controls; removing it removes those controls.
+Slice selection, plane selection and slice operations affect only that 3D
+measurement. Other datasets retain their coordinates and data. Each window
+has its own slice selection, even when displaying the same volume.
+Heatmaps share the window’s colour scale, including the displayed 3D slice.
+Multiple 3D measurements in one window are not yet supported.
+
 The bordered panel groups axis, colour and navigation controls in two rows.
 X and Y selectors are stacked on the left, with colour controls in the middle.
 On the right, the slice index sits above

@@ -6,6 +6,10 @@ All notable user-facing changes are recorded here.
 
 ### Added
 
+- Combine 1D traces, 2D heatmaps and one 3D measurement in a plot window, in
+  any insertion order. Slice controls appear with the volume and affect only
+  that dataset; removing it preserves the remaining plots.
+
 - Add symmetric colour limits around zero to the shared 2D/3D colour-scale dialog,
   including mirrored manual endpoint edits. Keep 3D colour scope controls in sync
   between the toolbar and dialog.

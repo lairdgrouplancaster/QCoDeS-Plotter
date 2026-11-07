@@ -599,6 +599,8 @@ class plotWidget(
         if operation_kind not in {"plot1d", "plot2d"}:
             return False
 
+        if getattr(self, "cursor_has_depth", False) and len(payload.get("axes") or ()) == 3:
+            return False
         target_axes = tuple(getattr(self.param, "depends_on_", ()))
         return preview_drop_is_compatible(target_axes, payload)
 
@@ -608,13 +610,15 @@ class plotWidget(
 
         parameter_name = str(payload.get("parameter") or "this measurement")
         operation_kind = getattr(self, "operation_kind", None)
+        if getattr(self, "cursor_has_depth", False) and len(payload.get("axes") or ()) == 3:
+            return "Each plot window can contain only one 3D measurement."
         if operation_kind == "plot1d":
             return (
-                f"Cannot add {parameter_name}; plots support 1D or 2D measurements."
+                f"Cannot add {parameter_name}; plots support 1D, 2D or 3D measurements."
             )
         if operation_kind == "plot2d":
             return (
-                f"Cannot add {parameter_name}; plots support 1D or 2D measurements."
+                f"Cannot add {parameter_name}; plots support 1D, 2D or 3D measurements."
             )
         return "Drop previews onto a compatible line plot or heatmap."
 
