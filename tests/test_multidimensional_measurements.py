@@ -364,7 +364,7 @@ def test_higher_dimensional_previews_do_not_read_measurement_samples(
 
 @pytest.mark.parametrize("dimension", [3, 4])
 @pytest.mark.parametrize("surface", ["thumbnail", "preview", "pending-thumbnail"])
-def test_placeholders_offer_export_stats_and_explicit_3d_plot_without_drag(
+def test_placeholders_offer_export_stats_and_3d_plot_with_drag(
     monkeypatch, dimension, surface
 ):
     preview = {
@@ -389,7 +389,7 @@ def test_placeholders_offer_export_stats_and_explicit_3d_plot_without_drag(
     try:
         label = host.findChild(PreviewImageLabel)
         assert label.text() == f"{dimension}D"
-        assert not isinstance(label, DraggablePreviewImageLabel)
+        assert isinstance(label, DraggablePreviewImageLabel) == (dimension == 3)
         QtTest.QTest.mouseDClick(label, QtCore.Qt.MouseButton.LeftButton)
         QtTest.QTest.keyClick(label, QtCore.Qt.Key.Key_Return)
         QtTest.QTest.keyClick(label, QtCore.Qt.Key.Key_Space)
