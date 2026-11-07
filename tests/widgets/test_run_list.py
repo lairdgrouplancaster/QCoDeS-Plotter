@@ -1936,12 +1936,14 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(unsupported[0].text(), "3D")
             self.assertEqual(
                 unsupported[0].accessibleName(),
-                "3D measurement unsupported",
+                "Open 3D slice viewer",
             )
             self.assertEqual(
                 unsupported[0].toolTip(),
-                "<b>signal</b> vs<br><b>x</b><br><b>y</b><br><b>z</b>",
+                "Open the 3D slice viewer",
             )
+            qtw.QApplication.sendEvent(unsupported[0], event)
+            self.assertEqual(requested, [("run-guid", "signal")] * 2)
         finally:
             treeWidgets.isfile = old_isfile
 

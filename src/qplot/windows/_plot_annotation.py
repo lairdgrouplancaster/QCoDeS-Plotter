@@ -53,12 +53,44 @@ def format_plot_sources(sources, *, rich_text=False):
     return ("<br>" if rich_text else "\n").join(lines)
 
 
+class _SelectableSourceText(QtWidgets.QGraphicsTextItem):
+    """Give text selection priority over the plot's image-copy shortcut."""
+
+    def sceneEvent(self, event):
+        if event.type() == QtCore.QEvent.Type.ShortcutOverride and (
+            event.matches(QtGui.QKeySequence.StandardKey.Copy)
+            or event.matches(QtGui.QKeySequence.StandardKey.SelectAll)
+        ):
+            event.accept()
+            return True
+        return super().sceneEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.matches(QtGui.QKeySequence.StandardKey.Copy):
+            cursor = self.textCursor()
+            if cursor.hasSelection():
+                QtWidgets.QApplication.clipboard().setText(cursor.selectedText().replace("\u2029", "\n"))
+            event.accept()
+        elif event.matches(QtGui.QKeySequence.StandardKey.SelectAll):
+            cursor = self.textCursor()
+            cursor.select(QtGui.QTextCursor.SelectionType.Document)
+            self.setTextCursor(cursor)
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+
 class PlotSourceLabel(pg.GraphicsWidget):
     """A shaded source strip that wraps to the plot width."""
 
     def __init__(self):
         super().__init__()
-        self.item = QtWidgets.QGraphicsTextItem(self)
+        self.item = _SelectableSourceText(self)
+        self.item.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+            | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        self.item.setCursor(QtCore.Qt.CursorShape.IBeamCursor)
         self.item.document().setDocumentMargin(0)
         self.text = ""
         self.rich_text = None
@@ -98,7 +130,7 @@ class PlotSourceLabel(pg.GraphicsWidget):
             ))
 
         painter.setBrush(tint(0.05))
-        painter.setPen(QtGui.QPen(tint(0.18), 1))
+        painter.setPen(QtGui.QPen(tint(0.10), 1))
         painter.drawRect(self.boundingRect().adjusted(0.5, 0.5, -0.5, -4.5))
 
     def _wrap(self):
@@ -115,6 +147,18 @@ class PlotSourceLabel(pg.GraphicsWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._wrap()
+
+    def eventFilter(self, source, event):
+        # PyQtGraph keeps scene focus when interacting with its view box.
+        # Clicking or panning outside the strip should restore plot shortcuts.
+        if (event.type() == QtCore.QEvent.Type.GraphicsSceneMousePress
+                and not self.item.contains(self.item.mapFromScene(event.scenePos()))):
+            self.item.clearFocus()
+            cursor = self.item.textCursor()
+            if cursor.hasSelection():
+                cursor.clearSelection()
+                self.item.setTextCursor(cursor)
+        return super().eventFilter(source, event)
 
     def sizeHint(self, which, constraint=None):
         width = {
@@ -135,6 +179,7 @@ class PlotAnnotationMixin(PlotHost):
         self.plot.layout.setRowMaximumHeight(0, 16777215)
         self.plot.layout.setRowPreferredHeight(0, -1)
         self.plot.layout.addItem(self.source_annotation, 0, 1)
+        self.plot.scene().installEventFilter(self.source_annotation)
         self._annotation_in_layout = True
         self.trace_updated.connect(self._update_plot_annotation)
         self._update_plot_annotation()

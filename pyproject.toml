@@ -105,6 +105,11 @@ ignore = ["UP040", "UP046"]
 check_untyped_defs = true
 follow_imports = "silent"
 files = [
+    "src/qplot/datahandling/volume.py",
+    "src/qplot/tools/volume_cuts.py",
+    "src/qplot/tools/volume_worker.py",
+    "src/qplot/windows/plot3d.py",
+    "src/qplot/windows/_volume_cut.py",
     "src/qplot/__init__.py",
     "src/qplot/__main__.py",
     "src/qplot/_icons.py",

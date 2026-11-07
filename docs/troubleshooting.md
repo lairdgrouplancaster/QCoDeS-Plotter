@@ -300,7 +300,7 @@ from one bounded ephemeral trusted detail read and are discarded or rejected
 when the selection changes. A trusted detail failure never triggers an
 automatic fallback copy. Explicit plot and CSV actions still open their own
 deferred action-owned dataset, and snapshot fallback retains its documented
-narrower behavior. If the accepted database or helper incarnation changes,
+narrower behaviour. If the accepted database or helper incarnation changes,
 obsolete derived results are discarded and current work is regenerated. The
 current renderer and derived-cache formats are version 3, so older-format cache
 entries are misses and are regenerated normally.
@@ -336,7 +336,7 @@ If the window stays empty:
 * Refresh manually with `R`.
 * Check that the run contains plottable dependent parameters.
 * Check whether the selected measurement has only finite data.
-* Close and reopen the plot if the underlying run was still being initialized.
+* Close and reopen the plot if the underlying run was still being initialised.
 
 ## Live Data Does Not Update
 

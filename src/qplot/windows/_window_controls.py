@@ -23,14 +23,36 @@ _WINDOW_KIND_LABELS = {
     }
 
 
-class _ApplicationQuitShortcutFilter(QtCore.QObject):
-    """Deliver Quit while a modal dialog blocks its owner window."""
+class _ApplicationQuitFilter(QtCore.QObject):
+    """Route native Quit and modal-dialog shortcuts through the main window."""
 
     def __init__(self, quit_action, parent):
         super().__init__(parent)
         self.quit_action = quit_action
+        self._handling_quit = False
 
     def eventFilter(self, watched, event):
+        if (
+                event.type() == QtCore.QEvent.Type.Quit
+                and watched is qtw.QApplication.instance()
+                ):
+            shutdown = getattr(self.parent(), "_shutdown", None)
+            if shutdown is None or shutdown.ready:
+                return False
+
+            # Dock Quit bypasses QAction and asks Qt to close visible windows
+            # in arbitrary order. A hidden main window or a refusing dialog
+            # can skip our shutdown handler entirely. Keep the event loop
+            # alive until that handler has confirmed and completed cleanup.
+            event.ignore()
+            if self._handling_quit or shutdown.waiting:
+                return True
+            self._trigger_quit()
+            if shutdown.ready:
+                event.accept()
+                return False
+            return True
+
         if (
                 event.type() != QtCore.QEvent.Type.KeyPress
                 or not isinstance(event, QtGui.QKeyEvent)
@@ -44,24 +66,35 @@ class _ApplicationQuitShortcutFilter(QtCore.QObject):
                 == QtGui.QKeySequence.SequenceMatch.ExactMatch
                 for shortcut in self.quit_action.shortcuts()
                 ):
-            self.quit_action.trigger()
+            self._trigger_quit()
             return True
 
         return False
 
+    def _trigger_quit(self):
+        # A confirmation dialog runs a nested event loop. Repeated Dock or
+        # keyboard requests must not invoke the Quit action again inside it.
+        if self._handling_quit:
+            return
+        self._handling_quit = True
+        try:
+            self.quit_action.trigger()
+        finally:
+            self._handling_quit = False
 
-def _install_application_quit_shortcut_filter(action_owner, quit_action):
-    """Install the modal-dialog fallback for qPlot's Quit action."""
-    if getattr(action_owner, "_qplot_quit_shortcut_filter", None) is not None:
+
+def _install_application_quit_filter(action_owner, quit_action):
+    """Share qPlot's shutdown handler with native Quit and modal shortcuts."""
+    if getattr(action_owner, "_qplot_quit_filter", None) is not None:
         return
 
     app = qtw.QApplication.instance()
     if app is None:
         return
 
-    shortcut_filter = _ApplicationQuitShortcutFilter(quit_action, action_owner)
-    app.installEventFilter(shortcut_filter)
-    action_owner._qplot_quit_shortcut_filter = shortcut_filter
+    quit_filter = _ApplicationQuitFilter(quit_action, action_owner)
+    app.installEventFilter(quit_filter)
+    action_owner._qplot_quit_filter = quit_filter
 
 
 def add_standard_window_controls(window):
@@ -120,7 +153,7 @@ def add_application_quit_action(window, menu, fallback_handler):
         quit_action.triggered.connect(quit_handler)
         action_owner._qplot_quit_action = quit_action
 
-    _install_application_quit_shortcut_filter(action_owner, quit_action)
+    _install_application_quit_filter(action_owner, quit_action)
     menu.addAction(quit_action)
     return quit_action
 

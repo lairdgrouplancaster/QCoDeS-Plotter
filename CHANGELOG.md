@@ -4,8 +4,28 @@ All notable user-facing changes are recorded here.
 
 ## 1.7.0 — Unreleased
 
+### Added
+
+- Add symmetric colour limits around zero to the shared 2D/3D colour-scale dialog,
+  including mirrored manual endpoint edits. Keep 3D colour scope controls in sync
+  between the toolbar and dialog.
+- Plot real-valued 3D QCoDeS measurements as selectable 2D slices. Choose X/Y
+  parameters, step by index or coordinate, retain zoom and selections, and use
+  shared whole-volume, per-slice or locked colour limits.
+- Extract horizontal, vertical and depth cuts from processed slices or raw
+  data, pin H/V cuts, and plot a marquee region's mean versus depth with coverage
+  counts. Freeze a processed slice into an independent 2D comparison plot.
+- Keep the selected coordinate during live acquisition, optionally follow the
+  latest acquired plane, and include slice/cut provenance in plot CSV exports.
+  Volumes use a cancellable private index and bounded plane cache; source
+  database protections are unchanged.
+
 ### Changed
 
+- Remove the redundant heatmap resolution text from the coordinate toolbar;
+  downsampled plots retain their warning button and details dialog.
+- Make plot source annotations selectable and copyable. Add compact 3D cursor
+  readouts with depth, coordinate tooltips and stable, dataset-sized index fields.
 - Raise the application minimum to Python 3.12. Standard CPython 3.12–3.14
   remains supported; Python 3.15 awaits dependency wheels and native-reader
   validation. Retain the existing `cp311-abi3` native wheel and SQLite pin.
@@ -17,6 +37,8 @@ All notable user-facing changes are recorded here.
 
 ### Fixed
 
+- Describe full-resolution database reads as points rather than sampled points,
+  and retain the selected 3D depth coordinate when the pointer leaves the plot.
 - Use declared setpoints for full-dataset statistics of inferred QCoDeS
   measurements. Numeric inference inputs no longer replace or swap the reported
   axes, and text or complex inference inputs no longer prevent statistics.

@@ -1811,7 +1811,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         panel_layout.setContentsMargins(0, 0, 0, 0)
         panel_layout.setSpacing(8)
 
-        color_scale_group = qtw.QGroupBox("Color scale", panel)
+        color_scale_group = qtw.QGroupBox("Colour scale", panel)
         color_scale_layout = qtw.QGridLayout(color_scale_group)
         color_scale_layout.setContentsMargins(8, 10, 8, 8)
         color_scale_layout.setHorizontalSpacing(8)
@@ -1824,9 +1824,9 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         self.color_scale_preview.setFixedHeight(18)
         self.color_scale_preview.setScaledContents(True)
         color_scale_layout.addWidget(self.color_scale_preview, 1, 0)
-        self.color_scale_button = qtw.QPushButton("Color scale…")
+        self.color_scale_button = qtw.QPushButton("Colour scale…")
         self.color_scale_button.setObjectName("heatmapColorScaleButton")
-        self.color_scale_button.setToolTip("Open the Color scale dialog.")
+        self.color_scale_button.setToolTip("Open the Colour scale dialog.")
         color_scale_layout.addWidget(
             self.color_scale_button,
             2,

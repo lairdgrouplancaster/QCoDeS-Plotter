@@ -2,7 +2,7 @@
 
 import xml.etree.ElementTree as ET
 
-from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui, QtTest, QtWidgets
 
 from qplot.configuration.config import config
 from qplot.windows._plot_annotation import PlotSourceLabel, format_plot_sources
@@ -87,6 +87,35 @@ def test_annotation_in_real_plot_and_svg(real_plot):
         assert not plot._plot_image_at_size(QtCore.QSize(640, 480)).isNull()
     assert plot_top[False] < plot_top[True]
     dialog.close()
+    assert not errors
+
+
+def test_annotation_mouse_selection_copies_text_without_copying_plot(real_plot):
+    plot, _database, errors, _dimensions = real_plot
+    item = plot.source_annotation.item
+    original = item.toPlainText()
+    image_copies = []
+    plot.copyPlotImageAction.triggered.connect(lambda: image_copies.append(True))
+    plot.activateWindow()
+    plot.widget.setFocus()
+    QtWidgets.QApplication.processEvents()
+    point = plot.widget.mapFromScene(item.mapToScene(QtCore.QPointF(5, 8)))
+    QtTest.QTest.mouseDClick(plot.widget.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=point)
+    selected = item.textCursor().selectedText()
+    assert selected
+    QtWidgets.QApplication.clipboard().clear()
+    QtTest.QTest.keySequence(plot.widget.viewport(), QtGui.QKeySequence(QtGui.QKeySequence.StandardKey.Copy))
+    assert QtWidgets.QApplication.clipboard().text() == selected
+    assert not image_copies
+    QtTest.QTest.keySequence(plot.widget.viewport(), QtGui.QKeySequence(QtGui.QKeySequence.StandardKey.SelectAll))
+    QtTest.QTest.keySequence(plot.widget.viewport(), QtGui.QKeySequence(QtGui.QKeySequence.StandardKey.Copy))
+    assert QtWidgets.QApplication.clipboard().text() == original
+    QtTest.QTest.keyClicks(plot.widget.viewport(), "replacement")
+    assert item.toPlainText() == original
+    point = plot.widget.mapFromScene(plot.vb.sceneBoundingRect().center())
+    QtTest.QTest.mouseClick(plot.widget.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=point)
+    QtTest.QTest.keySequence(plot.widget.viewport(), QtGui.QKeySequence(QtGui.QKeySequence.StandardKey.Copy))
+    assert image_copies == [True]
     assert not errors
 
 

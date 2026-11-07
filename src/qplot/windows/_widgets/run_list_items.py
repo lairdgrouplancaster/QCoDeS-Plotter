@@ -137,6 +137,7 @@ class RunPreviewCell(qtw.QWidget):
                 "measurementPreviewUnsupported",
                 )
             label.guid = self.guid
+            label.plotRequested.connect(self._emit_plot_requested)
             label.exportRequested.connect(self._emit_export_requested)
             label.statsRequested.connect(self._emit_stats_requested)
             self.content_layout.addWidget(label)
@@ -203,7 +204,7 @@ class RunPreviewCell(qtw.QWidget):
         dimensions = self._placeholder_dimensions
         dimension = dimensions[index] if index < len(dimensions) else None
         if dimension is not None and dimension > MAX_SUPPORTED_PLOT_DIMENSIONS:
-            label = PreviewImageLabel(parameter, plot_supported=False)
+            label = PreviewImageLabel(parameter, plot_supported=dimension == 3)
             label.guid = self.guid
         else:
             label = DraggablePreviewImageLabel(self.guid, parameter, axes_pending=True)

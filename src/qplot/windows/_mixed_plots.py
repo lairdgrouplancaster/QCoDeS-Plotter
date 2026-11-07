@@ -437,7 +437,7 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
             self.apply_axis_major_tick_count_preference()
             rescale = True
             if line_host:
-                action = QtGui.QAction("Color scale…", self)
+                action = QtGui.QAction("Colour scale…", self)
                 action.triggered.connect(self.open_colorbar_scale_dialog)
                 menu_bar = self.menuBar()
                 for menu_action in menu_bar.actions() if menu_bar is not None else ():

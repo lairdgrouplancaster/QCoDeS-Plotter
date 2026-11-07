@@ -1906,7 +1906,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
             color = qtw.QColorDialog.getColor(
                 QtGui.QColor(previous_color),
                 self,
-                "Select trace color",
+                "Select trace colour",
                 )
             if not color.isValid():
                 self._set_combo_value(combo, previous_color)

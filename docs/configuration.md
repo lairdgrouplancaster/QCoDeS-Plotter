@@ -68,7 +68,7 @@ cfg.update("user_preference.theme", "dark")
 cfg.dump()
 ```
 
-## Config Behavior
+## Config Behaviour
 
 On startup, QCoDeS-Plotter creates `~/.qplot/config.json` if it does not exist.
 Existing config files are validated against `config_schema.json`.
@@ -111,7 +111,7 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.font_size` | integer | `10` | `6 <= value <= 36` | Application font size in points. |
 | `user_preference.plot_tile_rows` | integer | `2` | `1 <= value <= 10` | Rows in the plot tiling grid. |
 | `user_preference.plot_tile_columns` | integer | `3` | `1 <= value <= 10` | Columns in the plot tiling grid. |
-| `user_preference.colorbar_width` | integer | `15` | `1 <= value <= 500` | Heatmap colorbar width in pixels. |
+| `user_preference.colorbar_width` | integer | `15` | `1 <= value <= 500` | Heatmap colour bar width in pixels. |
 | `user_preference.axis_tick_width` | number | `2` | `0.5 <= value <= 10` | Plot axis tick width. |
 | `user_preference.axis_major_tick_count` | integer | `3` | `2 <= value <= 10` | Target major tick count for plot axes. |
 | `user_preference.confirm_incompatible_axes` | boolean | `true` | `true` or `false` | Confirm drops with incompatible axis assignments. |
@@ -126,13 +126,13 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.bar_colour_include_cet_cyclic` | boolean | `true` | `true` or `false` | Show cyclic `colorcet` maps. |
 | `user_preference.bar_colour_include_cet_rainbow` | boolean | `true` | `true` or `false` | Show rainbow `colorcet` maps. |
 | `user_preference.bar_colour_include_cet_isoluminant` | boolean | `true` | `true` or `false` | Show isoluminant `colorcet` maps. |
-| `user_preference.bar_colour_include_cet_other` | boolean | `true` | `true` or `false` | Show uncategorized `colorcet` maps. |
+| `user_preference.bar_colour_include_cet_other` | boolean | `true` | `true` or `false` | Show uncategorised `colorcet` maps. |
 | `user_preference.bar_colour_include_matplotlib_perceptual` | boolean | `true` | `true` or `false` | Show perceptual Matplotlib maps. |
 | `user_preference.bar_colour_include_matplotlib_sequential` | boolean | `true` | `true` or `false` | Show sequential Matplotlib maps. |
 | `user_preference.bar_colour_include_matplotlib_divergent` | boolean | `true` | `true` or `false` | Show divergent Matplotlib maps. |
 | `user_preference.bar_colour_include_matplotlib_cyclic` | boolean | `true` | `true` or `false` | Show cyclic Matplotlib maps. |
 | `user_preference.bar_colour_include_matplotlib_qualitative` | boolean | `true` | `true` or `false` | Show qualitative Matplotlib maps. |
-| `user_preference.bar_colour_include_matplotlib_other` | boolean | `true` | `true` or `false` | Show uncategorized Matplotlib maps. |
+| `user_preference.bar_colour_include_matplotlib_other` | boolean | `true` | `true` or `false` | Show uncategorised Matplotlib maps. |
 | `user_preference.bar_colour_excluded` | string array | `[]` | any strings | Hide colour maps with these exact names. |
 | `user_preference.bar_colour_excluded_prefixes` | string array | `[]` | any strings | Hide colour maps with these prefixes. |
 | `user_preference.confirm_close` | boolean | `true` | `true` or `false` | Ask before closing the main window. |

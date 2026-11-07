@@ -52,6 +52,7 @@ from qplot.windows._window_controls import (
     ask_confirmation_with_dont_ask_again,
 )
 from qplot.windows.plot1d import plot1d
+from qplot.windows.plot3d import plot3d
 from tests._shutdown_harness import attach_shutdown
 from tests.windows.test_plot_integration import wait_for
 
@@ -1048,10 +1049,36 @@ class OpenPlotDatasetOwnershipTestCase(unittest.TestCase):
         self.assertEqual(harness.load_count, 1)
         self.assertEqual(harness.errors, [])
 
-    def test_three_dimensional_parameter_is_rejected_before_window_creation(self):
+    def test_three_dimensional_parameter_opens_slice_viewer(self):
         param = self.Param("volume")
         param.depends_on = "x, y, z"
         param.depends_on_ = ("x", "y", "z")
+        dataset = self.Dataset([param])
+        harness = self.Harness(dataset)
+        dataset_key = harness._current_dataset_key(dataset.guid)
+        opened = []
+
+        def open_volume(widget, opened_dataset, opened_param, **kwargs):
+            opened.append((widget, opened_dataset, opened_param, kwargs))
+            harness.dataset_holder[dataset_key] = DatasetHandle(opened_dataset)
+
+        harness.open_win = open_volume
+
+        harness.openPlot(dataset_key, show=False)
+
+        self.assertEqual(opened, [(
+            plot3d, dataset, param,
+            {"refrate": 1.0, "show": False, "dataset_key": dataset_key},
+        )])
+        self.assertFalse(dataset.conn.closed)
+        self.assertIs(harness.dataset_holder[dataset_key].dataset, dataset)
+        self.assertEqual(harness.errors, [])
+        self.assertEqual(harness.status_messages[-1][0], "Opened 1 plot.")
+
+    def test_four_dimensional_parameter_is_rejected_before_window_creation(self):
+        param = self.Param("volume")
+        param.depends_on = "x, y, z, t"
+        param.depends_on_ = ("x", "y", "z", "t")
         dataset = self.Dataset([param])
         harness = self.Harness(dataset)
         harness.open_win = lambda *args, **kwargs: self.fail(
@@ -1062,7 +1089,7 @@ class OpenPlotDatasetOwnershipTestCase(unittest.TestCase):
 
         self.assertTrue(dataset.conn.closed)
         self.assertEqual(harness.windows, [])
-        self.assertIn("3 independent axes", harness.status_messages[-1][0])
+        self.assertIn("4 independent axes", harness.status_messages[-1][0])
 
 
 class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
