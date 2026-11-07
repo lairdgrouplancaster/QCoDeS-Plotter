@@ -18,6 +18,13 @@ class RefreshIntervalSpinBox(qtw.QDoubleSpinBox):
         refresh_description="How often this plot checks for new measurement data.",
     ):
         super().__init__(parent)
+        self.setObjectName("refreshIntervalSpin")
+        self.setAccessibleName("Refresh interval in seconds")
+        self.setRange(0.0, 10_000.0)
+        self.setSingleStep(0.1)
+        self.setDecimals(1)
+        self.setSuffix(" s")
+        self.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         self._refresh_tooltip = (
             refresh_description + "\nSet to 0 to disable automatic refresh."
         )

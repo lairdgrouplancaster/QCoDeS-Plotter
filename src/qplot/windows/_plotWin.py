@@ -674,10 +674,6 @@ class plotWidget(
         self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, self.toolbarRef)
         
         self.spinBox = RefreshIntervalSpinBox()
-        self.spinBox.setObjectName("refreshIntervalSpin")
-        self.spinBox.setRange(0.0, 10_000.0)
-        self.spinBox.setSingleStep(0.1)
-        self.spinBox.setDecimals(1)
 
         self.refreshPlotButton = qtw.QToolButton()
         self.refreshPlotButton.setObjectName("refreshPlotButton")
@@ -689,7 +685,6 @@ class plotWidget(
         self.refreshPlotButton.setFixedSize(28, 26)
         self.refreshPlotButton.clicked.connect(self.refresh_plot_data)
         self.toolbarRef.addWidget(self.refreshPlotButton)
-        self.toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
         self.toolbarRef.addWidget(self.spinBox)
         self.plot_status = PlotStatusWidget(self.toolbarRef)
         self.plotStatusAction = self.toolbarRef.addWidget(self.plot_status)

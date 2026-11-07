@@ -65,15 +65,6 @@ class RunControlsMixin:
         self.spinBox = RefreshIntervalSpinBox(
             refresh_description="How often the run list checks for new runs.",
         )
-        self.spinBox.setObjectName("refreshIntervalSpin")
-        self.spinBox.setRange(0.0, 10_000.0)
-        self.spinBox.setSingleStep(0.1)
-        self.spinBox.setDecimals(1)
-        self.spinBox.setSuffix(" s")
-        self.spinBox.setSizePolicy(
-            qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed
-        )
-        self.spinBox.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
         set_refresh_interval(
             self.spinBox, self.config.get("user_preference.default_refresh_rate"),
         )
