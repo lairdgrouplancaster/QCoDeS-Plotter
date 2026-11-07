@@ -121,6 +121,7 @@ class plot3d(plot2d):
         self.follow_latest.toggled.connect(self._follow_latest_changed)
         self.color_mode = qtw.QComboBox()
         self.color_mode.setMinimumContentsLength(10)
+        self.color_mode.setMinimumWidth(85)
         self.color_mode.setSizeAdjustPolicy(
             qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         for label, mode in (("Whole volume", "volume"), ("Current slice", "slice"), ("Locked", "locked")):
