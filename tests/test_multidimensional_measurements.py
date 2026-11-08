@@ -477,8 +477,8 @@ def test_trusted_previews_keep_all_higher_dimensional_targets(only_high_dimensio
         bridge, "guid", {"images": ()}
     )
     assert error is None
-    assert [p["parameter"] for p in previews] == ["volume", "hypervolume"]
-    assert [p["dimension_count"] for p in previews] == [3, 4]
+    assert [p["parameter"] for p in previews] == [parameter.name for parameter in parameters]
+    assert [p["dimension_count"] for p in previews] == [len(parameter.depends_on) for parameter in parameters]
     assert all(p["unsupported"] for p in previews)
 
 
