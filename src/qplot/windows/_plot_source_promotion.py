@@ -3,6 +3,7 @@
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
+from weakref import ref
 
 from PyQt6 import QtWidgets as qtw
 
@@ -248,6 +249,7 @@ def promote_plot_source(
         raise
     finally:
         main._plot_tile_grid, main._next_plot_tile = next_position
+    owner._preview_drop_replacement = ref(replacement)
     owner.close()
     if owner._merged_trace_users <= 0:
         owner.deleteLater()

@@ -31,8 +31,16 @@ again) with the same `V_SD` range and sampling, so trace addition, removal,
 reordering, and secondary axes can be tested even with the smallest database.
 Every file also includes a `mixed_dimensions` run containing 1D, 2D, 3D, and 4D
 quantities with shared setpoint axes. More than 90% of the samples remain in
-1D and 2D quantities. Higher-dimensional quantities show `3D`, `4D`, etc.
-placeholders; their context menus offer CSV export and statistics.
+1D and 2D quantities. Every template also contains two standalone 3D runs,
+`magnetic_volume` and `gate_volume`, each with a 7 x 11 x 51 grid. Every template
+includes the complex-valued, dimensionless parameters `S11`, `S21`, and `S12`
+as 1D frequency sweeps (4–8 GHz, 21 points) in `complex_response`, and as 2D
+frequency sweeps across gate voltage (−1 to 1 V, 11 points) in
+`complex_gate_map`. These six complex quantities account for less than 1% of
+each template's samples. The example CSV offers the same small sweeps
+without generating a large database. Higher-dimensional quantities show `3D`,
+`4D`, etc. placeholders; their context menus offer CSV export and statistics,
+and 3D quantities can be opened as volume cuts.
 The nominal database sizes and largest grids are:
 
 | File | Approximate database size | Largest 2D run |
@@ -87,13 +95,22 @@ so synthetic measurements do not read parameters from an acquisition station.
 The CSV has these columns:
 
 ```csv
-run,kind,name,label,unit,setpoints,start,stop,points
-mixed,axis,bias,Bias,V,,-0.1,0.1,101
-mixed,axis,gate,Gate,V,,-1,1,11
-mixed,axis,field,Magnetic field,T,,0,1,3
-mixed,measurement,current,Current,nA,bias,,,
-mixed,measurement,conductance,Conductance,uS,gate;bias,,,
-mixed,measurement,signal,Signal,a.u.,field;gate;bias,,,
+run,kind,name,label,unit,setpoints,start,stop,points,paramtype
+mixed,axis,bias,Bias,V,,-0.1,0.1,101,numeric
+mixed,axis,gate,Gate,V,,-1,1,11,numeric
+mixed,axis,field,Magnetic field,T,,0,1,3,numeric
+mixed,measurement,current,Current,nA,bias,,,,numeric
+mixed,measurement,conductance,Conductance,uS,gate;bias,,,,numeric
+mixed,measurement,signal,Signal,a.u.,field;gate;bias,,,,numeric
+complex_response,axis,frequency,Frequency,GHz,,4,8,21,numeric
+complex_response,measurement,S11,S11,,frequency,,,,complex
+complex_response,measurement,S21,S21,,frequency,,,,complex
+complex_response,measurement,S12,S12,,frequency,,,,complex
+complex_gate_map,axis,frequency,Frequency,GHz,,4,8,21,numeric
+complex_gate_map,axis,V_G,Gate voltage,V,,-1,1,11,numeric
+complex_gate_map,measurement,S11,S11,,V_G;frequency,,,,complex
+complex_gate_map,measurement,S21,S21,,V_G;frequency,,,,complex
+complex_gate_map,measurement,S12,S12,,V_G;frequency,,,,complex
 ```
 
 Rows with the same `run` value belong to one QCoDeS run with that name. Runs
@@ -103,6 +120,9 @@ at least two points. Its `setpoints` cell must be blank. A `measurement` row
 lists its axes in `setpoints`, separated by semicolons, ordered from outermost
 (slowest) to innermost (fastest). Its `start`, `stop`, and `points` cells must
 be blank. Units may be blank; names and labels are required.
+`paramtype` must be `numeric` or `complex`; a blank cell means `numeric`.
+Axes must be numeric. Each complex measurement stores both its real and
+imaginary components using QCoDeS's native complex parameter type.
 
 Add as many axis rows and setpoint names as needed for higher dimensionality.
 Axis declarations may appear before or after their measurements. Names must
@@ -115,8 +135,10 @@ lower-dimensional quantities are not repeated over extra axes of other
 quantities. QCoDeS stores unrelated quantities as NULL in those result rows.
 The total reported point count is the sum across measured quantities.
 
-Each signal is the sum of two sinusoids with independently randomised
-amplitudes, phases, and frequencies along every axis. Generation writes bounded
+Each real signal is the sum of two sinusoids with independently randomised
+amplitudes, phases, and frequencies along every axis. Complex signals use
+independent two-sinusoid sums for their real and imaginary components.
+Generation writes bounded
 chunks without constructing a full multidimensional grid in memory. The old
 CSV format is no longer accepted; export a new example or collection template.
 

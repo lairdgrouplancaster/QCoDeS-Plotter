@@ -534,7 +534,9 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
                     max_heatmap_grid_side,
                     heatmap_axis_ranges,
                     heatmap_full_axis_ranges,
+                    complex_mode,
                     ):
+                self.complex_mode = complex_mode
                 self.cache = cache
                 self.param = param
                 self.param_dict = param_dict
@@ -567,11 +569,12 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
 
         class Param:
             name = "signal"
+            depends_on_ = ("x", "y")
 
         class Config:
             def get(self, key):
                 self.key = key
-                return 2_000_000
+                return "phase" if key == "user_preference.complex_nd" else 2_000_000
 
         class Operations:
             def get_data(self):
@@ -631,6 +634,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
 
         self.assertEqual(len(window.threadPool.started), 1)
         worker = window.threadPool.started[0]
+        self.assertEqual(worker.complex_mode, "phase")
         self.assertFalse(worker.checked_large_heatmap)
         self.assertTrue(worker.read_data)
         self.assertFalse(worker.force_sql_heatmap)

@@ -31,6 +31,12 @@ def numeric_isfinite(values):
     values = np.asarray(values)
     if values.dtype.kind != "O":
         return np.isfinite(values)
+    if any(isinstance(value, (complex, np.complexfloating)) for value in values.flat):
+        return np.asarray([
+            bool(np.isfinite(value)) if isinstance(value, (complex, np.complexfloating))
+            else value is not None and bool(np.isfinite(float(value)))
+            for value in values.flat
+        ], dtype=bool).reshape(values.shape)
     try:
         with np.errstate(over="ignore"):
             converted = values.astype(float)
@@ -61,4 +67,12 @@ def numeric_isfinite(values):
 def numeric_isnan(values):
     """Identify missing samples in dense arrays or exact numeric object cells."""
     values = np.asarray(values)
+    if values.dtype.kind == "O" and any(
+        isinstance(value, (complex, np.complexfloating)) for value in values.flat
+    ):
+        return np.asarray([
+            bool(np.isnan(value)) if isinstance(value, (complex, np.complexfloating))
+            else value is None or bool(np.isnan(float(value)))
+            for value in values.flat
+        ], dtype=bool).reshape(values.shape)
     return np.isnan(values.astype(float) if values.dtype.kind == "O" else values)

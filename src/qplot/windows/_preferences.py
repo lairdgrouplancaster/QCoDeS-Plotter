@@ -12,6 +12,12 @@ from PyQt6 import (
 )
 
 from qplot.configuration.fonts import FONT_SIZE_KEY
+from qplot.datahandling.complex_data import (
+    COMPLEX_1D_KEY,
+    COMPLEX_1D_OPTIONS,
+    COMPLEX_COMPONENT_OPTIONS,
+    COMPLEX_ND_KEY,
+)
 from qplot.updates import CHECK_ON_LAUNCH_KEY, INCLUDE_PRERELEASES_KEY
 
 from ._commands import create_action
@@ -59,6 +65,8 @@ _PREFERENCE_CONTROLS = (
     (FONT_SIZE_KEY, "fontSizeSpin"),
     (SHOW_SOURCE_ANNOTATION_KEY, "showSourceAnnotationCheck"),
     (CURSOR_SIGNIFICANT_FIGURES_KEY, "cursorSignificantFiguresSpin"),
+    (COMPLEX_1D_KEY, "complex1dCombo"),
+    (COMPLEX_ND_KEY, "complexNdCombo"),
     (COLORBAR_WIDTH_KEY, "colorbarWidthSpin"),
     (AXIS_TICK_WIDTH_KEY, "axisTickWidthSpin"),
     (AXIS_MAJOR_TICK_COUNT_KEY, "axisMajorTickCountSpin"),
@@ -219,6 +227,22 @@ class PreferencesDialog(qtw.QDialog):
         for label, value in THEME_OPTIONS:
             self.themeCombo.addItem(label, value)
         self._add_row(form, "&Theme:", self.themeCombo)
+
+        for attribute, label, options in (
+            ("complex1dCombo", "1D complex plots:", COMPLEX_1D_OPTIONS),
+            ("complexNdCombo", "Higher-dimensional complex plots:", COMPLEX_COMPONENT_OPTIONS),
+        ):
+            combo = qtw.QComboBox(tab)
+            combo.setObjectName(attribute + "Preference")
+            combo.setAccessibleName(label.rstrip(":"))
+            combo.setToolTip(
+                "Choose how complex measurements are plotted. The cursor readout "
+                "retains the original complex value and setpoints."
+            )
+            for text, value in options:
+                combo.addItem(text, value)
+            setattr(self, attribute, combo)
+            self._add_row(form, label, combo)
 
         self.fontSizeSpin = qtw.QSpinBox(tab)
         self.fontSizeSpin.setObjectName("fontSizePreferenceSpin")

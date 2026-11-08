@@ -191,6 +191,9 @@ def test_incompatible_drop_can_be_cancelled_then_approved(drop_plots, monkeypatc
     assert getattr(plots["d"], "_merged_trace_users", 0) == 0
     assert len(dialogs) == 1
     assert "The axes are incompatible" in dialogs[0][2]
+    assert f"Dataset to add: {plots['d'].label}\n" in dialogs[0][2]
+    assert f"Target plot: {target.label}\n" in dialogs[0][2]
+    assert f"Add {plots['d'].label} using the" in dialogs[0][2]
     assert dialogs[0][-1] == qtw.QMessageBox.StandardButton.Cancel
     if dimensions == 2:
         assert "colour scale units do not match" in dialogs[0][2]

@@ -10,6 +10,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 from qcodes.dataset.descriptions.param_spec import ParamSpec
 
+from qplot.datahandling.complex_data import ComplexSamples, contains_complex
 from qplot.datahandling.plot_progress import PlotProgress
 from qplot.tools.plot_csv import CsvColumns
 from qplot.tools.plot_result import capture_plot_result
@@ -24,7 +25,7 @@ from .plot2d import plot2d
 
 class CutLoader(loader):
     def __init__(self, *args, volume, selection, slice_operations, source_param,
-                 source_params, **kwargs):
+                 source_params, source_complex_mode="magnitude", **kwargs):
         kwargs["read_data"] = False
         super().__init__(*args, **kwargs)
         self.volume = volume
@@ -32,6 +33,7 @@ class CutLoader(loader):
         self.slice_operations = slice_operations
         self.source_param = source_param
         self.source_params = source_params
+        self.source_complex_mode = source_complex_mode
         self.cut_description = ""
         self.cut_metadata: tuple[tuple[str, object], ...] = ()
 
@@ -42,10 +44,21 @@ class CutLoader(loader):
             x, y, counts, value_param = extract_cut(
                 self.volume, self.selection, self.slice_operations, self.source_param, self.source_params,
                 check=self._check_cancelled, cancelled=self.is_cancelled,
+                complex_mode=self.source_complex_mode,
                 progress=lambda n, total: setattr(self, "_progress", PlotProgress(
                     "Extracting cut through slices", n, total, stage=2)),
             )
             self.axis_data = {"x": x, "y": y}
+            if getattr(self.source_param, "type", None) == "complex":
+                raw_x, raw_values, _, _ = extract_cut(
+                    self.volume, self.selection, (), self.source_param, self.source_params,
+                    check=self._check_cancelled, cancelled=self.is_cancelled, complex_mode=None,
+                )
+                if contains_complex(raw_values):
+                    self.complex_samples = ComplexSamples(
+                        (raw_x,), (self.source_params[self.selection.varying],),
+                        raw_values, self.source_complex_mode,
+                    )
             self.axis_param = {"x": self.source_params[self.selection.varying], "y": copy(value_param)}
             self.display_param = copy(value_param)
             operated = self.do_operations()
@@ -270,7 +283,8 @@ class VolumeCut(plot1d):
             with QtCore.QSignalBlocker(self.depth_marker):
                 self.depth_marker.setValue(self.source._depth_value or 0)
         self._sync_marker()
-        signature = (self.volume, self.selection, self.slice_operation_state.entries)
+        signature = (self.volume, self.selection, self.slice_operation_state.entries,
+                     self.source.worker.complex_mode)
         if signature != self._source_signature:
             self._source_signature = signature
             self._reload_cut()
@@ -285,7 +299,8 @@ class VolumeCut(plot1d):
     def _create_plot_loader(self, *args, **kwargs):
         worker = CutLoader(*args, volume=self.volume, selection=self.selection,
                            slice_operations=() if self.raw_data.isChecked() else self.slice_operations,
-                           source_param=self.source_param, source_params=self.source.param_dict, **kwargs)
+                           source_param=self.source_param, source_params=self.source.param_dict,
+                           source_complex_mode=self.source.worker.complex_mode, **kwargs)
         worker.cut_description = self._requested_description()
         worker.cut_metadata = (
             ("cut", worker.cut_description), ("database", self._dataset_key.database_path),
@@ -417,6 +432,13 @@ class FrozenLoader(loader):
             self.axis_param = {axis: original.axis_param[other] for axis, other in
                                (("x", "y" if transposed else "x"), ("y", "x" if transposed else "y"))}
             self.display_param = copy(original.display_param)
+            self.complex_samples = original.complex_samples
+            if self.complex_samples is not None and transposed:
+                self.complex_samples = replace(
+                    self.complex_samples,
+                    coordinates=self.complex_samples.coordinates[::-1],
+                    parameters=self.complex_samples.parameters[::-1],
+                )
             if original.dataGrid is not None:
                 self.dataGrid = (original.dataGrid.T if transposed else original.dataGrid).copy()
             operated = self.do_operations()
@@ -425,6 +447,10 @@ class FrozenLoader(loader):
                 if original.dataGrid is not None:
                     self.dataGrid = operated[2]
                 self._apply_operation_metadata()
+            if self.complex_samples is not None and original.dataGrid is not None:
+                self.complex_samples = self.complex_samples.bind_grid(
+                    self.axis_data["x"], self.axis_data["y"], check=self._check_cancelled,
+                )
             self.dataset_completed = True
             self.loaded_from_sql_heatmap = True
             self.heatmap_full_resolution = True

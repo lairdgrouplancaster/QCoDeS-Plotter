@@ -768,7 +768,8 @@ def _write_run(
             measured.name, label=measured.label, unit=measured.unit
         )
         measurement.register_parameter(
-            parameter, setpoints=tuple(axes[axis.name] for axis in measured.axes)
+            parameter, setpoints=tuple(axes[axis.name] for axis in measured.axes),
+            paramtype=measured.paramtype,
         )
         parameters.append(parameter)
 
@@ -779,6 +780,10 @@ def _write_run(
             components = random_sinusoid_components(
                 random_generator, measured.dimensions
             )
+            imaginary_components = (
+                random_sinusoid_components(random_generator, measured.dimensions)
+                if measured.paramtype == "complex" else None
+            )
             # Scalar storage through QCoDeS leaves unrelated quantities NULL.
             # Each quantity is sampled on its own grid; shared setpoints keep
             # their exact definitions without repeating lower-dimensional data.
@@ -786,6 +791,7 @@ def _write_run(
                 _raise_if_cancelled(cancelled_callback)
                 chunk = sample_chunk(
                     measured.axes, components, result_slice.start, result_slice.stop,
+                    imaginary_components=imaginary_components,
                 )
                 datasaver.add_result(
                     *((axes[name], values) for name, values in chunk.coordinates),

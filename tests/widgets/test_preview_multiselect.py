@@ -4,6 +4,7 @@ import pytest
 from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
+from qplot.windows._dragdrop import run_preview_payloads_from_mime
 from qplot.windows._widgets._preview_selection import (
     active_preview_labels,
     preview_key,
@@ -73,6 +74,90 @@ def test_shift_range_uses_sorted_visible_rows(table):
     assert selected_preview_targets(table) == tuple(map(preview_key, labels[1:5]))
     table.topLevelItem(1).setHidden(True)
     assert selected_preview_targets(table) == tuple(map(preview_key, (labels[1], labels[4])))
+
+
+def _drag(label, monkeypatch):
+    captured = []
+
+    class Drag:
+        def __init__(self, _source):
+            pass
+
+        def setMimeData(self, mime):
+            captured.append(run_preview_payloads_from_mime(mime))
+
+        def setPixmap(self, pixmap):
+            assert not pixmap.isNull()
+
+        def setHotSpot(self, _point):
+            pass
+
+        def exec(self, action):
+            assert action == QtCore.Qt.DropAction.CopyAction
+
+    monkeypatch.setattr(QtGui, "QDrag", Drag)
+    start = label.rect().center()
+    end = start + QtCore.QPoint(qtw.QApplication.startDragDistance() + 1, 0)
+    QtTest.QTest.mousePress(label, QtCore.Qt.MouseButton.LeftButton, pos=start)
+    move = QtGui.QMouseEvent(
+        QtCore.QEvent.Type.MouseMove, QtCore.QPointF(end), QtCore.QPointF(label.mapToGlobal(end)),
+        QtCore.Qt.MouseButton.NoButton, QtCore.Qt.MouseButton.LeftButton,
+        QtCore.Qt.KeyboardModifier.NoModifier,
+    )
+    qtw.QApplication.sendEvent(label, move)
+    QtTest.QTest.mouseRelease(label, QtCore.Qt.MouseButton.LeftButton, pos=end)
+    assert len(captured) == 1
+    return captured[0]
+
+
+def test_drag_selected_thumbnail_keeps_entire_group_in_display_order(table, monkeypatch):
+    labels = active_preview_labels(table)
+    _click(labels[0])
+    _click(labels[1], QtCore.Qt.KeyboardModifier.ControlModifier)
+    _click(labels[4], QtCore.Qt.KeyboardModifier.ControlModifier)
+    selected = selected_preview_targets(table)
+    previews = _drag(labels[1], monkeypatch)
+    assert tuple((preview["guid"], preview["parameter"]) for preview in previews) == selected
+    assert selected_preview_targets(table) == selected
+    assert all(preview.get("axes_pending") for preview in previews)
+
+
+def test_drag_unselected_thumbnail_carries_only_that_measurement(table, monkeypatch):
+    labels = active_preview_labels(table)
+    _click(labels[0])
+    _click(labels[1], QtCore.Qt.KeyboardModifier.ControlModifier)
+    previews = _drag(labels[4], monkeypatch)
+    assert [(preview["guid"], preview["parameter"]) for preview in previews] == [preview_key(labels[4])]
+    assert selected_preview_targets(table) == (preview_key(labels[4]),)
+
+
+def test_plain_click_selected_thumbnail_collapses_group_on_release(table):
+    labels = active_preview_labels(table)
+    _click(labels[0])
+    _click(labels[1], QtCore.Qt.KeyboardModifier.ControlModifier)
+    QtTest.QTest.mousePress(labels[0], QtCore.Qt.MouseButton.LeftButton)
+    assert len(selected_preview_targets(table)) == 2
+    QtTest.QTest.mouseRelease(labels[0], QtCore.Qt.MouseButton.LeftButton)
+    assert selected_preview_targets(table) == (preview_key(labels[0]),)
+
+
+def test_preview_pane_drags_all_selected_rendered_measurements(monkeypatch):
+    tab = PreviewTab(preview_size=64)
+    tab.current_guid = "run"
+    tab._show_previews([_white_preview("a"), _white_preview("b"), _white_preview("c")])
+    tab.show()
+    qtw.QApplication.processEvents()
+    try:
+        labels = active_preview_labels(tab)
+        _click(labels[0])
+        _click(labels[2], QtCore.Qt.KeyboardModifier.ShiftModifier)
+        previews = _drag(labels[1], monkeypatch)
+        assert [preview["parameter"] for preview in previews] == ["a", "b", "c"]
+        assert all(preview["axes"] == ["x"] for preview in previews)
+        assert len(selected_preview_targets(tab)) == 3
+    finally:
+        tab.close()
+        tab.deleteLater()
 
 
 def test_context_and_keyboard_menu_preserve_group(table, monkeypatch):

@@ -1,20 +1,112 @@
+import json
 import unittest
+from types import SimpleNamespace
 
+import pytest
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows import main as main_window
 from qplot.windows._dataset_handle import DatasetKey, TraceKey
 from qplot.windows._dragdrop import (
+    RUN_PREVIEW_MIME,
     make_run_preview_mime,
+    make_run_previews_mime,
     preview_drop_is_compatible,
     run_preview_payload_from_mime,
-    )
+    run_preview_payloads_from_mime,
+)
 from qplot.windows._plotWin import plotWidget
 
 
 class _PlotActionHarness:
     _defer_trusted_plot_action = main_window.MainWindow._defer_trusted_plot_action
+
+
+def test_multiple_preview_payload_preserves_sources_pending_axes_and_order():
+    previews = [{"guid": "first", "parameter": "a", "axes": ["x"]},
+                {"guid": "second", "parameter": "b", "axes_pending": True, "database_path": "other.db"}]
+    mime = make_run_previews_mime([*previews, previews[0]])
+    decoded = run_preview_payloads_from_mime(mime)
+    assert len(decoded) == 2
+    assert decoded[0] == previews[0]
+    assert decoded[1] == {**previews[1], "axes": []}
+    assert run_preview_payload_from_mime(mime) is None
+
+
+@pytest.mark.parametrize("payload", [[], None, {"previews": []}, {"previews": [None]},
+                                      {"previews": [{"guid": "run", "parameter": "a"}, {}]}])
+def test_malformed_preview_group_is_not_partly_accepted(payload):
+    mime = QtCore.QMimeData()
+    mime.setData(RUN_PREVIEW_MIME, json.dumps(payload).encode())
+    assert run_preview_payloads_from_mime(mime) is None
+
+
+def test_group_drop_dispatches_one_ordered_batch():
+    requests = []
+    target = SimpleNamespace(
+        operation_kind="plot1d", param=SimpleNamespace(depends_on_=("x",)),
+        previewTracesDropRequested=SimpleNamespace(emit=lambda *args: requests.append(args)),
+    )
+    target.accepts_preview_trace_drop = lambda payload: plotWidget.accepts_preview_trace_drop(target, payload)
+    previews = [{"guid": "one", "parameter": "a", "axes": ["x"]},
+                {"guid": "two", "parameter": "b", "axes_pending": True}]
+    mime = make_run_previews_mime(previews)
+    event = SimpleNamespace(type=lambda: QtCore.QEvent.Type.Drop, mimeData=lambda: mime)
+    event.setDropAction = lambda action: setattr(event, "action", action)
+    event.accept = lambda: setattr(event, "accepted", True)
+    assert plotWidget._handle_preview_drag_drop(target, event)
+    assert event.accepted
+    assert requests == [(target, run_preview_payloads_from_mime(mime))]
+
+
+def test_group_add_waits_for_metadata_without_hitting_pending_request_limit():
+    pending, added, loaded = [], [], set()
+    target = SimpleNamespace()
+
+    def defer(key, resume, **_kwargs):
+        if key in loaded:
+            return False
+        pending.append((key, resume))
+        return True
+
+    harness = SimpleNamespace(
+        _current_dataset_key=lambda guid: DatasetKey("database.db", guid),
+        _defer_trusted_plot_action=defer,
+        add_dropped_preview_to_plot=lambda target, key, name: added.append((target, key.guid, name)),
+    )
+    previews = [{"guid": f"run-{index}", "parameter": "signal"} for index in range(20)]
+    main_window.MainWindow.add_dropped_previews_to_plot(harness, target, previews)
+    while pending:
+        assert len(pending) == 1
+        key, resume = pending.pop()
+        loaded.add(key)
+        resume()
+    assert added == [(target, f"run-{index}", "signal") for index in range(20)]
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_group_add_follows_promoted_window_and_stops_after_source_switch(cancel):
+    original, replacement = SimpleNamespace(), SimpleNamespace()
+    added = []
+    harness = SimpleNamespace(
+        _current_dataset_key=lambda guid: DatasetKey("database.db", guid),
+        _defer_trusted_plot_action=lambda *args, **kwargs: False,
+    )
+
+    def add(target, key, name):
+        added.append((target, name))
+        if target is original:
+            original._preview_drop_replacement = lambda: replacement
+            original._closed = True
+            if cancel:
+                harness._plot_launch_generation = 1
+
+    harness.add_dropped_preview_to_plot = add
+    main_window.MainWindow.add_dropped_previews_to_plot(harness, original, [
+        {"guid": "run", "parameter": "volume"}, {"guid": "run", "parameter": "line"},
+    ])
+    assert added == [(original, "volume")] + ([] if cancel else [(replacement, "line")])
 
 
 class RunPreviewDragDropTestCase(unittest.TestCase):

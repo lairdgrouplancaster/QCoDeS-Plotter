@@ -1279,8 +1279,10 @@ def test_real_qcodes_partial_thumbnail_keeps_missing_parameter_identity(
         assert decode_error is None
         assert [preview["parameter"] for preview in previews] == [
             "partial_identity_signal",
+            "partial_identity_first",
         ]
         assert not previews[0]["image"].isNull()
+        assert previews[1]["unsupported"] is True
 
         cell = RunPreviewCell(guid, 2)
         cell.update_placeholder_metadata(metadata)
@@ -1291,7 +1293,7 @@ def test_real_qcodes_partial_thumbnail_keeps_missing_parameter_identity(
             if cell.content_layout.itemAt(index).widget() is not None
         ]
         assert [widget.objectName() for widget in widgets] == [
-            "measurementPreviewPlaceholder",
+            "measurementPreviewUnsupported",
             "measurementPreviewImage",
         ]
         assert [widget.parameter for widget in widgets] == [
@@ -1299,6 +1301,7 @@ def test_real_qcodes_partial_thumbnail_keeps_missing_parameter_identity(
             "partial_identity_signal",
         ]
         assert all(isinstance(widget, PreviewImageLabel) for widget in widgets)
+        assert all(widget.plot_supported for widget in widgets)
     finally:
         if cell is not None:
             cell.deleteLater()

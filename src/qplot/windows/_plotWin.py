@@ -22,11 +22,12 @@ from ._commands import (
     create_action,
     toolbar_toggle_command_spec,
 )
+from ._complex_plots import apply_complex_preference, format_complex_cursor
 from ._config_persistence import persist_config_value
 from ._dataset_handle import DatasetKey, TraceKey
 from ._dragdrop import (
     preview_drop_is_compatible,
-    run_preview_payload_from_mime,
+    run_preview_payloads_from_mime,
 )
 from ._help import add_help_menu
 from ._native_averaging import NativePlotItem, is_native_source_curve
@@ -200,6 +201,7 @@ class plotWidget(
     end_wait = QtCore.pyqtSignal()
     make_ds = QtCore.pyqtSignal([object])
     previewTraceDropRequested = QtCore.pyqtSignal(object, object, str)
+    previewTracesDropRequested = QtCore.pyqtSignal(object, object)
     trace_updated = QtCore.pyqtSignal()
 
     def _view_range_changed_programmatically(self) -> None:
@@ -564,19 +566,24 @@ class plotWidget(
 
 
     def _handle_preview_drag_drop(self, event):
-        payload = run_preview_payload_from_mime(event.mimeData())
-        if payload is None:
+        payloads = run_preview_payloads_from_mime(event.mimeData())
+        if payloads is None:
             return False
 
-        if not self.accepts_preview_trace_drop(payload):
+        rejected = next((payload for payload in payloads if not self.accepts_preview_trace_drop(payload)), None)
+        if rejected is not None:
             if event.type() == QtCore.QEvent.Type.Drop:
-                self.show_status(self._preview_drop_rejection_message(payload), 5000)
+                self.show_status(self._preview_drop_rejection_message(rejected), 5000)
             event.ignore()
             return True
 
         if event.type() == QtCore.QEvent.Type.Drop:
             event.setDropAction(QtCore.Qt.DropAction.CopyAction)
             event.accept()
+            if len(payloads) > 1:
+                self.previewTracesDropRequested.emit(self, payloads)
+                return True
+            payload = payloads[0]
             source_identity = payload["guid"]
             if payload.get("database_path"):
                 source_identity = DatasetKey(
@@ -1377,6 +1384,7 @@ class plotWidget(
         self.update_theme(self.config)
         self.apply_axis_major_tick_count_preference()
         self.apply_mouse_mode_preference()
+        apply_complex_preference(self)
         apply_colorbar_width = getattr(self, "apply_colorbar_width_preference", None)
         if callable(apply_colorbar_width):
             apply_colorbar_width()
@@ -1790,7 +1798,10 @@ class plotWidget(
                 index_txt = f"[{i},{j}]"
                 x_txt = self.format_cursor_number(x)
                 y_txt = self.format_cursor_number(y)
-                self.pos_labels["z"].setText(self.format_cursor_number(z))
+                self.pos_labels["z"].setText(
+                    format_complex_cursor(self, z) if isinstance(z, complex)
+                    else self.format_cursor_number(z)
+                )
                 if hasattr(self, "show_hover_pixel_outline"):
                     self.show_hover_pixel_outline(i, j)
                 else:

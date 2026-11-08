@@ -288,6 +288,56 @@ def test_programmatic_singleton_axis_keeps_finite_measurements(tmp_path):
         dataset.conn.close()
 
 
+def test_complex_measurements_round_trip_independently_of_chunk_size(tmp_path, monkeypatch):
+    source = tmp_path / "complex.csv"
+    _write_csv(source, [
+        ("mixed", "axis", "x", "X", "V", "", "-1", "1", "3", "numeric"),
+        ("mixed", "axis", "y", "Y", "V", "", "2", "-2", "4", "numeric"),
+        ("mixed", "axis", "z", "Z", "T", "", "0", "1", "2", "numeric"),
+        ("mixed", "measurement", "line", "Line", "A", "x", "", "", "", "complex"),
+        ("mixed", "measurement", "map", "Map", "A", "y;x", "", "", "", "complex"),
+        ("mixed", "measurement", "volume", "Volume", "A", "z;y;x", "", "", "", "complex"),
+        ("mixed", "measurement", "reference", "Reference", "A", "x", "", "", "", "numeric"),
+    ])
+    baseline = {}
+    for chunk_points in (5, 10_000):
+        monkeypatch.setattr("qplot.testdata._RESULT_CHUNK_POINTS", chunk_points)
+        path, specifications = generate_database_from_csv(
+            source, tmp_path / f"complex-{chunk_points}.db", rng=np.random.default_rng(62)
+        )
+        before = _artifact_state(path)
+        dataset = load_by_id_read_only(1, path)
+        try:
+            assert dataset.number_of_results == 42
+            for measured in specifications[0].measurements:
+                assert dataset.paramspecs[measured.name].type == measured.paramtype
+                tree = parameter_data_for_export(dataset, measured.name)
+                values = tree[measured.name].ravel()
+                assert len(values) == measured.point_count
+                assert np.isfinite(values).all()
+                if measured.paramtype == "complex":
+                    assert np.iscomplexobj(values)
+                    assert np.any(values.real != 0) and np.any(values.imag != 0)
+                    assert not np.array_equal(values.real, values.imag)
+                else:
+                    assert not np.iscomplexobj(values)
+                coordinates = list(itertools.product(*(
+                    np.linspace(axis.start, axis.stop, axis.points)
+                    for axis in measured.axes
+                )))
+                for index, axis in enumerate(measured.axes):
+                    np.testing.assert_allclose(
+                        tree[axis.name].ravel(), np.array(coordinates)[:, index]
+                    )
+                if chunk_points == 5:
+                    baseline[measured.name] = values.copy()
+                else:
+                    np.testing.assert_array_equal(values, baseline[measured.name])
+        finally:
+            dataset.conn.close()
+        assert _artifact_state(path) == before
+
+
 @pytest.mark.parametrize(
     "extra, message",
     [
@@ -362,9 +412,9 @@ def test_higher_dimensional_previews_do_not_read_measurement_samples(
     assert _artifact_state(path) == before
 
 
-@pytest.mark.parametrize("dimension", [3, 4])
+@pytest.mark.parametrize("dimension", [1, 2, 3, 4])
 @pytest.mark.parametrize("surface", ["thumbnail", "preview", "pending-thumbnail"])
-def test_placeholders_offer_export_stats_and_3d_plot_with_drag(
+def test_placeholders_offer_export_stats_and_supported_plots_with_drag(
     monkeypatch, dimension, surface
 ):
     preview = {
@@ -389,16 +439,16 @@ def test_placeholders_offer_export_stats_and_3d_plot_with_drag(
     try:
         label = host.findChild(PreviewImageLabel)
         assert label.text() == f"{dimension}D"
-        assert isinstance(label, DraggablePreviewImageLabel) == (dimension == 3)
+        assert isinstance(label, DraggablePreviewImageLabel) == (dimension <= 3)
         QtTest.QTest.mouseDClick(label, QtCore.Qt.MouseButton.LeftButton)
         QtTest.QTest.keyClick(label, QtCore.Qt.Key.Key_Return)
         QtTest.QTest.keyClick(label, QtCore.Qt.Key.Key_Space)
-        assert [kind for kind, _ in signals] == (["plot"] * 3 if dimension == 3 else [])
+        assert [kind for kind, _ in signals] == (["plot"] * 3 if dimension <= 3 else [])
         signals.clear()
 
         def choose(menu, _position):
             plot, export, stats = menu.actions()
-            assert plot.isEnabled() == (dimension == 3)
+            assert plot.isEnabled() == (dimension <= 3)
             assert export.isEnabled() and stats.isEnabled()
             export.trigger()
             stats.trigger()
@@ -519,11 +569,12 @@ def test_high_dimension_csv_and_stats_actions_read_every_sample_and_axis(
     assert _artifact_state(path) == before
 
 
-def test_smallest_collection_database_matches_nominal_size(tmp_path):
+@pytest.mark.parametrize(("index", "target"), [(0, 10e6), (1, 25e6), (2, 50e6)])
+def test_small_collection_databases_match_nominal_size(tmp_path, index, target):
     source = (
         Path(__file__).parents[1]
         / "src/qplot/resources/testdata"
-        / INSTRUCTION_FILE_NAMES[0]
+        / INSTRUCTION_FILE_NAMES[index]
     )
-    output, _ = generate_database_from_csv(source, tmp_path / "ten-mb.db")
-    assert 8_000_000 <= output.stat().st_size <= 12_000_000
+    output, _ = generate_database_from_csv(source, tmp_path / "nominal-size.db")
+    assert 0.8 * target <= output.stat().st_size <= 1.2 * target

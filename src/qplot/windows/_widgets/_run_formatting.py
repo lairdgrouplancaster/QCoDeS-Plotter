@@ -28,8 +28,14 @@ def preview_tooltip_text(preview):
             not preview.get("unsupported")
             or len(preview.get("axes") or []) > MAX_SUPPORTED_PLOT_DIMENSIONS
             ):
-        return preview_title(preview["parameter"], preview.get("axes") or [], rich_text=True)
-    return preview.get("title", "")
+        text = preview_title(preview["parameter"], preview.get("axes") or [], rich_text=True)
+    else:
+        text = preview.get("title", "")
+    if preview.get("complex"):
+        mode = {"magnitude": "Magnitude", "phase": "Phase (degrees)", "real": "Re",
+                "imag": "Im", "imag_vs_real": "Im vs Re"}.get(preview.get("complex_mode"))
+        text += "<br>ℂ Complex-valued measurement" + (f" · {mode}" if mode else "")
+    return text
 
 
 def run_tooltip_text(metadata):

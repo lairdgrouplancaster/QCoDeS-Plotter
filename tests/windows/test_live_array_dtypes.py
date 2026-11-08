@@ -145,7 +145,7 @@ def test_live_planned_array_dtype_change(
                 full_worker.run()
 
             current = snapshot_cache_parameter_publication_state(cache, "signal")
-            if complex_update:
+            if complex_update and column != "signal":
                 assert "complex" in plot._last_error_text.lower()
                 assert "not supported" in plot._last_error_text.lower()
                 assert column in plot._last_error_text
@@ -176,8 +176,11 @@ def test_live_planned_array_dtype_change(
                     assert current.data[name].dtype == values.dtype
                     assert current.data[name].shape == (4,)
                 for axis, name in enumerate(("fast", "signal")):
-                    np.testing.assert_array_equal(plot.line.getData()[axis], expected[name])
+                    displayed = np.abs(expected[name]) if complex_update and name == "signal" else expected[name]
+                    np.testing.assert_array_equal(plot.line.getData()[axis], displayed)
                     np.testing.assert_array_equal(plot.axis_data["xy"[axis]], full_worker.axis_data["xy"[axis]])
+                if complex_update:
+                    np.testing.assert_array_equal(plot.complex_samples.values, expected["signal"])
             for name, values in saved_arrays.items():
                 np.testing.assert_array_equal(prior.data[name], values)
             assert not any(isinstance(w.message, np.exceptions.ComplexWarning) for w in caught)

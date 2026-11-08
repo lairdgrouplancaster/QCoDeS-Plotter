@@ -472,9 +472,22 @@ CSV export and statistics, including ranges for all setpoint axes. No dimension
 is projected or averaged implicitly. Mixed runs plot each supported quantity
 according to its own dependencies.
 
-Line plots require real-valued measurements and coordinates, including samples
-stored in QCoDeS array parameters. Complex values produce a `Plot Error` naming
-the unsupported parameter. Raw measurement CSV exports preserve complex values.
+Complex measurements, including QCoDeS array samples, use the persistent
+preferences in **Preferences → Appearance**. **1D complex plots** can show
+magnitude, phase, Re or Im against the setpoint, or **Im vs Re** (Re horizontal,
+Im vertical). **Higher-dimensional complex plots** select magnitude, phase, Re
+or Im for heatmaps and 3D slices, retaining their usual setpoint axes. Both
+preferences default to magnitude; phase is in degrees. Applying a preference
+refreshes open plots, run-table thumbnails and the Preview pane. A small ℂ
+badge identifies complex measurements; its tooltip names the displayed
+component. Frozen snapshots retain their captured display.
+
+The lower-left readout retains the original complex value and recorded
+setpoints, including in Im vs Re plots. Complex readouts select a recorded
+sample even when trace snapping is turned off. Raw measurement CSV exports
+preserve both components. Setpoint axes must remain real-valued.
+If a thumbnail is unavailable, double-click its `1D` or `2D` tile to open the
+plot; an unavailable preview does not disable plotting.
 
 Trusted plot actions request a connection-free run description, then capture
 that run’s result prefix or aggregate a large numeric heatmap through the broker.
@@ -763,7 +776,10 @@ and choose **Export Selected Thumbnails as CSV…**, then choose a folder. This
 writes one raw CSV per selected measurement, including its setpoints. Selecting
 two measurements from the same run produces two files. Selection is local to
 the run table or Preview pane, and remains highlighted as previews finish
-loading. Existing double-click plotting and thumbnail dragging still work.
+loading. Drag any highlighted thumbnail onto a plot to add the whole selection
+in display order. The drag image shows the number of measurements being copied.
+Dragging an unselected thumbnail carries just that measurement. The usual
+axis compatibility choices and one-volume-per-window limit still apply.
 
 CSV capture and writing run in the background. The **CSV exports** window shows
 progress and lets you cancel selected or all pending exports. Hide it to keep

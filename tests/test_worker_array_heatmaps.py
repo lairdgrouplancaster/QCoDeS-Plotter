@@ -469,7 +469,7 @@ def test_variable_length_array_heatmap(tmp_path, limit, swapped, missing):
 
 @pytest.mark.parametrize("complex_column", ["fast", "signal"])
 @pytest.mark.parametrize("limit", [None, 4], ids=["cached", "bounded"])
-def test_variable_length_complex_records_are_rejected(tmp_path, complex_column, limit):
+def test_variable_length_complex_records_project_only_measurements(tmp_path, complex_column, limit):
     records = [(0, np.array([0, 2, 1]), np.array([0, 2, 1])),
                (1, np.array([3, 2, 1, 0]), np.array([13, 12, 11, 10]))]
     index = 1 if complex_column == "fast" else 2
@@ -490,6 +490,12 @@ def test_variable_length_complex_records_are_rejected(tmp_path, complex_column, 
         worker.emitter.errorOccurred.connect(errors.append)
         worker.emitter.finished.connect(finished.append)
         worker.run()
+        if complex_column == "signal":
+            assert finished == [True] and not errors
+            recorded = np.concatenate([record[2] for record in records])
+            np.testing.assert_array_equal(worker.complex_samples.values, recorded)
+            assert np.isrealobj(worker.dataGrid)
+            return
         assert finished == [False]
         assert len(errors) == 1
         assert "Complex-valued heatmaps" in str(errors[0])
@@ -801,7 +807,7 @@ def test_array_heatmap_cancellation_closes_blob_readers_without_publication(tmp_
 
 
 @pytest.mark.parametrize("limit", [100, 4])
-def test_complex_array_heatmap_is_rejected_without_losing_imaginary_values(tmp_path, limit):
+def test_complex_array_heatmap_is_projected_without_losing_imaginary_values(tmp_path, limit):
     records = [(y, [0, 1, 2], np.arange(3) + 10 * y + 1j) for y in range(2)]
     with heatmap_dataset(tmp_path, records=records) as dataset:
         worker = make_worker(dataset, max_full_heatmap_points=limit)
@@ -809,10 +815,12 @@ def test_complex_array_heatmap_is_rejected_without_losing_imaginary_values(tmp_p
         worker.emitter.errorOccurred.connect(errors.append)
         worker.emitter.finished.connect(finished.append)
         worker.run()
-        assert finished == [False]
-        assert len(errors) == 1
-        assert "Complex-valued heatmaps" in str(errors[0])
-        assert not hasattr(worker, "dataGrid")
+        assert finished == [True] and not errors
+        recorded = np.concatenate([record[2] for record in records])
+        np.testing.assert_array_equal(worker.complex_samples.values, recorded)
+        assert worker.complex_samples.mode == "magnitude"
+        if limit == 100:
+            np.testing.assert_allclose(worker.dataGrid, np.abs(recorded).reshape(2, 3))
 
 
 @pytest.mark.parametrize("shaped", [False, True], ids=["unshaped", "shaped"])

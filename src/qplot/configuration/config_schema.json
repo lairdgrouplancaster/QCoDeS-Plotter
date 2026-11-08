@@ -110,6 +110,16 @@
         "user_preference": {
             "type": "object",
             "properties": {
+                "complex_1d": {
+                    "type": "string",
+                    "enum": ["magnitude", "phase", "real", "imag", "imag_vs_real"],
+                    "default": "magnitude"
+                },
+                "complex_nd": {
+                    "type": "string",
+                    "enum": ["magnitude", "phase", "real", "imag"],
+                    "default": "magnitude"
+                },
                 "csv_filename_format": {
                     "type": "string",
                     "enum": ["current", "qcodes"],
@@ -278,6 +288,8 @@
                 }
             },
             "required": [
+                "complex_1d",
+                "complex_nd",
                 "theme",
                 "show_source_annotation",
                 "font_size",

@@ -1075,6 +1075,29 @@ processing succeeds; arrays keep their existing buffers. GUI publication reads
 this result while the worker retains cancellation and progress state. Existing
 source fences and publication rollback still govern acceptance.
 
+`datahandling/complex_data.py` defines the explicit magnitude, degree-phase,
+real and imaginary projections. Line workers can instead place Re on X and Im
+on Y. Projection affects private display arrays, leaving QCoDeS cache samples
+and raw exports intact. `PlotLoadResult.complex_samples` carries acquired source
+values and setpoints through the same fenced publication and rollback as the
+display arrays. Heatmap workers build a cancellable cell-to-source index off
+the GUI thread; hover reads that index rather than scanning the source arrays.
+Repeated coordinates and reduced display cells report a recorded source
+sample, choosing the closest to the cell centre and the latest on ties.
+Complex cursor retention is bounded by the existing 1 GiB decoding budget.
+Complex SQLite BLOBs use numeric array decoding rather than SQLite arithmetic.
+The 3D private volume index preserves both components, with the selected
+projection applied before plane operations and volume colour calculations.
+`windows/_complex_plots.py` applies the two persisted preferences and formats
+the original complex cursor value. Completed results from an older preference
+are discarded before GUI/cache publication and reloaded with the current mode.
+The bounded preview decoder accepts complex NPY measurements while requiring
+real setpoints. It applies the same projections, including Im vs Re, before
+rasterisation. Complex scalar BLOB capture shares the existing byte budget
+between verified grid probes and sampling windows. Both image cache keys carry
+the two complex preferences; changing either rejects older image publications.
+Preview widgets paint a small ℂ badge and describe the component in tooltips.
+
 `datahandling/LoadFromDB.py` prepares shaped and unshaped cache merges through
 separate helpers. A `_PreparedMerge` record keeps columns, insertion shape, and
 any planned-overflow sample count together. Shaped preparation owns private
