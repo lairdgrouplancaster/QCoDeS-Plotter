@@ -742,7 +742,10 @@ class plotWidget(
             label = qtw.QLabel("")
             label.setFont(font)
             label.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Preferred)
-            label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            # Leave spare index space after the text: the readout starts at
+            # the left edge while the coordinates' opening bracket stays put.
+            alignment = QtCore.Qt.AlignmentFlag.AlignLeft if axis == "index" else QtCore.Qt.AlignmentFlag.AlignRight
+            label.setAlignment(alignment | QtCore.Qt.AlignmentFlag.AlignVCenter)
             layout.addWidget(label)
             self.pos_labels[axis] = label
         closing = qtw.QLabel(")")
@@ -751,6 +754,7 @@ class plotWidget(
         layout.addWidget(closing)
         layout.addStretch()
         self.apply_cursor_label_widths()
+        self.trace_updated.connect(self._update_cursor_index_width)
 
         self.plot.scene().sigMouseMoved.connect(self.mouseMoved)
     
@@ -1279,14 +1283,52 @@ class plotWidget(
         """Keep monospaced fields stable across signs, values and exponents."""
         labels = self.__dict__.get("pos_labels", {})
         figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
+        self._update_cursor_index_width()
         for axis, label in labels.items():
-            if axis == "index":
-                characters = max(9, len(label.text())) if "depth" in labels else 17 if "z" in labels else 9
-                label.setFixedWidth(label.fontMetrics().horizontalAdvance("0" * characters))
-            else:
+            if axis != "index":
                 # Two exponent digits are enough for ordinary measurements.
                 # Qt can grow a field for an exceptional three-digit exponent.
                 label.setMinimumWidth(label.fontMetrics().horizontalAdvance("0" * cursor_field_width(figures)))
+
+    def _update_cursor_index_width(self) -> None:
+        """Reserve the largest source indices, independently of cursor position."""
+        labels = self.__dict__.get("pos_labels", {})
+        label = labels.get("index")
+        if label is None:
+            return
+        volume = self.__dict__.get("volume")
+        if volume is not None:
+            sizes = [tuple(len(axis) for axis in volume.axes.values())]
+        elif "z" in labels:
+            grid = self.__dict__.get("dataGrid")
+            sizes = [grid.shape if grid is not None else (1,) * (3 if "depth" in labels else 2)]
+        else:
+            samples = self.__dict__.get("axis_data", {}).get("x")
+            sizes = [(len(samples) if samples is not None else 1,)]
+
+        # Use full source counts, not clipped/downsampled rendering arrays.
+        # Include every retained trace so switching the snapped trace cannot
+        # move the parentheses. Reading lengths does not scan sample values.
+        lines = list(self.__dict__.get("lines", {}).values())
+        primary = self.__dict__.get("line")
+        if primary is not None and not any(line is primary for line in lines):
+            lines.append(primary)
+        for line in lines:
+            get_data = getattr(line, "getOriginalDataset", None)
+            data = get_data() if callable(get_data) else None
+            if data is not None and data[0] is not None and data[1] is not None:
+                count = min(len(data[0]), len(data[1]))
+                # 3D plots append the selected depth index to snapped traces.
+                sizes.append((count, max(sizes[0])) if volume is not None else (count,))
+
+        metrics = label.fontMetrics()
+        width = max(
+            metrics.horizontalAdvance("[" + ",".join(
+                digit * len(str(max(0, size - 1))) for size in shape) + "]")
+            for shape in sizes for digit in "0123456789"
+        ) + 2
+        if label.minimumWidth() != width or label.maximumWidth() != width:
+            label.setFixedWidth(width)
 
 
     def _set_cursor_index_label(self, text: str) -> None:
@@ -1299,6 +1341,7 @@ class plotWidget(
             if text:
                 indices = text.strip("[]").split(",")
                 text = "[" + ",".join(index.strip() for index in indices) + "]"
+            self._update_cursor_index_width()
             label.setText(text)
 
 

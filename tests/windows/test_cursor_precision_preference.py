@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pyqtgraph as pg
 import pytest
 from jsonschema import ValidationError
-from PyQt6 import QtCore
+from PyQt6 import QtCore, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.configuration.config import config
@@ -91,13 +91,17 @@ def test_existing_plot_updates_when_precision_is_applied(loaded_plot, snapped):
 
 
 @pytest.mark.parametrize("window_type", [plotWidget, plot2d])
-def test_coordinate_fields_have_equal_stable_fixed_widths(cfg, window_type):
+@pytest.mark.parametrize("point_count", [101, 10_000_000])
+def test_coordinate_fields_have_equal_stable_fixed_widths(cfg, window_type, point_count):
     window = window_type.__new__(window_type)
     qtw.QMainWindow.__init__(window)
     widget = pg.PlotWidget()
     window.setCentralWidget(widget)
     window.plot = widget.getPlotItem()
     window.config = cfg
+    window.axis_data = {"x": range(point_count)}
+    if window_type is plot2d:
+        window.dataGrid = SimpleNamespace(shape=(12, point_count))
     window._install_plot_control_view_range_preserver = lambda: None
     window._init_heatmap_downsample_warning_button = lambda: None
     try:
@@ -113,10 +117,17 @@ def test_coordinate_fields_have_equal_stable_fixed_widths(cfg, window_type):
             assert len(widths) == 1
             index_label = window.pos_labels["index"]
             assert index_label.minimumWidth() == index_label.maximumWidth()
+            largest_index = f"[{point_count - 1},11]" if window_type is plot2d else f"[{point_count - 1}]"
+            # Fit the largest index without the old blanket seven-digit padding.
+            metrics = index_label.fontMetrics()
+            assert metrics.horizontalAdvance(largest_index) <= index_label.width()
+            if point_count == 101:
+                old_capacity = "[9999999,9999999]" if window_type is plot2d else "[9999999]"
+                assert index_label.width() < metrics.horizontalAdvance(old_capacity)
+            assert index_label.alignment() & QtCore.Qt.AlignmentFlag.AlignLeft
             positions = None
             for index, value in zip(
-                (("[0,0]", "[9999999,9999999]", "") if window_type is plot2d
-                 else ("[0]", "[9999999]", "")),
+                ("[0,0]" if window_type is plot2d else "[0]", largest_index, ""),
                 (0.0, -1.23456789e-98, 1.7976931348623157e98),
                 strict=True,
             ):
@@ -140,5 +151,30 @@ def test_coordinate_fields_have_equal_stable_fixed_widths(cfg, window_type):
                 assert all(label.fontMetrics().horizontalAdvance(label.text()) <= label.width()
                            for label in labels)
     finally:
-        window.close()
-        window.deleteLater()
+        sip.delete(window)
+
+
+def test_index_space_includes_overlays_and_grows_with_live_data(loaded_plot):
+    window = loaded_plot
+    window.show()
+    # A retained overlay may be much longer than the primary trace. Its full
+    # sample count must reserve space even while the cursor is on the primary.
+    samples = range(10_001)
+    window.lines["long_overlay"] = SimpleNamespace(getOriginalDataset=lambda: (samples, samples))
+    try:
+        positions = []
+        for index in ("[0]", "[10000]", "[1]", ""):
+            window._set_cursor_index_label(index)
+            qtw.QApplication.processEvents()
+            positions.append(window.pos_labels["x"].x())
+        assert len(set(positions)) == 1
+        label = window.pos_labels["index"]
+        width = label.width()
+        assert label.fontMetrics().horizontalAdvance("[10000]") <= width
+        samples = range(100_001)
+        window.trace_updated.emit()
+        qtw.QApplication.processEvents()
+        assert label.width() > width
+        assert label.fontMetrics().horizontalAdvance("[100000]") <= label.width()
+    finally:
+        del window.lines["long_overlay"]

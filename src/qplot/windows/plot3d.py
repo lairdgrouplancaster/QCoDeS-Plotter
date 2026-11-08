@@ -203,16 +203,6 @@ class plot3d(plot2d):
         labels = self.__dict__.get("pos_labels", {})
         for label in labels.values():
             label.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
-        index_label = labels.get("index")
-        if index_label is not None:
-            volume = self.__dict__.get("volume")
-            # Reserve the dataset's maximum digit counts, not the hovered
-            # indices. Include a little room for native-font rounding.
-            maxima = [max(0, len(axis) - 1) for axis in volume.axes.values()] if volume is not None else [0, 0, 0]
-            metrics = index_label.fontMetrics()
-            width = max(metrics.horizontalAdvance("[" + ",".join(
-                digit * len(str(maximum)) for maximum in maxima) + "]") for digit in "0123456789")
-            index_label.setFixedWidth(width + 2)
 
     def _update_cursor_tooltip(self):
         if "cursor_readout" not in self.__dict__:
