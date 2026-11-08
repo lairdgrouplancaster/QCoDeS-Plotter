@@ -719,6 +719,8 @@ def _data_identities(target):
 def test_removing_source_promotes_bottom_remaining_dataset(
         mixed_plot, monkeypatch, tmp_path, bottom_kind, remove_other):
     window, target, runs = mixed_plot
+    original_title = target.windowTitle()
+    assert original_title == f"Plot {target._plot_window_number}"
     errors = []
     monkeypatch.setattr(qtw.QMessageBox, "exec", lambda box: qtw.QMessageBox.StandardButton.Ok)
     monkeypatch.setattr(qtw.QMessageBox, "critical", lambda *args: errors.append(args))
@@ -785,6 +787,7 @@ def test_removing_source_promotes_bottom_remaining_dataset(
     replacement = next(win for win in window.windows if win.visible)
     _wait_for(lambda: not replacement.worker.running and not replacement.__dict__.get("_refresh_pending", False))
     assert replacement is not target
+    assert replacement.windowTitle() == original_title
     assert replacement._dataset_key == sources[bottom_name]._dataset_key
     assert replacement._trace_key == bottom_key
     assert replacement.param.name == runs[bottom_name].name
@@ -849,6 +852,7 @@ def test_removing_source_promotes_bottom_remaining_dataset(
         new_dialog.remove_item_button.click()
         assert errors == []
         final = next(win for win in window.windows if win.visible)
+        assert final.windowTitle() == original_title
         _wait_for(lambda: not final.worker.running)
         assert final._dataset_key != current_source_key
         assert window.dataset_holder[current_source_key].users == 0

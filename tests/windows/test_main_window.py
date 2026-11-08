@@ -1700,7 +1700,7 @@ class OptionsMenuTestCase(unittest.TestCase):
         def close_current_database(self):
             self.close_database_commands += 1
 
-        def refreshMain(self):
+        def refresh_all(self):
             pass
 
         def open_bundled_test_database_csv_folder(self):

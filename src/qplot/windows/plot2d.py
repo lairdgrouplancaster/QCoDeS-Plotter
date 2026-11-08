@@ -143,7 +143,6 @@ class plot2d(
             for name in (
                 "axes_dock",
                 "oper_dock",
-                "toolbarRef",
                 "toolbarCo_ord",
                 )
             if (control := self.__dict__.get(name)) is not None
@@ -283,13 +282,8 @@ class plot2d(
 
     def initRefresh(self, refrate: float) -> None:
         super().initRefresh(refrate)
-        
-        self.relevel_refresh = qtw.QCheckBox("Autoscale colours on refresh")
-        self.relevel_refresh.setToolTip("Autoscale the heatmap colour range on each refresh")
-        self.relevel_refresh.toggled.connect(self._colorbar_auto_refresh_changed)
-        self.toolbarRef.insertWidget(self.plotStatusAction, self.relevel_refresh)
-     
-    
+        self._init_colorbar_refresh_control()
+
     def initContextMenu(self) -> None:
         super().initContextMenu()
 
@@ -464,7 +458,7 @@ class plot2d(
                     self._mark_display_synchronized(plot_worker)
                 return
 
-            autoLevels = self.relevel_refresh.isChecked()
+            autoLevels = self.relevel_refresh.isChecked() and self._colorbar_manual_levels is None
             operation_apply_generation = int(
                 getattr(plot_worker, "_qplot_operation_apply_generation", 0)
                 )

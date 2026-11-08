@@ -32,6 +32,9 @@ All notable user-facing changes are recorded here.
 
 ### Changed
 
+- Give plots stable numbered titles and compact status feedback in the macOS
+  title area or Windows menu bar. Use the main window's **Refresh every**
+  control for the run table and all live plots; its refresh button updates both.
 - Include at least two 3D datasets and small 1D/2D complex S11, S21 and S12
   datasets in every packaged synthetic database template. CSV instructions now
   declare parameter types; generated sizes remain close to the filename target.

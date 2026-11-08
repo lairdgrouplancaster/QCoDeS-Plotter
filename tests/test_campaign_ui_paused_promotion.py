@@ -1,9 +1,9 @@
-"""Replacing a mixed plot's primary source preserves its refresh choice."""
+"""Replacing a mixed plot's primary source preserves the shared refresh interval."""
 
 from types import SimpleNamespace
 
 import pytest
-from PyQt6 import QtCore
+from PyQt6 import QtGui
 from PyQt6 import QtWidgets as qtw
 
 from tests.windows.test_mixed_plot_drops import (
@@ -37,13 +37,14 @@ def _promote_from_appearance(main, target):
 
 @pytest.mark.parametrize("promoted", ["other_line", "other_heatmap"])
 @pytest.mark.parametrize("interval", [0.0, 0.4])
-def test_promotion_keeps_plot_refresh_control(mixed_plot, monkeypatch, promoted, interval):  # noqa: F811
+def test_promotion_keeps_shared_refresh_interval(mixed_plot, monkeypatch, promoted, interval):  # noqa: F811
     main, target, runs = mixed_plot
     monkeypatch.setattr(qtw.QMessageBox, "exec", lambda box: qtw.QMessageBox.StandardButton.Ok)
     assert main.config.get("user_preference.default_refresh_rate") == 1.0
     _drop(target, runs[promoted])
     _added(target, runs[promoted])
-    target.spinBox.setValue(interval)
+    main.spinBox.setValue(interval)
+    assert target.spinBox.value() == interval
     if interval == 0:
         assert not target.monitor.isActive()
 
@@ -51,7 +52,7 @@ def test_promotion_keeps_plot_refresh_control(mixed_plot, monkeypatch, promoted,
     assert replacement.spinBox.value() == interval
     if interval == 0:
         assert not replacement.monitor.isActive()
-    assert main.config.get("user_preference.default_refresh_rate") == 1.0
+    assert main.config.get("user_preference.default_refresh_rate") == interval
 
 
 @pytest.mark.parametrize("heatmap", [False, True], ids=["line", "heatmap"])
@@ -64,19 +65,24 @@ def test_live_source_promotion_preserves_pause_and_manual_refresh(tmp_path, monk
                               axes=source.param.depends_on_)
         _drop(target, run)
         _added(target, run)
-        target.spinBox.setValue(0)
+        main.spinBox.setValue(0)
+        assert_interval(main, 0)
         assert_interval(target, 0)
+        assert_interval(source, 0)
 
-        with QtCore.QSignalBlocker(main.monitor), QtCore.QSignalBlocker(source.monitor):
-            replacement = _promote_from_appearance(main, target)
-            assert_interval(replacement, 0)
-            previous_worker = replacement.worker
-            replacement.refreshPlotButton.click()
-            wait_for_plot_load(main, replacement)
-            assert replacement.worker is not previous_worker
-            assert_interval(replacement, 0)
+        replacement = _promote_from_appearance(main, target)
+        assert_interval(replacement, 0)
+        previous_worker = replacement.worker
+        action = next(action for action in replacement.findChildren(QtGui.QAction)
+                      if action.text() == "&Refresh")
+        action.trigger()
+        wait_for_plot_load(main, replacement)
+        assert replacement.worker is not previous_worker
+        assert_interval(replacement, 0)
 
-            replacement.spinBox.setValue(0.2)
-            assert_interval(replacement, 0.2)
-            replacement.spinBox.setValue(0)
-            assert_interval(replacement, 0)
+        main.spinBox.setValue(0.2)
+        for plot in (main, replacement, source):
+            assert_interval(plot, 0.2)
+        main.spinBox.setValue(0)
+        for plot in (main, replacement, source):
+            assert_interval(plot, 0)

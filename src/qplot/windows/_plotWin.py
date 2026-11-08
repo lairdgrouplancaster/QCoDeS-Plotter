@@ -38,6 +38,7 @@ from ._plot_axis_scaling import (
     PlotAxisScalingMixin,
     _PowerScaledAxisItem,
 )
+from ._plot_chrome import install_plot_chrome
 from ._plot_export import PlotExportMixin
 from ._plot_feedback import PlotWindowFeedbackMixin
 from ._plot_marquee import PlotMarqueeMixin
@@ -45,6 +46,7 @@ from ._plot_refresh import PlotRefreshMixin
 from ._plot_state import PlotStateOverlay
 from ._plot_status import PlotStatusWidget
 from ._plot_tiling import plot_tile_size
+from ._plot_title import assign_plot_title
 from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
     AXIS_MAJOR_TICK_COUNT_KEY,
@@ -236,8 +238,7 @@ class plotWidget(
         dataset_holder : dict[DatasetKey, DatasetHandle]
             Shared map of dataset identities to open-dataset ownership handles.
         refrate : float, optional
-            Default value for the refresh timer. The default is None, which 
-            corresponds to a 5.0s refresh time.
+            Initial shared refresh interval. None uses the configured value.
         show : bool, optional
             Whether to display the window or not. The default is True.
             When false reduces produced widgets to reduce workload.
@@ -329,7 +330,8 @@ class plotWidget(
             self.initMenu()
             
             ### FORMATING
-            self.setWindowTitle(str(self))
+            assign_plot_title(self)
+            install_plot_chrome(self, self.plot_status)
             
             self.plot.showAxis("right")
             self.plot.showAxis("top")
@@ -342,7 +344,7 @@ class plotWidget(
             self.resize(initial_width, initial_height)
             
         # Hidden source plots also own their canvas and progress timer. Their
-        # toolbar must not be destroyed while an unparented canvas keeps polling.
+        # status must not be destroyed while an unparented canvas keeps polling.
         w = qtw.QFrame()
         w.setLayout(self._window_layout)
         self.setCentralWidget(w)
@@ -360,7 +362,7 @@ class plotWidget(
 
     def event(self, event):
         # Menu hover tips must not create a bottom status bar or overwrite the
-        # persistent operation message in the refresh toolbar.
+        # persistent operation message in the window header.
         if event.type() == QtCore.QEvent.Type.StatusTip:
             return True
         return super().event(event)
@@ -672,7 +674,7 @@ class plotWidget(
 
     def initRefresh(self, refrate : float):
         """
-        Sets up refresh logic and widgets. Along with top toolbar
+        Set up internal interval storage and permanent plot status.
 
         Parameters
         ----------
@@ -680,28 +682,12 @@ class plotWidget(
             Default value for the refresh timer.
 
         """
-        self.toolbarRef = qtw.QToolBar("Refresh and status")
-        self.toolbarRef.setObjectName("plotRefreshToolbar")
-        self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, self.toolbarRef)
-        
-        self.spinBox = RefreshIntervalSpinBox()
-
-        self.refreshPlotButton = qtw.QToolButton()
-        self.refreshPlotButton.setObjectName("refreshPlotButton")
-        self.refreshPlotButton.setIcon(
-            self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_BrowserReload)
-        )
-        self.refreshPlotButton.setToolTip("Refresh plot data now (R)")
-        self.refreshPlotButton.setAccessibleName("Refresh plot data")
-        button_height = self.spinBox.sizeHint().height()
-        self.refreshPlotButton.setFixedSize(button_height, button_height)
-        self.spinBox.heightChanged.connect(
-            lambda height: self.refreshPlotButton.setFixedSize(height, height))
-        self.refreshPlotButton.clicked.connect(self.refresh_plot_data)
-        self.toolbarRef.addWidget(self.refreshPlotButton)
-        self.toolbarRef.addWidget(self.spinBox)
-        self.plot_status = PlotStatusWidget(self.toolbarRef)
-        self.plotStatusAction = self.toolbarRef.addWidget(self.plot_status)
+        # The main window owns the visible refresh controls. Retain exact
+        # interval storage for each source's bounded, independent worker.
+        self.spinBox = RefreshIntervalSpinBox(self)
+        self.spinBox.hide()
+        self.plot_status = PlotStatusWidget(self)
+        self.plot_status.hide()
         
         if refrate is not None and refrate >= 0:
             set_refresh_interval(self.spinBox, refrate)
@@ -756,7 +742,10 @@ class plotWidget(
             label = qtw.QLabel("")
             label.setFont(font)
             label.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Preferred)
-            label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+            # Leave spare index space after the text: the readout starts at
+            # the left edge while the coordinates' opening bracket stays put.
+            alignment = QtCore.Qt.AlignmentFlag.AlignLeft if axis == "index" else QtCore.Qt.AlignmentFlag.AlignRight
+            label.setAlignment(alignment | QtCore.Qt.AlignmentFlag.AlignVCenter)
             layout.addWidget(label)
             self.pos_labels[axis] = label
         closing = qtw.QLabel(")")
@@ -765,6 +754,7 @@ class plotWidget(
         layout.addWidget(closing)
         layout.addStretch()
         self.apply_cursor_label_widths()
+        self.trace_updated.connect(self._update_cursor_index_width)
 
         self.plot.scene().sigMouseMoved.connect(self.mouseMoved)
     
@@ -1293,14 +1283,52 @@ class plotWidget(
         """Keep monospaced fields stable across signs, values and exponents."""
         labels = self.__dict__.get("pos_labels", {})
         figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
+        self._update_cursor_index_width()
         for axis, label in labels.items():
-            if axis == "index":
-                characters = max(9, len(label.text())) if "depth" in labels else 17 if "z" in labels else 9
-                label.setFixedWidth(label.fontMetrics().horizontalAdvance("0" * characters))
-            else:
+            if axis != "index":
                 # Two exponent digits are enough for ordinary measurements.
                 # Qt can grow a field for an exceptional three-digit exponent.
                 label.setMinimumWidth(label.fontMetrics().horizontalAdvance("0" * cursor_field_width(figures)))
+
+    def _update_cursor_index_width(self) -> None:
+        """Reserve the largest source indices, independently of cursor position."""
+        labels = self.__dict__.get("pos_labels", {})
+        label = labels.get("index")
+        if label is None:
+            return
+        volume = self.__dict__.get("volume")
+        if volume is not None:
+            sizes = [tuple(len(axis) for axis in volume.axes.values())]
+        elif "z" in labels:
+            grid = self.__dict__.get("dataGrid")
+            sizes = [grid.shape if grid is not None else (1,) * (3 if "depth" in labels else 2)]
+        else:
+            samples = self.__dict__.get("axis_data", {}).get("x")
+            sizes = [(len(samples) if samples is not None else 1,)]
+
+        # Use full source counts, not clipped/downsampled rendering arrays.
+        # Include every retained trace so switching the snapped trace cannot
+        # move the parentheses. Reading lengths does not scan sample values.
+        lines = list(self.__dict__.get("lines", {}).values())
+        primary = self.__dict__.get("line")
+        if primary is not None and not any(line is primary for line in lines):
+            lines.append(primary)
+        for line in lines:
+            get_data = getattr(line, "getOriginalDataset", None)
+            data = get_data() if callable(get_data) else None
+            if data is not None and data[0] is not None and data[1] is not None:
+                count = min(len(data[0]), len(data[1]))
+                # 3D plots append the selected depth index to snapped traces.
+                sizes.append((count, max(sizes[0])) if volume is not None else (count,))
+
+        metrics = label.fontMetrics()
+        width = max(
+            metrics.horizontalAdvance("[" + ",".join(
+                digit * len(str(max(0, size - 1))) for size in shape) + "]")
+            for shape in sizes for digit in "0123456789"
+        ) + 2
+        if label.minimumWidth() != width or label.maximumWidth() != width:
+            label.setFixedWidth(width)
 
 
     def _set_cursor_index_label(self, text: str) -> None:
@@ -1313,6 +1341,7 @@ class plotWidget(
             if text:
                 indices = text.strip("[]").split(",")
                 text = "[" + ",".join(index.strip() for index in indices) + "]"
+            self._update_cursor_index_width()
             label.setText(text)
 
 
@@ -1826,8 +1855,7 @@ class plotWidget(
     @QtCore.pyqtSlot(float)
     def monitorIntervalChanged(self, interval):
         """
-        Handles event for self.spinBox value change.
-        Updates refresh timer.
+        Apply the shared refresh interval to this plot's reader timer.
 
         Parameters
         ----------
@@ -1837,7 +1865,7 @@ class plotWidget(
         """
         remember_refresh_interval(self.spinBox, interval)
         self.monitor.stop()
-        if interval > 0:
+        if interval > 0 and self._can_process_refresh() and self._refresh_monitor_required():
             self.monitor.start(max(1, round(interval * 1000)))
             
             

@@ -118,6 +118,17 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
     """
 
+    def _init_colorbar_refresh_control(self):
+        """Keep the refresh choice available even for hidden overlay sources."""
+        self.relevel_refresh = qtw.QCheckBox("Autoscale on refresh", cast(qtw.QWidget, self))
+        self.relevel_refresh.setChecked(True)
+        self.relevel_refresh.setToolTip(
+            "Automatically adjust the colour range on each refresh. "
+            "Manual scaling temporarily disables this option without changing your choice."
+        )
+        self.relevel_refresh.toggled.connect(self._colorbar_auto_refresh_changed)
+        self.relevel_refresh.hide()
+
     def _init_colorbar_scale_controls(self):
         """
         Build manual/auto color scale controls for the dialog.
@@ -130,6 +141,8 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         self.colorbar_manual_radio = qtw.QRadioButton("Manual")
         self.colorbar_auto_radio = qtw.QRadioButton("Auto")
+        if "relevel_refresh" not in self.__dict__:
+            self._init_colorbar_refresh_control()
         self.symmetric_color = qtw.QCheckBox("Symmetric")
         self.symmetric_color.setChecked(self.__dict__.get("_colorbar_symmetric", False))
         self.symmetric_color.setToolTip(
@@ -223,6 +236,8 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         )
         range_layout.addWidget(self.colorbar_range_entry.summary, 2, 3, 1, 2)
         range_layout.addWidget(self.colorbar_auto_radio, 3, 2)
+        range_layout.addWidget(self.relevel_refresh, 3, 3, 1, 3)
+        self.relevel_refresh.show()
         range_layout.setColumnStretch(3, 1)
         range_layout.setColumnStretch(4, 1)
 
@@ -527,19 +542,23 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             self._sync_colorbar_filter_controls()
             self._select_colorbar_colormap(self._current_colorbar_colormap_name())
 
-        manual = getattr(self, "_colorbar_manual_levels", None) is not None
-        for widget in (self.colorbar_manual_radio, self.colorbar_auto_radio):
-            widget.blockSignals(True)
-
-        self.colorbar_manual_radio.setChecked(manual)
-        self.colorbar_auto_radio.setChecked(not manual)
+        self._sync_colorbar_scale_mode()
         fixed_center = self.__dict__.get("_colorbar_symmetric", False) and self.colorbar_range_entry.center_span
         self.colorbar_min_text.setEnabled(not fixed_center)
         self.colorbar_min_label.setEnabled(not fixed_center)
         self._update_colorbar_auto_limits_tooltip()
 
-        for widget in (self.colorbar_manual_radio, self.colorbar_auto_radio):
-            widget.blockSignals(False)
+    def _sync_colorbar_scale_mode(self):
+        """Suspend refresh autoscaling in manual mode, retaining the choice."""
+        manual = self.__dict__.get("_colorbar_manual_levels") is not None
+        for name, checked in (("colorbar_manual_radio", manual), ("colorbar_auto_radio", not manual)):
+            widget = self.__dict__.get(name)
+            if widget is not None:
+                with QtCore.QSignalBlocker(widget):
+                    widget.setChecked(checked)
+        checkbox = self.__dict__.get("relevel_refresh")
+        if checkbox is not None:
+            checkbox.setEnabled(not manual)
 
     def _colorbar_auto_limits(self):
         """Return validated prospective automatic color-scale limits."""
@@ -787,13 +806,9 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         self._colorbar_manual_levels = (float(vmin), float(vmax))
 
-        if "relevel_refresh" in self.__dict__:
-            self.relevel_refresh.setChecked(False)
-
         minimum, maximum = self._colorbar_manual_levels
         self._set_colorbar_levels(minimum, maximum)
-        if "colorbar_manual_radio" in self.__dict__:
-            self.colorbar_manual_radio.setChecked(True)
+        self._sync_colorbar_scale_mode()
         if self.__dict__.get("_heatmap_color_range_rejected", False):
             self.refreshWindow(force=True)
         return True
@@ -805,16 +820,14 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         """
         self._colorbar_manual_levels = None
-        if "relevel_refresh" in self.__dict__:
-            self.relevel_refresh.setChecked(True)
+        self._sync_colorbar_scale_mode()
         self.scaleColorbar()
 
     @QtCore.pyqtSlot(bool)
     def _colorbar_auto_refresh_changed(self, enabled):
         """
-        Keep colorbar manual state in sync with the refresh toolbar checkbox.
+        Apply newly enabled refresh autoscaling only in automatic mode.
 
         """
-        if enabled:
-            self._colorbar_manual_levels = None
+        if enabled and self.__dict__.get("_colorbar_manual_levels") is None:
             self.scaleColorbar()

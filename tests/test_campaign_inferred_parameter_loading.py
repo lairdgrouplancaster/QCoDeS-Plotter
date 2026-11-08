@@ -4,6 +4,7 @@ from contextlib import contextmanager
 
 import numpy as np
 import pytest
+from PyQt6 import QtGui
 from qcodes.dataset import (
     Measurement,
     initialise_or_create_database_at,
@@ -194,7 +195,9 @@ def test_inferred_live_refreshes_keep_sibling_cursors_independent(
                 protected = database_state(path)
                 # Queue each independent tree before processing any callbacks.
                 for name in ("sibling", "signal", "converted"):
-                    plots[name].refreshPlotButton.click()
+                    action = next(action for action in plots[name].findChildren(QtGui.QAction)
+                                  if action.text() == "&Refresh")
+                    action.trigger()
                 wait_for(lambda: all(not plot.worker.running for plot in plots.values()))
                 assert errors == []
                 _assert_samples(plots, stop, heatmap)
