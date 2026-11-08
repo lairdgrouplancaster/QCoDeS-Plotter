@@ -72,6 +72,7 @@ class CsvColumns:
     columns: tuple[np.ndarray, ...]
     coordinates: tuple[np.ndarray, ...] = ()
     shared_x: bool = False
+    constants: tuple[tuple[str, object], ...] = ()
 
     def write(self, filename, cancelled=lambda: False, progress=lambda *_: None, *, separator=","):
         _check(cancelled)
@@ -88,12 +89,12 @@ class CsvColumns:
         progress("Writing plot values", 0, total)
         with open(filename, "w", encoding="utf-8", newline="") as stream:
             writer = csv.writer(stream, delimiter=separator, quoting=csv.QUOTE_MINIMAL)
-            writer.writerow(self.headers)
+            writer.writerow((*self.headers, *(name for name, _ in self.constants)))
             for index, row in enumerate(zip_longest(*self.columns, fillvalue="")):
                 if index % 1024 == 0:
                     _check(cancelled)
                     progress("Writing plot values", index, total)
-                writer.writerow([csv_numeric_text(value) for value in row])
+                writer.writerow([csv_numeric_text(value) for value in (*row, *(v for _, v in self.constants))])
         _check(cancelled)
         progress("Writing plot values", total, total)
         return total
@@ -138,6 +139,7 @@ class TransformedTrace:
 class TransformedCsv:
     traces: tuple[TransformedTrace, ...]
     shared_x: bool = False
+    constants: tuple[tuple[str, object], ...] = ()
 
     def write(self, filename, cancelled=lambda: False, progress=lambda *_: None, *, separator=","):
         headers, columns, coordinates = [], [], []
@@ -152,7 +154,7 @@ class TransformedCsv:
             else:
                 headers.extend(trace.headers)
                 columns.extend((x, y))
-        return CsvColumns(tuple(headers), tuple(columns), tuple(coordinates), self.shared_x).write(
+        return CsvColumns(tuple(headers), tuple(columns), tuple(coordinates), self.shared_x, self.constants).write(
             filename, cancelled, progress, separator=separator,
         )
 
@@ -163,6 +165,7 @@ class HeatmapCsv:
     x: np.ndarray
     y: np.ndarray
     grid: np.ndarray
+    constants: tuple[tuple[str, object], ...] = ()
 
     def write(self, filename, cancelled=lambda: False, progress=lambda *_: None, *, separator=","):
         total = self.grid.size
@@ -171,7 +174,7 @@ class HeatmapCsv:
         with open(filename, "w", encoding="utf-8", newline="") as stream:
             writer = csv.writer(stream, delimiter=separator, quoting=csv.QUOTE_MINIMAL,
                                 lineterminator="\n")
-            writer.writerow(self.headers)
+            writer.writerow((*self.headers, *(name for name, _ in self.constants)))
             count = 0
             for j, y in enumerate(self.y):
                 for i, x in enumerate(self.x):
@@ -179,7 +182,8 @@ class HeatmapCsv:
                         _check(cancelled)
                         progress("Writing current heatmap grid", count, total)
                     writer.writerow((csv_numeric_text(x), csv_numeric_text(y),
-                                     csv_numeric_text(self.grid[j, i])))
+                                     csv_numeric_text(self.grid[j, i]),
+                                     *(csv_numeric_text(v) for _, v in self.constants)))
                     count += 1
         _check(cancelled)
         progress("Writing current heatmap grid", total, total)

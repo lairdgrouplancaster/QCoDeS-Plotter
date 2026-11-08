@@ -140,7 +140,7 @@ private files are removed when their owning connection closes.
 
 Automatic default selection, scrolling, and metadata completion do not launch
 legacy preview or thumbnail snapshot workers during a trusted live session.
-Snapshot fallback sessions may retain their current preview behavior. The
+Snapshot fallback sessions may retain their current preview behaviour. The
 trusted Stage 5C scheduler instead produces bounded derived thumbnails and
 previews through the persistent helper and version-3 derived cache. Explicit
 trusted plots capture or aggregate the selected run through the broker. Raw CSV
@@ -465,12 +465,12 @@ There are several ways to open plots:
   selected run.
 
 Parameters with one independent variable open as line plots, and parameters
-with two independent variables open as heatmaps. Measurements with three or
-more independent variables are not projected or averaged implicitly: qPlot
-shows a `3D`, `4D`, etc. placeholder in the run table and preview tab. Right-click
-the placeholder to export CSV or generate statistics, including ranges for all
-setpoint axes. Plotting and dragging these quantities are unavailable. Mixed
-runs can still plot their 1D and 2D quantities.
+with two independent variables open as heatmaps. Three independent variables
+open a 3D slice viewer; double-click a `3D` placeholder or use its Plot action.
+Measurements with four or more independent variables retain placeholders with
+CSV export and statistics, including ranges for all setpoint axes. No dimension
+is projected or averaged implicitly. Mixed runs plot each supported quantity
+according to its own dependencies.
 
 Line plots require real-valued measurements and coordinates, including samples
 stored in QCoDeS array parameters. Complex values produce a `Plot Error` naming
@@ -524,11 +524,11 @@ Common plot controls:
 * Right-click inside a marquee selection for zoom and statistics actions.
 * Press `Esc` or double-click the plot to clear a marquee selection.
 * Double-click an X or Y axis to open its scaling dialog.
-* Range controls default to `Min / Max`. Select `Center / Span` to enter an
+* Range controls default to `Min / Max`. Select `Centre / Span` to enter an
   arithmetic midpoint and the full range width (`maximum - minimum`). Switching
   formats leaves the plotted range and Auto/Manual mode unchanged. The readout
   underneath shows the equivalent values without units; hover for full precision.
-  Each axis and color scale retains its own format while the plot window is open.
+  Each axis and colour scale retains its own format while the plot window is open.
   Values use data coordinates even on logarithmic axes, where both resulting
   limits must remain positive.
 * Use `Log Scale` in an axis-scaling tab to switch a line-plot axis between
@@ -569,23 +569,27 @@ hides that layer until its units match again.
 
 The left panel lists the heatmap layers. Added layers are translucent so that
 overlapping maps remain visible; use each layer's opacity control or remove
-button to adjust the composition. All layers share one colormap and color
+button to adjust the composition. All layers share one colour map and colour
 range, which is autoscaled across their combined finite values. A hidden source
 plot remains live while its layer is present, just as it does for an added line
 trace. Large hidden heatmap sources also follow the visible window's viewport
 when qPlot reloads zoomed data.
 
-Cursor readout, marquee statistics, color zoom, and 1D cut extraction continue
+Cursor readout, marquee statistics, colour zoom, and 1D cut extraction continue
 to use the original heatmap in the window. Heatmaps also add the following
-color-scale and cut controls.
+colour-scale and cut controls.
 
-Color-scale controls:
+Colour-scale controls:
 
-* Right-click the plot and choose `Autoscale Color`, or press `C`.
-* Double-click the color scale bar to open the color scaling dialog.
-  Its range controls offer the same `Min / Max` and `Center / Span` formats as
+* Right-click the plot and choose `Autoscale Colour`, or press `C`.
+* Double-click the colour scale bar to open the colour scaling dialog.
+  Its range controls offer the same `Min / Max` and `Centre / Span` formats as
   the plot axes.
-* Drag one color-scale handle to adjust a limit.
+* **Symmetric** in the dialog keeps limits equally spaced around zero, for both
+  2D plots and 3D slices. It is off by default. Automatic limits use the larger
+  absolute endpoint; editing either manual limit mirrors the other. In
+  `Centre / Span` mode, the centre stays at zero. Locked limits remain locked.
+* Drag one colour-scale handle to adjust a limit.
 * Drag between handles to slide the range.
 * Drag outside the handles to widen or narrow the range.
 
@@ -603,6 +607,91 @@ Color-scale controls:
 * Cut plots are live-data compatible.
 * Cut plots can be added to compatible 1D plots when their X axis matches the
   1D plot's independent variable.
+
+### 3D Slice Viewer
+
+A plot window can combine 1D traces, 2D heatmaps and one 3D measurement,
+added in any order using preview dragging or Appearance → Add. Adding a 3D
+measurement brings up its slice controls; removing it removes those controls.
+Slice selection, plane selection and slice operations affect only that 3D
+measurement. Other datasets retain their coordinates and data. Each window
+has its own slice selection, even when displaying the same volume.
+Heatmaps share the window’s colour scale, including the displayed 3D slice.
+Multiple 3D measurements in one window are not yet supported.
+
+The bordered panel groups axis, colour and navigation controls in two rows.
+X and Y selectors are stacked on the left, with colour controls in the middle.
+On the right, the slice index sits above
+the depth coordinate, beside the slider and **Follow latest** controls.
+Drag its handle to move both rows together; the panel docks at the top or bottom
+of the window.
+Select any two independent parameters as X and Y. The remaining parameter is
+Depth. The default uses the last declared dependency as X, the preceding one
+as Y, and the first as Depth. The navigator shows a zero-based index and its
+actual coordinate and unit. Hover over the slider or Slice control to see the
+valid index range. Recorded depth coordinates
+are ordered numerically, independently of acquisition order.
+
+The compact cursor readout shows `[X index, Y index, depth index]` followed by
+`(X, Y, depth, value)`. Hover over it for parameter names, units and the ordering.
+Copy Coordinates includes all four values.
+An em dash (`—`) marks an unavailable or nonfinite cursor value.
+
+* Use the slider, Slice spinbox arrows, or Page Up/Page Down to step. Home/End
+  select the first/last slice. Scroll over the slider to step; scrolling over
+  the heatmap continues to zoom. Navigation does not wrap.
+* Enter an index or a coordinate; coordinate entry selects the nearest recorded
+  plane and shows the selected value. X/Y zoom and marquee bounds persist.
+* Choose **Whole volume**, **Current slice**, or **Locked** colour limits.
+  Whole-volume limits include slice operations and are calculated in the
+  background, with an explicitly provisional range and scan progress. Live
+  limits expand without shrinking. Press C to recalculate; dragging the
+  colourbar or using marquee colour zoom locks the limits. The **Colour** dropdown
+  is also available in the colour-scale dialog and stays in sync with the toolbar.
+  **Symmetric** is available in that dialog.
+* **Slice operations** run independently on each full plane, regardless of
+  zoom or marquee bounds. Swapping X/Y preserves the physical operation.
+  Changing the depth parameter restores that plane's own operation settings,
+  initially empty. Derivative labels and units follow the named parameter.
+* H/V cuts follow the current slice unless **Pin to this slice** is checked.
+  D opens a depth cut at the selected X/Y position. Drag its point marker to
+  move the position, or move the depth marker in the cut window to select a
+  slice. Missing coordinates produce gaps, without snapping to another point
+  independently in each plane.
+* Cuts use the processed slice values by default. **Raw data** bypasses the
+  slice pipeline; the cut's own operations run after extraction. Switching
+  planes preserves cuts' physical meanings and pins H/V cuts from the old
+  plane. Cuts retain their live source if its viewing window is closed.
+* The marquee menu offers **Mean within selection versus depth**. This averages
+  finite cells in the same physical rectangle in each plane. **Coverage…** lists
+  the count for each depth; ordinary two-column mean-cut CSV exports also
+  include those counts.
+* **Freeze Slice as 2D Plot** creates an independent processed snapshot with
+  ordinary appearance, operations, H/V cuts and exports.
+
+Refresh preserves the selected physical depth, even when new coordinates
+change its index. **Follow latest** instead selects the most recently acquired
+depth, which need not be the largest coordinate. Manual navigation disables
+following. Incomplete slices show how many cells are missing; complete slices
+omit this indicator. The navigator also reports repeated samples and planned
+slice counts when known. Identical coordinate triples use a finite mean, with
+repeat counts shown; missing cells remain missing unless an explicit fill
+operation is applied.
+
+Scalar and compatible numeric array storage are supported, including nonuniform
+spacing, descending/snake sweeps and incomplete grids. Complex data and
+coordinates that cannot be displayed without rounding are refused explicitly.
+Each plane's cell count and acquired sample count must fit
+`max_full_heatmap_points`; oversized planes report the limit instead of silently
+downsampling. The viewer builds a private disk index, caches a few planes and
+prefetches neighbours, without allocating a dense 3D cube. An initial capture
+and index of the acquired run is required; live refresh rebuilds that index.
+
+Slice/cut CSV exports include the
+source GUID/revision, fixed coordinates, units and applied operations. The
+normal run CSV export continues to provide all recorded measurement samples.
+The first version uses one volume per viewer; use frozen slices for existing
+2D comparison workflows.
 
 ### Data Operations
 
@@ -739,8 +828,8 @@ General shortcuts:
 | `Ctrl+W` / `Cmd+W` | Close the current qPlot window |
 | `Ctrl+Q` / `Cmd+Q` | Quit qPlot |
 | `Ctrl+,` | Open preferences |
-| `Ctrl+M` / `Alt+Space, N` | Minimize the current window |
-| `Alt+Space, X` / `Alt+Space, R` | Maximize or restore the current window on Windows |
+| `Ctrl+M` / `Alt+Space, N` | Minimise the current window |
+| `Alt+Space, X` / `Alt+Space, R` | Maximise or restore the current window on Windows |
 | `Ctrl+Cmd+F` / `F11` | Enter or leave full screen |
 | `Ctrl+C` / `Cmd+C` | Copy selected cells or rows in the run details pane |
 | `Ctrl+Shift+C` / `Cmd+Shift+C` | Copy the current cell or value in the run details pane |

@@ -67,7 +67,8 @@ def test_high_dimension_double_click_does_not_reach_run_table(dimension, populat
         QtTest.QTest.mouseClick(volume, QtCore.Qt.MouseButton.LeftButton)
         QtTest.QTest.mouseDClick(volume, QtCore.Qt.MouseButton.LeftButton)
         assert run_requests == []
-        assert preview_requests == []
+        assert preview_requests == ([("mixed-run", "volume")] if dimension == 3 else [])
+        preview_requests.clear()
 
         QtTest.QTest.mouseClick(line, QtCore.Qt.MouseButton.LeftButton)
         QtTest.QTest.mouseDClick(line, QtCore.Qt.MouseButton.LeftButton)
@@ -321,6 +322,8 @@ def test_unsupported_preview_keeps_its_declared_position():
         ]
         assert widgets[0].parameter == "first"
         assert widgets[1].text() == "3D"
+        assert isinstance(widgets[1], DraggablePreviewImageLabel)
+        assert widgets[1].axes == ["x", "y", "z"]
         assert widgets[2].parameter == "signal"
     finally:
         cell.deleteLater()

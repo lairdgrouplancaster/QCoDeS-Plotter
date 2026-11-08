@@ -369,7 +369,7 @@ def test_mixed_drop_uses_spare_axes_and_asks_only_for_real_mismatches(mixed_plot
     _wait_for(lambda: bool(dialogs))
     assert (len(target.lines), len(target.heatmaps)) == before
     if len(second.axes) == 2:
-        assert "colorscale units do not match" in dialogs[0]
+        assert "colour scale units do not match" in dialogs[0]
     monkeypatch.setattr(qtw.QMessageBox, "exec", lambda box: qtw.QMessageBox.StandardButton.Ok)
     _drop(target, second)
     _added(target, second)
@@ -642,7 +642,7 @@ def test_appearance_warns_for_colorscale_even_on_spare_axes(mixed_plot, monkeypa
     dialog = target._plot_appearance_dialog
     item = _axis_warning_item(dialog, "heatmap", layer.from_win._trace_key)
     assert not item.icon().isNull()
-    assert "Colorscale:" in item.toolTip()
+    assert "Colour scale:" in item.toolTip()
     assert "q (V)" in item.toolTip() and "z (A)" in item.toolTip()
     assert "Bottom axis:" not in item.toolTip()
     assert "Left axis:" not in item.toolTip()

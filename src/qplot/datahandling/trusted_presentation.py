@@ -263,7 +263,7 @@ class _PresentationNormalizer:
             if self.shortened_key_count or self.shortened_value_count:
                 message = self._display_summary_text()
             else:
-                message = "Selected detail normalized within all presentation limits."
+                message = "Selected detail normalised within all presentation limits."
         else:
             self._add_node("No data", "", "", None)
             status = "empty"

@@ -140,20 +140,20 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "window.minimize": CommandSpec(
         "window.minimize",
-        "&Minimize",
-        "Minimize this window",
+        "&Minimise",
+        "Minimise this window",
         _platform_shortcuts(mac=["Ctrl+M"], windows=["Alt+Space, N"]),
         help_section="Main and All Plot Windows",
         help_shortcut="Ctrl+M / Alt+Space, N",
     ),
     "window.maximize_restore": CommandSpec(
         "window.maximize_restore",
-        "Ma&ximize / Restore",
-        "Maximize or restore this window",
+        "Ma&ximise / Restore",
+        "Maximise or restore this window",
         _platform_shortcuts(windows=["Alt+Space, X", "Alt+Space, R"]),
         help_section="Main and All Plot Windows",
         help_shortcut="Alt+Space, X / Alt+Space, R",
-        help_text="Maximize or restore the current window on Windows",
+        help_text="Maximise or restore the current window on Windows",
     ),
     "window.full_screen": CommandSpec(
         "window.full_screen",
@@ -357,7 +357,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "heatmap.autoscale_color": CommandSpec(
         "heatmap.autoscale_color",
-        "Autoscale Color",
+        "Autoscale Colour",
         "Autoscale the colour range",
         "C",
         help_section="2D Heatmap Windows",
@@ -375,6 +375,26 @@ COMMANDS: dict[str, CommandSpec] = {
         "Open a vertical cut",
         "V",
         help_section="2D Heatmap Windows",
+    ),
+    "slice.depth_cut": CommandSpec(
+        "slice.depth_cut", "Depth Cut", "Open a cut versus the depth coordinate", "D",
+        help_section="3D Slice Windows",
+    ),
+    "slice.previous": CommandSpec(
+        "slice.previous", "Previous Slice", "Show the previous recorded depth coordinate", "PgUp",
+        help_section="3D Slice Windows",
+    ),
+    "slice.next": CommandSpec(
+        "slice.next", "Next Slice", "Show the next recorded depth coordinate", "PgDown",
+        help_section="3D Slice Windows",
+    ),
+    "slice.first": CommandSpec(
+        "slice.first", "First Slice", "Show the lowest recorded depth coordinate", "Home",
+        help_section="3D Slice Windows",
+    ),
+    "slice.last": CommandSpec(
+        "slice.last", "Last Slice", "Show the highest recorded depth coordinate", "End",
+        help_section="3D Slice Windows",
     ),
     "plot.clear_selection": CommandSpec(
         "plot.clear_selection",
@@ -414,6 +434,7 @@ SHORTCUT_HELP_SECTIONS = (
     "All Plot Windows (1D, 2D, and Cuts)",
     "Cut Windows",
     "2D Heatmap Windows",
+    "3D Slice Windows",
     "Context Menus",
 )
 

@@ -221,6 +221,8 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
         self.trace_label = qtw.QLabel("")
         self.trace_label.setMinimumWidth(0)
+        self.trace_label.setSizePolicy(qtw.QSizePolicy.Policy.Expanding, qtw.QSizePolicy.Policy.Preferred)
+        self.trace_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
         self.toolbarCo_ord.addWidget(self.trace_label)
         self._update_coordinate_context()
 
@@ -323,7 +325,7 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         self._set_cursor_index_label(f"[{nearest.point_number - 1}]")
         self.pos_labels["x"].setText(self.format_cursor_number(nearest.x_value))
         self.pos_labels["y"].setText(self.format_cursor_number(nearest.y_value))
-        self._show_snap_report(nearest.label, nearest.point_number)
+        self._show_snap_report(nearest.label)
         self._show_snap_marker(
             nearest.x_view_value,
             nearest.y_view_value,
@@ -331,12 +333,12 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         )
 
 
-    def _show_snap_report(self, label, point_number):
+    def _show_snap_report(self, label):
         """
-        Shows the active run, plotted axes, and snapped point.
+        Shows the active run and plotted axes.
 
         """
-        self._update_coordinate_context(label, point_number)
+        self._update_coordinate_context(label)
 
 
     def _clear_snap_report(self):
@@ -347,8 +349,8 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         self._update_coordinate_context()
 
 
-    def _update_coordinate_context(self, label=None, point_number=None):
-        """Show ``Run N: measurement vs setpoint`` and optional snap detail."""
+    def _update_coordinate_context(self, label=None):
+        """Show ``Run N: measurement vs setpoint`` for the active trace."""
 
         trace_label = self.__dict__.get("trace_label")
         if trace_label is None:
@@ -356,11 +358,8 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
         run_id, vertical, horizontal, tooltip = self._coordinate_context_parts(label)
         message = f"Run {run_id}: {vertical} vs {horizontal}"
-        if point_number is not None:
-            message += f" (snapped to point {point_number - 1})"
         trace_label.setText(message)
         trace_label.setToolTip(tooltip)
-        trace_label.adjustSize()
         trace_label.updateGeometry()
         self.toolbarCo_ord.updateGeometry()
 

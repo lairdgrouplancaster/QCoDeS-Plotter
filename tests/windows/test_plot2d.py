@@ -38,7 +38,7 @@ def test_heatmap_refresh_controls_accept_base_class_keyword():
     try:
         window.initRefresh(refrate=1.5)
         assert window.spinBox.value() == 1.5
-        assert window.relevel_refresh.text() == "Autoscale colors on refresh"
+        assert window.relevel_refresh.text() == "Autoscale colours on refresh"
         assert window.toolbarRef.widgetForAction(window.plotStatusAction) is window.plot_status
     finally:
         sip.delete(window)
@@ -1998,7 +1998,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         menu = window._new_marquee_context_menu()
         action_texts = [action.text() for action in menu.actions()]
 
-        self.assertEqual(action_texts, ["Zoom", "Zoom X", "Zoom Y", "Zoom color", "Stats..."])
+        self.assertEqual(action_texts, ["Zoom", "Zoom X", "Zoom Y", "Zoom colour", "Stats..."])
 
     def test_context_menu_uses_short_cut_labels(self):
         class Host(plot2d):
@@ -2805,7 +2805,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             host.initContextMenu()
             auto_color = next(
                 action for action in host.vbMenu.actions()
-                if action.text().replace("&", "") == "Autoscale Color"
+                if action.text().replace("&", "") == "Autoscale Colour"
                 )
 
             self.assertEqual(auto_color.shortcut().toString(), "C")
@@ -2871,12 +2871,12 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 )
             self.assertFalse(hasattr(host, "heatmap_downsample_button_action"))
             self.assertFalse(hasattr(host, "heatmap_downsample_side_button"))
-            self.assertEqual(host.heatmap_resolution_label.text(), "Resolution: pending")
+            self.assertFalse(hasattr(host, "heatmap_resolution_label"))
             widgets = [
                 host.toolbarCo_ord.widgetForAction(action)
                 for action in host.toolbarCo_ord.actions()
                 ]
-            self.assertEqual(widgets, [host.heatmap_resolution_label])
+            self.assertEqual(widgets, [])
 
             host._update_heatmap_downsample_state(Worker())
 
@@ -2884,10 +2884,6 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             self.assertEqual(
                 host.heatmap_downsample_button.pos(),
                 QtCore.QPoint(264, 164),
-                )
-            self.assertEqual(
-                host.heatmap_resolution_label.text(),
-                "Resolution: downsampled 500 x 400 of 2,000 x 1,000",
                 )
 
             opened = []
@@ -2952,10 +2948,6 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
             self.assertFalse(host.heatmap_downsample_button.isHidden())
             self.assertTrue(host._heatmap_downsample_info["grid_binned"])
-            self.assertEqual(
-                host.heatmap_resolution_label.text(),
-                "Resolution: downsampled 176 x 176 of 3,501 x 801",
-                )
 
             text = host._heatmap_downsample_dialog_text()
             self.assertIn("3,501 x 801 = 2,804,301 cells", text)
@@ -3019,10 +3011,6 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 "unique_y_count": None,
             })
             host._update_heatmap_downsample_state(Worker())
-            self.assertEqual(
-                host.heatmap_resolution_label.text(),
-                "Resolution: downsampled 500 x 400; exact source dimensions not retained",
-            )
             for details in (host._heatmap_downsample_dialog_text(), host._heatmap_downsample_dialog_message()):
                 self.assertIn("not retained during downsampling", details)
                 self.assertIn("keep memory use bounded", details)
@@ -3076,10 +3064,6 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             host._update_heatmap_downsample_state(Worker())
 
             self.assertFalse(host.heatmap_downsample_button.isHidden())
-            self.assertEqual(
-                host.heatmap_resolution_label.text(),
-                "Resolution: downsampled 176 x 176 of 3,501 x 801",
-                )
             text = host._heatmap_downsample_dialog_text()
             self.assertIn("3,501 x 801 = 2,804,301 cells", text)
             self.assertIn("full-resolution heatmap limit is 1,000,000", text)
@@ -3145,7 +3129,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
         self.assertFalse(applied)
         self.assertNotIn("none", _colorbar_colormaps())
-        self.assertEqual(window.status_messages, [("Unknown color map.", 5000)])
+        self.assertEqual(window.status_messages, [("Unknown colour map.", 5000)])
 
     def test_colorbar_colormap_config_filters_names_prefixes_and_groups(self):
         class Config:

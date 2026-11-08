@@ -102,7 +102,7 @@ def _assert_pointer_mode(host, snapping):
         assert float(host.pos_labels["x"].text()) == 1
         assert float(host.pos_labels["y"].text()) == 1
         assert host.pos_labels["index"].text() == "[1]"
-        assert "snapped to point 1" in host.trace_label.text()
+        assert "snapped to point" not in host.trace_label.text()
         assert host._snap_marker_view is not None
         np.testing.assert_array_equal(host.snap_marker.getData(), [[1], [1]])
     else:

@@ -284,11 +284,10 @@ class plot2d(
     def initRefresh(self, refrate: float) -> None:
         super().initRefresh(refrate)
         
-        self.relevel_refresh = qtw.QCheckBox("Autoscale colors on refresh")
+        self.relevel_refresh = qtw.QCheckBox("Autoscale colours on refresh")
         self.relevel_refresh.setToolTip("Autoscale the heatmap colour range on each refresh")
         self.relevel_refresh.toggled.connect(self._colorbar_auto_refresh_changed)
         self.toolbarRef.insertWidget(self.plotStatusAction, self.relevel_refresh)
-        self.toolbarRef.insertSeparator(self.plotStatusAction)
      
     
     def initContextMenu(self) -> None:
@@ -612,21 +611,12 @@ class plot2d(
 
 
     def _init_heatmap_downsample_warning_button(self) -> None:
-        resolution_label = qtw.QLabel("Resolution: pending")
-        resolution_label.setObjectName("heatmapResolutionStatusLabel")
-        resolution_label.setToolTip("Heatmap source and plotted grid resolution.")
-        resolution_label.setSizePolicy(qtw.QSizePolicy.Policy.Expanding, qtw.QSizePolicy.Policy.Preferred)
-        resolution_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-        self.heatmap_resolution_label = resolution_label
-        self.toolbarCo_ord.addWidget(resolution_label)
-
         parent = self._heatmap_downsample_button_parent()
         self.__dict__["_heatmap_downsample_button_parent"] = parent
         parent.installEventFilter(self)
         self.heatmap_downsample_button = self._new_heatmap_downsample_button(parent)
 
         self._update_heatmap_downsample_button()
-        self._update_heatmap_resolution_label()
 
 
     def _heatmap_downsample_button_parent(self) -> qtw.QWidget:
@@ -710,7 +700,6 @@ class plot2d(
 
         self._heatmap_downsample_info = merged or None
         self._update_heatmap_downsample_button()
-        self._update_heatmap_resolution_label()
 
 
     def _heatmap_downsample_info_from_worker(
@@ -957,88 +946,6 @@ class plot2d(
         button.setVisible(visible)
         if visible:
             self._position_heatmap_downsample_button()
-
-
-    def _update_heatmap_resolution_label(self) -> None:
-        label = self.__dict__.get("heatmap_resolution_label")
-        if label is None:
-            return
-
-        text = self._heatmap_resolution_label_text()
-        label.setText(text)
-        if self._heatmap_downsample_info is not None:
-            label.setToolTip(self._heatmap_downsample_dialog_text())
-        else:
-            label.setToolTip(text)
-
-
-    def _heatmap_resolution_label_text(self) -> str:
-        info = self.__dict__.get("_heatmap_downsample_info")
-        if isinstance(info, dict):
-            grid_columns = self._format_heatmap_count(info.get("grid_columns"))
-            grid_rows = self._format_heatmap_count(info.get("grid_rows"))
-            info_source_columns = self._format_heatmap_count(
-                info.get("source_grid_columns")
-                )
-            info_source_rows = self._format_heatmap_count(
-                info.get("source_grid_rows")
-                )
-            if (
-                    info.get("source_sampled")
-                    or info.get("source_aggregated")
-                    or info.get("grid_binned")
-                    ):
-                if info.get("source_grid_columns") is None or info.get("source_grid_rows") is None:
-                    reason = ("exact source dimensions not retained" if info.get("source_dimensions_limited")
-                              else "source dimensions unavailable")
-                    return f"Resolution: downsampled {grid_columns} x {grid_rows}; {reason}"
-                return (
-                    "Resolution: downsampled "
-                    f"{grid_columns} x {grid_rows} of "
-                    f"{info_source_columns} x {info_source_rows}"
-                    )
-            return f"Resolution: full {grid_columns} x {grid_rows}"
-
-        data_grid = self.__dict__.get("dataGrid")
-        if data_grid is None:
-            return "Resolution: pending"
-        try:
-            plotted_grid_rows, plotted_grid_columns = data_grid.shape
-        except (AttributeError, ValueError):
-            return "Resolution: pending"
-
-        source_shape = self._source_heatmap_grid_shape_from_metadata()
-        if source_shape is None:
-            if self.__dict__.get("_heatmap_full_resolution", False):
-                return (
-                    "Resolution: full "
-                    f"{self._format_heatmap_count(plotted_grid_columns)} x "
-                    f"{self._format_heatmap_count(plotted_grid_rows)}"
-                )
-            return (
-                "Resolution: plotted "
-                f"{self._format_heatmap_count(plotted_grid_columns)} x "
-                f"{self._format_heatmap_count(plotted_grid_rows)}; source unknown"
-                )
-
-        source_rows, source_columns = source_shape
-        if (
-                int(source_rows) == int(plotted_grid_rows)
-                and int(source_columns) == int(plotted_grid_columns)
-                ):
-            return (
-                "Resolution: full "
-                f"{self._format_heatmap_count(plotted_grid_columns)} x "
-                f"{self._format_heatmap_count(plotted_grid_rows)}"
-                )
-
-        return (
-            "Resolution: plotted "
-            f"{self._format_heatmap_count(plotted_grid_columns)} x "
-            f"{self._format_heatmap_count(plotted_grid_rows)} of "
-            f"{self._format_heatmap_count(source_columns)} x "
-            f"{self._format_heatmap_count(source_rows)}"
-            )
 
 
     def show_heatmap_downsample_dialog(self) -> None:
@@ -1872,7 +1779,7 @@ class plot2d(
     def _add_marquee_color_context_action(self, menu: qtw.QMenu) -> QtGui.QAction:
         action = self._add_marquee_context_action(
             menu,
-            "Zoom color",
+            "Zoom colour",
             self.zoom_marquee_color,
             )
         if self._marquee_color_levels() is None:

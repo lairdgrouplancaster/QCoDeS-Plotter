@@ -320,10 +320,12 @@ def test_trusted_launch_and_refresh_never_copy_database(tmp_path, monkeypatch, a
         np.testing.assert_array_equal(plot.dataGrid, np.arange(3)[:, None] * 10 + np.arange(4))
         if action != "aggregate":
             assert plot.worker.heatmap_full_resolution
-            assert plot.heatmap_resolution_label.text() == "Resolution: full 4 x 3"
+            assert plot.heatmap_downsample_button.isHidden()
+            assert plot.plot_status.message.startswith("Loaded 12 points in ")
         else:
             assert not plot.worker.heatmap_full_resolution
-            assert "downsampled" in plot.heatmap_resolution_label.text()
+            assert not plot.heatmap_downsample_button.isHidden()
+            assert "aggregated cells in " in plot.plot_status.message
         if action in ("live", "switch", "aggregate"):
             if action == "switch":
                 second = tmp_path / "second.db"

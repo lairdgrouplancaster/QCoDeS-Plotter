@@ -193,7 +193,7 @@ def test_incompatible_drop_can_be_cancelled_then_approved(drop_plots, monkeypatc
     assert "The axes are incompatible" in dialogs[0][2]
     assert dialogs[0][-1] == qtw.QMessageBox.StandardButton.Cancel
     if dimensions == 2:
-        assert "colorscale units do not match" in dialogs[0][2]
+        assert "colour scale units do not match" in dialogs[0][2]
     _mock_warning(monkeypatch, lambda *args: qtw.QMessageBox.StandardButton.Ok)
     added = _add(target, plots["d"], dimensions)
     assert _sides(target, added, dimensions) == ("Bottom", "Left")
@@ -289,7 +289,7 @@ def test_colorscale_mismatch_warns_even_with_unused_coordinate_axes(drop_plots, 
                         dialogs.append(args) or qtw.QMessageBox.StandardButton.Ok)
     layer = _add(target, source, dimensions)
     assert len(dialogs) == 1
-    assert "colorscale units do not match" in dialogs[0][2]
+    assert "colour scale units do not match" in dialogs[0][2]
     assert _sides(target, layer, dimensions) == ("Top", "Right")
     assert layer.image.isVisible()
 

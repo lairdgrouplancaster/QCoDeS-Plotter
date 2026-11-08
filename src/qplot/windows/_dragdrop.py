@@ -66,5 +66,5 @@ def preview_drop_is_compatible(target_axes, payload):
         # Pending thumbnails have a run/parameter identity but no rendered
         # axes yet. The add action loads the actual parameter before choosing
         # axes and requesting approval for any remaining incompatibility.
-        return len(target_axes) in (1, 2)
-    return len(target_axes) in (1, 2) and len(axes) in (1, 2) and len(set(axes)) == len(axes)
+        return len(target_axes) in (1, 2, 3)
+    return len(target_axes) in (1, 2, 3) and len(axes) in (1, 2, 3) and len(set(axes)) == len(axes)

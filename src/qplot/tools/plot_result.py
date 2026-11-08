@@ -54,6 +54,8 @@ class PlotLoadResult:
     _heatmap_estimated_range_rows: int | None = None
     _heatmap_aggregated_source_rows: int | None = None
     _heatmap_source_sample_stride: int | None = None
+    slice_volume: Any = None
+    slice_frame: Any = None
 
 
 def capture_plot_result(worker: Any) -> PlotLoadResult:

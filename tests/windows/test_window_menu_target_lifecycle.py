@@ -32,7 +32,7 @@ def _target_action(menu, target, route):
                     if action.property("qplotWindowListEntry")
                     and target.label in action.text()
                     and ("Cut" in action.text()) == (target.operation_kind == "sweeper"))
-    title = {"minimize": "Minimize", "maximize": "Maximize", "fullscreen": "Full Screen"}[route]
+    title = {"minimize": "Minimise", "maximize": "Maximise", "fullscreen": "Full Screen"}[route]
     return next(action for action in menu.actions()
                 if title.casefold() in action.text().replace("&", "").casefold())
 

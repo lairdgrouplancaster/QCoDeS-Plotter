@@ -3694,6 +3694,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             _fallback_colorbar_colormap_name = plot2d._fallback_colorbar_colormap_name
             _colorbar_colormap = plot2d._colorbar_colormap
             _init_colorbar_scale_controls = plot2d._init_colorbar_scale_controls
+            _init_colorbar_scope_controls = plot2d._init_colorbar_scope_controls
+            _colorbar_symmetric_changed = plot2d._colorbar_symmetric_changed
+            _symmetric_colorbar_levels = plot2d._symmetric_colorbar_levels
             _init_colorbar_filter_controls = plot2d._init_colorbar_filter_controls
             _init_colorbar_colormap_table = plot2d._init_colorbar_colormap_table
             _populate_colorbar_colormap_table = plot2d._populate_colorbar_colormap_table
@@ -3788,18 +3791,18 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host._init_colorbar_scale_controls()
             action_texts = [action.text().replace("&", "") for action in host.vbMenu.actions()]
 
-            self.assertIn("Color Scale...", action_texts)
+            self.assertIn("Colour Scale...", action_texts)
             self.assertEqual(host.colorbar_min_label.text(), "Minimum")
             self.assertEqual(host.colorbar_max_label.text(), "Maximum")
             self.assertIs(host.colorbar_min_label.buddy(), host.colorbar_min_text)
             self.assertIs(host.colorbar_max_label.buddy(), host.colorbar_max_text)
             self.assertEqual(
                 host.colorbar_min_text.accessibleName(),
-                "Color scale minimum",
+                "Colour scale minimum",
                 )
             self.assertEqual(
                 host.colorbar_max_text.accessibleName(),
-                "Color scale maximum",
+                "Colour scale maximum",
                 )
             range_layout = host.colorbar_manual_radio.parentWidget().layout()
             self.assertIsInstance(range_layout, qtw.QGridLayout)
@@ -3814,7 +3817,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             copy_button = host.colorbar_copy_auto_limits_button
             self.assertEqual(
                 copy_button.accessibleName(),
-                "Use auto color scale limits as manual limits",
+                "Use auto colour scale limits as manual limits",
                 )
             self.assertEqual(
                 copy_button.toolTip(),
@@ -3855,7 +3858,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             host.open_colorbar_scale_dialog()
 
-            self.assertEqual(host.colorbar_scale_dialog.windowTitle(), "Color scale")
+            self.assertEqual(host.colorbar_scale_dialog.windowTitle(), "Colour scale")
             self.assertIs(host.colorbar_scale_controls.parent(), host.colorbar_scale_dialog)
 
             host.colorbar_colormap_table.setCurrentCell(

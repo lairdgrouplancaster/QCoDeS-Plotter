@@ -40,7 +40,7 @@ def assert_snap(window, owner, key, physical_x, physical_y, view_x, view_y, inde
     assert window.pos_labels["x"].text() == f"{window.format_cursor_number(physical_x[index])}"
     assert window.pos_labels["y"].text() == f"{window.format_cursor_number(physical_y[index])}"
     assert window.pos_labels["index"].text().replace(" ", "") == f"[{index}]"
-    assert f"snapped to point {index})" in window.trace_label.text()
+    assert "snapped to point" not in window.trace_label.text()
     nearest = window._nearest_trace_point(scene_pos)
     assert nearest.label == key
     assert coordinate_viewbox(nearest.viewbox) is coordinate_viewbox(owner)

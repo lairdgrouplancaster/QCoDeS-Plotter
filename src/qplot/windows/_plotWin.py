@@ -147,6 +147,27 @@ def _plot_area_size_icon(size):
     return QtGui.QIcon(pixmap)
 
 
+class _CursorReadout(qtw.QWidget):
+    """Clip a full-width row of fields instead of squeezing them together."""
+
+    def __init__(self):
+        super().__init__()
+        self.content = qtw.QWidget(self)
+        self.content.installEventFilter(self)
+        self.setMinimumWidth(1)
+
+    def sizeHint(self):
+        return self.content.sizeHint()
+
+    def minimumSizeHint(self):
+        return QtCore.QSize(1, self.content.sizeHint().height())
+
+    def eventFilter(self, source, event):
+        if event.type() == QtCore.QEvent.Type.LayoutRequest:
+            self.updateGeometry()
+        return super().eventFilter(source, event)
+
+
 class plotWidget(
     PlotAnnotationMixin,
     PlotWindowFeedbackMixin,
@@ -578,6 +599,8 @@ class plotWidget(
         if operation_kind not in {"plot1d", "plot2d"}:
             return False
 
+        if getattr(self, "cursor_has_depth", False) and len(payload.get("axes") or ()) == 3:
+            return False
         target_axes = tuple(getattr(self.param, "depends_on_", ()))
         return preview_drop_is_compatible(target_axes, payload)
 
@@ -587,13 +610,15 @@ class plotWidget(
 
         parameter_name = str(payload.get("parameter") or "this measurement")
         operation_kind = getattr(self, "operation_kind", None)
+        if getattr(self, "cursor_has_depth", False) and len(payload.get("axes") or ()) == 3:
+            return "Each plot window can contain only one 3D measurement."
         if operation_kind == "plot1d":
             return (
-                f"Cannot add {parameter_name}; plots support 1D or 2D measurements."
+                f"Cannot add {parameter_name}; plots support 1D, 2D or 3D measurements."
             )
         if operation_kind == "plot2d":
             return (
-                f"Cannot add {parameter_name}; plots support 1D or 2D measurements."
+                f"Cannot add {parameter_name}; plots support 1D, 2D or 3D measurements."
             )
         return "Drop previews onto a compatible line plot or heatmap."
 
@@ -653,10 +678,6 @@ class plotWidget(
         self.addToolBar(QtCore.Qt.ToolBarArea.TopToolBarArea, self.toolbarRef)
         
         self.spinBox = RefreshIntervalSpinBox()
-        self.spinBox.setObjectName("refreshIntervalSpin")
-        self.spinBox.setRange(0.0, 10_000.0)
-        self.spinBox.setSingleStep(0.1)
-        self.spinBox.setDecimals(1)
 
         self.refreshPlotButton = qtw.QToolButton()
         self.refreshPlotButton.setObjectName("refreshPlotButton")
@@ -665,10 +686,12 @@ class plotWidget(
         )
         self.refreshPlotButton.setToolTip("Refresh plot data now (R)")
         self.refreshPlotButton.setAccessibleName("Refresh plot data")
-        self.refreshPlotButton.setFixedSize(28, 26)
+        button_height = self.spinBox.sizeHint().height()
+        self.refreshPlotButton.setFixedSize(button_height, button_height)
+        self.spinBox.heightChanged.connect(
+            lambda height: self.refreshPlotButton.setFixedSize(height, height))
         self.refreshPlotButton.clicked.connect(self.refresh_plot_data)
         self.toolbarRef.addWidget(self.refreshPlotButton)
-        self.toolbarRef.addWidget(qtw.QLabel("Refresh interval (s): "))
         self.toolbarRef.addWidget(self.spinBox)
         self.plot_status = PlotStatusWidget(self.toolbarRef)
         self.plotStatusAction = self.toolbarRef.addWidget(self.plot_status)
@@ -695,15 +718,23 @@ class plotWidget(
         self.pos_labels = {}
 
         font = QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont)
-        container = qtw.QWidget()
+        container = _CursorReadout()
+        self.cursor_readout = container
+        has_depth = getattr(self, "cursor_has_depth", False)
+        values = "X, Y, depth, value" if has_depth else (
+            "X, Y, value" if getattr(self, "operation_kind", None) == "plot2d" else "X, Y")
+        container.setToolTip(f"Square brackets show zero-based indices.\nValues in parentheses: ({values}).")
         # Allow small plot windows to clip the readout without increasing their
         # minimum width, while retaining its full size hint when space permits.
         container.setMinimumWidth(1)
-        layout = qtw.QHBoxLayout(container)
+        layout = qtw.QHBoxLayout(container.content)
+        layout.setSizeConstraint(qtw.QLayout.SizeConstraint.SetFixedSize)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         self.toolbarCo_ord.addWidget(container)
-        for axis in ("index", "x", "y", "z"):
+        for axis in ("index", "x", "y", "depth", "z"):
+            if axis == "depth" and not has_depth:
+                continue
             if axis == "z" and getattr(self, "operation_kind", None) != "plot2d":
                 continue
             if axis != "index":
@@ -713,6 +744,8 @@ class plotWidget(
                 layout.addWidget(separator)
                 if axis == "z":
                     self._cursor_z_separator = separator
+                elif axis == "depth":
+                    self._cursor_depth_separator = separator
             label = qtw.QLabel("")
             label.setFont(font)
             label.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Preferred)
@@ -909,7 +942,7 @@ class plotWidget(
         insert_before = next(
             (
                 action for action in window_menu.actions()
-                if action.text().replace("&", "") == "Minimize"
+                if action.text().replace("&", "") == "Minimise"
                 ),
             None,
             )
@@ -1237,7 +1270,7 @@ class plotWidget(
         labels = self.pos_labels
         coordinates = [
             labels[axis].text().strip()
-            for axis in ("x", "y", "z")
+            for axis in ("x", "y", "depth", "z")
             if axis in labels and not labels[axis].isHidden()
         ]
         if not any(coordinates):
@@ -1255,7 +1288,7 @@ class plotWidget(
         figures = self.config.get(CURSOR_SIGNIFICANT_FIGURES_KEY)
         for axis, label in labels.items():
             if axis == "index":
-                characters = 17 if "z" in labels else 9
+                characters = max(9, len(label.text())) if "depth" in labels else 17 if "z" in labels else 9
                 label.setFixedWidth(label.fontMetrics().horizontalAdvance("0" * characters))
             else:
                 # Two exponent digits are enough for ordinary measurements.
@@ -1632,8 +1665,11 @@ class plotWidget(
 
         """
         # Qt leaves child windows visible when their parent is merely closed.
-        # Reject editors before releasing the dataset so they cannot act on a
-        # closed plot. Keep their widgets alive for retained overlay sources.
+        # Hide detached panels and reject editors before releasing the dataset
+        # so they cannot act on a closed plot. Keep their widgets alive for
+        # retained overlay sources.
+        for panel in self.findChildren((qtw.QDockWidget, qtw.QToolBar)):
+            panel.hide()
         for dialog in self.findChildren(qtw.QDialog):
             dialog.reject()
         dispose_export_dialog = getattr(

@@ -25,6 +25,15 @@ should still start normally.
 
 Continue validating current settings and saving them safely. This policy applies only to qPlot settings and does not relax the database-access invariant or measurement-data correctness requirements.
 
+## Spelling
+
+Use British English in user-facing text, including labels, tooltips,
+accessibility text, messages, and documentation (for example, "colour" and
+"centre"). Use one consistent house style; do not add a spelling preference.
+
+Retain existing code identifiers, settings keys, external API spellings, and
+proper names. Technical tokens shown in documentation must match the code.
+
 ## Python environment
 
 Always use the project virtual environment for Python commands. If the

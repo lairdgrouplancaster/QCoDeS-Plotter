@@ -149,7 +149,8 @@ def test_initial_mixed_run_shows_all_dimension_placeholders_without_result_reads
         labels = [cell.content_layout.itemAt(i).widget() for i in range(5)]
         assert [label.text() for label in labels] == ["1D", "2D", "3D", "4D", "1D"]
         assert all(label.objectName() == "measurementPreviewPlaceholder" for label in labels)
-        assert all(not label.plot_supported for label in labels[2:4])
+        assert labels[2].plot_supported  # 3D uses an explicit slice viewer.
+        assert not labels[3].plot_supported
     finally:
         executor.close()
         if run_list is not None:
@@ -363,7 +364,7 @@ def test_higher_dimensional_previews_do_not_read_measurement_samples(
 
 @pytest.mark.parametrize("dimension", [3, 4])
 @pytest.mark.parametrize("surface", ["thumbnail", "preview", "pending-thumbnail"])
-def test_placeholders_offer_export_and_stats_without_plot_or_drag(
+def test_placeholders_offer_export_stats_and_3d_plot_with_drag(
     monkeypatch, dimension, surface
 ):
     preview = {
@@ -388,15 +389,16 @@ def test_placeholders_offer_export_and_stats_without_plot_or_drag(
     try:
         label = host.findChild(PreviewImageLabel)
         assert label.text() == f"{dimension}D"
-        assert not isinstance(label, DraggablePreviewImageLabel)
+        assert isinstance(label, DraggablePreviewImageLabel) == (dimension == 3)
         QtTest.QTest.mouseDClick(label, QtCore.Qt.MouseButton.LeftButton)
         QtTest.QTest.keyClick(label, QtCore.Qt.Key.Key_Return)
         QtTest.QTest.keyClick(label, QtCore.Qt.Key.Key_Space)
-        assert signals == []
+        assert [kind for kind, _ in signals] == (["plot"] * 3 if dimension == 3 else [])
+        signals.clear()
 
         def choose(menu, _position):
             plot, export, stats = menu.actions()
-            assert not plot.isEnabled()
+            assert plot.isEnabled() == (dimension == 3)
             assert export.isEnabled() and stats.isEnabled()
             export.trigger()
             stats.trigger()

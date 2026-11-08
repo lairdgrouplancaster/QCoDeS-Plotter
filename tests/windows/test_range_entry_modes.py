@@ -84,7 +84,7 @@ def test_axis_switch_preserves_range_auto_and_per_axis_format(
         [float(ui.minText.text()), float(ui.maxText.text())],
         [(low + high) / 2, high - low],
     )
-    assert ui.minimumLabel.text() == "Center"
+    assert ui.minimumLabel.text() == "Centre"
     assert ui.maximumLabel.text() == "Span"
     assert ui.maxText.accessibleName() == f"{axis.upper()} axis span"
     other = window._axis_scale_controls["y" if axis == "x" else "x"]
@@ -162,8 +162,8 @@ def test_color_switch_preserves_auto_and_unitless_summary(heatmap, qapplication)
     assert heatmap.relevel_refresh.isChecked()
     assert tuple(heatmap.bar.levels()) == (0, 3)
     assert entry.summary.text() == "Minimum 0   ·   Maximum 3"
-    assert heatmap.colorbar_min_label.text() == "Center"
-    assert heatmap.colorbar_max_text.accessibleName() == "Color scale span"
+    assert heatmap.colorbar_min_label.text() == "Centre"
+    assert heatmap.colorbar_max_text.accessibleName() == "Colour scale span"
     # Auto updates and reopening both retain the independent selection.
     heatmap.dataGrid = np.array([[-10, 70]])
     heatmap.scaleColorbar()

@@ -1,7 +1,7 @@
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from qplot.datahandling.dimensions import MAX_SUPPORTED_PLOT_DIMENSIONS
+from qplot.datahandling.dimensions import MAX_VIEWER_DIMENSIONS
 
 from ._run_formatting import (
     one_dimensional_duplicate_point_count,
@@ -137,6 +137,10 @@ class RunPreviewCell(qtw.QWidget):
                 "measurementPreviewUnsupported",
                 )
             label.guid = self.guid
+            if isinstance(label, DraggablePreviewImageLabel):
+                label.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+                label.dragFinished.connect(self._apply_pending_display)
+            label.plotRequested.connect(self._emit_plot_requested)
             label.exportRequested.connect(self._emit_export_requested)
             label.statsRequested.connect(self._emit_stats_requested)
             self.content_layout.addWidget(label)
@@ -202,7 +206,7 @@ class RunPreviewCell(qtw.QWidget):
         parameter = parameters[index] if index < len(parameters) else ""
         dimensions = self._placeholder_dimensions
         dimension = dimensions[index] if index < len(dimensions) else None
-        if dimension is not None and dimension > MAX_SUPPORTED_PLOT_DIMENSIONS:
+        if dimension is not None and dimension > MAX_VIEWER_DIMENSIONS:
             label = PreviewImageLabel(parameter, plot_supported=False)
             label.guid = self.guid
         else:

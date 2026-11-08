@@ -1313,7 +1313,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
                 }
             )
         # The renderer deliberately omits higher-dimensional images. Keep
-        # those quantities available as labelled export/statistics targets,
+        # those quantities available as labelled slice/export/statistics targets,
         # including in mixed runs whose lower-dimensional images succeeded.
         for parameter in parameters.values():
             axes = list(parameter.depends_on)
@@ -1322,7 +1322,8 @@ class TrustedDerivedQtBridge(QtCore.QObject):
                     "parameter": parameter.name,
                     "axes": axes,
                     "dimension_count": len(axes),
-                    "title": unsupported_plot_message(parameter.name, axes),
+                    "title": ("Open the 3D slice viewer" if len(axes) == 3
+                              else unsupported_plot_message(parameter.name, axes)),
                     "unsupported": True,
                 })
         return previews, None

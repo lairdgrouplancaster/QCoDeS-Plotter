@@ -848,11 +848,11 @@ class SnapToTraceTestCase(unittest.TestCase):
         window.trace_label = qtw.QLabel()
         window.toolbarCo_ord = qtw.QToolBar()
 
-        window._show_snap_report(trace_key, 2)
+        window._show_snap_report(trace_key)
 
         self.assertEqual(
             window.trace_label.text(),
-            "Run 1: Conductance vs Gate voltage (snapped to point 1)",
+            "Run 1: Conductance vs Gate voltage",
         )
         self.assertEqual(window.trace_label.toolTip(), Source.label)
 
@@ -898,11 +898,11 @@ class SnapToTraceTestCase(unittest.TestCase):
         window.trace_label = qtw.QLabel()
         window.toolbarCo_ord = qtw.QToolBar()
 
-        window._show_snap_report("secondary", 3)
+        window._show_snap_report("secondary")
 
         self.assertEqual(
             window.trace_label.text(),
-            "Run 2: Gate voltage vs Current (snapped to point 2)",
+            "Run 2: Gate voltage vs Current",
         )
 
     def test_swap_plot_axes_exchanges_loaded_data_labels_and_refreshes(self):

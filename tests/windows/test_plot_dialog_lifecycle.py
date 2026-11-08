@@ -1,11 +1,11 @@
-"""Closing real QCoDeS plots also closes their owned editors."""
+"""Closing real QCoDeS plots also closes their owned editors and panels."""
 
 import os
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from PyQt6 import QtCore, sip
+from PyQt6 import QtCore, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.plot_progress import PlotProgress
@@ -134,6 +134,53 @@ def test_plot_close_closes_owned_editor(dialog_plot, editor):
     assert not dialog.isVisible()
 
 
+def _detach_panel(panel, app):
+    panel.window().raise_()
+    panel.window().activateWindow()
+    panel.show()
+    app.processEvents()
+    if isinstance(panel, qtw.QDockWidget):
+        panel.setFloating(True)
+    else:
+        # QToolBar has no setFloating API: exercise the actual handle drag.
+        option = qtw.QStyleOptionToolBar()
+        panel.initStyleOption(option)
+        start = panel.style().subElementRect(
+            qtw.QStyle.SubElement.SE_ToolBarHandle, option, panel,
+        ).center()
+        direction = (
+            -1 if panel.parentWidget().toolBarArea(panel)
+            == QtCore.Qt.ToolBarArea.BottomToolBarArea else 1
+        )
+        QtTest.QTest.mouseMove(panel, start)
+        QtTest.QTest.mousePress(panel, QtCore.Qt.MouseButton.LeftButton, pos=start)
+        QtTest.QTest.mouseMove(panel, start + QtCore.QPoint(20, direction * 50), delay=30)
+        QtTest.QTest.mouseMove(panel, start + QtCore.QPoint(30, direction * 150), delay=30)
+        QtTest.QTest.mouseRelease(
+            panel, QtCore.Qt.MouseButton.LeftButton,
+            pos=start + QtCore.QPoint(30, direction * 150),
+        )
+    app.processEvents()
+    assert panel.isFloating() and panel.isVisible()
+
+
+@pytest.mark.parametrize("dialog_plot", ["line", "heatmap"], indirect=True)
+@pytest.mark.parametrize("panel_name", [
+    "axes_dock", "oper_dock", "toolbarRef", "toolbarCo_ord",
+])
+def test_plot_close_hides_detached_panels(dialog_plot, panel_name):
+    window, plot, app, _guids = dialog_plot
+    panel = getattr(plot, panel_name)
+    _detach_panel(panel, app)
+
+    plot.close()
+    app.processEvents()
+
+    assert window.windows == []
+    assert not plot.isVisible()
+    assert not panel.isVisible()
+
+
 @pytest.mark.parametrize("dialog_plot", ["downsample"], indirect=True)
 def test_plot_close_rejects_active_downsample_dialog(dialog_plot):
     window, plot, app, _guids = dialog_plot
@@ -192,7 +239,9 @@ def test_database_or_application_close_closes_plot_editors(dialog_plot, close_ac
 
 
 @pytest.mark.parametrize("dialog_plot", ["line"], indirect=True)
-def test_closing_retained_source_closes_editors_and_preserves_refresh(dialog_plot, monkeypatch):
+@pytest.mark.parametrize("panel_name", ["oper_dock", "toolbarRef", "toolbarCo_ord"])
+def test_closing_retained_source_closes_editors_and_preserves_refresh(
+        dialog_plot, monkeypatch, panel_name):
     window, host, app, guids = dialog_plot
     window.openPlot(guid=guids[1])
     wait_for(lambda: len(window.windows) == 2)
@@ -203,6 +252,10 @@ def test_closing_retained_source_closes_editors_and_preserves_refresh(dialog_plo
     assert source._merged_trace_users == 1
     source.open_trace_appearance_dialog()
     dialog = source._trace_appearance_dialog
+    source_panel = getattr(source, panel_name)
+    host_panel = getattr(host, panel_name)
+    _detach_panel(source_panel, app)
+    _detach_panel(host_panel, app)
     cancelled = []
     original_cancel = source.worker.cancel
 
@@ -215,6 +268,9 @@ def test_closing_retained_source_closes_editors_and_preserves_refresh(dialog_plo
     source.close()
     app.processEvents()
     assert not dialog.isVisible()
+    assert not source_panel.isVisible()
+    assert host_panel.isVisible()
+    assert not sip.isdeleted(source.oper_widget)
     assert window.windows == [host]
     assert source._can_process_refresh()
     assert source.widget.scene() is not None

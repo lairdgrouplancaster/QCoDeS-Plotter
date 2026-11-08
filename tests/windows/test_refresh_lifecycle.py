@@ -144,9 +144,12 @@ def test_refresh_interval_text_does_not_overlap_native_buttons(theme, style_name
         window.show()
         assert spin.maximum() == 10_000.0
         spin.setValue(10_000.0)
-        assert spin.text() == ("10,000.0" if plot_control else "10,000.0 s")
+        assert spin.text() == "10,000.0 s"
         window.resize(1200, 600)
         qtw.QApplication.processEvents()
+        if plot_control:
+            assert window.refreshPlotButton.height() == spin.height()
+            assert window.refreshPlotButton.width() == spin.height()
         assert spin.minimumWidth() == spin.maximumWidth() == spin.sizeHint().width()
         for interval in (0.0, 10.0, 10_000.0):
             spin.setValue(interval)

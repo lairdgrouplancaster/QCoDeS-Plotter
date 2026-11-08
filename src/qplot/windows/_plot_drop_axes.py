@@ -114,7 +114,7 @@ def dataset_axis_warnings(target: Any, kind: str, key: Any) -> tuple[str, ...]:
         unit = getattr(parameter, "unit", None)
         plot_unit = getattr(plot_parameter, "unit", None)
         if unit is None or plot_unit is None or str(unit).strip() != str(plot_unit).strip():
-            reasons.append(f"Colorscale: dataset {quantity(parameter)} does not match plot {quantity(plot_parameter)}.")
+            reasons.append(f"Colour scale: dataset {quantity(parameter)} does not match plot {quantity(plot_parameter)}.")
     return tuple(reasons)
 
 
@@ -217,7 +217,7 @@ def plan_drop_axes(target: Any, source: Any) -> DropAxisPlan:
         source_unit = getattr(source_parameter, "unit", None)
         if target_unit is None or source_unit is None or str(target_unit).strip() != str(source_unit).strip():
             plan = DropAxisPlan(plan.axis_order, plan.x_side, plan.y_side, plan.incompatible + (
-                f"The colorscale units do not match (source: {source_unit or 'unitless'}; "
+                f"The colour scale units do not match (source: {source_unit or 'unitless'}; "
                 f"plot: {target_unit or 'unitless'}).",
             ))
     return plan
@@ -246,7 +246,7 @@ class DroppedAxisMapping:
         options = self._source_axis_options()
         names = self.source_names
         target_names = tuple(self.target.axis_options[axis] for axis in ("x", "y"))
-        if target_names == self.target_names[::-1]:
+        if not getattr(self.target, "cursor_has_depth", False) and target_names == self.target_names[::-1]:
             names = names[::-1]
         axes = tuple(next((axis for axis in ("x", "y") if options[axis] == name), "")
                      for name in names)
