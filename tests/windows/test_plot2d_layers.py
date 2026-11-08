@@ -40,6 +40,8 @@ class _SourceWindow(QtCore.QObject):
     trace_updated = QtCore.pyqtSignal()
     end_wait = QtCore.pyqtSignal()
     monitorIntervalChanged = plotWidget.monitorIntervalChanged
+    _can_process_refresh = plotWidget._can_process_refresh
+    _refresh_monitor_required = plotWidget._refresh_monitor_required
 
     def __init__(
             self,
@@ -55,6 +57,7 @@ class _SourceWindow(QtCore.QObject):
             ):
         super().__init__()
         self._dataset_key = trace_key.dataset_key
+        self._dataset_holder = {self._dataset_key: SimpleNamespace(users=1)}
         self._trace_key = trace_key
         self.label = f"ID:2 {trace_key.parameter_name}"
         self.axis_options = dict(axis_options)

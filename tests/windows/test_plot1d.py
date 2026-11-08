@@ -2699,6 +2699,8 @@ class SnapToTraceTestCase(unittest.TestCase):
                 "spinBox": SpinBox(1.0),
                 "monitor": Monitor(),
                 "monitorIntervalChanged": plotWidget.monitorIntervalChanged,
+                "_can_process_refresh": plotWidget._can_process_refresh,
+                "_refresh_monitor_required": plotWidget._refresh_monitor_required,
             },
         )()
         first_parent = type(
