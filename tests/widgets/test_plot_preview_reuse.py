@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 
 from qplot.tools.plot_result import capture_plot_result
 from qplot.windows._dataset_handle import DatasetKey
@@ -88,6 +89,33 @@ def test_completed_plot_publishes_only_unmodified_committed_data():
     worker.operations = {}
     PlotRefreshMixin._commit_refresh_publication(plot, worker)
     assert published == [True]
+
+
+@pytest.mark.parametrize("plot_mode", ["phase", "magnitude"])
+def test_complex_plot_preview_reuse_requires_current_display_preference(plot_mode):
+    published = []
+    key = DatasetKey("unopened.db", "run")
+    preview = SimpleNamespace(
+        run_metadata={"run": {}}, preview_size=64, generation=1,
+        database_instance=SimpleNamespace(logical_path=key.database_path,
+                                         resolved_path=key.resolved_database_path,
+                                         identity=key.database_identity),
+        _trusted_derived_mode=False, _shutting_down=False,
+        publish_plot_preview=lambda guid, image: published.append((guid, image)),
+    )
+    window = SimpleNamespace(infoBox=SimpleNamespace(preview=preview),
+                             config={"user_preference.complex_1d": "phase"})
+    plot = SimpleNamespace(_dataset_key=key, param=SimpleNamespace(name="S11", depends_on_=("frequency",)))
+    result = SimpleNamespace(axis_data={"x": [0., 1.], "y": [3., 2.]}, dataset_completed=True,
+                             complex_samples=SimpleNamespace(mode=plot_mode))
+    with patch("qplot.windows._plot_actions.dataset_key_matches_current_source", return_value=True):
+        PlotActionsMixin._publish_displayed_plot_preview(window, plot, result)
+    if plot_mode == "phase":
+        assert len(published) == 1
+        assert published[0][1]["complex"]
+        assert published[0][1]["complex_mode"] == "phase"
+    else:
+        assert not published
 
 
 def test_plot_preview_rechecks_source_before_publishing():

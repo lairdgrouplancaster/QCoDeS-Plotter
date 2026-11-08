@@ -29,14 +29,15 @@ class CutSelection:
 
 
 def extract_cut(volume, selection, operations, param, params, *, check=lambda: None,
-                cancelled=lambda: False, progress=lambda *_: None):
+                cancelled=lambda: False, progress=lambda *_: None, complex_mode="magnitude"):
     axes = {"x": params[selection.x], "y": params[selection.y]}
     depths = volume.axes[selection.depth]
     display_param = param
 
     def plane(index):
         frame = volume.plane(selection.x, selection.y, index, check=check)
-        return processed_plane(frame, operations, param, axes, check=check, cancelled=cancelled)
+        return processed_plane(frame, operations, param, axes, check=check, cancelled=cancelled,
+                               complex_mode=complex_mode)
 
     def exact_index(values, value):
         index = int(np.searchsorted(values, value))
@@ -69,7 +70,9 @@ def extract_cut(volume, selection, operations, param, params, *, check=lambda: N
             finite = region[numeric_isfinite(region)]
             count = finite.size
             if count:
-                value = finite_mean(finite, check_cancelled=check)
+                value = (finite_mean(finite.real, check_cancelled=check)
+                         + 1j * finite_mean(finite.imag, check_cancelled=check)
+                         if np.iscomplexobj(finite) else finite_mean(finite, check_cancelled=check))
         else:
             i, j = exact_index(frame.x, selection.x_value), exact_index(frame.y, selection.y_value)
             if i is not None and j is not None:

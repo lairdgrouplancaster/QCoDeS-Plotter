@@ -391,7 +391,8 @@ Common actions:
 
 * `File -> Load Database...` loads a QCoDeS database.
 * `File -> Load Recent Database` reopens a recently used database.
-* `File -> Refresh` checks the current database for new runs.
+* `File -> Refresh` checks the current database for new runs and refreshes all
+  live plot windows once.
 * `File -> Open Database Folder` opens the folder containing the loaded
   database.
 * `File -> Close Database` closes its plot windows, cancels background database
@@ -436,8 +437,8 @@ Common actions:
   `Show Diagnostic Log in File Explorer` opens its folder.
 * `File -> Quit qPlot` closes the database and exits. Its shortcut is `Cmd+Q`
   on macOS and `Ctrl+Q` on Windows and Linux.
-* The refresh interval controls how often qPlot checks for new runs. Set it to
-  `0.0 s` to disable automatic checks.
+* **Refresh every** controls the interval for the run table and all live plots.
+  Set it to `0.0 s` to disable automatic refresh everywhere.
 * `Auto-plot` opens every newly detected run, including runs already complete,
   in both trusted live and snapshot fallback sessions. Enabling it also opens
   the newest incomplete run already listed. Trusted live requests use the
@@ -472,9 +473,22 @@ CSV export and statistics, including ranges for all setpoint axes. No dimension
 is projected or averaged implicitly. Mixed runs plot each supported quantity
 according to its own dependencies.
 
-Line plots require real-valued measurements and coordinates, including samples
-stored in QCoDeS array parameters. Complex values produce a `Plot Error` naming
-the unsupported parameter. Raw measurement CSV exports preserve complex values.
+Complex measurements, including QCoDeS array samples, use the persistent
+preferences in **Preferences → Appearance**. **1D complex plots** can show
+magnitude, phase, Re or Im against the setpoint, or **Im vs Re** (Re horizontal,
+Im vertical). **Higher-dimensional complex plots** select magnitude, phase, Re
+or Im for heatmaps and 3D slices, retaining their usual setpoint axes. Both
+preferences default to magnitude; phase is in degrees. Applying a preference
+refreshes open plots, run-table thumbnails and the Preview pane. A small ℂ
+badge identifies complex measurements; its tooltip names the displayed
+component. Frozen snapshots retain their captured display.
+
+The lower-left readout retains the original complex value and recorded
+setpoints, including in Im vs Re plots. Complex readouts select a recorded
+sample even when trace snapping is turned off. Raw measurement CSV exports
+preserve both components. Setpoint axes must remain real-valued.
+If a thumbnail is unavailable, double-click its `1D` or `2D` tile to open the
+plot; an unavailable preview does not disable plotting.
 
 Trusted plot actions request a connection-free run description, then capture
 that run’s result prefix or aggregate a large numeric heatmap through the broker.
@@ -486,7 +500,7 @@ instance. See [explicit plotting](trusted-live-reader.md#explicit-plotting) for
 capture limits and progress reporting.
 
 Plot windows may appear before their data has finished loading. Check the plot
-window refresh toolbar; unless qPlot stops responding or shows an error, wait for the
+window status message; unless qPlot stops responding or shows an error, wait for the
 load to complete.
 
 ## Plot Windows
@@ -506,8 +520,11 @@ The annotation uses a shaded strip with a bold database name. In
 in all plots and exports. It is enabled by default. Hiding it also removes
 the space reserved for the strip.
 
-The `Refresh and status` toolbar is visible by default, including for completed
-runs. Its right-hand side shows the latest status message until another
+Windows are titled **Plot 1**, **Plot 2**, and so on. These numbers remain stable
+when other windows close or a plot's primary source changes.
+
+Status appears at the right of the menu bar on Windows, and alongside the
+native window title on macOS, including for completed runs. It shows the latest status message until another
 message or loading progress replaces it. During loading it shows a progress
 bar for the current stage, elapsed time, and the stage number. Hover over
 progress for the stage name and detailed counts, or over a shortened status
@@ -585,6 +602,10 @@ Colour-scale controls:
 * Double-click the colour scale bar to open the colour scaling dialog.
   Its range controls offer the same `Min / Max` and `Centre / Span` formats as
   the plot axes.
+* **Autoscale on refresh** in the colour-scale dialog is enabled by default for
+  2D plots. Manual limits, including adjustments made by dragging the colour
+  bar, grey out this option without changing its value. Returning to **Auto**
+  restores the option with your previous choice.
 * **Symmetric** in the dialog keeps limits equally spaced around zero, for both
   2D plots and 3D slices. It is off by default. Automatic limits use the larger
   absolute endpoint; editing either manual limit mirrors the other. In
@@ -763,7 +784,10 @@ and choose **Export Selected Thumbnails as CSV…**, then choose a folder. This
 writes one raw CSV per selected measurement, including its setpoints. Selecting
 two measurements from the same run produces two files. Selection is local to
 the run table or Preview pane, and remains highlighted as previews finish
-loading. Existing double-click plotting and thumbnail dragging still work.
+loading. Drag any highlighted thumbnail onto a plot to add the whole selection
+in display order. The drag image shows the number of measurements being copied.
+Dragging an unselected thumbnail carries just that measurement. The usual
+axis compatibility choices and one-volume-per-window limit still apply.
 
 CSV capture and writing run in the background. The **CSV exports** window shows
 progress and lets you cancel selected or all pending exports. Hide it to keep
@@ -809,12 +833,13 @@ page layout.
 
 ## Live Data
 
-qPlot can display running QCoDeS experiments. The main-window refresh interval
-checks for newly added runs. Each plot window has its own refresh timer for
-loading new data from the database.
+qPlot can display running QCoDeS experiments. **Refresh every** in the main
+window sets one interval for checking the run table and updating all live plots.
+New plots and cuts inherit this interval; frozen snapshots remain unchanged.
 
-Use `File -> Refresh` or `R` to refresh manually. Set a refresh interval to
-`0.0 s` when you want manual refresh only.
+The main window's refresh button, `File -> Refresh`, or `R` refreshes the run
+table and all live plots once. In a plot window, `R` refreshes just that plot's
+sources. Set the main interval to `0.0 s` for manual refresh only.
 
 ## Keyboard Shortcuts
 
@@ -824,7 +849,7 @@ General shortcuts:
 | --- | --- |
 | `F1` | Show quick start help |
 | `Ctrl+L` | Load a database |
-| `R` | Refresh the current window |
+| `R` | Refresh all live plots and the table from the main window, or just the focused plot |
 | `Ctrl+W` / `Cmd+W` | Close the current qPlot window |
 | `Ctrl+Q` / `Cmd+Q` | Quit qPlot |
 | `Ctrl+,` | Open preferences |
@@ -849,7 +874,6 @@ Plot-window shortcuts:
 | `Ctrl+C` / `Cmd+C` | Copy the plot image to the clipboard using the selected copy format/resolution |
 | `Ctrl+E` | Export the plot |
 | `Ctrl+P` / `Cmd+P` | Print the visible plot area |
-| `Ctrl+Alt+R` | Show or hide the refresh and status toolbar |
 | `Ctrl+Alt+C` | Show or hide the coordinates toolbar |
 | `Ctrl+Alt+A` | Show or hide Cut controls in a cut window |
 | `Ctrl+Alt+O` | Show or hide the data operations panel |

@@ -474,6 +474,25 @@ class ResultLayoutQueries:
             nd_observations = []
             nd_steps = {}
 
+        # Separate dependent blocks can defeat a shared physical-row proof
+        # even when every dependent's complete grid has been verified. Publish
+        # their common logical shape only after all owners are accounted for.
+        independent = self._independent.get(run_id)
+        if (
+            not observations and not has_array_records
+            and len(expected_dependencies) == 2
+            and independent is not None
+            and independent.after_row_id == result_watermark
+            and all(not state.first_value_missing for state in independent.states)
+            and {pattern.dependent for proof in independent.proofs
+                 for pattern in proof.dependent_rows} == set(expected_dependents)
+            and len({proof.shape for proof in independent.proofs}) == 1
+            and all(proof.dependencies == expected_dependencies for proof in independent.proofs)
+        ):
+            shape = independent.proofs[0].shape
+            observations.append((expected_dependencies, math.prod(shape), shape))
+            nd_steps.update(zip(expected_dependencies, shape, strict=True))
+
         return _RunLayoutObservation(
             tuple(observations), tuple(nd_observations), nd_steps, regular_observation
         )

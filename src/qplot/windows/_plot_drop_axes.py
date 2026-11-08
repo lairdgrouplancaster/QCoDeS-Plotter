@@ -139,8 +139,10 @@ class DropAxisPlan:
         box = qtw.QMessageBox(
             qtw.QMessageBox.Icon.Warning,
             "Incompatible axes",
-            f"The axes are incompatible with {source.label}:\n\n{reasons}\n\n"
-            f"Add the dataset using the {self.x_side.lower()} and "
+            f"Dataset to add: {source.label}\n"
+            f"Target plot: {getattr(target, 'label', 'current plot')}\n\n"
+            f"The axes are incompatible:\n\n{reasons}\n\n"
+            f"Add {source.label} using the {self.x_side.lower()} and "
             f"{self.y_side.lower()} axes?",
             qtw.QMessageBox.StandardButton.Ok | qtw.QMessageBox.StandardButton.Cancel,
             target,

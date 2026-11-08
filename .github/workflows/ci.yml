@@ -375,7 +375,7 @@ jobs:
             "--timeout=90", "--timeout-method=thread", "--durations=20", "-v",
             "-o", "junit_family=xunit1", "--junitxml=$env:QPLOT_CI_TEST_REPORT"
           )
-          # Two disjoint whole-file partitions retain the complete suite while
+          # Four disjoint whole-file partitions retain the complete suite while
           # fitting its growing workload into a bounded budget.
           # Each partition keeps two workers, 90-second individual tests and
           # 25 minutes total, plus two-minute cleanup within the 30-minute job.

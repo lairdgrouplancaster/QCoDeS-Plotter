@@ -120,7 +120,7 @@ def test_generator_cli_reports_external_storage_configuration(
 ):
     source = tmp_path / "instructions.csv"
     source.write_text(
-        "run,kind,name,label,unit,setpoints,start,stop,points\n"
+        "run,kind,name,label,unit,setpoints,start,stop,points,paramtype\n"
         "run_1,axis,V_SD,Source-drain voltage,V,,0,1,3\n"
         "run_1,measurement,current,Current,A,V_SD,,,\n",
     )

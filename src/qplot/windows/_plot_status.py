@@ -1,4 +1,4 @@
-"""Compact, persistent feedback for the refresh toolbar."""
+"""Compact, persistent feedback in a plot's title area or menu bar."""
 
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
@@ -7,7 +7,7 @@ from ._status import StatusLabel
 
 
 class PlotStatusWidget(qtw.QWidget):
-    """Use the available toolbar space for a message or current-stage progress."""
+    """Use the available header space for a message or current-stage progress."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -15,6 +15,7 @@ class PlotStatusWidget(qtw.QWidget):
         self.setSizePolicy(qtw.QSizePolicy.Policy.Expanding, qtw.QSizePolicy.Policy.Preferred)
         self.message = ""
         self._progress_active = False
+        self._preferred_width = 320
 
         self.status_label = StatusLabel(self)
         self.status_label.setObjectName("plotStatusMessage")
@@ -53,7 +54,15 @@ class PlotStatusWidget(qtw.QWidget):
         return QtCore.QSize(0, self.stack.minimumSize().height())
 
     def sizeHint(self):
-        return QtCore.QSize(320, self.stack.sizeHint().height())
+        return QtCore.QSize(self._preferred_width, self.stack.sizeHint().height())
+
+    def set_available_width(self, width: int) -> None:
+        # QMenuBar positions corner widgets using sizeHint before constraining
+        # their geometry. Keep both in agreement so menus cannot overlap.
+        if width != self._preferred_width:
+            self._preferred_width = width
+            self.setFixedWidth(width)
+            self.updateGeometry()
 
     def show_message(self, message: str) -> None:
         self.message = message

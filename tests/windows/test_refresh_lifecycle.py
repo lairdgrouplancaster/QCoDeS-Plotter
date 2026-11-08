@@ -1,7 +1,6 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import SimpleNamespace
 
 import pytest
 from PyQt6 import QtCore, QtTest
@@ -12,7 +11,6 @@ from qplot.configuration.themes.dark import dark
 from qplot.configuration.themes.light import light
 from qplot.datahandling.file_identity import database_instance
 from qplot.windows._database_actions import DatabaseActionsMixin
-from qplot.windows._plotWin import plotWidget
 from qplot.windows._preferences import PreferencesDialog
 from qplot.windows._run_controls import RunControlsMixin
 
@@ -30,6 +28,8 @@ class _Config:
             "user_preference.plot_tile_columns": 2,
             "user_preference.confirm_incompatible_axes": True,
             "user_preference.colorbar_width": 15,
+            "user_preference.complex_1d": "magnitude",
+            "user_preference.complex_nd": "magnitude",
             "user_preference.axis_tick_width": 2.0,
             "user_preference.axis_major_tick_count": 3,
             "GUI.preview_size": 200,
@@ -120,26 +120,18 @@ class _RefreshHarness(qtw.QMainWindow):
 
 @pytest.mark.parametrize("theme", [light, dark, blank], ids=["light", "dark", "blank"])
 @pytest.mark.parametrize("style_name", qtw.QStyleFactory.keys())
-@pytest.mark.parametrize("plot_control", [False, True], ids=["main", "plot"])
-def test_refresh_interval_text_does_not_overlap_native_buttons(theme, style_name, plot_control):
+def test_refresh_interval_text_does_not_overlap_native_buttons(theme, style_name):
     window = _RefreshHarness()
-    if plot_control:
-        window.spinBox.deleteLater()
-        window.ds = SimpleNamespace(running=True)
-        window.refreshWindow = lambda: None
-        window.refresh_plot_data = lambda: None
-        plotWidget.initRefresh(window, 0.1)
     window.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen)
     window.setStyleSheet(theme.main)
     style = qtw.QStyleFactory.create(style_name)
     style.setParent(window)
     spin = window.spinBox
     spin.setStyle(style)
-    if not plot_control:
-        container = qtw.QWidget(window)
-        layout = qtw.QHBoxLayout(container)
-        layout.addWidget(spin)
-        window.setCentralWidget(container)
+    container = qtw.QWidget(window)
+    layout = qtw.QHBoxLayout(container)
+    layout.addWidget(spin)
+    window.setCentralWidget(container)
     try:
         window.show()
         assert spin.maximum() == 10_000.0
@@ -147,9 +139,6 @@ def test_refresh_interval_text_does_not_overlap_native_buttons(theme, style_name
         assert spin.text() == "10,000.0 s"
         window.resize(1200, 600)
         qtw.QApplication.processEvents()
-        if plot_control:
-            assert window.refreshPlotButton.height() == spin.height()
-            assert window.refreshPlotButton.width() == spin.height()
         assert spin.minimumWidth() == spin.maximumWidth() == spin.sizeHint().width()
         for interval in (0.0, 10.0, 10_000.0):
             spin.setValue(interval)

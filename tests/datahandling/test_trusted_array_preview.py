@@ -22,7 +22,7 @@ from qplot.datahandling.trusted_query_types import (
     TRUSTED_DERIVED_MAX_ARRAY_BYTES,
     TrustedSourceRevisionNamespace,
 )
-from qplot.datahandling.trusted_work_scheduler import TrustedWorkKind
+from qplot.datahandling.trusted_work_scheduler import RenderingOptions, TrustedWorkKind
 from tests.datahandling.test_stage5c_real_qcodes import (
     _load_basic_runs,
     _ReadOnlySqliteExecutor,
@@ -146,3 +146,69 @@ def test_oversized_array_headers_rejected_before_allocation():
     )
     with pytest.raises(_UnsupportedNumericData):
         _decode(stream.getvalue())
+
+
+@pytest.mark.parametrize("mode", ["magnitude", "phase", "real", "imag", "imag_vs_real"])
+@pytest.mark.parametrize("array_records", [False, True], ids=["scalar", "array"])
+def test_complex_line_pixels_match_selected_projection(mode, array_records):
+    observation = _observation()
+    values = np.array([1 + 2j, -3 + 4j, -2 - 3j, 4 - 1j])
+    x = np.arange(4., 8.)
+    if mode == "imag_vs_real":
+        projected_x, projected_y = values.real, values.imag
+    else:
+        projected_x = x
+        projected_y = {"magnitude": np.abs, "phase": lambda z: np.angle(z, deg=True),
+                       "real": np.real, "imag": np.imag}[mode](values)
+    parameters = (observation.parameters[0], replace(observation.parameters[-1], paramtype="complex"))
+    if array_records:
+        rows = ((1, _blob(x), _blob(values)),)
+        parameters = tuple(replace(param, paramtype="array") for param in parameters)
+    else:
+        rows = tuple((index + 1, float(coordinate), _blob(value))
+                     for index, (coordinate, value) in enumerate(zip(x, values, strict=True)))
+    source = replace(observation, parameters=parameters, sample_rows=rows)
+    reference = replace(observation, sample_rows=tuple(
+        (index + 1, float(x), float(y)) for index, (x, y)
+        in enumerate(zip(projected_x, projected_y, strict=True))
+    ))
+    options = RenderingOptions.from_mapping({"complex_1d": mode, "width": 96, "height": 96})
+    actual = render_trusted_derived_payload(source, TrustedWorkKind.THUMBNAIL, options)
+    expected = render_trusted_derived_payload(reference, TrustedWorkKind.THUMBNAIL, options)
+    assert actual["status"] == "ok", actual
+    image = dict(actual["images"][0])
+    assert image["complex_mode"] == mode
+    assert image["sampled_points"] == 4
+    assert image["bytes"] == dict(expected["images"][0])["bytes"]
+
+
+@pytest.mark.parametrize("mode", ["magnitude", "phase", "real", "imag"])
+def test_complex_heatmap_pixels_match_selected_projection(mode):
+    observation = _observation(dimensions=2)
+    values = np.array([1 + 2j, -3 + 4j, -2 - 3j, 4 - 1j])
+    coordinates = [np.array([0., 0., 1., 1.]), np.array([0., 1., 0., 1.])]
+    projected = {"magnitude": np.abs, "phase": lambda z: np.angle(z, deg=True),
+                 "real": np.real, "imag": np.imag}[mode](values)
+    parameters = tuple(replace(param, paramtype="array") for param in observation.parameters)
+    source = replace(observation, parameters=parameters, validated_2d_layouts=(),
+                     sample_rows=((1, *map(_blob, coordinates), _blob(values)),))
+    reference = replace(source, sample_rows=((1, *map(_blob, coordinates), _blob(projected)),))
+    options = RenderingOptions.from_mapping({"complex_nd": mode, "width": 96, "height": 96})
+    actual = render_trusted_derived_payload(source, TrustedWorkKind.PREVIEW, options)
+    expected = render_trusted_derived_payload(reference, TrustedWorkKind.PREVIEW, options)
+    assert actual["status"] == "ok", actual
+    assert dict(actual["images"][0])["complex_mode"] == mode
+    assert dict(actual["images"][0])["bytes"] == dict(expected["images"][0])["bytes"]
+
+
+def test_complex_nyquist_preview_still_validates_recorded_coordinate_lengths():
+    observation = _observation()
+    observation = replace(
+        observation,
+        parameters=tuple(replace(param, paramtype="array") for param in observation.parameters),
+        sample_rows=((1, _blob([1., 2., 3.]), _blob([2. + 3j, 3. + 4j])),),
+    )
+    options = RenderingOptions.from_mapping({"complex_1d": "imag_vs_real"})
+    payload = render_trusted_derived_payload(observation, TrustedWorkKind.THUMBNAIL, options)
+    assert payload["status"] == "unsupported"
+    assert "sizes differ" in payload["description"]

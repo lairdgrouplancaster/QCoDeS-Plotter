@@ -85,6 +85,7 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             return
 
         self._colorbar_manual_levels = None
+        self._sync_colorbar_scale_mode()
         minimum, maximum = levels
         self._set_colorbar_levels(minimum, maximum)
 
@@ -216,6 +217,7 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             self._sync_colorbar_axis_scaling()
 
         self._colorbar_last_levels = (vmin, vmax)
+        self._sync_colorbar_scale_mode()
         self._sync_colorbar_level_fields(vmin, vmax)
         return True
 
@@ -984,12 +986,7 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             return
 
         self._colorbar_manual_levels = levels
-        if "relevel_refresh" in self.__dict__:
-            self.relevel_refresh.setChecked(False)
-        if "colorbar_manual_radio" in self.__dict__:
-            self.colorbar_manual_radio.setChecked(True)
-        if "colorbar_auto_radio" in self.__dict__:
-            self.colorbar_auto_radio.setChecked(False)
+        self._sync_colorbar_scale_mode()
         self._sync_colorbar_level_fields(*levels)
 
     def _current_colorbar_levels(self):

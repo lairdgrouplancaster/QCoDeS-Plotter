@@ -28,6 +28,7 @@ from ._refresh_interval import (
     remember_refresh_interval,
     set_refresh_interval,
 )
+from ._shared_refresh import apply_shared_refresh_interval, refresh_plot_sources
 from ._widgets import (
     RunList,
     moreInfo,
@@ -63,7 +64,7 @@ class RunControlsMixin:
 
         """
         self.spinBox = RefreshIntervalSpinBox(
-            refresh_description="How often the run list checks for new runs.",
+            refresh_description="How often the run list and live plots check for new data.",
         )
         set_refresh_interval(
             self.spinBox, self.config.get("user_preference.default_refresh_rate"),
@@ -92,10 +93,10 @@ class RunControlsMixin:
         self.refreshDatabaseButton.setIcon(
             self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_BrowserReload)
             )
-        self.refreshDatabaseButton.setToolTip("Refresh the database run list (R)")
-        self.refreshDatabaseButton.setAccessibleName("Refresh database")
+        self.refreshDatabaseButton.setToolTip("Refresh the run list and all live plots (R)")
+        self.refreshDatabaseButton.setAccessibleName("Refresh run list and live plots")
         self.refreshDatabaseButton.setFixedSize(28, 26)
-        self.refreshDatabaseButton.clicked.connect(self.refreshMain)
+        self.refreshDatabaseButton.clicked.connect(lambda: RunControlsMixin.refresh_all(self))
 
         self.closeAllPlotsButton = qtw.QToolButton()
         self.closeAllPlotsButton.setObjectName("closeAllPlotsButton")
@@ -175,7 +176,9 @@ class RunControlsMixin:
         sublayout.addWidget(self.autoPlotBox)
 
         sublayout.addSpacing(12)
-        sublayout.addWidget(qtw.QLabel("Refresh:"))
+        refresh_label = qtw.QLabel("Refresh every")
+        refresh_label.setBuddy(self.spinBox)
+        sublayout.addWidget(refresh_label)
         sublayout.addWidget(self.spinBox)
         sublayout.addWidget(self.refreshDatabaseButton)
 
@@ -305,9 +308,9 @@ class RunControlsMixin:
         refresh_button.setIcon(self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_BrowserReload))
         refresh_button.setText("Refresh")
         refresh_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        refresh_button.setToolTip("Check for new measurements")
-        refresh_button.setAccessibleName("Refresh database")
-        refresh_button.clicked.connect(self.refreshMain)
+        refresh_button.setToolTip("Refresh the run list and all live plots")
+        refresh_button.setAccessibleName("Refresh run list and live plots")
+        refresh_button.clicked.connect(lambda: RunControlsMixin.refresh_all(self))
         layout.addWidget(refresh_button)
         self.emptyStateRefreshButton = refresh_button
 
@@ -416,10 +419,16 @@ class RunControlsMixin:
         except (TypeError, ValueError):
             return 0.0
 
+    @QtCore.pyqtSlot()
+    def refresh_all(self):
+        """Manually refresh the run table and each live plot source once."""
+        refresh_plot_sources(self)
+        self.refreshMain()
+
     @QtCore.pyqtSlot(float)
     def monitorIntervalChanged(self, interval):
         """
-        Updates the refresh interval for checking for new runs in database.
+        Updates the shared refresh interval for the run list and live plots.
 
         """
         if not self._save_refresh_interval(interval):
@@ -511,6 +520,7 @@ class RunControlsMixin:
                 state.monitor_was_active = interval > 0
                 state.monitor_interval_ms = max(1, round(interval * 1000))
         RunControlsMixin._update_automatic_refresh_timer(self, interval)
+        apply_shared_refresh_interval(self, interval)
 
     def _committed_refresh_database_instance(self):
         """Return the accepted source instance, never inferring it from text."""

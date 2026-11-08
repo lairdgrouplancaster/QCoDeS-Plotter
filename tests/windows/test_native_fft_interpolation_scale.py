@@ -78,7 +78,7 @@ def test_scale_extremes_through_actual_fft_refresh_csv_and_reset(
         assert plot.plot.ctrl.fftCheck.isChecked()
         for refresh in (False, True):
             if refresh:
-                plot.refreshPlotButton.click()
+                plot.refresh_plot_data()
                 wait_for(lambda plot=plot: not plot.worker.running)
                 plot.monitor.stop()
             for line in (plot.line, plot.line.curve):

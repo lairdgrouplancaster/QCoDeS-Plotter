@@ -77,6 +77,11 @@ def _render_1d(
         y = _finite_number(row[indexes[y_name]])
         if x is not None and y is not None:
             points.append((x, y))
+    return _render_line_points(points, width, height, cancel_check)
+
+
+def _render_line_points(points, width, height, cancel_check):
+    """Rasterise finite acquired pairs in their original order."""
     rgba = bytearray(b"\xff" * (width * height * 4))
     if not points:
         return rgba, 0

@@ -54,6 +54,7 @@ from qplot.datahandling.trusted_presentation import (
 from qplot.datahandling.trusted_query_types import (
     TRUSTED_DERIVED_ARRAY_ROWS_PER_WINDOW,
     TRUSTED_DERIVED_MAX_ARRAY_BYTES,
+    TRUSTED_DERIVED_MAX_COMPLEX_CELL_BYTES,
     TRUSTED_DERIVED_MAX_DEPENDENTS,
     TRUSTED_DERIVED_MAX_GRID_SAMPLE_ROWS,
     TRUSTED_DERIVED_MAX_SAMPLE_CELLS,
@@ -301,6 +302,7 @@ class TrustedMetadataQueryAdapter:
         self._unavailable_run_fields: dict[int, tuple[str, ...]] = {}
         self._setpoint_summaries: dict[int, tuple[TrustedSetpointSummary, ...]] = {}
         self._preview_array_columns: dict[int, tuple[str, ...]] = {}
+        self._preview_complex_columns: dict[int, tuple[str, ...]] = {}
         self._setpoint_summaries_truncated: dict[int, bool] = {}
         self._setpoint_summary_watermarks: dict[int, int] = {}
         self._setpoint_summary_names: dict[int, tuple[str, ...]] = {}
@@ -339,6 +341,7 @@ class TrustedMetadataQueryAdapter:
         self._result_columns.clear()
         self._setpoint_summaries.clear()
         self._preview_array_columns.clear()
+        self._preview_complex_columns.clear()
         self._setpoint_summaries_truncated.clear()
         self._setpoint_summary_watermarks.clear()
         self._setpoint_summary_names.clear()
@@ -529,6 +532,7 @@ class TrustedMetadataQueryAdapter:
             # tied to its former result table.
             self._setpoint_summaries.pop(record.run_id, None)
             self._preview_array_columns.pop(record.run_id, None)
+            self._preview_complex_columns.pop(record.run_id, None)
             self._setpoint_summaries_truncated.pop(record.run_id, None)
             self._setpoint_summary_watermarks.pop(record.run_id, None)
             self._setpoint_summary_names.pop(record.run_id, None)
@@ -690,9 +694,13 @@ class TrustedMetadataQueryAdapter:
         preview_columns = tuple(
             name for name in result_columns if name != "id"
         )[:TRUSTED_DERIVED_MAX_SOURCE_COLUMNS]
-        self._preview_array_columns[run_id] = tuple(
-            name for name in preview_columns if name in array_parameters
-        )
+        complex_parameters = {
+            parameter.name for parameter in parameter_views_from_run_metadata(metadata)
+            if parameter.paramtype == "complex"
+        }
+        blob_parameters = array_parameters | complex_parameters
+        self._preview_array_columns[run_id] = tuple(name for name in preview_columns if name in blob_parameters)
+        self._preview_complex_columns[run_id] = tuple(name for name in preview_columns if name in complex_parameters)
         has_array_records = bool(
             array_parameters.intersection((*measure_parameters, *sweep_parameters))
         )
@@ -930,6 +938,14 @@ class TrustedMetadataQueryAdapter:
         grid_budget = TRUSTED_DERIVED_MAX_GRID_SAMPLE_ROWS - (
             TRUSTED_DERIVED_ROWS_PER_WINDOW if needs_other_samples else 0
         )
+        # Public cached run fields omit the full description. Retain the
+        # codec names captured by expensive_run before it discards that text.
+        complex_columns = set(self._preview_complex_columns.get(run_id, ())).intersection(retained_columns)
+        if complex_columns:
+            # Reserve a quarter of the byte budget for edge/window samples.
+            # Bound grid BLOBs before they cross the trusted helper boundary.
+            grid_budget = min(grid_budget, (TRUSTED_DERIVED_MAX_ARRAY_BYTES * 3 // 4)
+                              // (len(complex_columns) * TRUSTED_DERIVED_MAX_COMPLEX_CELL_BYTES))
         grid_sample_plans = tuple(
             plan
             for proof in layout_proofs
@@ -947,6 +963,13 @@ class TrustedMetadataQueryAdapter:
             for name in retained_columns
         )
         selected = ", ".join(('"id"', *numeric_expressions))
+        grid_selected = ", ".join(('"id"', *(
+            f"CASE WHEN typeof({quote_sqlite_identifier(name)})='blob' AND "
+            f"length({quote_sqlite_identifier(name)}) <= {TRUSTED_DERIVED_MAX_COMPLEX_CELL_BYTES} "
+            f"THEN {quote_sqlite_identifier(name)} ELSE NULL END AS {quote_sqlite_identifier(name)}"
+            if name in complex_columns else numeric
+            for name, numeric in zip(retained_columns, numeric_expressions, strict=True)
+        )))
         array_columns = set(self._preview_array_columns.get(run_id, ())).intersection(
             retained_columns
         )
@@ -954,7 +977,9 @@ class TrustedMetadataQueryAdapter:
         if array_columns:
             # Bound the whole capture, including overlapping sampling windows,
             # before any BLOB crosses the helper boundary.
-            blob_limit = TRUSTED_DERIVED_MAX_ARRAY_BYTES // (
+            window_budget = (TRUSTED_DERIVED_MAX_ARRAY_BYTES // 4
+                             if complex_columns and grid_sample_plans else TRUSTED_DERIVED_MAX_ARRAY_BYTES)
+            blob_limit = window_budget // (
                 len(array_columns) * TRUSTED_DERIVED_ARRAY_ROWS_PER_WINDOW
                 * (TRUSTED_DERIVED_SAMPLE_WINDOWS + 1)
             )
@@ -981,7 +1006,7 @@ class TrustedMetadataQueryAdapter:
             placeholders = ", ".join("?" for _ in sampled_grid_ids)
             sample_queries = [
                 TrustedQuery(
-                    f"SELECT {selected} FROM {table} "
+                    f"SELECT {grid_selected} FROM {table} "
                     f'WHERE "id" IN ({placeholders}) ORDER BY "id" '
                     f"LIMIT {TRUSTED_DERIVED_MAX_GRID_SAMPLE_ROWS}",
                     sampled_grid_ids,

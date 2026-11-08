@@ -1278,6 +1278,8 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
         )
         before_operation = np.asarray(nonuniform_window.dataGrid).copy()
         assert nonuniform_window._colorbar_manual_levels is None
+        assert nonuniform_window.relevel_refresh.isChecked()
+        nonuniform_window.relevel_refresh.setChecked(False)
         assert not nonuniform_window.relevel_refresh.isChecked()
         previous_worker = nonuniform_window.worker
         subtract_row_mean.input.setChecked(True)
@@ -1617,7 +1619,6 @@ def test_toggling_plot_controls_preserves_heatmap_view_range(tmp_path, monkeypat
 
         for control in (
             heatmap_window.oper_dock,
-            heatmap_window.toolbarRef,
             heatmap_window.toolbarCo_ord,
         ):
             assert control.isVisible()
@@ -1638,7 +1639,6 @@ def test_toggling_plot_controls_preserves_heatmap_view_range(tmp_path, monkeypat
         manual_range = np.asarray(heatmap_window.vb.viewRange(), dtype=float)
         for control in (
             heatmap_window.oper_dock,
-            heatmap_window.toolbarRef,
             heatmap_window.toolbarCo_ord,
         ):
             control.toggleViewAction().trigger()

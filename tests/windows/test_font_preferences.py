@@ -51,6 +51,7 @@ def test_font_size_rejects_invalid_settings(cfg, value):
 
 class PlotFontWindow(qtw.QMainWindow):
     update_theme = plotWidget.update_theme
+    _update_cursor_index_width = plotWidget._update_cursor_index_width
 
     def __init__(self, cfg):
         super().__init__()

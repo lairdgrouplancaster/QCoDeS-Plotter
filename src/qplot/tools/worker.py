@@ -14,6 +14,13 @@ from qplot.datahandling._numeric_arrays import NumericArrayReader
 from qplot.datahandling._sqlite_identifiers import (
     quote_identifier_text as _sqlite_identifier,
 )
+from qplot.datahandling.complex_data import (
+    ComplexSamples,
+    complex_parameter,
+    complex_values,
+    contains_complex,
+    project_complex,
+)
 from qplot.datahandling.dimensions import ensure_supported_plot_dimensions
 from qplot.datahandling.file_identity import (
     canonical_database_path,
@@ -110,6 +117,7 @@ class loader(QtCore.QRunnable):
                  heatmap_full_axis_ranges: dict | None = None,
                  database_identity=None,
                  deadline=None,
+                 complex_mode: str = "magnitude",
                  ):
         """
         Sets up worker with required data for run()
@@ -151,6 +159,8 @@ class loader(QtCore.QRunnable):
             cache_database_path(cache)
         )
         self.param = param
+        self.complex_mode = complex_mode
+        self.complex_samples: ComplexSamples | None = None
         self.dataset_completed: bool | None = None
         self.display_param = copy(param)
         self.param_dict = param_dict
@@ -482,7 +492,7 @@ class loader(QtCore.QRunnable):
             if len(getattr(self.param, "depends_on_", ())) > 1:
                 self._validate_heatmap_parameter_types()
             elif len(self.param.depends_on_) == 1:
-                for name in (self.param.name, *self.param.depends_on_):
+                for name in self.param.depends_on_:
                     if getattr(self.param_dict[name], "type", None) == "complex":
                         self._reject_complex_line(name)
             self._prepare_trusted_prefix()
@@ -578,6 +588,8 @@ class loader(QtCore.QRunnable):
                 data = self._normalise_array_records(data)
                 depvarData = data[self.param.name]
                 acquired = self._acquired_sample_mask(depvarData, write_status)
+                if len(self.param.depends_on_) == 2 and contains_complex(depvarData, check=self._check_cancelled):
+                    data, depvarData = self._project_heatmap_data(data, depvarData, acquired)
                 # Count this parameter's acquired samples, including array
                 # elements but excluding preallocated, unmeasured padding.
                 self.loaded_point_count = int(np.count_nonzero(acquired))
@@ -681,6 +693,18 @@ class loader(QtCore.QRunnable):
                 and not self.sampled_heatmap_source
                 and not self.aggregated_heatmap_source
             )
+            parts = getattr(self, "_complex_parts", None)
+            if parts:
+                xs, ys, values = (concatenate_record_samples([part[i] for part in parts]) for i in range(3))
+                self.complex_samples = ComplexSamples(
+                    (xs, ys), tuple(self.param_dict[self.axes_dict[axis]] for axis in ("x", "y")),
+                    values, self.complex_mode,
+                )
+                self._complex_parts = []
+            if self.complex_samples is not None and len(self.complex_samples.coordinates) == 2:
+                self.complex_samples = self.complex_samples.bind_grid(
+                    self.axis_data["x"], self.axis_data["y"], check=self._check_cancelled,
+                )
             completed_result = capture_plot_result(self)
         except PlotWorkCancelled:
             self._finish_cancelled()
@@ -774,7 +798,9 @@ class loader(QtCore.QRunnable):
                 values = [np.asarray(column[index]) for column in columns]
                 size = values[0].size
                 for name, value in zip(names, values, strict=True):
-                    if heatmap:
+                    if name == self.param.name:
+                        pass  # Measurement components are selected after record normalisation.
+                    elif heatmap:
                         self._real_heatmap_values(
                             value, name, coordinate=name != self.param.name,
                         )
@@ -1163,7 +1189,7 @@ class loader(QtCore.QRunnable):
 
     def _has_array_heatmap_columns(self):
         return any(
-            getattr(param, "type", None) == "array"
+            getattr(param, "type", None) in ("array", "complex")
             for param in (
                 self.param,
                 self.param_dict[self.axes_dict["x"]],
@@ -1176,7 +1202,7 @@ class loader(QtCore.QRunnable):
         """Yield one aligned record, without materialising any array BLOB."""
         names = (self.axes_dict["x"], self.axes_dict["y"], self.param.name)
         array_columns = [
-            getattr(self.param_dict[name], "type", None) == "array"
+            getattr(self.param_dict[name], "type", None) in ("array", "complex")
             for name in names
         ]
         columns = ", ".join(
@@ -1207,7 +1233,7 @@ class loader(QtCore.QRunnable):
                                 self.table_name, name, rowid, readonly=True,
                             ))
                             values[index] = NumericArrayReader(blob)
-                            if values[index].dtype.kind == "c":
+                            if values[index].dtype.kind == "c" and name != self.param.name:
                                 self._reject_complex_heatmap(
                                     name,
                                     coordinate=name != self.param.name,
@@ -1263,6 +1289,8 @@ class loader(QtCore.QRunnable):
 
     def _read_array_heatmap_arrays(self, conn):
         """Keep a bounded sample buffer, or stream two passes into a mean grid."""
+        self._complex_parts = []
+        self._complex_parts_bytes = 0
         buffered: list[tuple[np.ndarray, np.ndarray, np.ndarray]] | None = []
         source_count = matching_count = 0
         # Keep exact coordinates only while an axis could fit on screen.
@@ -1344,6 +1372,8 @@ class loader(QtCore.QRunnable):
         means = FiniteBinMeans((axes[1].size, axes[0].size), self._check_cancelled)
 
         def accumulate(*, replay=False):
+            self._complex_parts = []
+            self._complex_parts_bytes = 0
             # Both passes use the same private snapshot, frozen bin geometry,
             # and visible-value filtering. Close each iterator (including its
             # read-only BLOBs) before starting the optional exact replay.
@@ -1669,8 +1699,6 @@ class loader(QtCore.QRunnable):
             name = self.axes_dict[axis]
             if getattr(self.param_dict[name], "type", None) == "complex":
                 self._reject_complex_heatmap(name, coordinate=True)
-        if getattr(self.param, "type", None) == "complex":
-            self._reject_complex_heatmap()
 
 
     def _real_heatmap_values(self, values, parameter_name, *, coordinate=False):
@@ -1708,10 +1736,10 @@ class loader(QtCore.QRunnable):
             coordinate=True,
         )
         self._check_cancelled()
-        z_values = self._real_heatmap_values(
-            z_values,
-            getattr(self.param, "name", "measurement"),
-        )
+        complex_measurement = contains_complex(z_values, check=self._check_cancelled)
+        z_values = (complex_values(z_values) if complex_measurement else self._real_heatmap_values(
+            z_values, getattr(self.param, "name", "measurement"),
+        ))
         # Broadcast within a decoded record/chunk, before flattening or
         # masking, so a scalar slow setpoint accompanies every array sample.
         x_values, y_values, z_values = np.broadcast_arrays(x_values, y_values, z_values)
@@ -1726,7 +1754,18 @@ class loader(QtCore.QRunnable):
         finite = numeric_isfinite(x_data) & numeric_isfinite(y_data) & numeric_isfinite(z_data)
         self._check_cancelled()
 
-        return x_data[finite], y_data[finite], z_data[finite]
+        xs, ys, zs = x_data[finite], y_data[finite], z_data[finite]
+        if complex_measurement:
+            mode = getattr(self, "complex_mode", "magnitude")
+            parts = self.__dict__.setdefault("_complex_parts", [])
+            size = self.__dict__.get("_complex_parts_bytes", 0) + xs.nbytes + ys.nbytes + zs.nbytes
+            if size > MAX_TRUSTED_FULL_PLOT_DECODE_BYTES:
+                raise ValueError("Recorded complex cursor samples exceed the 1 GiB decoding budget.")
+            self._complex_parts_bytes = size
+            parts.append((xs.copy(), ys.copy(), zs.copy()))
+            self.display_param = complex_parameter(self.param, mode)
+            return xs, ys, project_complex(zs, mode)
+        return xs, ys, zs
 
 
     @staticmethod
@@ -2335,6 +2374,33 @@ class loader(QtCore.QRunnable):
             if x_name != self.param.name
             else self.param.depends_on_[0]
         )
+        if contains_complex(data[self.param.name], check=self._check_cancelled):
+            setpoint_name = self.param.depends_on_[0]
+            setpoints = self._real_line_values(data[setpoint_name], setpoint_name)
+            values = complex_values(data[self.param.name])
+            if setpoints.shape != values.shape:
+                raise ValueError("1D setpoint and measurement shapes do not match")
+            valid = np.asarray(valid_rows) & numeric_isfinite(setpoints) & np.isfinite(values)
+            setpoints, values = setpoints[valid].ravel(), values[valid].ravel()
+            mode = getattr(self, "complex_mode", "magnitude")
+            self.complex_samples = ComplexSamples(
+                (setpoints,), (self.param_dict[setpoint_name],), values, mode,
+            )
+            if mode == "imag_vs_real":
+                axis_data = {"x": values.real.copy(), "y": values.imag.copy()}
+                axis_param = {"x": complex_parameter(self.param, "real"),
+                              "y": complex_parameter(self.param, "imag")}
+            else:
+                projected = project_complex(values, mode)
+                measurement = complex_parameter(self.param, mode)
+                if x_name == self.param.name:
+                    axis_data = {"x": projected, "y": setpoints}
+                    axis_param = {"x": measurement, "y": self.param_dict[setpoint_name]}
+                else:
+                    axis_data = {"x": setpoints, "y": projected}
+                    axis_param = {"x": self.param_dict[setpoint_name], "y": measurement}
+            self.display_param = axis_param["y"]
+            return axis_data, axis_param
         # Flatten both arrays with the same mask in QCoDeS record order.
         # Sorting or uniquing either axis would break sample alignment.
         x_values = self._real_line_values(data[x_name], x_name)
@@ -2354,6 +2420,23 @@ class loader(QtCore.QRunnable):
         axis_param["y"] = self.param_dict[y_name]
         
         return axis_data, axis_param
+
+    def _project_heatmap_data(self, data, values, acquired):
+        """Project private display data while retaining acquired source samples."""
+        values = complex_values(values)
+        names = tuple(self.axes_dict[axis] for axis in ("x", "y"))
+        coordinates = tuple(self._real_heatmap_values(data[name], name, coordinate=True)
+                            for name in names)
+        xs, ys, values = np.broadcast_arrays(*coordinates, values)
+        valid = acquired & np.isfinite(values) & numeric_isfinite(xs) & numeric_isfinite(ys)
+        mode = getattr(self, "complex_mode", "magnitude")
+        self.complex_samples = ComplexSamples(
+            (xs[valid].ravel(), ys[valid].ravel()),
+            tuple(self.param_dict[name] for name in names), values[valid].ravel(), mode,
+        )
+        self.display_param = complex_parameter(self.param, mode)
+        projected = project_complex(values, mode)
+        return {**data, self.param.name: projected}, projected
         
     
     def for_shaped_2d(self, data, depvarData, *, acquired=None):

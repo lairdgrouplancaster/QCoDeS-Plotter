@@ -2319,6 +2319,8 @@ def test_live_facts_reconciliation_and_format_invalidation_are_narrow(
     assert dict(formats_before[TrustedWorkKind.THUMBNAIL].options.values) == {
         "height": 96,
         "width": 96,
+        "complex_1d": "magnitude",
+        "complex_nd": "magnitude",
     }
     bridge.update_preview_size(333)
     assert [kind for kind, _value in coordinator.format_updates] == [
@@ -2332,6 +2334,33 @@ def test_live_facts_reconciliation_and_format_invalidation_are_narrow(
         bridge._formats[TrustedWorkKind.THUMBNAIL]
         == formats_before[TrustedWorkKind.THUMBNAIL]
     )
+
+
+def test_complex_preference_change_rejects_old_image_publications(bound_bridge, monkeypatch):
+    window, bridge, coordinator, _runs = bound_bridge
+    window._selected_run_guid = "guid-1"
+    bridge.select_run("guid-1")
+    stale = [_publication(bridge, coordinator, "guid-1", kind)
+             for kind in (TrustedWorkKind.THUMBNAIL, TrustedWorkKind.PREVIEW)]
+    metadata_format = bridge._formats[TrustedWorkKind.METADATA]
+    window.config = {"user_preference.complex_1d": "imag_vs_real", "user_preference.complex_nd": "phase"}
+    cleared = []
+    monkeypatch.setattr(window.RunList, "show_run_preview_placeholders", lambda: cleared.append(True), raising=False)
+    bridge.update_complex_preferences()
+    assert cleared == [True]
+    assert bridge._formats[TrustedWorkKind.METADATA] == metadata_format
+    assert [kind for kind, _ in coordinator.format_updates] == [TrustedWorkKind.THUMBNAIL, TrustedWorkKind.PREVIEW]
+    for kind in (TrustedWorkKind.THUMBNAIL, TrustedWorkKind.PREVIEW):
+        options = dict(bridge._formats[kind].options.values)
+        assert (options["complex_1d"], options["complex_nd"]) == ("imag_vs_real", "phase")
+    before = len(window.RunList.preview_updates)
+    for publication in stale:
+        bridge._publish(publication)
+    assert len(window.RunList.preview_updates) == before
+    assert not window.infoBox.preview.retained
+    bridge.update_preview_size(333)
+    options = dict(bridge._formats[TrustedWorkKind.PREVIEW].options.values)
+    assert options == {"width": 333, "height": 333, "complex_1d": "imag_vs_real", "complex_nd": "phase"}
 
 
 def test_unsupported_and_malformed_images_are_bounded_and_nonfatal(

@@ -159,7 +159,7 @@ def test_appearance_removal_preserves_cursor_mode(
     _assert_source_values(target)
     _assert_pointer_mode(target, snapping)
 
-    target.refreshPlotButton.click()
+    target.refresh_plot_data()
     _wait_for(lambda: not target.worker.running and not getattr(target, "_refresh_pending", False))
     _assert_source_values(target)
     _assert_pointer_mode(target, snapping)

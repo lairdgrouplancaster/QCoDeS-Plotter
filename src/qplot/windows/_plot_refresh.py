@@ -22,6 +22,7 @@ from qplot.tools import loader
 from qplot.tools.operation_registry import OperationValidationError
 from qplot.tools.plot_result import PlotLoadResult
 
+from ._complex_plots import configured_complex_mode, sync_complex_axes
 from ._dataset_handle import DatasetKey, dataset_key_matches_current_source
 from ._plot_host import PlotHost
 from ._refresh_interval import refresh_interval_value
@@ -208,6 +209,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 "axis_param",
                 "dataGrid",
                 "display_param",
+                "complex_samples",
                 "last_ds_len",
                 ) + tuple(getattr(self, "_extra_publication_fields", ())):
             fields[name] = (name in self.__dict__, self.__dict__.get(name))
@@ -456,7 +458,9 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 ),
             "heatmap_axis_ranges": heatmap_axis_ranges,
             "heatmap_full_axis_ranges": heatmap_full_axis_ranges,
+            "complex_mode": configured_complex_mode(self),
         }
+        self._requested_complex_mode = loader_kwargs["complex_mode"]
         database_identity = getattr(
             getattr(self, "_dataset_key", None),
             "database_identity",
@@ -759,6 +763,11 @@ class PlotRefreshMixin(_PlotRefreshBase):
             result: PlotLoadResult | None = worker.result
             if result is None:
                 raise AttributeError("The completed plot worker has no result.")
+            if (result.complex_samples is not None
+                    and "_frozen_result" not in self.__dict__
+                    and worker.complex_mode != configured_complex_mode(self)):
+                self._queue_pending_refresh(force=True)
+                return False
             self._begin_refresh_publication(worker)
             prepare_publication = getattr(self, "_prepare_plot_publication", None)
             if callable(prepare_publication):
@@ -815,6 +824,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 "y": result.axis_param["y"],
                 }
             self.display_param = result.display_param if result.display_param is not None else self.param
+            self.complex_samples = result.complex_samples
 
             # For 2d plots
             if result.dataGrid is not None:
@@ -831,6 +841,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 )
             if callable(update_coordinate_context):
                 update_coordinate_context()
+            sync_complex_axes(self)
             elapsed = perf_counter() - worker.started_at
 
             if result.loaded_from_sql_heatmap:

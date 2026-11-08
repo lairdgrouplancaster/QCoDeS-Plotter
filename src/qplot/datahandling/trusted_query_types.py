@@ -38,6 +38,8 @@ TRUSTED_DERIVED_MAX_SAMPLE_CELLS = TRUSTED_DERIVED_MAX_SAMPLE_ROWS * (
 TRUSTED_DERIVED_RUN_TEXT_MAX_BYTES = 256 * 1024
 TRUSTED_DERIVED_ARRAY_ROWS_PER_WINDOW = 8
 TRUSTED_DERIVED_MAX_ARRAY_BYTES = 1024 * 1024
+# Current QCoDeS scalar complex NPY records fit in a header plus one sample.
+TRUSTED_DERIVED_MAX_COMPLEX_CELL_BYTES = 256
 PrimitiveScalar: TypeAlias = None | bool | int | float | str | bytes
 PrimitiveValue: TypeAlias = PrimitiveScalar | tuple["PrimitiveValue", ...]
 FrozenFields: TypeAlias = tuple[tuple[str, PrimitiveValue], ...]

@@ -28,8 +28,6 @@ def heatmap(request, qapplication):
         window.bar.setImageItem(window.image, insert_in=window.plot)
         window._colorbar_manual_levels = None
         window._colorbar_colormap_name = "viridis"
-        window.relevel_refresh = qtw.QCheckBox(window)
-        window.relevel_refresh.setChecked(True)
         window._init_colorbar_scale_controls()
         window.show()
         window.open_colorbar_scale_dialog()
@@ -59,7 +57,8 @@ def test_manual_input_has_validator_numeric_meaning(heatmap, texts, expected):
     heatmap.colorbar_manual_radio.click()
     assert heatmap._colorbar_manual_levels == expected
     assert tuple(heatmap.bar.levels()) == expected
-    assert not heatmap.relevel_refresh.isChecked()
+    assert heatmap.relevel_refresh.isChecked()
+    assert not heatmap.relevel_refresh.isEnabled()
 
 
 @pytest.mark.parametrize("text", [

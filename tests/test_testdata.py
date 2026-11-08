@@ -348,7 +348,8 @@ def test_example_csv_is_ready_to_generate(tmp_path):
     specifications = read_specifications(csv_path)
 
     assert csv_path.read_bytes().startswith(b"\xef\xbb\xbf")
-    assert len(specifications) == 3
+    assert len(specifications) == 5
+    assert specifications[1].measurements[0].paramtype == "numeric"
     measured = specifications[2].measurements
     assert [m.dimensions for m in measured] == [1, 2, 3, 4]
     assert [m.point_count for m in measured] == [21, 21 * 11, 3 * 11 * 21, 2 * 3 * 11 * 21]
@@ -356,6 +357,58 @@ def test_example_csv_is_ready_to_generate(tmp_path):
     assert sum(m.point_count for m in quantities if m.dimensions <= 2) > 0.8 * sum(m.point_count for m in quantities)
     with pytest.raises(SpecificationError, match="already exists"):
         write_example_csv(csv_path)
+
+
+@pytest.mark.parametrize("source_name", ["example.csv", *INSTRUCTION_FILE_NAMES])
+def test_complex_examples_contain_s_parameters_against_frequency(tmp_path, source_name):
+    source = tmp_path / source_name
+    if source_name == "example.csv":
+        write_example_csv(source)
+    else:
+        copy_instruction_collection(tmp_path)
+    specifications = read_specifications(source)
+    complex_runs = [
+        run for run in specifications
+        if any(measured.paramtype == "complex" for measured in run.measurements)
+    ]
+    assert [run.name for run in complex_runs] == ["complex_response", "complex_gate_map"]
+    for dimensions, run in enumerate(complex_runs, start=1):
+        assert [measured.name for measured in run.measurements] == ["S11", "S21", "S12"]
+        frequency = next(axis for axis in run.axes if axis.name == "frequency")
+        assert (frequency.label, frequency.unit) == ("Frequency", "GHz")
+        assert (frequency.start, frequency.stop, frequency.points) == (4.0, 8.0, 21)
+        for measured in run.measurements:
+            assert measured.dimensions == dimensions
+            assert measured.axes[-1] == frequency
+            assert measured.paramtype == "complex"
+            assert measured.label == measured.name
+            assert measured.unit == ""
+        if dimensions == 2:
+            gate, _ = run.axes
+            assert (gate.name, gate.unit) == ("V_G", "V")
+            assert (gate.start, gate.stop, gate.points) == (-1.0, 1.0, 11)
+
+    output = testdata_module.generate_database(complex_runs, tmp_path / "s-parameters.db")
+    for run_id, run in enumerate(complex_runs, start=1):
+        dataset = readonly_module.load_by_id_read_only(run_id, output)
+        try:
+            for measured in run.measurements:
+                assert dataset.paramspecs[measured.name].type == "complex"
+                data = dataset.get_parameter_data(measured.name)[measured.name]
+                expected_frequency = np.linspace(4.0, 8.0, 21)
+                if measured.dimensions == 2:
+                    expected_frequency = np.tile(expected_frequency, 11)
+                    np.testing.assert_allclose(
+                        data["V_G"].ravel(), np.repeat(np.linspace(-1.0, 1.0, 11), 21)
+                    )
+                np.testing.assert_allclose(data["frequency"].ravel(), expected_frequency)
+                values = data[measured.name]
+                assert values.size == measured.point_count
+                assert np.iscomplexobj(values)
+                assert np.isfinite(values).all()
+                assert np.any(values.real != 0) and np.any(values.imag != 0)
+        finally:
+            dataset.conn.close()
 
 
 def test_example_cli_reports_written_path(tmp_path, capsys):
@@ -371,17 +424,27 @@ def test_instruction_collection_is_cumulative_and_spans_10mb_to_30gb(tmp_path):
     output_paths = copy_instruction_collection(tmp_path)
     assert tuple(path.name for path in output_paths) == INSTRUCTION_FILE_NAMES
     specification_sets = [read_specifications(path) for path in output_paths]
-    assert [len(specifications) for specifications in specification_sets] == list(range(11, 39, 3))
+    assert [len(specifications) for specifications in specification_sets] == list(range(15, 43, 3))
     for specifications in specification_sets:
         quantities = [m for run in specifications for m in run.measurements]
         assert {m.dimensions for m in quantities} == {1, 2, 3, 4}
+        assert sum(m.dimensions == 3 for m in quantities) >= 2
+        assert sum(
+            all(m.dimensions == 3 for m in run.measurements)
+            for run in specifications
+        ) >= 2
         assert sum(m.point_count for m in quantities if m.dimensions <= 2) > 0.9 * sum(m.point_count for m in quantities)
         mixed = next(run for run in specifications if run.name == "mixed_dimensions")
         assert [m.dimensions for m in mixed.measurements] == [1, 2, 3, 4]
+        complex_quantities = [m for m in quantities if m.paramtype == "complex"]
+        assert len(complex_quantities) == 6
+        assert {m.dimensions for m in complex_quantities} == {1, 2}
+        assert sum(m.point_count for m in complex_quantities) < 0.01 * sum(m.point_count for m in quantities)
     for predecessor, successor in zip(specification_sets[:-1], specification_sets[1:], strict=True):
         assert successor[:len(predecessor)] == predecessor
     # Scalar SQLite rows average about 35 bytes for separate 2D runs.
     # The small shared mixed run has extra columns and costs about 0.5 MB.
+    # The added standalone 3D and complex runs contribute under 1 MB.
     targets = (10e6, 25e6, 50e6, 100e6, 250e6, 500e6, 1e9, 5e9, 10e9, 30e9)
     for specifications, target in zip(specification_sets, targets, strict=True):
         estimated_size = sum(run.point_count for run in specifications if run.name != "mixed_dimensions") * 35.132 + 500_000

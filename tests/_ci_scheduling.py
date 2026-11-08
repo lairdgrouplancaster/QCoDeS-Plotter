@@ -49,9 +49,9 @@ def _file_costs(files, timings: dict[str, tuple[float, int]]) -> dict[str, float
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--qplot-ci-partition",
-        choices=("1/2", "2/2"),
+        choices=("1/2", "2/2", "1/4", "2/4", "3/4", "4/4"),
         default=None,
-        help="Run one of two balanced, disjoint whole-file CI partitions.",
+        help="Run one of two or four balanced, disjoint whole-file CI partitions.",
     )
     parser.addoption(
         "--qplot-ci-timings",
@@ -68,12 +68,12 @@ def pytest_configure(config: pytest.Config) -> None:
         raise pytest.UsageError(f"Cannot read CI timings from {path}: {error}") from error
 
 
-def _file_partitions(costs: dict[str, float]) -> dict[str, int]:
+def _file_partitions(costs: dict[str, float], count: int = 2) -> dict[str, int]:
     """Place expensive files first; tie order is independent of collection."""
-    loads = [0.0, 0.0]
+    loads = [0.0] * count
     partitions = {}
     for path in sorted(costs, key=lambda path: (-costs[path], path)):
-        selected = min(range(2), key=lambda index: loads[index])
+        selected = min(range(count), key=lambda index: loads[index])
         partitions[path] = selected
         loads[selected] += costs[path]
     return partitions
@@ -97,7 +97,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     costs = _file_costs(files, config.stash[_TIMINGS])
     if partition is not None:
         selected = int(partition[0]) - 1
-        assignments = _file_partitions(costs)
+        assignments = _file_partitions(costs, int(partition.split("/")[1]))
         deselected = [item for item in items if assignments[item.nodeid.split("::", 1)[0]] != selected]
         items[:] = [item for item in items if assignments[item.nodeid.split("::", 1)[0]] == selected]
         config.hook.pytest_deselected(items=deselected)

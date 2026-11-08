@@ -15,6 +15,7 @@ import sqlite3
 import stat
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 CSV_COLUMNS = (
     "run",
@@ -26,20 +27,21 @@ CSV_COLUMNS = (
     "start",
     "stop",
     "points",
+    "paramtype",
 )
 
 # Setpoints are ordered from the outermost to the innermost sweep.
 EXAMPLE_ROWS = (
-    ("line", "axis", "V_SD", "Source-drain voltage", "V", "", "-0.1", "0.1", "501"),
-    ("line", "measurement", "current", "Current", "nA", "V_SD", "", "", ""),
-    ("map", "axis", "V_SD", "Source-drain voltage", "V", "", "-0.1", "0.1", "121"),
-    ("map", "axis", "V_G", "Gate voltage", "V", "", "-1", "1", "81"),
-    ("map", "measurement", "current", "Current", "nA", "V_SD;V_G", "", "", ""),
-    ("mixed", "axis", "V_SD", "Source-drain voltage", "V", "", "-0.1", "0.1", "21"),
-    ("mixed", "axis", "V_G", "Gate voltage", "V", "", "-1", "1", "11"),
-    ("mixed", "axis", "field", "Magnetic field", "T", "", "0", "1", "3"),
-    ("mixed", "axis", "temperature", "Temperature", "K", "", "0.1", "1", "2"),
-    ("mixed", "measurement", "current", "Current", "nA", "V_SD", "", "", ""),
+    ("line", "axis", "V_SD", "Source-drain voltage", "V", "", "-0.1", "0.1", "501", "numeric"),
+    ("line", "measurement", "current", "Current", "nA", "V_SD", "", "", "", "numeric"),
+    ("map", "axis", "V_SD", "Source-drain voltage", "V", "", "-0.1", "0.1", "121", "numeric"),
+    ("map", "axis", "V_G", "Gate voltage", "V", "", "-1", "1", "81", "numeric"),
+    ("map", "measurement", "current", "Current", "nA", "V_SD;V_G", "", "", "", "numeric"),
+    ("mixed", "axis", "V_SD", "Source-drain voltage", "V", "", "-0.1", "0.1", "21", "numeric"),
+    ("mixed", "axis", "V_G", "Gate voltage", "V", "", "-1", "1", "11", "numeric"),
+    ("mixed", "axis", "field", "Magnetic field", "T", "", "0", "1", "3", "numeric"),
+    ("mixed", "axis", "temperature", "Temperature", "K", "", "0.1", "1", "2", "numeric"),
+    ("mixed", "measurement", "current", "Current", "nA", "V_SD", "", "", "", "numeric"),
     (
         "mixed",
         "measurement",
@@ -50,6 +52,7 @@ EXAMPLE_ROWS = (
         "",
         "",
         "",
+        "numeric",
     ),
     (
         "mixed",
@@ -61,6 +64,7 @@ EXAMPLE_ROWS = (
         "",
         "",
         "",
+        "numeric",
     ),
     (
         "mixed",
@@ -72,7 +76,17 @@ EXAMPLE_ROWS = (
         "",
         "",
         "",
+        "numeric",
     ),
+    ("complex_response", "axis", "frequency", "Frequency", "GHz", "", "4", "8", "21", "numeric"),
+    ("complex_response", "measurement", "S11", "S11", "", "frequency", "", "", "", "complex"),
+    ("complex_response", "measurement", "S21", "S21", "", "frequency", "", "", "", "complex"),
+    ("complex_response", "measurement", "S12", "S12", "", "frequency", "", "", "", "complex"),
+    ("complex_gate_map", "axis", "frequency", "Frequency", "GHz", "", "4", "8", "21", "numeric"),
+    ("complex_gate_map", "axis", "V_G", "Gate voltage", "V", "", "-1", "1", "11", "numeric"),
+    ("complex_gate_map", "measurement", "S11", "S11", "", "V_G;frequency", "", "", "", "complex"),
+    ("complex_gate_map", "measurement", "S21", "S21", "", "V_G;frequency", "", "", "", "complex"),
+    ("complex_gate_map", "measurement", "S12", "S12", "", "V_G;frequency", "", "", "", "complex"),
 )
 
 
@@ -120,6 +134,7 @@ class MeasurementSpecification:
     label: str
     unit: str
     axes: tuple[AxisSpecification, ...]
+    paramtype: Literal["numeric", "complex"] = "numeric"
 
     @property
     def dimensions(self):
@@ -167,6 +182,7 @@ class _MeasurementDeclaration:
     label: str
     unit: str
     setpoint_names: tuple[str, ...]
+    paramtype: Literal["numeric", "complex"]
 
 
 @dataclass(frozen=True)
@@ -235,8 +251,13 @@ def _parse_runs(rows):
             )
         label = _required(row, "label", line_number)
         unit = (row.get("unit") or "").strip()
+        paramtype = (row.get("paramtype") or "").strip() or "numeric"
+        if paramtype not in {"numeric", "complex"}:
+            raise _row_error(line_number, "paramtype must be numeric or complex")
         value: AxisSpecification | _MeasurementDeclaration
         if kind == "axis":
+            if paramtype != "numeric":
+                raise _row_error(line_number, "axis paramtype must be numeric")
             if (row.get("setpoints") or "").strip():
                 raise _row_error(line_number, "axis setpoints must be blank")
             start = _finite_float(row, "start", line_number)
@@ -263,7 +284,10 @@ def _parse_runs(rows):
                     line_number,
                     "setpoints must be distinct axis names separated by semicolons",
                 )
-            value = _MeasurementDeclaration(name, label, unit, names)
+            value = _MeasurementDeclaration(
+                name, label, unit, names,
+                "complex" if paramtype == "complex" else "numeric",
+            )
         declarations[name] = _Declaration(line_number, value)
 
     specifications = []
@@ -285,7 +309,9 @@ def _parse_runs(rows):
                 axes.append(declared.value)
                 used_axes.add(axis_name)
             measurements.append(
-                MeasurementSpecification(value.name, value.label, value.unit, tuple(axes))
+                MeasurementSpecification(
+                    value.name, value.label, value.unit, tuple(axes), value.paramtype
+                )
             )
         if not measurements:
             raise SpecificationError(f"Run {run!r} contains no measurements")

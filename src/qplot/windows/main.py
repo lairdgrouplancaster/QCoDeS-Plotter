@@ -26,6 +26,7 @@ from qplot.diagnostics import log_user_error
 from qplot.windows._database_detail_state import detail_channel
 
 from ._commands import create_action
+from ._complex_plots import apply_complex_preference
 from ._config_persistence import (
     persist_config_action,
     persist_config_value,
@@ -256,6 +257,10 @@ class MainWindow(
         self.initMenu()
         self.initFile()
         self.initRunDisplay()
+        self.infoBox.preview.set_complex_preferences((
+            self.config.get("user_preference.complex_1d"),
+            self.config.get("user_preference.complex_nd"),
+        ))
         self._trusted_derived_bridge = TrustedDerivedQtBridge(self)
         self.initShortcuts()
         self.startupDatabaseTimer = QtCore.QTimer(self)
@@ -331,7 +336,7 @@ class MainWindow(
         
         # Force update check on database
         refreshAction = create_action("window.refresh", self)
-        refreshAction.triggered.connect(self.refreshMain)
+        refreshAction.triggered.connect(self.refresh_all)
         fileMenu.addAction(refreshAction)
 
         fileMenu.addSeparator()
@@ -798,6 +803,17 @@ class MainWindow(
             if callable(apply_colorbar_width):
                 apply_colorbar_width()
         self._sync_mouse_mode_settings()
+        complex_changed = self.infoBox.preview.set_complex_preferences((
+            self.config.get("user_preference.complex_1d"),
+            self.config.get("user_preference.complex_nd"),
+        ))
+        bridge = self.__dict__.get("_trusted_derived_bridge")
+        if bridge is not None:
+            bridge.update_complex_preferences()
+        if complex_changed:
+            self._prioritize_preview_runs()
+        for win in self.windows:
+            apply_complex_preference(win)
 
 
     def _sync_theme_actions(self):

@@ -60,7 +60,8 @@ def test_symmetric_colorbar_drag_mirrors_and_locks(heatmap):
     assert heatmap.bar.levels() == (-1., 1.)
     heatmap.bar.sigLevelsChangeFinished.emit(heatmap.bar)
     assert heatmap._colorbar_manual_levels == (-1., 1.)
-    assert not heatmap.relevel_refresh.isChecked()
+    assert heatmap.relevel_refresh.isChecked()
+    assert not heatmap.relevel_refresh.isEnabled()
 
 
 def test_zero_and_nonfinite_data_have_safe_symmetric_limits(heatmap):

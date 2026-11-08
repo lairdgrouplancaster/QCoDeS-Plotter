@@ -108,6 +108,8 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.csv_filename_format` | string | `"current"` | `current` or `qcodes` | Default CSV filename convention. |
 | `user_preference.show_source_annotation` | boolean | `true` | `true` or `false` | Show source annotations in plot windows. |
 | `user_preference.cursor_significant_figures` | integer | `6` | `1 <= value <= 17` | Significant figures in cursor readouts. |
+| `user_preference.complex_1d` | string | `"magnitude"` | `magnitude`, `phase`, `real`, `imag`, `imag_vs_real` | Display projection for complex 1D measurements; phase is in degrees. |
+| `user_preference.complex_nd` | string | `"magnitude"` | `magnitude`, `phase`, `real`, `imag` | Display projection for complex heatmaps and 3D slices; phase is in degrees. |
 | `user_preference.font_size` | integer | `10` | `6 <= value <= 36` | Application font size in points. |
 | `user_preference.plot_tile_rows` | integer | `2` | `1 <= value <= 10` | Rows in the plot tiling grid. |
 | `user_preference.plot_tile_columns` | integer | `3` | `1 <= value <= 10` | Columns in the plot tiling grid. |
@@ -140,7 +142,7 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.auto_plot` | boolean | `false` | `true` or `false` | Automatically open newly detected runs. |
 | `user_preference.mouse_mode` | string | `"pan"` | `pan` or `rect` | Default plot mouse interaction mode. |
 | `user_preference.copy_plot_image_resolution` | string | `"screen"` | `screen`, `dpi_300`, or `svg` | Format/resolution used by plot-window Copy Plot Image. |
-| `user_preference.default_refresh_rate` | number | `1` | `0 <= value <= 10000` | Default main/plot refresh interval in seconds; zero disables automatic refresh. |
+| `user_preference.default_refresh_rate` | number | `1` | `0 <= value <= 10000` | Shared interval for the run table and all live plots, in seconds; zero disables automatic refresh everywhere. |
 | `runtime_settings.max_threads` | integer | `4` | `1 <= value <= 999` | Maximum worker threads for background loading. |
 | `runtime_settings.max_full_heatmap_points` | integer | `2000000` | `1 <= value <= 2000000000` | Maximum estimated points loaded at full resolution before 2D plot windows use SQL spatial aggregation. |
 | `runtime_settings.max_heatmap_grid_cells` | integer | `250000` | `1 <= value <= 2000000000` | Maximum cells in a downsampled heatmap display grid. |

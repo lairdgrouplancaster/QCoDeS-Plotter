@@ -3,11 +3,13 @@
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
+from weakref import ref
 
 from PyQt6 import QtWidgets as qtw
 
 from ._plot2d_layers import DEFAULT_OVERLAY_OPACITY
 from ._plot_drop_axes import DropAxisPlan, plan_drop_axes
+from ._plot_title import inherit_plot_title
 from ._refresh_interval import refresh_interval_value
 from ._signal_blocking import blocked_signals
 
@@ -93,6 +95,7 @@ def _copy_window_layout(owner: Any, replacement: Any) -> None:
                 widget.setObjectName(f"{widget_type.__name__}:{widget.windowTitle()}")
     replacement.restoreState(owner.saveState())
     replacement.setGeometry(owner.geometry())
+    inherit_plot_title(owner, replacement)
 
 
 def _promotion_primary(datasets: list[_DatasetAppearance]) -> _DatasetAppearance:
@@ -248,6 +251,7 @@ def promote_plot_source(
         raise
     finally:
         main._plot_tile_grid, main._next_plot_tile = next_position
+    owner._preview_drop_replacement = ref(replacement)
     owner.close()
     if owner._merged_trace_users <= 0:
         owner.deleteLater()

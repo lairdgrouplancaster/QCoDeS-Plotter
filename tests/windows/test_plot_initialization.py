@@ -9,6 +9,7 @@ from qplot.configuration.config import config
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
 from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._plot_refresh import PlotRefreshMixin
+from qplot.windows._refresh_interval import RefreshIntervalSpinBox, set_refresh_interval
 from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.main import MainWindow
 from qplot.windows.plot1d import plot1d
@@ -98,6 +99,10 @@ def test_owner_does_not_publish_a_failed_setup_or_steal_dataset_ownership(
             self.threadPool = pool
             self.dataset_holder = {key: handle}
             self.windows = []
+            self.spinBox = RefreshIntervalSpinBox()
+            set_refresh_interval(
+                self.spinBox, self.config.get("user_preference.default_refresh_rate"),
+            )
 
     entered = []
 
@@ -121,6 +126,7 @@ def test_owner_does_not_publish_a_failed_setup_or_steal_dataset_ownership(
         assert delete_timer.isActive()
     finally:
         delete_timer.stop()
+        sip.delete(owner.spinBox)
         for window in entered:
             sip.delete(window)
 
