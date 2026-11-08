@@ -5,9 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  schedule:
-    - cron: "23 4 * * 1"
   workflow_dispatch:
+    inputs:
+      full-validation:
+        description: Include Linux tests, coverage and source-distribution validation
+        type: boolean
+        default: true
   workflow_call:
     inputs:
       full-validation:
@@ -36,12 +39,9 @@ jobs:
     timeout-minutes: 5
     outputs:
       full-validation: ${{ steps.plan.outputs.full-validation }}
-      checks: ${{ steps.plan.outputs.checks }}
-      installations: ${{ steps.plan.outputs.installations }}
+      platforms: ${{ steps.plan.outputs.platforms }}
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -92,72 +92,79 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-  native-wheels:
-    name: ${{ matrix.os-name }} native cp311-abi3 wheel
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            os-name: Linux x86_64 manylinux
-            arch: x86_64
-            build: cp311-manylinux_x86_64
-            artifact-name: qplotter-native-linux-x86_64
-          - os: macos-latest
-            os-name: macOS ARM64
-            arch: arm64
-            build: cp311-macosx_arm64
-            artifact-name: qplotter-native-macos-arm64
-          - os: macos-15-intel
-            os-name: macOS Intel
-            arch: x86_64
-            build: cp311-macosx_x86_64
-            artifact-name: qplotter-native-macos-intel
-          - os: windows-2025
-            os-name: Windows x64
-            arch: AMD64
-            build: cp311-win_amd64
-            artifact-name: qplotter-native-windows-x64
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          architecture: ${{ runner.os == 'Windows' && 'x64' || '' }}
-      - name: Install build tools
-        run: python -m pip install cibuildwheel==4.3.0 build twine
-      - name: Verify clean source tree
-        run: python scripts/validate_distribution.py --check-clean
-      - name: Build native source distribution
-        if: runner.os == 'Linux'
-        run: python -m build native --sdist --outdir dist
-      # cibuildwheel repairs Linux wheels with auditwheel and audits abi3.
-      # An ordinary ubuntu linux_x86_64 wheel is not a publication artifact.
-      - name: Build and repair native platform wheel
-        if: ${{ !inputs.reuse-native }}
-        env:
-          CIBW_BUILD: ${{ matrix.build }}
-          CIBW_ARCHS: ${{ matrix.arch }}
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-        run: python -m cibuildwheel native --output-dir dist
-      - name: Fetch the exact published native wheel for this platform
-        if: inputs.reuse-native
-        run: >-
-          python scripts/release.py fetch-native
-          --platform ${{ matrix.artifact-name }} --outdir dist
-      - name: Check native metadata
-        run: python -m twine check dist/*
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact-name }}
-          path: dist/*
-          if-no-files-found: error
+  # Explicit jobs let each platform proceed without waiting for another runner.
+  native-linux:
+    uses: ./.github/workflows/ci-native.yml
+    with:
+      os: ubuntu-latest
+      os-name: Linux x86_64 manylinux
+      arch: x86_64
+      build: cp311-manylinux_x86_64
+      artifact-name: qplotter-native-linux-x86_64
+      reuse-native: ${{ inputs.reuse-native || false }}
+
+  native-windows:
+    uses: ./.github/workflows/ci-native.yml
+    with:
+      os: windows-2025
+      os-name: Windows x64
+      arch: AMD64
+      build: cp311-win_amd64
+      artifact-name: qplotter-native-windows-x64
+      reuse-native: ${{ inputs.reuse-native || false }}
+
+  native-macos-arm64:
+    uses: ./.github/workflows/ci-native.yml
+    with:
+      os: macos-latest
+      os-name: macOS ARM64
+      arch: arm64
+      build: cp311-macosx_arm64
+      artifact-name: qplotter-native-macos-arm64
+      reuse-native: ${{ inputs.reuse-native || false }}
+
+  native-macos-intel:
+    uses: ./.github/workflows/ci-native.yml
+    with:
+      os: macos-15-intel
+      os-name: macOS Intel
+      arch: x86_64
+      build: cp311-macosx_x86_64
+      artifact-name: qplotter-native-macos-intel
+      reuse-native: ${{ inputs.reuse-native || false }}
+
+  platform-linux:
+    needs: [ci-plan, application-artifacts, native-linux]
+    if: needs.ci-plan.outputs.full-validation == 'true'
+    uses: ./.github/workflows/ci-platform.yml
+    with:
+      checks: ${{ toJSON(fromJSON(needs.ci-plan.outputs.platforms)['linux-x86_64'].checks) }}
+      installations: ${{ toJSON(fromJSON(needs.ci-plan.outputs.platforms)['linux-x86_64'].installations) }}
+
+  platform-windows:
+    needs: [ci-plan, application-artifacts, native-windows]
+    uses: ./.github/workflows/ci-platform.yml
+    with:
+      checks: ${{ toJSON(fromJSON(needs.ci-plan.outputs.platforms)['windows-x64'].checks) }}
+      installations: ${{ toJSON(fromJSON(needs.ci-plan.outputs.platforms)['windows-x64'].installations) }}
+
+  platform-macos-arm64:
+    needs: [ci-plan, application-artifacts, native-macos-arm64]
+    uses: ./.github/workflows/ci-platform.yml
+    with:
+      checks: ${{ toJSON(fromJSON(needs.ci-plan.outputs.platforms)['macos-arm64'].checks) }}
+      installations: ${{ toJSON(fromJSON(needs.ci-plan.outputs.platforms)['macos-arm64'].installations) }}
+
+  platform-macos-intel:
+    needs: [ci-plan, application-artifacts, native-macos-intel]
+    uses: ./.github/workflows/ci-platform.yml
+    with:
+      checks: ${{ toJSON(fromJSON(needs.ci-plan.outputs.platforms)['macos-intel'].checks) }}
+      installations: ${{ toJSON(fromJSON(needs.ci-plan.outputs.platforms)['macos-intel'].installations) }}
 
   static-analysis:
     name: Static analysis
-    needs: [application-artifacts, native-wheels]
+    needs: [application-artifacts, native-linux]
     runs-on: ubuntu-latest
 
     steps:
@@ -193,311 +200,19 @@ jobs:
       - name: Run mypy
         run: python -m mypy
 
-  checks:
-    needs: [ci-plan, application-artifacts, native-wheels]
-    name: ${{ matrix.os }} Python ${{ matrix.python-version }} (${{ matrix.suite }}${{ matrix.partition && format(' {0}', matrix.partition) || '' }})
-    runs-on: ${{ matrix.os }}
+  coverage:
+    needs: [ci-plan, application-artifacts, native-linux]
+    if: needs.ci-plan.outputs.full-validation == 'true'
+    name: Coverage (${{ matrix.partition }}/2)
+    runs-on: ubuntu-latest
     timeout-minutes: 30
-
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.ci-plan.outputs.checks) }}
+      matrix:
+        partition: [1, 2]
 
     env:
-      QT_QPA_PLATFORM: offscreen
-      QPLOT_CI_WHEEL_AUDIT: ${{ github.workspace }}/dist/wheel-installation-audit.py
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          version: "0.12.5"
-          python-version: ${{ matrix.python-version }}
-          enable-cache: "auto"
-          # Reuse downloaded packages across unrelated workflow edits;
-          # uv still resolves and installs the requested tool versions below.
-          cache-dependency-glob: "**/pyproject.toml"
-          cache-local-path: ${{ runner.tool_cache }}/uv-cache
-          # Keep downloaded wheels available for subsequent CI runs.
-          prune-cache: false
-
-      - name: Configure test report path
-        if: runner.os != 'Windows'
-        shell: bash
-        run: echo "QPLOT_CI_TEST_REPORT=$RUNNER_TEMP/qplot-test-results.xml" >> "$GITHUB_ENV"
-
-      - name: Configure Windows temporary directory
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $standardTemp = Join-Path $env:RUNNER_TEMP "qplot-standard-user"
-          $pytestTemp = (Join-Path $standardTemp "pytest").Replace("\", "/")
-          New-Item -ItemType Directory -Force -Path $standardTemp | Out-Null
-          "QPLOT_UNPRIVILEGED_TEMP=$standardTemp" >> $env:GITHUB_ENV
-          "TEMP=$standardTemp" >> $env:GITHUB_ENV
-          "TMP=$standardTemp" >> $env:GITHUB_ENV
-          "TMPDIR=$standardTemp" >> $env:GITHUB_ENV
-          "PYTEST_ADDOPTS=--basetemp=$pytestTemp" >> $env:GITHUB_ENV
-          "QPLOT_CI_PHASE_LOG_PATH=$(Join-Path $standardTemp 'wrapper-phase.txt')" >> $env:GITHUB_ENV
-          "QPLOT_CI_TEST_REPORT=$(Join-Path $standardTemp 'qplot-test-results.xml')" >> $env:GITHUB_ENV
-
-      # download-artifact defaults to this workflow run, including PR merge SHA.
-      - name: Download application artifacts from this revision
-        uses: actions/download-artifact@v4
-        with:
-          name: qplotter-application
-          path: dist
-      - name: Download matching native artifacts from this revision
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.native-artifact }}
-          path: dist
-
-      - name: Require the pinned APSW platform wheel
-        run: >-
-          uv pip install --system --only-binary apsw apsw==3.53.4.0
-
-      - name: Install package and test tools
-        run: >-
-          python scripts/validate_distribution.py --install-only --with-dev-tools
-          --audit-path dist/wheel-installation-audit.py dist
-
-      - name: Install Qt system libraries
-        if: runner.os == 'Linux'
-        timeout-minutes: 5
-        run: |
-          # Hosted runners normally include libegl1. Avoid an unrelated mirror
-          # outage blocking tests when the dependency is already available.
-          if [ "$(dpkg-query -W -f='${Status}' libegl1 2>/dev/null)" = "install ok installed" ]; then
-            echo "libegl1 is already installed."
-            exit 0
-          fi
-          sudo timeout 120s apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
-          sudo timeout 120s apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install --yes --no-install-recommends libegl1
-
-      - name: Verify the elevated Windows runner is rejected
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-          $principal = [Security.Principal.WindowsPrincipal]::new($identity)
-          if (-not $principal.IsInRole(
-            [Security.Principal.WindowsBuiltInRole]::Administrator
-          )) {
-            throw "The GitHub-hosted windows-2025 runner is not elevated as expected."
-          }
-          $guardCode = @'
-          import tempfile
-          from pathlib import Path
-
-          import apsw
-
-          from qplot.datahandling.trusted_live import (
-              TrustedLiveReader,
-              TrustedLiveReaderUnavailableError,
-          )
-
-          with tempfile.TemporaryDirectory(prefix="qplot-elevated-guard-") as root:
-              database = Path(root) / "guard.db"
-              writer = apsw.Connection(str(database))
-              writer.execute("PRAGMA journal_mode = WAL")
-              writer.execute("CREATE TABLE guard (value INTEGER NOT NULL)")
-              writer.execute("INSERT INTO guard VALUES (1)")
-              try:
-                  try:
-                      TrustedLiveReader.open(database)
-                  except TrustedLiveReaderUnavailableError as error:
-                      messages = []
-                      current = error
-                      while current is not None:
-                          messages.append(str(current))
-                          current = current.__cause__
-                      if "refuses elevated Windows tokens" not in " ".join(messages):
-                          raise AssertionError(
-                              "trusted reader failed for an unexpected reason: "
-                              + " | ".join(messages)
-                          ) from error
-                  else:
-                      raise AssertionError(
-                          "trusted reader accepted the elevated Windows runner token"
-                      )
-              finally:
-                  writer.close()
-          '@
-          python -c $guardCode
-
-      - name: Verify unprivileged Windows deadline containment
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $python = (Get-Command python).Source
-          & "$env:GITHUB_WORKSPACE\.github\scripts\check-unprivileged-windows-deadline.ps1" `
-            -FilePath $python
-
-      # Keep each Qt/QCoDeS test file in one process, and cap disk and
-      # thread-pool contention at two workers across all source suites.
-      # Partition membership and file order use the same committed timing
-      # profile in every worker. Unknown files retain a test-count estimate.
-      - name: Run partitioned full test suite
-        if: matrix.suite == 'full' && runner.os != 'Windows' && matrix.partition
-        env:
-          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-        run: >-
-          python -m pytest -o pythonpath= --no-cov -n 2 --dist=loadfile
-          --no-loadscope-reorder
-          --qplot-ci-partition=${{ matrix.partition }}
-          --timeout=90 --timeout-method=thread --durations=20 -v
-          -o junit_family=xunit1 --junitxml="$QPLOT_CI_TEST_REPORT"
-
-      # The trusted VFS intentionally rejects the hosted runner's elevated
-      # token, so run the Windows suites through a disposable local account
-      # that belongs only to the standard Users group.
-      - name: Run full test suite as a standard Windows user
-        if: matrix.suite == 'full' && runner.os == 'Windows'
-        shell: pwsh
-        env:
-          MPLCONFIGDIR: ${{ runner.temp }}/qplot-standard-user/matplotlib
-        run: |
-          $python = (Get-Command python).Source
-          $arguments = @(
-            "-m", "pytest", "-o", "pythonpath=", "--no-cov",
-            "-n", "2", "--dist=loadfile",
-            "--no-loadscope-reorder",
-            "--qplot-ci-partition=${{ matrix.partition }}",
-            "--timeout=90", "--timeout-method=thread", "--durations=20", "-v",
-            "-o", "junit_family=xunit1", "--junitxml=$env:QPLOT_CI_TEST_REPORT"
-          )
-          # Four disjoint whole-file partitions retain the complete suite while
-          # fitting its growing workload into a bounded budget.
-          # Each partition keeps two workers, 90-second individual tests and
-          # 25 minutes total, plus two-minute cleanup within the 30-minute job.
-          & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
-            -FilePath $python `
-            -ArgumentList $arguments `
-            -TimeoutSeconds 1500
-
-      # Share the test list through a pytest argument file to stay below the
-      # Windows standard-user launcher's 1024-character command-line limit.
-      - name: Run compatibility test suite
-        if: matrix.suite == 'compatibility' && runner.os != 'Windows'
-        env:
-          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-        run: >-
-          python -m pytest -o pythonpath= --no-cov --maxfail=1 -n 2 --dist=loadfile
-          --timeout=90 --timeout-method=thread --durations=20
-          -o junit_family=xunit1 --junitxml="$QPLOT_CI_TEST_REPORT"
-          @.github/pytest-compatibility.txt
-
-      - name: Run compatibility test suite as a standard Windows user
-        if: matrix.suite == 'compatibility' && runner.os == 'Windows'
-        shell: pwsh
-        env:
-          MPLCONFIGDIR: ${{ runner.temp }}/qplot-standard-user/matplotlib
-        run: |
-          $python = (Get-Command python).Source
-          $arguments = @(
-            "-m", "pytest", "-o", "pythonpath=", "--no-cov", "--maxfail=1",
-            "-n", "2", "--dist=loadfile",
-            "--timeout=90", "--timeout-method=thread", "--durations=20",
-            "-o", "junit_family=xunit1", "--junitxml=$env:QPLOT_CI_TEST_REPORT",
-            "@.github/pytest-compatibility.txt"
-          )
-          & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
-            -FilePath $python `
-            -ArgumentList $arguments
-
-      - name: Upload test timings
-        if: ${{ !cancelled() }}
-        # Timing profiles help balance future runs; their upload must not turn
-        # passing tests into a failed check during an artifact-service outage.
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          # job-index avoids '/' in partition labels and distinguishes every entry.
-          name: qplot-test-timings-${{ strategy.job-index }}-${{ matrix.os }}-${{ matrix.python-version }}-${{ matrix.suite }}
-          path: ${{ env.QPLOT_CI_TEST_REPORT }}
-          if-no-files-found: ignore
-
-      - name: Publish bounded Windows source-test diagnostics
-        # Successful runs include pytest's duration report in child stdout.
-        if: ${{ !cancelled() && runner.os == 'Windows' }}
-        shell: pwsh
-        run: |
-          function Write-BoundedLogTail {
-            param(
-              [Parameter(Mandatory = $true)]
-              [string] $Path,
-              [int] $MaximumBytes = 32768
-            )
-            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-              return
-            }
-            Write-Host "===== $([System.IO.Path]::GetFileName($Path)) ====="
-            $stream = $null
-            try {
-              $stream = [System.IO.File]::Open(
-                $Path,
-                [System.IO.FileMode]::Open,
-                [System.IO.FileAccess]::Read,
-                [System.IO.FileShare]::ReadWrite
-              )
-              $length = [int] [Math]::Min($stream.Length, $MaximumBytes)
-              if ($stream.Length -gt $length) {
-                Write-Host "[truncated to the final $length bytes]"
-              }
-              [void] $stream.Seek(-$length, [System.IO.SeekOrigin]::End)
-              $buffer = [byte[]]::new($length)
-              $totalRead = 0
-              while ($totalRead -lt $length) {
-                $read = $stream.Read(
-                  $buffer,
-                  $totalRead,
-                  $length - $totalRead
-                )
-                if ($read -eq 0) {
-                  break
-                }
-                $totalRead += $read
-              }
-              [Console]::Out.Write(
-                [System.Text.Encoding]::UTF8.GetString(
-                  $buffer,
-                  0,
-                  $totalRead
-                )
-              )
-            } catch {
-              Write-Warning "Could not publish '$Path': $_"
-            } finally {
-              if ($null -ne $stream) {
-                $stream.Dispose()
-              }
-            }
-          }
-          foreach ($name in @(
-            "wrapper-phase.txt",
-            "child-stdout.txt",
-            "child-stderr.txt"
-          )) {
-            $path = Join-Path $env:QPLOT_UNPRIVILEGED_TEMP $name
-            Write-BoundedLogTail -Path $path
-          }
-
-  coverage:
-    needs: [ci-plan, application-artifacts, native-wheels]
-    if: needs.ci-plan.outputs.full-validation == 'true'
-    name: Coverage
-    runs-on: ubuntu-latest
-
-    env:
+      COVERAGE_FILE: ${{ github.workspace }}/.coverage.${{ matrix.partition }}
       QT_QPA_PLATFORM: offscreen
       QPLOT_CI_WHEEL_AUDIT: ${{ github.workspace }}/dist/wheel-installation-audit.py
 
@@ -546,14 +261,62 @@ jobs:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
         run: >-
           python -m pytest -o pythonpath= -n 2 --dist=loadfile --no-loadscope-reorder
-          --cov=qplot --cov-report=term-missing:skip-covered --cov-report=xml
+          --qplot-ci-partition=${{ matrix.partition }}/2
+          --cov=qplot --cov-report=
+
+      - name: Upload coverage partition
+        uses: actions/upload-artifact@v4
+        with:
+          name: qplot-coverage-${{ matrix.partition }}
+          path: .coverage.${{ matrix.partition }}
+          include-hidden-files: true
+          if-no-files-found: error
+
+  coverage-report:
+    name: Combined coverage
+    needs: [ci-plan, coverage]
+    if: needs.ci-plan.outputs.full-validation == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Install coverage tools
+        run: python -m pip install "coverage>=7.12"
+      - name: Download first coverage partition
+        uses: actions/download-artifact@v4
+        with:
+          name: qplot-coverage-1
+      - name: Download second coverage partition
+        uses: actions/download-artifact@v4
+        with:
+          name: qplot-coverage-2
+      - name: Combine both complete partitions
+        run: |
+          test -s .coverage.1
+          test -s .coverage.2
+          python -m coverage combine --rcfile=.github/coverage-combine.toml .coverage.1 .coverage.2
+          python -m coverage report --skip-covered
+          python -m coverage xml
+      - name: Upload combined coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: qplot-coverage-report
+          path: coverage.xml
+          if-no-files-found: error
 
   package:
-    needs: [ci-plan, application-artifacts, native-wheels]
+    needs: [ci-plan, application-artifacts, native-linux]
     if: needs.ci-plan.outputs.full-validation == 'true'
-    name: Linux source and installed manylinux validation
+    name: Linux source and installed manylinux validation (${{ matrix.partition }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2]
 
     env:
       QT_QPA_PLATFORM: offscreen
@@ -604,181 +367,90 @@ jobs:
       - name: Validate artifact contents and testability
         env:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-        run: python scripts/validate_distribution.py dist
+        run: python scripts/validate_distribution.py --test-partition ${{ matrix.partition }}/2 dist
 
       - name: Check package metadata
         run: python -m twine check dist/*
 
       - name: Upload package artifacts
+        if: matrix.partition == 1
         uses: actions/upload-artifact@v4
         with:
           name: qplot-distributions-linux
           path: dist/*
 
-  platform-wheels:
-    name: ${{ matrix.os-name }} compiler-free installations Python ${{ matrix.python-version }}
-    needs: [ci-plan, application-artifacts, native-wheels]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.ci-plan.outputs.installations) }}
-
-    env:
-      QT_QPA_PLATFORM: offscreen
-      PIP_NO_CACHE_DIR: "1"
-      UV_NO_CACHE: "1"
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Configure Windows temporary directory
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $standardTemp = Join-Path $env:RUNNER_TEMP "qplot-standard-user"
-          New-Item -ItemType Directory -Force -Path $standardTemp | Out-Null
-          "QPLOT_UNPRIVILEGED_TEMP=$standardTemp" >> $env:GITHUB_ENV
-          "TEMP=$standardTemp" >> $env:GITHUB_ENV
-          "TMP=$standardTemp" >> $env:GITHUB_ENV
-          "TMPDIR=$standardTemp" >> $env:GITHUB_ENV
-
-      - name: Install packaging tools and verify the pinned APSW wheel
-        run: |
-          python -m pip install -U pip
-          python -m pip install build twine
-          python -m pip install --only-binary apsw apsw==3.53.4.0
-
-      - name: Verify clean source tree
-        run: python scripts/validate_distribution.py --check-clean
-
-      # download-artifact defaults to this workflow run, including PR merge SHA.
-      - name: Download application artifacts from this revision
-        uses: actions/download-artifact@v4
-        with:
-          name: qplotter-application
-          path: dist
-      - name: Download matching native artifacts from this revision
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.native-artifact }}
-          path: dist
-      - name: Install Qt system libraries
-        if: runner.os == 'Linux'
-        timeout-minutes: 5
-        run: |
-          # Hosted runners normally include libegl1. Avoid an unrelated mirror
-          # outage blocking tests when the dependency is already available.
-          if [ "$(dpkg-query -W -f='${Status}' libegl1 2>/dev/null)" = "install ok installed" ]; then
-            echo "libegl1 is already installed."
-            exit 0
-          fi
-          sudo timeout 120s apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
-          sudo timeout 120s apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install --yes --no-install-recommends libegl1
-
-      - name: Validate and exercise the installed wheel
-        if: runner.os != 'Windows'
-        env:
-          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-        run: python scripts/validate_compiler_free_install.py --mode wheel dist
-
-      - name: Validate the installed wheel as a standard Windows user
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          MPLCONFIGDIR: ${{ runner.temp }}/qplot-standard-user/matplotlib
-        run: |
-          $python = (Get-Command python).Source
-          $arguments = @(
-            "scripts/validate_compiler_free_install.py", "--mode", "wheel", "dist"
-          )
-          & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
-            -FilePath $python `
-            -ArgumentList $arguments
-
-      - name: Accept editable install and live Python edit without a compiler
-        if: runner.os != 'Windows'
-        env:
-          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
-        run: python scripts/validate_compiler_free_install.py --mode editable dist
-
-      - name: Accept editable install as a standard Windows user
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          MPLCONFIGDIR: ${{ runner.temp }}/qplot-standard-user/matplotlib
-        run: |
-          $python = (Get-Command python).Source
-          $arguments = @(
-            "scripts/validate_compiler_free_install.py", "--mode", "editable", "dist"
-          )
-          & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
-            -FilePath $python `
-            -ArgumentList $arguments
-
-      - name: Upload Windows wheel failure diagnostics
-        if: failure() && runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: qplot-wheel-windows-${{ matrix.python-version }}-diagnostics
-          if-no-files-found: ignore
-          path: |
-            ${{ env.QPLOT_UNPRIVILEGED_TEMP }}/child-stdout.txt
-            ${{ env.QPLOT_UNPRIVILEGED_TEMP }}/child-stderr.txt
-
-      - name: Check wheel metadata
-        run: python -m twine check dist/*
-
   required-checks:
     name: Required checks
     runs-on: ubuntu-latest
-    needs: [lint, ci-plan, application-artifacts, native-wheels, static-analysis, checks, coverage, package, platform-wheels]
+    needs: [lint, ci-plan, application-artifacts, native-linux, native-windows, native-macos-arm64, native-macos-intel, static-analysis, platform-windows, platform-macos-arm64, platform-macos-intel, platform-linux, coverage, coverage-report, package]
     if: always()
 
     steps:
       - name: Check matrix result
         run: |
-          if [ "${{ needs.ci-plan.result }}" != "success" ]; then
-            echo "Validation planning failed."
-            exit 1
-          fi
           case "${{ needs.ci-plan.outputs.full-validation }}" in
             true) expected_full_result=success ;;
             false) expected_full_result=skipped ;;
             *) echo "Missing or invalid validation scope."; exit 1 ;;
           esac
           if [ "${{ needs.lint.result }}" != "success" ]; then
-            echo "Ruff failed."
+            echo "Required job lint did not succeed."
             exit 1
           fi
-          if [ "${{ needs.application-artifacts.result }}" != "success" ] || [ "${{ needs.native-wheels.result }}" != "success" ]; then
-            echo "Application or native artifact build failed."
+          if [ "${{ needs.ci-plan.result }}" != "success" ]; then
+            echo "Required job ci-plan did not succeed."
+            exit 1
+          fi
+          if [ "${{ needs.application-artifacts.result }}" != "success" ]; then
+            echo "Required job application-artifacts did not succeed."
+            exit 1
+          fi
+          if [ "${{ needs.native-linux.result }}" != "success" ]; then
+            echo "Required job native-linux did not succeed."
+            exit 1
+          fi
+          if [ "${{ needs.native-windows.result }}" != "success" ]; then
+            echo "Required job native-windows did not succeed."
+            exit 1
+          fi
+          if [ "${{ needs.native-macos-arm64.result }}" != "success" ]; then
+            echo "Required job native-macos-arm64 did not succeed."
+            exit 1
+          fi
+          if [ "${{ needs.native-macos-intel.result }}" != "success" ]; then
+            echo "Required job native-macos-intel did not succeed."
             exit 1
           fi
           if [ "${{ needs.static-analysis.result }}" != "success" ]; then
-            echo "Static analysis failed."
+            echo "Required job static-analysis did not succeed."
             exit 1
           fi
-          if [ "${{ needs.checks.result }}" != "success" ]; then
-            echo "One or more matrix checks failed."
+          if [ "${{ needs.platform-windows.result }}" != "success" ]; then
+            echo "Required job platform-windows did not succeed."
+            exit 1
+          fi
+          if [ "${{ needs.platform-macos-arm64.result }}" != "success" ]; then
+            echo "Required job platform-macos-arm64 did not succeed."
+            exit 1
+          fi
+          if [ "${{ needs.platform-macos-intel.result }}" != "success" ]; then
+            echo "Required job platform-macos-intel did not succeed."
+            exit 1
+          fi
+          if [ "${{ needs.platform-linux.result }}" != "$expected_full_result" ]; then
+            echo "platform-linux result does not match the required validation scope."
             exit 1
           fi
           if [ "${{ needs.coverage.result }}" != "$expected_full_result" ]; then
-            echo "Coverage result does not match the required validation scope."
+            echo "coverage result does not match the required validation scope."
+            exit 1
+          fi
+          if [ "${{ needs.coverage-report.result }}" != "$expected_full_result" ]; then
+            echo "coverage-report result does not match the required validation scope."
             exit 1
           fi
           if [ "${{ needs.package.result }}" != "$expected_full_result" ]; then
-            echo "Source validation result does not match the required validation scope."
-            exit 1
-          fi
-          if [ "${{ needs.platform-wheels.result }}" != "success" ]; then
-            echo "One or more platform wheel builds failed."
+            echo "package result does not match the required validation scope."
             exit 1
           fi
           echo "All matrix checks passed."

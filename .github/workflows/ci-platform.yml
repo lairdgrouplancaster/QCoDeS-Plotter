@@ -1,0 +1,434 @@
+name: Validate platform
+
+on:
+  workflow_call:
+    inputs:
+      checks:
+        type: string
+        required: true
+      installations:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  PIP_ONLY_BINARY: apsw
+
+jobs:
+  checks:
+    name: ${{ matrix.os }} Python ${{ matrix.python-version }} (${{ matrix.suite }}${{ matrix.partition && format(' {0}', matrix.partition) || '' }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.checks) }}
+
+    env:
+      QT_QPA_PLATFORM: offscreen
+      QPLOT_CI_WHEEL_AUDIT: ${{ github.workspace }}/dist/wheel-installation-audit.py
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: "0.12.5"
+          python-version: ${{ matrix.python-version }}
+          enable-cache: "auto"
+          # Reuse downloaded packages across unrelated workflow edits;
+          # uv still resolves and installs the requested tool versions below.
+          cache-dependency-glob: "**/pyproject.toml"
+          cache-local-path: ${{ runner.tool_cache }}/uv-cache
+          # Keep downloaded wheels available for subsequent CI runs.
+          prune-cache: false
+
+      - name: Configure test report path
+        if: runner.os != 'Windows'
+        shell: bash
+        run: echo "QPLOT_CI_TEST_REPORT=$RUNNER_TEMP/qplot-test-results.xml" >> "$GITHUB_ENV"
+
+      - name: Configure Windows temporary directory
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $standardTemp = Join-Path $env:RUNNER_TEMP "qplot-standard-user"
+          $pytestTemp = (Join-Path $standardTemp "pytest").Replace("\", "/")
+          New-Item -ItemType Directory -Force -Path $standardTemp | Out-Null
+          "QPLOT_UNPRIVILEGED_TEMP=$standardTemp" >> $env:GITHUB_ENV
+          "TEMP=$standardTemp" >> $env:GITHUB_ENV
+          "TMP=$standardTemp" >> $env:GITHUB_ENV
+          "TMPDIR=$standardTemp" >> $env:GITHUB_ENV
+          "PYTEST_ADDOPTS=--basetemp=$pytestTemp" >> $env:GITHUB_ENV
+          "QPLOT_CI_PHASE_LOG_PATH=$(Join-Path $standardTemp 'wrapper-phase.txt')" >> $env:GITHUB_ENV
+          "QPLOT_CI_TEST_REPORT=$(Join-Path $standardTemp 'qplot-test-results.xml')" >> $env:GITHUB_ENV
+
+      # download-artifact defaults to this workflow run, including PR merge SHA.
+      - name: Download application artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: qplotter-application
+          path: dist
+      - name: Download matching native artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.native-artifact }}
+          path: dist
+
+      - name: Require the pinned APSW platform wheel
+        run: >-
+          uv pip install --system --only-binary apsw apsw==3.53.4.0
+
+      - name: Install package and test tools
+        run: >-
+          python scripts/validate_distribution.py --install-only --with-dev-tools
+          --audit-path dist/wheel-installation-audit.py dist
+
+      - name: Install Qt system libraries
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: |
+          # Hosted runners normally include libegl1. Avoid an unrelated mirror
+          # outage blocking tests when the dependency is already available.
+          if [ "$(dpkg-query -W -f='${Status}' libegl1 2>/dev/null)" = "install ok installed" ]; then
+            echo "libegl1 is already installed."
+            exit 0
+          fi
+          sudo timeout 120s apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
+          sudo timeout 120s apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install --yes --no-install-recommends libegl1
+
+      - name: Verify the elevated Windows runner is rejected
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+          if (-not $principal.IsInRole(
+            [Security.Principal.WindowsBuiltInRole]::Administrator
+          )) {
+            throw "The GitHub-hosted windows-2025 runner is not elevated as expected."
+          }
+          $guardCode = @'
+          import tempfile
+          from pathlib import Path
+
+          import apsw
+
+          from qplot.datahandling.trusted_live import (
+              TrustedLiveReader,
+              TrustedLiveReaderUnavailableError,
+          )
+
+          with tempfile.TemporaryDirectory(prefix="qplot-elevated-guard-") as root:
+              database = Path(root) / "guard.db"
+              writer = apsw.Connection(str(database))
+              writer.execute("PRAGMA journal_mode = WAL")
+              writer.execute("CREATE TABLE guard (value INTEGER NOT NULL)")
+              writer.execute("INSERT INTO guard VALUES (1)")
+              try:
+                  try:
+                      TrustedLiveReader.open(database)
+                  except TrustedLiveReaderUnavailableError as error:
+                      messages = []
+                      current = error
+                      while current is not None:
+                          messages.append(str(current))
+                          current = current.__cause__
+                      if "refuses elevated Windows tokens" not in " ".join(messages):
+                          raise AssertionError(
+                              "trusted reader failed for an unexpected reason: "
+                              + " | ".join(messages)
+                          ) from error
+                  else:
+                      raise AssertionError(
+                          "trusted reader accepted the elevated Windows runner token"
+                      )
+              finally:
+                  writer.close()
+          '@
+          python -c $guardCode
+
+      - name: Verify unprivileged Windows deadline containment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $python = (Get-Command python).Source
+          & "$env:GITHUB_WORKSPACE\.github\scripts\check-unprivileged-windows-deadline.ps1" `
+            -FilePath $python
+
+      # Keep each Qt/QCoDeS test file in one process, and cap disk and
+      # thread-pool contention at two workers across all source suites.
+      # Partition membership and file order use the same committed timing
+      # profile in every worker. Unknown files retain a test-count estimate.
+      - name: Run partitioned full test suite
+        if: matrix.suite == 'full' && runner.os != 'Windows' && matrix.partition
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: >-
+          python -m pytest -o pythonpath= --no-cov -n 2 --dist=loadfile
+          --no-loadscope-reorder
+          --qplot-ci-partition=${{ matrix.partition }}
+          --timeout=90 --timeout-method=thread --durations=20 -v
+          -o junit_family=xunit1 --junitxml="$QPLOT_CI_TEST_REPORT"
+
+      # The trusted VFS intentionally rejects the hosted runner's elevated
+      # token, so run the Windows suites through a disposable local account
+      # that belongs only to the standard Users group.
+      - name: Run full test suite as a standard Windows user
+        if: matrix.suite == 'full' && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/qplot-standard-user/matplotlib
+        run: |
+          $python = (Get-Command python).Source
+          $arguments = @(
+            "-m", "pytest", "-o", "pythonpath=", "--no-cov",
+            "-n", "2", "--dist=loadfile",
+            "--no-loadscope-reorder",
+            "--qplot-ci-partition=${{ matrix.partition }}",
+            "--timeout=90", "--timeout-method=thread", "--durations=20", "-v",
+            "-o", "junit_family=xunit1", "--junitxml=$env:QPLOT_CI_TEST_REPORT"
+          )
+          # Four disjoint whole-file partitions retain the complete suite while
+          # fitting its growing workload into a bounded budget.
+          # Each partition keeps two workers, 90-second individual tests and
+          # 25 minutes total, plus two-minute cleanup within the 30-minute job.
+          & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
+            -FilePath $python `
+            -ArgumentList $arguments `
+            -TimeoutSeconds 1500
+
+      # Share the test list through a pytest argument file to stay below the
+      # Windows standard-user launcher's 1024-character command-line limit.
+      - name: Run compatibility test suite
+        if: matrix.suite == 'compatibility' && runner.os != 'Windows'
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: >-
+          python -m pytest -o pythonpath= --no-cov --maxfail=1 -n 2 --dist=loadfile
+          --timeout=90 --timeout-method=thread --durations=20
+          -o junit_family=xunit1 --junitxml="$QPLOT_CI_TEST_REPORT"
+          @.github/pytest-compatibility.txt
+
+      - name: Run compatibility test suite as a standard Windows user
+        if: matrix.suite == 'compatibility' && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/qplot-standard-user/matplotlib
+        run: |
+          $python = (Get-Command python).Source
+          $arguments = @(
+            "-m", "pytest", "-o", "pythonpath=", "--no-cov", "--maxfail=1",
+            "-n", "2", "--dist=loadfile",
+            "--timeout=90", "--timeout-method=thread", "--durations=20",
+            "-o", "junit_family=xunit1", "--junitxml=$env:QPLOT_CI_TEST_REPORT",
+            "@.github/pytest-compatibility.txt"
+          )
+          & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
+            -FilePath $python `
+            -ArgumentList $arguments
+
+      - name: Upload test timings
+        if: ${{ !cancelled() }}
+        # Timing profiles help balance future runs; their upload must not turn
+        # passing tests into a failed check during an artifact-service outage.
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          # job-index avoids '/' in partition labels and distinguishes every entry.
+          name: qplot-test-timings-${{ strategy.job-index }}-${{ matrix.os }}-${{ matrix.python-version }}-${{ matrix.suite }}
+          path: ${{ env.QPLOT_CI_TEST_REPORT }}
+          if-no-files-found: ignore
+
+      - name: Publish bounded Windows source-test diagnostics
+        # Successful runs include pytest's duration report in child stdout.
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          function Write-BoundedLogTail {
+            param(
+              [Parameter(Mandatory = $true)]
+              [string] $Path,
+              [int] $MaximumBytes = 32768
+            )
+            if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+              return
+            }
+            Write-Host "===== $([System.IO.Path]::GetFileName($Path)) ====="
+            $stream = $null
+            try {
+              $stream = [System.IO.File]::Open(
+                $Path,
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::Read,
+                [System.IO.FileShare]::ReadWrite
+              )
+              $length = [int] [Math]::Min($stream.Length, $MaximumBytes)
+              if ($stream.Length -gt $length) {
+                Write-Host "[truncated to the final $length bytes]"
+              }
+              [void] $stream.Seek(-$length, [System.IO.SeekOrigin]::End)
+              $buffer = [byte[]]::new($length)
+              $totalRead = 0
+              while ($totalRead -lt $length) {
+                $read = $stream.Read(
+                  $buffer,
+                  $totalRead,
+                  $length - $totalRead
+                )
+                if ($read -eq 0) {
+                  break
+                }
+                $totalRead += $read
+              }
+              [Console]::Out.Write(
+                [System.Text.Encoding]::UTF8.GetString(
+                  $buffer,
+                  0,
+                  $totalRead
+                )
+              )
+            } catch {
+              Write-Warning "Could not publish '$Path': $_"
+            } finally {
+              if ($null -ne $stream) {
+                $stream.Dispose()
+              }
+            }
+          }
+          foreach ($name in @(
+            "wrapper-phase.txt",
+            "child-stdout.txt",
+            "child-stderr.txt"
+          )) {
+            $path = Join-Path $env:QPLOT_UNPRIVILEGED_TEMP $name
+            Write-BoundedLogTail -Path $path
+          }
+
+  platform-wheels:
+    name: ${{ matrix.os-name }} compiler-free installations Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.installations) }}
+
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PIP_NO_CACHE_DIR: "1"
+      UV_NO_CACHE: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Configure Windows temporary directory
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $standardTemp = Join-Path $env:RUNNER_TEMP "qplot-standard-user"
+          New-Item -ItemType Directory -Force -Path $standardTemp | Out-Null
+          "QPLOT_UNPRIVILEGED_TEMP=$standardTemp" >> $env:GITHUB_ENV
+          "TEMP=$standardTemp" >> $env:GITHUB_ENV
+          "TMP=$standardTemp" >> $env:GITHUB_ENV
+          "TMPDIR=$standardTemp" >> $env:GITHUB_ENV
+
+      - name: Install packaging tools and verify the pinned APSW wheel
+        run: |
+          python -m pip install -U pip
+          python -m pip install build twine
+          python -m pip install --only-binary apsw apsw==3.53.4.0
+
+      - name: Verify clean source tree
+        run: python scripts/validate_distribution.py --check-clean
+
+      # download-artifact defaults to this workflow run, including PR merge SHA.
+      - name: Download application artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: qplotter-application
+          path: dist
+      - name: Download matching native artifacts from this revision
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.native-artifact }}
+          path: dist
+      - name: Install Qt system libraries
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: |
+          # Hosted runners normally include libegl1. Avoid an unrelated mirror
+          # outage blocking tests when the dependency is already available.
+          if [ "$(dpkg-query -W -f='${Status}' libegl1 2>/dev/null)" = "install ok installed" ]; then
+            echo "libegl1 is already installed."
+            exit 0
+          fi
+          sudo timeout 120s apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
+          sudo timeout 120s apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install --yes --no-install-recommends libegl1
+
+      - name: Validate and exercise the installed wheel
+        if: runner.os != 'Windows'
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: python scripts/validate_compiler_free_install.py --mode wheel dist
+
+      - name: Validate the installed wheel as a standard Windows user
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/qplot-standard-user/matplotlib
+        run: |
+          $python = (Get-Command python).Source
+          $arguments = @(
+            "scripts/validate_compiler_free_install.py", "--mode", "wheel", "dist"
+          )
+          & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
+            -FilePath $python `
+            -ArgumentList $arguments
+
+      - name: Accept editable install and live Python edit without a compiler
+        if: runner.os != 'Windows'
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+        run: python scripts/validate_compiler_free_install.py --mode editable dist
+
+      - name: Accept editable install as a standard Windows user
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/qplot-standard-user/matplotlib
+        run: |
+          $python = (Get-Command python).Source
+          $arguments = @(
+            "scripts/validate_compiler_free_install.py", "--mode", "editable", "dist"
+          )
+          & "$env:GITHUB_WORKSPACE\.github\scripts\run-unprivileged-windows.ps1" `
+            -FilePath $python `
+            -ArgumentList $arguments
+
+      - name: Upload Windows wheel failure diagnostics
+        if: failure() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: qplot-wheel-windows-${{ matrix.python-version }}-diagnostics
+          if-no-files-found: ignore
+          path: |
+            ${{ env.QPLOT_UNPRIVILEGED_TEMP }}/child-stdout.txt
+            ${{ env.QPLOT_UNPRIVILEGED_TEMP }}/child-stderr.txt
+
+      - name: Check wheel metadata
+        run: python -m twine check dist/*

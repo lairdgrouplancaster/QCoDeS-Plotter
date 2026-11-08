@@ -23,14 +23,14 @@ def github_directory() -> Path:
 def test_full_windows_suite_has_its_own_bounded_time_budget(
     github_directory: Path,
 ) -> None:
-    workflow = (github_directory / "workflows/ci.yml").read_text(encoding="utf-8")
+    workflow = (github_directory / "workflows/ci-platform.yml").read_text(encoding="utf-8")
     full_suite = workflow.split(
         "      - name: Run full test suite as a standard Windows user\n", 1
     )[1].split("      - name:", 1)[0]
     budget = re.search(r"-TimeoutSeconds (\d+)", full_suite)
     assert budget is not None, "The full suite must not use the 420-second default"
     assert 600 <= int(budget[1]) <= 1500
-    checks_job = workflow.split("  checks:\n", 1)[1]
+    checks_job = workflow.split("\n  checks:\n", 1)[1]
     job_minutes = re.search(r"timeout-minutes: (\d+)", checks_job)
     assert job_minutes is not None
     # Reserve two minutes for bounded cleanup and three for setup/diagnostics.
@@ -46,9 +46,9 @@ def test_full_windows_suite_has_its_own_bounded_time_budget(
 def test_windows_full_matrix_runs_all_partitions_with_existing_containment(
     github_directory: Path, full_validation: bool,
 ) -> None:
-    workflow = (github_directory / "workflows/ci.yml").read_text(encoding="utf-8")
-    checks = workflow.split("  checks:\n", 1)[1].split("    env:\n", 1)[0]
-    assert 'matrix: ${{ fromJSON(needs.ci-plan.outputs.checks) }}' in checks
+    workflow = (github_directory / "workflows/ci-platform.yml").read_text(encoding="utf-8")
+    checks = workflow.split("\n  checks:\n", 1)[1].split("    env:\n", 1)[0]
+    assert 'matrix: ${{ fromJSON(inputs.checks) }}' in checks
     planner = runpy.run_path(str(github_directory / "scripts/ci_plan.py"))
     entries = planner["check_matrix"](full_validation)["include"]
     windows_full = [(entry["python-version"], entry.get("partition", "")) for entry in entries
@@ -76,14 +76,19 @@ def test_windows_full_matrix_runs_all_partitions_with_existing_containment(
     assert "invoke-bounded-unprivileged-windows.ps1" in full_suite
     # Every selected matrix entry remains required. Full validation retains
     # the complete Linux coverage suite with explicit instrumentation.
-    required = workflow.split("  required-checks:\n", 1)[1]
-    assert 'needs.checks.result }}" != "success"' in required
-    coverage = workflow.split("  coverage:\n", 1)[1].split("  package:\n", 1)[0]
+    parent = (github_directory / "workflows/ci.yml").read_text(encoding="utf-8")
+    required = parent.split("  required-checks:\n", 1)[1]
+    assert 'needs.platform-windows.result' in required
+    coverage = parent.split("  coverage:\n", 1)[1].split("  coverage-report:\n", 1)[0]
     assert "if: needs.ci-plan.outputs.full-validation == 'true'" in coverage
     assert "python -m pytest -o pythonpath= -n 2 --dist=loadfile --no-loadscope-reorder" in coverage
-    assert "--cov=qplot --cov-report=term-missing:skip-covered --cov-report=xml" in coverage
+    assert "--cov=qplot" in coverage
     assert "--no-cov" not in coverage
-    assert "--qplot-ci-partition" not in coverage
+    assert "partition: [1, 2]" in coverage
+    assert "--qplot-ci-partition=${{ matrix.partition }}/2" in coverage
+    report = parent.split("  coverage-report:\n", 1)[1].split("  package:\n", 1)[0]
+    assert "coverage combine" in report
+    assert "coverage report" in report and "coverage xml" in report
 
 
 @pytest.mark.parametrize("suite", ["full", "compatibility"])
@@ -91,7 +96,7 @@ def test_windows_full_matrix_runs_all_partitions_with_existing_containment(
 def test_windows_source_suite_fits_standard_user_command_line(
     github_directory: Path, suite: str, python_version: str
 ) -> None:
-    workflow = (github_directory / "workflows/ci.yml").read_text(encoding="utf-8")
+    workflow = (github_directory / "workflows/ci-platform.yml").read_text(encoding="utf-8")
     step = workflow.split(
         f"      - name: Run {suite} test suite as a standard Windows user\n", 1
     )[1].split("      - name:", 1)[0]
