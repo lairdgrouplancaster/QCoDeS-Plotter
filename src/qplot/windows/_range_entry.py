@@ -61,6 +61,8 @@ class RangeEntry(qtw.QWidget):
         self.group = qtw.QButtonGroup(self)
         self.min_max_button = qtw.QPushButton("Min / Max", self)
         self.center_span_button = qtw.QPushButton("Centre / Span", self)
+        self.min_max_button.setObjectName("rangeEntryMinMax")
+        self.center_span_button.setObjectName("rangeEntryCentreSpan")
         for index, button in enumerate((self.min_max_button, self.center_span_button)):
             button.setCheckable(True)
             button.setAutoDefault(False)
@@ -69,10 +71,17 @@ class RangeEntry(qtw.QWidget):
             layout.addWidget(button, 1)
         self.min_max_button.setChecked(True)
         self.setStyleSheet(
-            "QPushButton { padding: 5px 8px; border: 1px solid palette(mid); }"
+            "QPushButton { padding: 5px 8px; border: 1px solid palette(mid); "
+            "border-radius: 0; background: palette(button); color: palette(button-text); }"
+            # The right segment owns the single shared divider. Only the
+            # outside corners are rounded, so both buttons read as one control.
+            "QPushButton#rangeEntryMinMax { border-right: 0; "
+            "border-top-left-radius: 6px; border-bottom-left-radius: 6px; }"
+            "QPushButton#rangeEntryCentreSpan { "
+            "border-top-right-radius: 6px; border-bottom-right-radius: 6px; }"
             "QPushButton:checked { background: palette(highlight); "
             "color: palette(highlighted-text); }"
-            "QPushButton:focus { border: 1px solid palette(text); }"
+            "QPushButton:focus { border-color: palette(text); }"
         )
         self.setToolTip("Change the input format without changing the plotted range.")
         self.center_span_button.setToolTip(
