@@ -142,7 +142,8 @@ def check_matrix(full_validation: bool) -> dict[str, list[dict[str, str]]]:
                 "native-artifact": artifact,
             }
             if entry["suite"] == "full":
-                entries.extend({**entry, "partition": partition} for partition in ("1/2", "2/2"))
+                count = 4 if runner == "windows-2025" else 2
+                entries.extend({**entry, "partition": f"{index}/{count}"} for index in range(1, count + 1))
             else:
                 entries.append(entry)
     compatibility = [("macos-15-intel", "qplotter-native-macos-intel")]

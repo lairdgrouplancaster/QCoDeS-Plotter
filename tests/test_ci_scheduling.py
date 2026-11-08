@@ -109,7 +109,7 @@ def _run_suite(
         [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
         for path in sorted(tmp_path.glob("gw*.jsonl"))
     ]
-    assert len(traces) == 2
+    assert 1 <= len(traces) <= 2
     return traces
 
 
@@ -147,12 +147,13 @@ def test_loadfile_preserves_tests_and_starts_the_expected_files(
 
 
 @pytest.mark.parametrize("prioritize_slow_files", [False, True])
+@pytest.mark.parametrize("partition_count", [2, 4])
 def test_partitions_run_every_test_once_without_splitting_files(
-    tmp_path: Path, prioritize_slow_files: bool,
+    tmp_path: Path, prioritize_slow_files: bool, partition_count: int,
 ) -> None:
     observed = {}
     counts = []
-    for partition in ("1/2", "2/2"):
+    for partition in (f"{index}/{partition_count}" for index in range(1, partition_count + 1)):
         directory = tmp_path / partition.replace("/", "-")
         expected = _create_suite(directory)
         traces = _run_suite(directory, prioritize_slow_files, partition)
@@ -169,10 +170,12 @@ def test_partitions_run_every_test_once_without_splitting_files(
         observed.update(files)
         counts.append(sum(map(len, files.values())))
     assert observed == expected
-    assert sorted(counts) == [9, 10]
+    assert all(counts)
+    if partition_count == 2:
+        assert sorted(counts) == [9, 10]
 
 
-@pytest.mark.parametrize("partition", ["1/2", "2/2"])
+@pytest.mark.parametrize("partition", ["1/2", "2/2", "1/4", "2/4", "3/4", "4/4"])
 def test_partition_membership_is_independent_of_collection_order(
     tmp_path: Path, partition: str,
 ) -> None:
