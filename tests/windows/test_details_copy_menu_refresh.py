@@ -80,12 +80,19 @@ def details_window(tmp_path, monkeypatch, qapplication):
             assert service is not None
             window.RunList.setCurrentItem(window.RunList._item_for_guid(saver.dataset.guid))
             bridge = window._trusted_derived_bridge
-            wait_for(lambda: bridge.coordinator is not None
-                     and not bridge.coordinator.active
-                     and not bridge.coordinator.snapshot().pending_count
-                     and not bridge.background_active()
-                     and bridge._selected_detail_publication is not None
-                     and bridge._detail_display_guid == saver.dataset.guid)
+            # Copy menus need the selected details, not global background
+            # quiescence: offscreen preview work may still be queued.
+            try:
+                wait_for(lambda: bridge._selected_detail_publication is not None
+                         and bridge._detail_display_guid == saver.dataset.guid)
+            except AssertionError as error:
+                coordinator = bridge.coordinator
+                raise AssertionError(
+                    f"Selected details unavailable: displayed={bridge._detail_display_guid!r}, "
+                    f"publication={bridge._selected_detail_publication is not None}, "
+                    f"background={bridge.background_active()}, "
+                    f"coordinator={coordinator.snapshot() if coordinator is not None else None}"
+                ) from error
             yield window, saver.dataset, database, state
         finally:
             close_main_window(window)
