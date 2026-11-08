@@ -105,3 +105,28 @@ def test_resolution_errors_keep_original_row_and_run(tmp_path, rows, expected_er
 def test_non_regular_source_is_rejected_before_reading(tmp_path):
     with pytest.raises(specifications.SpecificationError, match="not a regular file"):
         specifications.read_specifications(tmp_path)
+
+
+@pytest.mark.parametrize("paramtype", ["", "numeric", "complex"])
+def test_measurement_parameter_type_is_resolved(tmp_path, paramtype):
+    path = _write_csv(tmp_path, [
+        ("run", "axis", "x", "X", "V", "", "0", "1", "3", "numeric"),
+        ("run", "measurement", "s", "Signal", "A", "x", "", "", "", paramtype),
+    ])
+
+    measured = specifications.read_specifications(path)[0].measurements[0]
+
+    assert measured.paramtype == (paramtype or "numeric")
+
+
+@pytest.mark.parametrize(("kind", "paramtype", "message"), [
+    ("measurement", "array", "paramtype must be numeric or complex"),
+    ("axis", "complex", "axis paramtype must be numeric"),
+])
+def test_invalid_parameter_types_report_source_row(tmp_path, kind, paramtype, message):
+    path = _write_csv(tmp_path, [
+        ("run", kind, "s", "Signal", "A", "", "0", "1", "3", paramtype),
+    ])
+
+    with pytest.raises(specifications.SpecificationError, match=f"CSV row 2: {message}"):
+        specifications.read_specifications(path)

@@ -31,6 +31,7 @@ class SliceFrame:
     depth: float | None
     index: int
     samples: int
+    raw_values: np.ndarray | None = None
 
 
 class VolumeStore:
@@ -71,7 +72,7 @@ class VolumeStore:
                     arrays = [np.asarray(column).reshape(-1) for column in columns]
                     if len(arrays) != 4 or len({a.size for a in arrays}) != 1:
                         raise ValueError("3D setpoint and measurement shapes do not match.")
-                    if any(a.dtype.kind not in "biuf" for a in arrays[:3]) or arrays[3].dtype.kind not in "biufO":
+                    if any(a.dtype.kind not in "biuf" for a in arrays[:3]) or arrays[3].dtype.kind not in "biufcO":
                         raise ValueError("3D viewing requires real numeric measurements and coordinates.")
                     # Coordinate conversion is checked by the source decoder.
                     # Require already validated doubles here rather than round
@@ -91,7 +92,7 @@ class VolumeStore:
                             store.latest[name] = float(values[-1])
                     def encoded(value):
                         scalar = np.asarray(value)
-                        if scalar.dtype.kind not in "biuf":
+                        if scalar.dtype.kind not in "biufc":
                             raise ValueError("3D viewing requires real numeric samples.")
                         return scalar.tobytes(), scalar.dtype.str
                     # Values retain their original dtype and bytes, including
@@ -187,7 +188,12 @@ class VolumeStore:
             np.add.at(counts, (np.searchsorted(ys, y_values[finite]),
                                np.searchsorted(xs, x_values[finite])), 1)
             if np.any(finite):
-                matrix = data2matrix(y_values[finite], x_values[finite], samples[finite], check_cancelled=check)
+                if np.iscomplexobj(samples):
+                    real = data2matrix(y_values[finite], x_values[finite], samples[finite].real, check_cancelled=check)
+                    imaginary = data2matrix(y_values[finite], x_values[finite], samples[finite].imag, check_cancelled=check)
+                    matrix = real + 1j * imaginary
+                else:
+                    matrix = data2matrix(y_values[finite], x_values[finite], samples[finite], check_cancelled=check)
                 values = matrix.reindex(index=ys, columns=xs).to_numpy()
         check()
         frame = SliceFrame(xs, ys, values, counts, depth, index, len(rows))

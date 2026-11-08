@@ -1148,6 +1148,7 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
                 self.closed = Signal()
                 self.make_ds = Signal()
                 self.previewTraceDropRequested = Signal()
+                self.previewTracesDropRequested = Signal()
                 self.merge_compatibility_changed = Signal()
                 self.sweep_moved = Signal()
                 self.remove_sweep = Signal()
@@ -1353,6 +1354,7 @@ class DatabaseAwareDatasetCacheTestCase(unittest.TestCase):
                 self.closed = Signal()
                 self.make_ds = Signal()
                 self.previewTraceDropRequested = Signal()
+                self.previewTracesDropRequested = Signal()
                 self.get_mergables = Signal()
                 self.remove_dataset = Signal()
 

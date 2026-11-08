@@ -58,6 +58,7 @@ class _CutAxisState:
     overlay: _OverlayState | None
     refresh_pending: bool
     refresh_pending_force: bool
+    complex_samples: Any = None
 
 
 @dataclass
@@ -268,6 +269,7 @@ class sweeper(Plot1DSnapMixin, plotWidget):
             refresh_pending_force=bool(
                 self.__dict__.get("_refresh_pending_force", False)
                 ),
+            complex_samples=self.__dict__.get("complex_samples"),
             )
 
 
@@ -338,6 +340,7 @@ class sweeper(Plot1DSnapMixin, plotWidget):
             }
         self.axis_param = dict(state.axis_param)
         self.dataGrid = np.array(state.data_grid, copy=True)
+        self.complex_samples = state.complex_samples
         self.display_param = state.display_param
         self._set_slider_state(
             state.slider_range,

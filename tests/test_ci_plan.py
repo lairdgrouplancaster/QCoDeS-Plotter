@@ -192,13 +192,14 @@ def test_check_matrix_keeps_all_desktop_partitions_and_python_versions(full):
     expected = {
         (runner, version, "full", partition)
         for runner in ("windows-2025", "macos-latest")
-        for version in ("3.12", "3.14") for partition in ("1/2", "2/2")
+        for version in ("3.12", "3.14")
+        for partition in (("1/4", "2/4", "3/4", "4/4") if runner == "windows-2025" else ("1/2", "2/2"))
     } | {(runner, "3.13", "compatibility", None) for runner in ("windows-2025", "macos-latest")}
     compatibility = ("macos-15-intel", "ubuntu-latest") if full else ("macos-15-intel",)
     expected |= {(runner, version, "compatibility", None)
                  for runner in compatibility for version in ("3.12", "3.13", "3.14")}
     assert actual == expected
-    assert len(entries) == len(expected) == (16 if full else 13)
+    assert len(entries) == len(expected) == (20 if full else 17)
     artifacts = {
         "windows-2025": "qplotter-native-windows-x64",
         "macos-latest": "qplotter-native-macos-arm64",
@@ -238,7 +239,7 @@ def test_cli_missing_or_invalid_event_emits_safe_complete_outputs(tmp_path, payl
     outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
     assert set(outputs) == {"full-validation", "checks", "installations", "reason"}
     assert outputs["full-validation"] == "true"
-    assert len(json.loads(outputs["checks"])["include"]) == 16
+    assert len(json.loads(outputs["checks"])["include"]) == 20
     assert len(json.loads(outputs["installations"])["include"]) == 12
     assert "CI mode: full." in result.stdout
 
@@ -260,5 +261,5 @@ def test_cli_emits_routine_outputs_only_for_successful_safe_comparison(git_repos
     )
     outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
     assert outputs["full-validation"] == "false"
-    assert len(json.loads(outputs["checks"])["include"]) == 13
+    assert len(json.loads(outputs["checks"])["include"]) == 17
     assert len(json.loads(outputs["installations"])["include"]) == 9

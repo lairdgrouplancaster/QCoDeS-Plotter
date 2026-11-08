@@ -156,6 +156,7 @@ class RunPreviewCell(qtw.QWidget):
         label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         label.setToolTip(preview_tooltip_text(preview))
         label.set_preview_accessibility(preview.get("title"))
+        label.set_complex_dataset(preview.get("complex", False))
         label.setPixmap(
             QtGui.QPixmap.fromImage(preview["image"]).scaled(
                 self.icon_size,

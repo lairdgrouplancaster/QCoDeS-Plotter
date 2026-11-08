@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from PyQt6 import QtCore, QtGui, sip
 
+from qplot.datahandling.complex_data import COMPLEX_1D_KEY, COMPLEX_ND_KEY
 from qplot.datahandling.dimensions import (
     MAX_SUPPORTED_PLOT_DIMENSIONS,
     unsupported_plot_message,
@@ -113,7 +114,8 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self._last_errors: dict[tuple[str, TrustedWorkKind], str] = {}
         self._last_helper_incarnation = 0
         self._replacement_reload_queued = False
-        self._formats = self._work_formats(window.preview_size)
+        self._complex_modes = self._configured_complex_modes()
+        self._formats = self._work_formats(window.preview_size, *self._complex_modes)
 
         self._queuedWakeup.connect(  # type: ignore[call-arg]
             self._poll,
@@ -483,7 +485,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         """Invalidate only full previews; run-table thumbnails stay current."""
 
         self._require_owner()
-        preview_format = self._preview_format(preview_size)
+        preview_format = self._preview_format(preview_size, *self._complex_modes)
         if self._formats[TrustedWorkKind.PREVIEW] == preview_format:
             return
         self._formats = {**self._formats, TrustedWorkKind.PREVIEW: preview_format}
@@ -497,6 +499,27 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         coordinator = self._coordinator
         if coordinator is not None and self._accepting_publications:
             coordinator.update_format(TrustedWorkKind.PREVIEW, preview_format)
+
+    def _configured_complex_modes(self) -> tuple[str, str]:
+        config = getattr(self._window, "config", None)
+        return ((config.get(COMPLEX_1D_KEY), config.get(COMPLEX_ND_KEY))
+                if config is not None else ("magnitude", "magnitude"))
+
+    def update_complex_preferences(self) -> None:
+        """Discard stale components and schedule both image sizes with new keys."""
+        self._require_owner()
+        modes = self._configured_complex_modes()
+        if modes == self._complex_modes:
+            return
+        self._complex_modes = modes
+        self._formats = self._work_formats(self._window.preview_size, *modes)
+        self._window.infoBox.preview.discard_trusted_previews()
+        self._window.RunList.show_run_preview_placeholders()
+        coordinator = self._coordinator
+        if coordinator is not None and self._accepting_publications:
+            for kind in (TrustedWorkKind.THUMBNAIL, TrustedWorkKind.PREVIEW):
+                coordinator.update_format(kind, self._formats[kind])
+            self.request_priority_update()
 
     def clear_database(self) -> None:
         """Stop publication immediately and retire work without a GUI wait."""
@@ -1310,21 +1333,29 @@ class TrustedDerivedQtBridge(QtCore.QObject):
                     "dimension_count": len(axes),
                     "title": title,
                     "image": image,
+                    "complex": image_fields.get("complex_mode") is not None,
+                    "complex_mode": image_fields.get("complex_mode"),
                 }
             )
-        # The renderer deliberately omits higher-dimensional images. Keep
-        # those quantities available as labelled slice/export/statistics targets,
-        # including in mixed runs whose lower-dimensional images succeeded.
+        # Missing images do not imply unsupported plots. Keep every measured
+        # quantity available, including quantities omitted from a partial or
+        # bounded payload.
+        rendered = {preview["parameter"] for preview in previews}
         for parameter in parameters.values():
             axes = list(parameter.depends_on)
-            if len(axes) > MAX_SUPPORTED_PLOT_DIMENSIONS:
+            if axes and parameter.name not in rendered:
+                title = preview_title(parameter.name, axes)
+                if len(axes) == 3:
+                    title = "Open the 3D slice viewer"
+                elif len(axes) > MAX_SUPPORTED_PLOT_DIMENSIONS:
+                    title = unsupported_plot_message(parameter.name, axes)
                 previews.append({
                     "parameter": parameter.name,
                     "axes": axes,
                     "dimension_count": len(axes),
-                    "title": ("Open the 3D slice viewer" if len(axes) == 3
-                              else unsupported_plot_message(parameter.name, axes)),
+                    "title": title,
                     "unsupported": True,
+                    "complex": parameter.paramtype == "complex",
                 })
         return previews, None
 
@@ -1451,26 +1482,28 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         )
 
     @staticmethod
-    def _work_formats(preview_size: int) -> dict[TrustedWorkKind, WorkFormat]:
+    def _work_formats(preview_size: int, complex_1d="magnitude", complex_nd="magnitude") -> dict[TrustedWorkKind, WorkFormat]:
         return {
             TrustedWorkKind.METADATA: WorkFormat(TRUSTED_DERIVED_RENDERER_VERSION),
             TrustedWorkKind.THUMBNAIL: WorkFormat(
                 TRUSTED_DERIVED_RENDERER_VERSION,
                 RenderingOptions.from_mapping(
-                    {"height": _THUMBNAIL_SIZE, "width": _THUMBNAIL_SIZE}
+                    {"height": _THUMBNAIL_SIZE, "width": _THUMBNAIL_SIZE,
+                     "complex_1d": complex_1d, "complex_nd": complex_nd}
                 ),
             ),
             TrustedWorkKind.PREVIEW: TrustedDerivedQtBridge._preview_format(
-                preview_size
+                preview_size, complex_1d, complex_nd
             ),
         }
 
     @staticmethod
-    def _preview_format(preview_size: int) -> WorkFormat:
+    def _preview_format(preview_size: int, complex_1d="magnitude", complex_nd="magnitude") -> WorkFormat:
         size = max(1, min(2_048, int(preview_size)))
         return WorkFormat(
             TRUSTED_DERIVED_RENDERER_VERSION,
-            RenderingOptions.from_mapping({"height": size, "width": size}),
+            RenderingOptions.from_mapping({"height": size, "width": size,
+                                           "complex_1d": complex_1d, "complex_nd": complex_nd}),
         )
 
     @QtCore.pyqtSlot()

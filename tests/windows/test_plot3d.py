@@ -732,6 +732,42 @@ def test_adding_volume_rolls_back_without_losing_existing_plot(tmp_path, main, m
     assert errors == []
 
 
+@pytest.mark.parametrize("primary_dimension", [1, 2])
+def test_group_drop_follows_volume_promotion_for_remaining_measurements(tmp_path, main, monkeypatch,
+                                                                      primary_dimension):
+    from qplot.windows._dragdrop import make_run_previews_mime
+    from qplot.windows._plot_drop_axes import DropAxisPlan
+    from tests.windows.test_heatmap_layer_integration import _PreviewDropEvent
+
+    window, errors = main
+    monkeypatch.setattr(DropAxisPlan, "approve", lambda *args: True)
+    path = tmp_path / "group-volume.db"
+    runs = build_mixed_volume(path)
+    before = trusted_database_artifact_state(path)
+    window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(runs[primary_dimension][0])
+    wait_for(lambda: len(window.windows) == 1 and loaded(window.windows[0]))
+    original = window.windows[0]
+    other_dimension = 2 if primary_dimension == 1 else 1
+    event = _PreviewDropEvent(make_run_previews_mime([
+        {"guid": runs[dimension][0], "parameter": runs[dimension][1], "axes_pending": True}
+        for dimension in (3, other_dimension)
+    ]))
+    assert original._handle_preview_drag_drop(event)
+    wait_for(lambda: len(window.windows) == 1 and isinstance(window.windows[0], plot3d)
+             and len(window.windows[0]._plot_item_order) == 3 and loaded(window.windows[0]))
+    replacement = window.windows[0]
+    assert replacement is not original
+    assert original._preview_drop_replacement() is replacement
+    assert len(replacement.lines) == 1
+    assert len(replacement.heatmaps) == 2
+    wait_for(lambda: all(layer is replacement or layer.geometry is not None
+                        for layer in replacement.heatmaps.values()))
+    assert errors == []
+    assert_database_artifacts_unchanged_except_trusted_shm(path, before)
+
+
 def test_adding_volume_preserves_manual_colour_limits(tmp_path, main, monkeypatch):
     from qplot.windows._plot_drop_axes import DropAxisPlan
 

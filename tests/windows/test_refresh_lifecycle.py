@@ -30,6 +30,8 @@ class _Config:
             "user_preference.plot_tile_columns": 2,
             "user_preference.confirm_incompatible_axes": True,
             "user_preference.colorbar_width": 15,
+            "user_preference.complex_1d": "magnitude",
+            "user_preference.complex_nd": "magnitude",
             "user_preference.axis_tick_width": 2.0,
             "user_preference.axis_major_tick_count": 3,
             "GUI.preview_size": 200,

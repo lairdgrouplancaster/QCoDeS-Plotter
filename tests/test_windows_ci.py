@@ -43,7 +43,7 @@ def test_full_windows_suite_has_its_own_bounded_time_budget(
 
 
 @pytest.mark.parametrize("full_validation", [False, True], ids=["routine", "full"])
-def test_windows_full_matrix_runs_both_partitions_with_existing_containment(
+def test_windows_full_matrix_runs_all_partitions_with_existing_containment(
     github_directory: Path, full_validation: bool,
 ) -> None:
     workflow = (github_directory / "workflows/ci.yml").read_text(encoding="utf-8")
@@ -53,8 +53,8 @@ def test_windows_full_matrix_runs_both_partitions_with_existing_containment(
     entries = planner["check_matrix"](full_validation)["include"]
     windows_full = [(entry["python-version"], entry.get("partition", "")) for entry in entries
                     if entry["os"] == "windows-2025" and entry["suite"] == "full"]
-    assert sorted(windows_full) == [("3.12", "1/2"), ("3.12", "2/2"),
-                                    ("3.14", "1/2"), ("3.14", "2/2")]
+    assert sorted(windows_full) == [(version, f"{index}/4") for version in ("3.12", "3.14")
+                                    for index in range(1, 5)]
     mac_full = [(entry["python-version"], entry.get("partition", "")) for entry in entries
                 if entry["os"] == "macos-latest" and entry["suite"] == "full"]
     assert sorted(mac_full) == [("3.12", "1/2"), ("3.12", "2/2"),

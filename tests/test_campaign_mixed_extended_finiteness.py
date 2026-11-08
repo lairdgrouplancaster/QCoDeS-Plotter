@@ -104,8 +104,8 @@ def test_object_finiteness_does_not_narrow_extended_exponents():
     np.testing.assert_array_equal(numeric_isfinite(values), [True] * 3 + [False] * 3 + [True] * 3)
 
 
-@pytest.mark.parametrize("value", ["not numeric", object(), 1 + 2j])
-def test_nonnumeric_or_complex_objects_are_not_silently_accepted(value):
+@pytest.mark.parametrize("value", ["not numeric", object()])
+def test_nonnumeric_objects_are_not_silently_accepted(value):
     with pytest.raises((TypeError, ValueError)):
         numeric_isfinite(np.array([1, value], dtype=object))
 
@@ -117,3 +117,10 @@ def test_ordinary_finiteness_keeps_scalar_empty_and_array_shapes(dtype):
         actual = numeric_isfinite(values)
         assert actual.shape == values.shape
         np.testing.assert_array_equal(actual, np.ones(values.shape, dtype=bool))
+
+
+def test_complex_object_finiteness_checks_both_components():
+    values = np.array([1 + 2j, complex(float("inf"), 2),
+                       complex(1, float("inf")), complex(float("nan"), 2),
+                       complex(1, float("nan"))], dtype=object)
+    np.testing.assert_array_equal(numeric_isfinite(values), [True, False, False, False, False])

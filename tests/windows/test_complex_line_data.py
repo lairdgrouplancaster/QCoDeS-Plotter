@@ -1,4 +1,4 @@
-"""Complex 1D QCoDeS data fails normally, without publishing a partial plot."""
+"""Complex measurements render and export; complex coordinates fail safely."""
 
 import csv
 import hashlib
@@ -103,16 +103,22 @@ def test_complex_measurement_actual_plot_error_export_and_recovery(tmp_path, mon
             plot.monitor.stop()
         assert not uncaught, [str(args[1]) for args in uncaught]
         assert not any("complex" in str(warning.message).lower() for warning in caught)
-        assert "complex" in plot._last_error_text.lower()
-        assert "not supported" in plot._last_error_text.lower()
-        assert ("x" if "coordinate" in kind else "signal") in plot._last_error_text
-        assert not plot.__dict__.get("_qplot_display_synchronized", False)
-        assert not cache_parameter_is_synchronized(plot.ds.cache, "signal")
-        assert "axis_data" not in plot.__dict__
-        assert plot.line.getData() == (None, None)
+        if "coordinate" in kind:
+            assert "complex" in plot._last_error_text.lower()
+            assert "not supported" in plot._last_error_text.lower()
+            assert "x" in plot._last_error_text
+            assert not plot.__dict__.get("_qplot_display_synchronized", False)
+            assert not cache_parameter_is_synchronized(plot.ds.cache, "signal")
+            assert "axis_data" not in plot.__dict__
+            assert plot.line.getData() == (None, None)
+        else:
+            assert plot.worker.result is not None, plot._last_error_text
+            np.testing.assert_array_equal(plot.axis_data["x"], x)
+            np.testing.assert_allclose(plot.axis_data["y"], np.abs(signal))
+            np.testing.assert_array_equal(plot.complex_samples.values, signal)
         assert plot._refresh_publication is None
 
-        # Raw run export remains available even when the plot cannot be rendered.
+        # Raw export retains both components, independently of the projection.
         target = tmp_path / "raw.csv"
         monkeypatch.setattr(qtw.QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
         window.measurementBox.setText("1")

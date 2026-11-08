@@ -108,6 +108,8 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.csv_filename_format` | string | `"current"` | `current` or `qcodes` | Default CSV filename convention. |
 | `user_preference.show_source_annotation` | boolean | `true` | `true` or `false` | Show source annotations in plot windows. |
 | `user_preference.cursor_significant_figures` | integer | `6` | `1 <= value <= 17` | Significant figures in cursor readouts. |
+| `user_preference.complex_1d` | string | `"magnitude"` | `magnitude`, `phase`, `real`, `imag`, `imag_vs_real` | Display projection for complex 1D measurements; phase is in degrees. |
+| `user_preference.complex_nd` | string | `"magnitude"` | `magnitude`, `phase`, `real`, `imag` | Display projection for complex heatmaps and 3D slices; phase is in degrees. |
 | `user_preference.font_size` | integer | `10` | `6 <= value <= 36` | Application font size in points. |
 | `user_preference.plot_tile_rows` | integer | `2` | `1 <= value <= 10` | Rows in the plot tiling grid. |
 | `user_preference.plot_tile_columns` | integer | `3` | `1 <= value <= 10` | Columns in the plot tiling grid. |

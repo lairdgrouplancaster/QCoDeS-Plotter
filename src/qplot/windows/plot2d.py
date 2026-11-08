@@ -1610,7 +1610,7 @@ class plot2d(
             self,
             x_value: float,
             y_value: float,
-            ) -> tuple[int, int, float, float, float] | None:
+            ) -> tuple[int, int, float, float, float | complex] | None:
         """Return index, recorded coordinates, and value under a point."""
 
         geometry = self._heatmap_geometry()
@@ -1621,6 +1621,13 @@ class plot2d(
             return None
 
         x_index, y_index = index
+        samples = self.__dict__.get("complex_samples")
+        if samples is not None:
+            point = samples.cell_index(x_index, y_index)
+            if point is None:
+                return None
+            return (x_index, y_index, float(samples.coordinates[0][point]),
+                    float(samples.coordinates[1][point]), complex(samples.values[point]))
         return (
             x_index,
             y_index,

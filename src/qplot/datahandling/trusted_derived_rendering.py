@@ -28,7 +28,7 @@ from qplot.datahandling.trusted_work_scheduler import (
     TrustedWorkKind,
 )
 
-TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v9"
+TRUSTED_DERIVED_RENDERER_VERSION = "trusted-derived-renderer-v10"
 TRUSTED_DERIVED_MAX_IMAGES = 8
 TRUSTED_DERIVED_MAX_IMAGE_WIDTH = 2_048
 TRUSTED_DERIVED_MAX_IMAGE_HEIGHT = 2_048
@@ -202,6 +202,7 @@ def render_trusted_derived_payload(
         cancel_check()
         parameter = parameter_by_name.get(dependent)
         dependencies = parameter.depends_on if parameter is not None else ()
+        complex_mode = None
         try:
             if len(dependencies) > 2:
                 raise _UnsupportedNumericData(
@@ -216,15 +217,22 @@ def render_trusted_derived_payload(
                     "The dependent or one of its sweep parameters is unavailable."
                 )
             array_tree = any(
-                parameter_by_name[name].paramtype == "array"
+                parameter_by_name[name].paramtype in ("array", "complex")
                 for name in (*dependencies, dependent)
                 if name in parameter_by_name
             )
             if array_tree:
                 from .trusted_array_preview import render_array_preview
 
-                rgba, points = render_array_preview(
+                mode = dict(options.values).get("complex_1d" if len(dependencies) == 1 else "complex_nd", "magnitude")
+                allowed = {"magnitude", "phase", "real", "imag"}
+                if len(dependencies) == 1:
+                    allowed.add("imag_vs_real")
+                if mode not in allowed:
+                    raise ValueError("Invalid complex preview display mode.")
+                rgba, points, complex_mode = render_array_preview(
                     observation, dependencies, dependent, width, height, cancel_check,
+                    complex_mode=mode,
                 )
                 dimensionality = len(dependencies)
             elif len(dependencies) == 1:
@@ -278,6 +286,7 @@ def render_trusted_derived_payload(
                 ("dimensions", dimensionality),
                 ("sampled_points", points),
                 ("bytes", encoded),
+                *((("complex_mode", complex_mode),) if complex_mode is not None else ()),
             )
         )
         if dependent_index + 1 >= TRUSTED_DERIVED_MAX_IMAGES:
@@ -682,7 +691,7 @@ def validate_trusted_derived_payload(payload: DerivedPayload) -> int:
     encoded_total = 0
     for image in images:
         fields = _pair_mapping(image, name="image", maximum=16)
-        if set(fields) != {
+        required_image_fields = {
             "encoding",
             "width",
             "height",
@@ -690,8 +699,14 @@ def validate_trusted_derived_payload(payload: DerivedPayload) -> int:
             "dimensions",
             "sampled_points",
             "bytes",
-        }:
+        }
+        if set(fields) - {"complex_mode"} != required_image_fields:
             raise TrustedDerivedRenderingError("A derived image field is invalid.")
+        if "complex_mode" in fields and fields["complex_mode"] not in (
+            ("magnitude", "phase", "real", "imag", "imag_vs_real")
+            if fields["dimensions"] == 1 else ("magnitude", "phase", "real", "imag")
+        ):
+            raise TrustedDerivedRenderingError("A derived complex display mode is invalid.")
         width, height = fields["width"], fields["height"]
         encoded = fields["bytes"]
         if (

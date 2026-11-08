@@ -6,6 +6,12 @@ All notable user-facing changes are recorded here.
 
 ### Added
 
+- Plot complex QCoDeS measurements using persistent magnitude, phase, Re or Im
+  preferences, with Im vs Re also available for 1D traces. Cursor readouts retain
+  the original complex samples. Matching thumbnails and previews carry a ℂ badge.
+- Drag all highlighted measurement thumbnails into a plot together, in display
+  order, including selections spanning multiple runs.
+
 - Combine 1D traces, 2D heatmaps and one 3D measurement in a plot window, in
   any insertion order. Slice controls appear with the volume and affect only
   that dataset; removing it preserves the remaining plots.
@@ -26,6 +32,9 @@ All notable user-facing changes are recorded here.
 
 ### Changed
 
+- Include at least two 3D datasets and small 1D/2D complex S11, S21 and S12
+  datasets in every packaged synthetic database template. CSV instructions now
+  declare parameter types; generated sizes remain close to the filename target.
 - Remove the redundant heatmap resolution text from the coordinate toolbar;
   downsampled plots retain their warning button and details dialog.
 - Make plot source annotations selectable and copyable. Add compact 3D cursor
@@ -41,6 +50,9 @@ All notable user-facing changes are recorded here.
 
 ### Fixed
 
+- Keep complex thumbnail plot actions available, report proven setpoint counts
+  for independently stored measurement grids, and name both the incoming
+  dataset and target plot in incompatible-axis warnings.
 - Describe full-resolution database reads as points rather than sampled points,
   and retain the selected 3D depth coordinate when the pointer leaves the plot.
 - Use declared setpoints for full-dataset statistics of inferred QCoDeS

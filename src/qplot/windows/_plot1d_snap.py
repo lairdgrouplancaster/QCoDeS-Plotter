@@ -8,6 +8,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._commands import command_spec, command_with_status, create_action
+from ._complex_plots import show_complex_line_readout
 from ._native_transforms import NativePlotDataItem
 from ._plot_host import PlotHost
 
@@ -297,10 +298,15 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
         """
         self._last_cursor_scene_pos = pos
-        if not (
+        snapping = bool(
             self.snap_to_trace_action is not None
             and self.snap_to_trace_action.isChecked()
-            ):
+        )
+        complex_lines = self.__dict__.get("complex_samples") is not None or any(
+            getattr(line, "from_win", self).__dict__.get("complex_samples") is not None
+            for line in self.__dict__.get("lines", {}).values()
+        )
+        if not snapping and not complex_lines:
             super().mouseMoved(pos)
             return
 
@@ -325,12 +331,16 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         self._set_cursor_index_label(f"[{nearest.point_number - 1}]")
         self.pos_labels["x"].setText(self.format_cursor_number(nearest.x_value))
         self.pos_labels["y"].setText(self.format_cursor_number(nearest.y_value))
+        line = self.__dict__.get("lines", {}).get(nearest.label, self.__dict__.get("line"))
+        is_complex = show_complex_line_readout(self, line, nearest.point_number - 1)
+        if not snapping and not is_complex:
+            super().mouseMoved(pos)
+            return
         self._show_snap_report(nearest.label)
-        self._show_snap_marker(
-            nearest.x_view_value,
-            nearest.y_view_value,
-            nearest.viewbox,
-        )
+        if snapping:
+            self._show_snap_marker(
+                nearest.x_view_value, nearest.y_view_value, nearest.viewbox,
+            )
 
 
     def _show_snap_report(self, label):
@@ -376,6 +386,11 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         except (AttributeError, RuntimeError):
             dataset = None
         run_id = getattr(dataset, "run_id", "?")
+        samples = source.__dict__.get("complex_samples")
+        if samples is not None and len(samples.coordinates) == 1:
+            return (run_id, source.param.label or source.param.name,
+                    samples.parameters[0].label or samples.parameters[0].name,
+                    str(getattr(source, "label", "")))
 
         host_options = self.__dict__.get("_axis_selection", {})
         if not host_options:

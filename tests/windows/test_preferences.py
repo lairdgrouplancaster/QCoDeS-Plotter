@@ -31,6 +31,8 @@ class FakeConfig:
             "user_preference.font_size": 10,
             "user_preference.show_source_annotation": True,
             "user_preference.cursor_significant_figures": 6,
+            "user_preference.complex_1d": "magnitude",
+            "user_preference.complex_nd": "magnitude",
             COLORBAR_WIDTH_KEY: 15,
             AXIS_TICK_WIDTH_KEY: 2.0,
             AXIS_MAJOR_TICK_COUNT_KEY: 3,

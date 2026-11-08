@@ -72,11 +72,12 @@ def test_shaped_loader_rejects_the_named_complex_coordinate(complex_axis):
         )
 
 
+@pytest.mark.parametrize("mode", ["magnitude", "phase", "real", "imag"])
 @pytest.mark.parametrize("shaped", [False, True], ids=["unshaped", "shaped"])
 @pytest.mark.parametrize("complex_values", [False, True], ids=["real", "complex"])
 @pytest.mark.parametrize("force_sql", [False, True], ids=["cache", "bounded-sql"])
-def test_real_qcodes_heatmap_preserves_real_values_or_rejects_complex(
-    tmp_path, shaped, complex_values, force_sql,
+def test_real_qcodes_heatmap_preserves_real_values_and_projects_complex(
+    tmp_path, shaped, complex_values, force_sql, mode,
 ):
     path = tmp_path / "heatmap.db"
     initialise_or_create_database_at(str(path), journal_mode="DELETE")
@@ -107,7 +108,7 @@ def test_real_qcodes_heatmap_preserves_real_values_or_rejects_complex(
         worker = worker_module.loader(
             dataset.cache, params["signal"], params,
             {"x": "x", "y": "y"},
-            force_sql_heatmap=force_sql,
+            force_sql_heatmap=force_sql, complex_mode=mode,
         )
         finished, errors = _run_worker(worker)
 
@@ -116,20 +117,25 @@ def test_real_qcodes_heatmap_preserves_real_values_or_rejects_complex(
                 (2, 3) if shaped else (6,)
             )
 
+        assert finished == [True]
+        assert errors == []
+        np.testing.assert_array_equal(worker.axis_data["x"], [0, 1, 2])
+        np.testing.assert_array_equal(worker.axis_data["y"], [0, 1])
+        expected = np.array([[0, 1, 2], [10, 11, 12]])
         if complex_values:
-            assert finished == [False]
-            assert len(errors) == 1
-            assert "complex" in str(errors[0]).lower()
-            assert "signal" in str(errors[0])
-            assert not hasattr(worker, "dataGrid")
-        else:
-            assert finished == [True]
-            assert errors == []
-            np.testing.assert_array_equal(worker.axis_data["x"], [0, 1, 2])
-            np.testing.assert_array_equal(worker.axis_data["y"], [0, 1])
-            np.testing.assert_array_equal(
-                worker.dataGrid, [[0, 1, 2], [10, 11, 12]],
-            )
+            recorded = expected + 1j * (100 + expected)
+            samples = worker.complex_samples
+            np.testing.assert_array_equal(samples.values, recorded.ravel())
+            np.testing.assert_array_equal(samples.coordinates[0], [0, 1, 2, 0, 1, 2])
+            np.testing.assert_array_equal(samples.coordinates[1], [0, 0, 0, 1, 1, 1])
+            assert samples.mode == mode
+            expected = {
+                "magnitude": np.abs(recorded),
+                "phase": np.angle(recorded, deg=True),
+                "real": recorded.real,
+                "imag": recorded.imag,
+            }[mode]
+        np.testing.assert_allclose(worker.dataGrid, expected)
     finally:
         dataset.conn.close()
 

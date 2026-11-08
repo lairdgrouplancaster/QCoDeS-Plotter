@@ -1063,6 +1063,8 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     def can_swap_plot_axes(self) -> bool:
         """Return whether this window has a valid, reversible 1D axis pair."""
 
+        if getattr(self.__dict__.get("complex_samples"), "mode", None) == "imag_vs_real":
+            return False
         names = self._default_plot_axis_names()
         dropdowns = self.__dict__.get("axis_dropdown", {})
         if names is None or set(dropdowns) != {"x", "y"}:

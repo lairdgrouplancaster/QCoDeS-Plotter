@@ -743,6 +743,12 @@ class PlotActionsMixin:
             getattr(plot, "param", None),
             preview.preview_size,
         )
+        if plot_preview is not None and plot_preview.get("complex"):
+            from qplot.datahandling.complex_data import COMPLEX_1D_KEY, COMPLEX_ND_KEY
+
+            mode_key = COMPLEX_1D_KEY if len(plot_preview["axes"]) == 1 else COMPLEX_ND_KEY
+            if plot_preview.get("complex_mode") != self.config.get(mode_key):
+                return
         if (
             plot_preview is None
             or preview.generation != preview_generation
@@ -871,6 +877,7 @@ class PlotActionsMixin:
             )
         win.make_ds.connect(self.add_ds_at)
         win.previewTraceDropRequested.connect(self.add_dropped_preview_to_plot)
+        win.previewTracesDropRequested.connect(self.add_dropped_previews_to_plot)
         if window_type in {"plot1d", "plot2d"}:
             win._plot_source_replacement_request = lambda selected, target_window=win: promote_plot_source(
                 self, target_window, selected,
@@ -1600,6 +1607,40 @@ class PlotActionsMixin:
                 dataset,
                 context="Preview plot dataset cleanup failed",
             )
+
+
+    @QtCore.pyqtSlot(object, object)
+    def add_dropped_previews_to_plot(self, target_win, previews):
+        """Add a selection in order, awaiting each run's trusted metadata."""
+        sources = tuple((
+            DatasetKey(preview["database_path"], preview["guid"])
+            if preview.get("database_path") else self._current_dataset_key(preview["guid"]),
+            preview["parameter"],
+        ) for preview in previews)
+        launch_generation = getattr(self, "_plot_launch_generation", 0)
+
+        def add_remaining(index=0, target=target_win):
+            while index < len(sources):
+                # A volume can replace the receiving window while retaining
+                # its overlays. The rest of this drop follows that owner.
+                while (replacement_ref := getattr(target, "_preview_drop_replacement", None)) is not None:
+                    target = replacement_ref()
+                    if target is None:
+                        return
+                if (getattr(target, "_closed", False)
+                        or getattr(self, "_shutdown_started", False)
+                        or launch_generation != getattr(self, "_plot_launch_generation", 0)):
+                    return
+                key, parameter = sources[index]
+                if self._defer_trusted_plot_action(
+                    key, lambda index=index, target=target: add_remaining(index, target),
+                    target_window=target,
+                ):
+                    return
+                self.add_dropped_preview_to_plot(target, key, parameter)
+                index += 1
+
+        add_remaining()
 
 
     @QtCore.pyqtSlot(object, object, str)

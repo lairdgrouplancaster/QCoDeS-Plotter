@@ -718,7 +718,8 @@ class plot3d(plot2d):
     def _start_volume_range(self):
         if self.volume is None or self._closed or self._color_mode != "volume":
             return
-        key = (self.volume, tuple(self.axis_options.items()), self._applied_operation_state.entries)
+        key = (self.volume, tuple(self.axis_options.items()), self._applied_operation_state.entries,
+               self.worker.complex_mode)
         if self._range_key == key:
             return
         if self._range_task is not None:
@@ -728,6 +729,7 @@ class plot3d(plot2d):
         self._set_range_status("Provisional colour range; scanning volume…")
         volume, axes, operations = self.volume, dict(self.axis_options), self._applied_operations
         param = self.param
+        complex_mode = self.worker.complex_mode
         params = {role: self.param_dict[name] for role, name in axes.items()}
         def scan(task):
             lower = upper = None
@@ -736,7 +738,8 @@ class plot3d(plot2d):
                 task.check()
                 task.progress = PlotProgress("Calculating whole-volume colour range", index, len(depths), stage=2)
                 frame = volume.plane(axes["x"], axes["y"], index, check=task.check)
-                frame, _ = processed_plane(frame, operations, param, params, check=task.check, cancelled=task.is_cancelled)
+                frame, _ = processed_plane(frame, operations, param, params, check=task.check,
+                                          cancelled=task.is_cancelled, complex_mode=complex_mode)
                 values = frame.values[numeric_isfinite(frame.values)]
                 if values.size:
                     lo, hi = float(np.min(values)), float(np.max(values))

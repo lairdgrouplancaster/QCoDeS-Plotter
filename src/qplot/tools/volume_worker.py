@@ -11,6 +11,12 @@ from PyQt6 import QtCore
 
 from qplot.datahandling._numeric_arrays import NumericArrayReader
 from qplot.datahandling._sqlite_identifiers import quote_identifier_text as identifier
+from qplot.datahandling.complex_data import (
+    ComplexSamples,
+    complex_parameter,
+    contains_complex,
+    project_complex,
+)
 from qplot.datahandling.numeric_samples import concatenate_record_samples
 from qplot.datahandling.parameter_data import flatten_record_columns
 from qplot.datahandling.plot_progress import PlotProgress
@@ -28,10 +34,13 @@ from qplot.tools.worker import PlotWorkCancelled, loader
 
 
 def processed_plane(frame, operations, param, axis_params, *, check=lambda: None,
-                    cancelled=lambda: False):
+                    cancelled=lambda: False, complex_mode="magnitude"):
     """The same plane pipeline backs images, all cuts, and colour statistics."""
     check()
     display_param = copy(param)
+    if complex_mode is not None and contains_complex(frame.values):
+        frame = replace(frame, raw_values=frame.values, values=project_complex(frame.values, complex_mode))
+        display_param = complex_parameter(param, complex_mode)
     if not operations or not frame.values.size:
         return frame, display_param
     data = {"x": frame.x.copy(), "y": frame.y.copy(), "z": frame.values.copy()}
@@ -70,7 +79,8 @@ class VolumeLoader(loader):
         names = (*self.param.depends_on_, self.param.name)
         for columns in chunks:
             self._check_cancelled()
-            if any(np.asarray(column).dtype.kind not in "biufO" for column in columns):
+            if (any(np.asarray(column).dtype.kind not in "biufO" for column in columns[:3])
+                    or np.asarray(columns[3]).dtype.kind not in "biufcO"):
                 raise ValueError("3D viewing requires real numeric measurements and coordinates.")
             yield tuple(self._float_heatmap_coordinates(np.asarray(column), name)
                         for name, column in zip(names[:3], columns[:3], strict=True)) + (np.asarray(columns[3]),)
@@ -107,7 +117,7 @@ class VolumeLoader(loader):
                         if is_blob:
                             blob = stack.enter_context(connection.blobopen(self.table_name, name, row[0], readonly=True))
                             value = NumericArrayReader(blob)
-                            if value.dtype.kind == "c":
+                            if value.dtype.kind == "c" and name != self.param.name:
                                 raise ValueError(f"Complex parameter '{name}' cannot be displayed in a 3D slice.")
                         values.append(np.nan if value is None else value)
                     array_sizes = {name: value.size for name, value in zip(names, values, strict=True)
@@ -149,7 +159,8 @@ class VolumeLoader(loader):
         if len(names) != 3:
             raise ValueError("3D slicing requires exactly three independent parameters.")
         for name in (*names, self.param.name):
-            if self.param_dict[name].type not in ("numeric", "array"):
+            allowed = ("numeric", "array", "complex") if name == self.param.name else ("numeric", "array")
+            if self.param_dict[name].type not in allowed:
                 raise ValueError(f"3D viewing requires real numeric parameter '{name}'.")
         self._prepare_trusted_prefix()
         self._progress = PlotProgress("Indexing 3D coordinates", stage=2)
@@ -191,13 +202,24 @@ class VolumeLoader(loader):
             index = volume.nearest_index(depth_name, value) if value is not None else self.depth_index
             self._progress = PlotProgress("Loading 2D slice", stage=2)
             frame = volume.plane(x, y, index, check=self._check_cancelled)
+            if contains_complex(frame.values):
+                xs, ys = np.meshgrid(frame.x, frame.y)
+                self.complex_samples = ComplexSamples(
+                    (xs.ravel(), ys.ravel()), (self.param_dict[x], self.param_dict[y]),
+                    frame.values.ravel(), self.complex_mode,
+                )
             self.axis_param = {axis: self.param_dict[name] for axis, name in (("x", x), ("y", y))}
             frame, self.display_param = processed_plane(
                 frame, self.operations, self.param, self.axis_param,
                 check=self._check_cancelled, cancelled=self.is_cancelled,
+                complex_mode=self.complex_mode,
             )
             self.axis_data = {"x": frame.x, "y": frame.y}
             self.dataGrid = frame.values
+            if self.complex_samples is not None:
+                self.complex_samples = self.complex_samples.bind_grid(
+                    frame.x, frame.y, check=self._check_cancelled,
+                )
             self.loaded_point_count = frame.samples
             self.heatmap_full_resolution = True
             self.loaded_from_sql_heatmap = True  # independent of the QCoDeS cache

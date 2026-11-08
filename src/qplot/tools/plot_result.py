@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 
+from qplot.datahandling.complex_data import ComplexSamples
 from qplot.datahandling.file_identity import DatabaseFileIdentity
 
 
@@ -56,6 +57,7 @@ class PlotLoadResult:
     _heatmap_source_sample_stride: int | None = None
     slice_volume: Any = None
     slice_frame: Any = None
+    complex_samples: ComplexSamples | None = None
 
 
 def capture_plot_result(worker: Any) -> PlotLoadResult:
@@ -105,4 +107,5 @@ def capture_plot_result(worker: Any) -> PlotLoadResult:
         _heatmap_estimated_range_rows=getattr(worker, "_heatmap_estimated_range_rows", None),
         _heatmap_aggregated_source_rows=getattr(worker, "_heatmap_aggregated_source_rows", None),
         _heatmap_source_sample_stride=getattr(worker, "_heatmap_source_sample_stride", None),
+        complex_samples=getattr(worker, "complex_samples", None),
     )

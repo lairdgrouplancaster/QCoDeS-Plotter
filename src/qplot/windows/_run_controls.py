@@ -175,7 +175,9 @@ class RunControlsMixin:
         sublayout.addWidget(self.autoPlotBox)
 
         sublayout.addSpacing(12)
-        sublayout.addWidget(qtw.QLabel("Refresh:"))
+        refresh_label = qtw.QLabel("Refresh every")
+        refresh_label.setBuddy(self.spinBox)
+        sublayout.addWidget(refresh_label)
         sublayout.addWidget(self.spinBox)
         sublayout.addWidget(self.refreshDatabaseButton)
 

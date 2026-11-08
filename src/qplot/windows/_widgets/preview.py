@@ -13,6 +13,7 @@ from qplot.datahandling._sqlite_identifiers import (
 )
 from qplot.datahandling.dimensions import (
     MAX_SUPPORTED_PLOT_DIMENSIONS,
+    MAX_VIEWER_DIMENSIONS,
     unsupported_plot_message,
 )
 from qplot.datahandling.file_identity import (
@@ -30,7 +31,7 @@ from qplot.datahandling.readonly import (
 from qplot.datahandling.trusted_presentation import bounded_presentation_error
 from qplot.diagnostics import log_exception
 
-from .._dragdrop import make_run_preview_mime
+from .._dragdrop import make_run_previews_mime
 from ._preview_selection import (
     active_preview_labels,
     preview_key,
@@ -145,6 +146,7 @@ class PreviewTab(qtw.QWidget):
         super().__init__(*args)
 
         self.preview_size = int(preview_size or PREVIEW_SIZE)
+        self.complex_modes = ("magnitude", "magnitude")
         self._cache_max_entries = (
             None if cache_max_entries is None else int(cache_max_entries)
         )
@@ -280,6 +282,20 @@ class PreviewTab(qtw.QWidget):
         for guid in self._explicit_guids:
             self._enqueue(guid, priority=PREVIEW_PLOTTED_PRIORITY)
         self._schedule_start_next()
+
+
+    def set_complex_preferences(self, modes):
+        modes = tuple(modes)
+        if modes == self.complex_modes:
+            return False
+        self.complex_modes = modes
+        if self._trusted_derived_mode:
+            return True  # The bridge owns format invalidation and scheduling.
+        current_guid = self.current_guid
+        self.set_database_runs(self.database_path, dict(self.run_metadata))
+        if current_guid:
+            self.set_current_guid(current_guid)
+        return True
 
 
     def set_database_runs(self, database_path, runs):
@@ -1021,6 +1037,7 @@ class PreviewTab(qtw.QWidget):
                 else self.preview_size
             ),
             )
+        worker.complex_modes = self.complex_modes
         worker.signals.finished.connect(self._worker_signal_finished)
         self._workers[active_key] = worker
         self.thread_pool.start(worker)
@@ -1285,6 +1302,7 @@ class PreviewCard(qtw.QWidget):
         image.setPixmap(QtGui.QPixmap.fromImage(preview["image"]))
         image.setToolTip(preview_tooltip_text(preview))
         image.set_preview_accessibility(preview["title"])
+        image.set_complex_dataset(preview.get("complex", False))
         image.plotRequested.connect(self.plotRequested)
         image.exportRequested.connect(self.exportRequested)
         image.statsRequested.connect(self.statsRequested)
@@ -1308,6 +1326,7 @@ class PreviewImageLabel(qtw.QLabel):
         self._preview_retired = False
         self.plot_supported = plot_supported
         self._selected = False
+        self._complex_dataset = False
         self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.setProperty(PREVIEW_SELECTED_PROPERTY, False)
         self.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.DefaultContextMenu)
@@ -1320,6 +1339,7 @@ class PreviewImageLabel(qtw.QLabel):
         self.setAccessibleName(accessible_name)
         self.setAccessibleDescription(
             "Ctrl/Cmd-click to select several thumbnails; Shift-click selects a range. "
+            "Drag a highlighted thumbnail to add the selection to a plot. "
             "Press Enter or Space to plot. Press Menu or Shift+F10 for plot and export actions."
             if self.plot_supported else
             "Ctrl/Cmd-click to select several thumbnails; Shift-click selects a range. "
@@ -1330,6 +1350,16 @@ class PreviewImageLabel(qtw.QLabel):
     def set_selected(self, selected):
         self._selected = bool(selected)
         self.setProperty(PREVIEW_SELECTED_PROPERTY, self._selected)
+        self.update()
+
+
+    def set_complex_dataset(self, complex_dataset):
+        self._complex_dataset = bool(complex_dataset)
+        self.setProperty("complexDataset", self._complex_dataset)
+        description = self.accessibleDescription().removeprefix("Complex-valued measurement. ")
+        self.setAccessibleDescription(
+            ("Complex-valued measurement. " if self._complex_dataset else "") + description
+        )
         self.update()
 
 
@@ -1365,10 +1395,23 @@ class PreviewImageLabel(qtw.QLabel):
     def paintEvent(self, event):
         super().paintEvent(event)
 
+        painter = QtGui.QPainter(self)
+        if self._complex_dataset:
+            font = painter.font()
+            font.setPixelSize(max(9, min(13, self.width() // 4)))
+            painter.setFont(font)
+            metrics = painter.fontMetrics()
+            badge = QtCore.QRect(
+                self.width() - metrics.horizontalAdvance("ℂ") - 5, 2,
+                metrics.horizontalAdvance("ℂ") + 3, metrics.height(),
+            )
+            background = self.palette().color(QtGui.QPalette.ColorRole.Base)
+            background.setAlpha(215)
+            painter.fillRect(badge, background)
+            painter.setPen(self.palette().color(QtGui.QPalette.ColorRole.Text))
+            painter.drawText(badge, QtCore.Qt.AlignmentFlag.AlignCenter, "ℂ")
         if not self._selected:
             return
-
-        painter = QtGui.QPainter(self)
         color = self.palette().color(QtGui.QPalette.ColorRole.Highlight)
         rect = self.rect()
         border_width = 2
@@ -1496,6 +1539,7 @@ class DraggablePreviewImageLabel(PreviewImageLabel):
         self.axes_pending = axes_pending
         self.drag_active = False
         self._drag_start_pos = None
+        self._collapse_selection_on_release = False
         if self.guid:
             self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
 
@@ -1503,7 +1547,23 @@ class DraggablePreviewImageLabel(PreviewImageLabel):
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.MouseButton.LeftButton:
             self._drag_start_pos = event.pos()
+            self._collapse_selection_on_release = self._selected and not event.modifiers()
+            if self._collapse_selection_on_release:
+                # Defer a plain click on a selected item until release, so a
+                # drag can keep the rest of the highlighted group.
+                self.setFocus(QtCore.Qt.FocusReason.MouseFocusReason)
+                event.accept()
+                return
         super().mousePressEvent(event)
+
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+            if self._collapse_selection_on_release:
+                self.select_preview()
+            self._collapse_selection_on_release = False
+            self._drag_start_pos = None
+        super().mouseReleaseEvent(event)
 
 
     def mouseMoveEvent(self, event):
@@ -1526,18 +1586,34 @@ class DraggablePreviewImageLabel(PreviewImageLabel):
 
 
     def _start_drag(self):
+        self.select_preview(preserve=True)
+        labels = [label for label in active_preview_labels(self._selection_scope()) if label._selected]
+        if not labels:
+            labels = [self]
+        previews = [{"guid": label.guid, "parameter": label.parameter,
+                     "axes": getattr(label, "axes", []),
+                     "axes_pending": getattr(label, "axes_pending", False)} for label in labels]
+        instance = self.window().__dict__.get("_loaded_database_instance")
+        if instance is not None:
+            for preview in previews:
+                preview["database_path"] = instance.logical_path
         drag = QtGui.QDrag(self)
-        drag.setMimeData(make_run_preview_mime(
-            self.guid, self.parameter, self.axes, axes_pending=self.axes_pending,
-        ))
-
-        pixmap = self.pixmap()
-        if pixmap is not None and not pixmap.isNull():
-            drag.setPixmap(pixmap)
-            drag.setHotSpot(QtCore.QPoint(pixmap.width() // 2, pixmap.height() // 2))
-        else:
-            drag.setPixmap(self.grab())
-            drag.setHotSpot(self.rect().center())
+        drag.setMimeData(make_run_previews_mime(previews))
+        pixmap = self.grab()
+        if len(previews) > 1:
+            painter = QtGui.QPainter(pixmap)
+            font = painter.font()
+            font.setPixelSize(10)
+            painter.setFont(font)
+            count = str(len(previews))
+            width = painter.fontMetrics().horizontalAdvance(count) + 4
+            badge = QtCore.QRect(1, self.height() - 14, width, 13)
+            painter.fillRect(badge, self.palette().color(QtGui.QPalette.ColorRole.Highlight))
+            painter.setPen(self.palette().color(QtGui.QPalette.ColorRole.HighlightedText))
+            painter.drawText(badge, QtCore.Qt.AlignmentFlag.AlignCenter, count)
+            painter.end()
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(self.rect().center())
 
         self.drag_active = True
         try:
@@ -1545,6 +1621,7 @@ class DraggablePreviewImageLabel(PreviewImageLabel):
         finally:
             self.drag_active = False
             self._drag_start_pos = None
+            self._collapse_selection_on_release = False
             self.dragFinished.emit()
 
 
@@ -1579,6 +1656,7 @@ class PreviewWorker(QtCore.QRunnable):
         self.guid = guid
         self.metadata = metadata
         self.preview_size = preview_size
+        self.complex_modes = ("magnitude", "magnitude")
         self.deadline = deadline
         self._cancelled = threading.Event()
         self._connection_lock = threading.Lock()
@@ -1666,6 +1744,8 @@ class PreviewWorker(QtCore.QRunnable):
                 }
                 if self.deadline is not None:
                     preview_kwargs["deadline"] = self.deadline
+                if self.complex_modes != ("magnitude", "magnitude"):
+                    preview_kwargs["complex_modes"] = self.complex_modes
                 previews = generate_run_previews(
                     self._database_binding,
                     self.metadata,
@@ -1700,6 +1780,7 @@ def generate_run_previews(
         is_cancelled=None,
         connection_callback=None,
         deadline=None,
+        complex_modes=("magnitude", "magnitude"),
         ):
     _raise_if_preview_aborted(is_cancelled, deadline)
 
@@ -1750,6 +1831,8 @@ def generate_run_previews(
                 )
         cursor = conn.cursor()
         available_columns = _table_columns(cursor, table_name)
+        cursor.execute(f"PRAGMA table_info({_sqlite_identifier(table_name)})")
+        column_types = {row[1]: str(row[2]).lower() for row in cursor.fetchall()}
         if not metadata.get("run_description"):
             # Compact run metadata omits the full description. The union of
             # a run's sweep axes cannot describe each quantity in a mixed
@@ -1766,7 +1849,15 @@ def generate_run_previews(
                 continue
 
             axes = [axis for axis in declared_axes if axis in available_columns]
-            if len(axes) == 1:
+            if len(axes) in (1, 2) and any(
+                column_types.get(name) in ("complex", "array") for name in (*axes, parameter)
+            ):
+                preview = _preview_complex_or_array(
+                    cursor, table_name, parameter, axes, column_types, size,
+                    complex_modes[0 if len(axes) == 1 else 1],
+                    lambda: _raise_if_preview_aborted(is_cancelled, deadline),
+                )
+            elif len(axes) == 1:
                 preview = _preview_1d(cursor, table_name, metadata, parameter, axes[0], size)
             elif len(axes) >= 2:
                 preview = _preview_2d(
@@ -1867,21 +1958,63 @@ def _dependencies_from_result_layout(cursor, table_name):
 
 
 def unsupported_preview_label(preview, size, object_name):
+    """Keep plot actions available when only thumbnail rendering is unavailable."""
     dimensions = int(preview.get("dimension_count") or len(preview.get("axes") or []))
+    plot_supported = 1 <= dimensions <= MAX_VIEWER_DIMENSIONS
     label = (DraggablePreviewImageLabel(
         preview.get("guid", ""), preview.get("parameter", ""), preview.get("axes") or [],
-    ) if dimensions == 3 else PreviewImageLabel(preview.get("parameter", ""), plot_supported=False))
+    ) if plot_supported else PreviewImageLabel(preview.get("parameter", ""), plot_supported=False))
     label.setText(f"{dimensions}D")
     label.setObjectName(object_name)
-    label.setAccessibleName("Open 3D slice viewer" if dimensions == 3 else f"{dimensions}D measurement unsupported")
+    action = "Open 3D slice viewer" if dimensions == 3 else (
+        f"Open {dimensions}D plot" if plot_supported else f"{dimensions}D measurement unsupported"
+    )
+    label.setAccessibleName(action)
     label.setFixedSize(int(size), int(size))
     label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
     label.setWordWrap(True)
-    label.setToolTip("Open the 3D slice viewer" if dimensions == 3 else
-                     preview_tooltip_text(preview) or "Unsupported measurement dimensionality")
+    label.setToolTip(
+        "Open the 3D slice viewer" if dimensions == 3 else
+        f"{action}\nPreview unavailable.\n{preview_tooltip_text(preview)}" if plot_supported else
+        preview_tooltip_text(preview) or "Unsupported measurement dimensionality"
+    )
     label.setFrameShape(qtw.QFrame.Shape.Box)
     label.setFrameShadow(qtw.QFrame.Shadow.Plain)
+    label.set_complex_dataset(preview.get("complex", False))
     return label
+
+
+def _preview_complex_or_array(cursor, table_name, parameter, axes, column_types,
+                              size, mode, check):
+    from qplot.datahandling._trusted_preview_raster import _UnsupportedNumericData
+    from qplot.datahandling.trusted_array_preview import render_array_samples
+    from qplot.datahandling.trusted_query_types import TRUSTED_DERIVED_MAX_ARRAY_BYTES
+
+    # Bound transferred NPY bytes before decoding. Native complex scalars and
+    # array records have different useful row budgets; neither uses SQL AVG.
+    columns = (*axes, parameter)
+    row_limit = 8 if any(column_types.get(name) == "array" for name in columns) else 1_024
+    blob_limit = TRUSTED_DERIVED_MAX_ARRAY_BYTES // (len(columns) * row_limit)
+    selected = ", ".join(
+        f"CASE WHEN typeof({quoted}) IN ('integer', 'real') OR "
+        f"(typeof({quoted})='blob' AND length({quoted}) <= {blob_limit}) "
+        f"THEN {quoted} ELSE NULL END AS {quoted}"
+        for quoted in map(_sqlite_identifier, columns)
+    )
+    check()
+    rows = _select_eligible_rows(cursor, _sqlite_identifier(table_name), selected, columns, row_limit)
+    check()
+    try:
+        rgba, _, complex_mode = render_array_samples(
+            columns, rows, axes, parameter, size, size, check, complex_mode=mode,
+        )
+    except _UnsupportedNumericData:
+        preview = _unsupported_preview(parameter, axes)
+        preview["complex"] = column_types.get(parameter) == "complex"
+        return preview
+    image = QtGui.QImage(bytes(rgba), size, size, size * 4, QtGui.QImage.Format.Format_RGBA8888).copy()
+    return {"parameter": parameter, "axes": list(axes), "title": _preview_title(parameter, axes),
+            "image": image, "complex": complex_mode is not None, "complex_mode": complex_mode}
 
 
 def _preview_1d(cursor, table_name, metadata, parameter, axis, size):
@@ -1995,11 +2128,14 @@ def render_displayed_plot_preview(worker, parameter, size):
             grid[::row_step, ::column_step], size=size,
         )
     name = str(parameter.name)
+    complex_samples = getattr(worker, "complex_samples", None)
     return {
         "parameter": name,
         "axes": axes,
         "title": _preview_title(name, axes),
         "image": image,
+        "complex": complex_samples is not None,
+        "complex_mode": complex_samples.mode if complex_samples is not None else None,
     }
 
 
