@@ -483,6 +483,7 @@ class ResultLayoutQueries:
             and len(expected_dependencies) == 2
             and independent is not None
             and independent.after_row_id == result_watermark
+            and all(not state.first_value_missing for state in independent.states)
             and {pattern.dependent for proof in independent.proofs
                  for pattern in proof.dependent_rows} == set(expected_dependents)
             and len({proof.shape for proof in independent.proofs}) == 1
