@@ -78,12 +78,21 @@ def details_window(tmp_path, monkeypatch, qapplication):
             wait_for(lambda: not window._database_load_active and not detail_channel(window).active)
             service = window._trusted_read_service
             assert service is not None
-            window.RunList.setCurrentItem(window.RunList._item_for_guid(saver.dataset.guid))
+            item = window.RunList._item_for_guid(saver.dataset.guid)
+            # ExtendedSelection's default command can toggle an already
+            # selected row off when native modifier-key state remains held.
+            window.RunList.clearSelection()
+            window.RunList.setCurrentItem(
+                item, 0, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+            )
+            assert window.RunList.selectedItems() == [item]
             bridge = window._trusted_derived_bridge
-            # Copy menus need the selected details, not global background
-            # quiescence: offscreen preview work may still be queued.
             try:
-                wait_for(lambda: bridge._selected_detail_publication is not None
+                wait_for(lambda: bridge.coordinator is not None
+                         and not bridge.coordinator.active
+                         and not bridge.coordinator.snapshot().pending_count
+                         and not bridge.background_active()
+                         and bridge._selected_detail_publication is not None
                          and bridge._detail_display_guid == saver.dataset.guid)
             except AssertionError as error:
                 coordinator = bridge.coordinator
