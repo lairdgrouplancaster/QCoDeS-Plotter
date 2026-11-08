@@ -124,10 +124,12 @@ def test_help_command_shares_one_request_and_provides_upgrade_instructions(updat
     assert checker._reply is None
 
 
-def test_automatic_checks_are_opt_in_daily_and_manual_checks_override_throttle(updates, monkeypatch):
+def test_automatic_checks_are_daily_by_default_and_manual_checks_override_throttle(updates, monkeypatch):
     checker, cfg, window = updates
     now = [100000.0]
     monkeypatch.setattr(_updates.time, "time", lambda: now[0])
+    assert cfg.get(CHECK_ON_LAUNCH_KEY) is True
+    cfg.update(CHECK_ON_LAUNCH_KEY, False)
     assert not checker.check(cfg, automatic_parent=window)
     assert not checker._manager.requests
     cfg.update(CHECK_ON_LAUNCH_KEY, True)
@@ -277,6 +279,7 @@ def test_deleted_parent_and_settings_write_failure_do_not_break_callback(updates
 
 def test_startup_schedules_only_when_enabled_and_uses_cached_running_version(updates):
     checker, cfg, window = updates
+    cfg.update(CHECK_ON_LAUNCH_KEY, False)
     configure_launch_check(window, {"version": "1.2"})
     assert not hasattr(window, "_update_check_timer")
     cfg.update(CHECK_ON_LAUNCH_KEY, True)
@@ -295,20 +298,20 @@ def test_update_preferences_persist_cancel_and_restore_defaults(updates, monkeyp
     checker, cfg, window = updates
     dialog = PreferencesDialog(cfg)
     try:
-        assert not dialog.checkUpdatesOnLaunchCheck.isChecked()
+        assert dialog.checkUpdatesOnLaunchCheck.isChecked()
         assert not dialog.includePrereleasesCheck.isChecked()
-        dialog.checkUpdatesOnLaunchCheck.setChecked(True)
+        dialog.checkUpdatesOnLaunchCheck.setChecked(False)
         dialog.includePrereleasesCheck.setChecked(True)
         assert dialog.apply_preferences()
-        assert config().get(CHECK_ON_LAUNCH_KEY)
+        assert not config().get(CHECK_ON_LAUNCH_KEY)
         assert config().get(INCLUDE_PRERELEASES_KEY)
-        dialog.checkUpdatesOnLaunchCheck.setChecked(False)
+        dialog.checkUpdatesOnLaunchCheck.setChecked(True)
         dialog.reject()
-        assert config().get(CHECK_ON_LAUNCH_KEY)
+        assert not config().get(CHECK_ON_LAUNCH_KEY)
         monkeypatch.setattr(qtw.QMessageBox, "question", lambda *_args: qtw.QMessageBox.StandardButton.Yes)
         assert dialog.restore_defaults()
         assert dialog.apply_preferences()
-        assert not cfg.get(CHECK_ON_LAUNCH_KEY)
+        assert cfg.get(CHECK_ON_LAUNCH_KEY)
         assert not cfg.get(INCLUDE_PRERELEASES_KEY)
     finally:
         dialog.close()
