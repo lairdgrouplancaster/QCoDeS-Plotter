@@ -832,6 +832,7 @@ class PlotActionsMixin:
                 **kargs,
             )
             if isinstance(win, plotWidget):
+                win._initial_refresh_rate = refresh_interval_value(self.spinBox)
                 win.initialize_plot_window()
             window_type = getattr(win, "operation_kind", None)
             if window_type is None:

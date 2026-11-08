@@ -194,7 +194,7 @@ def test_live_main_and_new_plot_keep_configured_rate_after_unrelated_apply(
             window.config.update("user_preference.default_refresh_rate", 1.049)
             window.apply_current_settings()
             assert_interval(window, 1.049)
-            assert_interval(plot, rate)
+            assert_interval(plot, 1.049)
         finally:
             dialog.close()
             dialog.deleteLater()
@@ -250,16 +250,18 @@ def test_unedited_return_preserves_rate_and_typing_same_display_zero_disables(
 ):
     with live_view(tmp_path, monkeypatch, .049) as (window, open_plot):
         plot = open_plot("signal_a")
-        for owner in (window, plot):
-            assert owner.spinBox.value() == 0
-            assert "0.049" in owner.spinBox.toolTip()
-            QtTest.QTest.keyClick(owner.spinBox.lineEdit(), QtCore.Qt.Key.Key_Return)
-            assert_interval(owner, .049)
-            type_zero(owner.spinBox)
-            assert_interval(owner, 0.)
+        assert window.spinBox.value() == 0
+        assert "0.049" in window.spinBox.toolTip()
+        QtTest.QTest.keyClick(window.spinBox.lineEdit(), QtCore.Qt.Key.Key_Return)
+        assert_interval(window, .049)
+        assert_interval(plot, .049)
+        type_zero(window.spinBox)
+        assert_interval(window, 0.)
+        assert_interval(plot, 0.)
         assert window.config.get("user_preference.default_refresh_rate") == 0
         window.spinBox.stepUp()
         assert_interval(window, .1)
+        assert_interval(plot, .1)
         assert window.config.get("user_preference.default_refresh_rate") == .1
 
 
@@ -282,14 +284,14 @@ def test_failed_setting_write_restores_precise_interval_and_timer(
 
 
 @pytest.mark.parametrize("heatmap", [False, True], ids=["line", "heatmap"])
-def test_hidden_live_sources_copy_and_rearm_the_exact_parent_rate(
+def test_hidden_live_sources_follow_and_rearm_the_exact_shared_rate(
     tmp_path, monkeypatch, heatmap,
 ):
     with live_view(tmp_path, monkeypatch, .149, heatmap=heatmap) as (window, open_plot):
         target = open_plot("signal_a")
         source = open_plot("signal_b", show=False)
-        set_refresh_interval(target.spinBox, .049)
-        target.monitorIntervalChanged(.049)
+        window.config.update("user_preference.default_refresh_rate", .049)
+        window._sync_refresh_interval()
         source.monitor.stop()
         assert window.add_trace_to_plot(
             target, source._dataset_key, source.param.name, param=source.param,
@@ -297,7 +299,7 @@ def test_hidden_live_sources_copy_and_rearm_the_exact_parent_rate(
         assert source._closed
         assert source._merged_trace_users == 1
         assert_interval(source, .049)
-        QtTest.QTest.keyClick(target.spinBox.lineEdit(), QtCore.Qt.Key.Key_Return)
+        QtTest.QTest.keyClick(window.spinBox.lineEdit(), QtCore.Qt.Key.Key_Return)
         assert_interval(target, .049)
         assert_interval(source, .049)
         source.monitor.stop()
@@ -306,5 +308,6 @@ def test_hidden_live_sources_copy_and_rearm_the_exact_parent_rate(
         else:
             target.refresh_secondary_lines()
         assert_interval(source, .049)
-        type_zero(target.spinBox)
+        type_zero(window.spinBox)
+        assert_interval(target, 0.)
         assert_interval(source, 0.)

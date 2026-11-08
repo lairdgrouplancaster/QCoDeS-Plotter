@@ -254,7 +254,7 @@ class _PyqtgraphDialogHost(qtw.QMainWindow):
 
 
 class PlotWindowRefreshTestCase(unittest.TestCase):
-    def test_refresh_button_discards_checked_argument_and_refreshes_source(self):
+    def test_plot_refresh_action_refreshes_source_without_interval_controls(self):
         window = plotWidget.__new__(plotWidget)
         qtw.QMainWindow.__init__(window)
         window.monitor = QtCore.QTimer(window)
@@ -263,8 +263,10 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         window.refreshWindow = lambda force=False: refreshes.append(force)
         try:
             window.initRefresh(refrate=1.5)
-            window.refreshPlotButton.clicked.emit(True)
+            window.refresh_plot_data()
             self.assertEqual(refreshes, [True])
+            self.assertTrue(window.spinBox.isHidden())
+            self.assertNotIn("refreshPlotButton", window.__dict__)
         finally:
             sip.delete(window)
 
@@ -3698,6 +3700,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             _fallback_colorbar_colormap_name = plot2d._fallback_colorbar_colormap_name
             _colorbar_colormap = plot2d._colorbar_colormap
             _init_colorbar_scale_controls = plot2d._init_colorbar_scale_controls
+            _init_colorbar_refresh_control = plot2d._init_colorbar_refresh_control
             _init_colorbar_scope_controls = plot2d._init_colorbar_scope_controls
             _colorbar_symmetric_changed = plot2d._colorbar_symmetric_changed
             _symmetric_colorbar_levels = plot2d._symmetric_colorbar_levels
@@ -3747,6 +3750,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 plot2d._colorbar_interactive_levels_finished
                 )
             _sync_colorbar_scale_controls = plot2d._sync_colorbar_scale_controls
+            _sync_colorbar_scale_mode = plot2d._sync_colorbar_scale_mode
+            _colorbar_auto_refresh_changed = plot2d._colorbar_auto_refresh_changed
             _sync_colorbar_level_fields = plot2d._sync_colorbar_level_fields
             _colorbar_colormap_row = plot2d._colorbar_colormap_row
             _select_colorbar_colormap = plot2d._select_colorbar_colormap

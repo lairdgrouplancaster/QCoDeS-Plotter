@@ -136,7 +136,7 @@ def _assert_ready_overlay(host, overlay, expected, levels):
     qtw.QApplication.processEvents()
 
 
-@pytest.mark.parametrize("scale", ["auto_on", "auto_off", "manual_before", "manual_pending"])
+@pytest.mark.parametrize("scale", ["auto_on", "auto_off", "manual_before", "manual_pending", "manual_refresh_on"])
 def test_promotion_renders_before_first_primary_publication(promotion_plot, monkeypatch, scale):
     main, target, expected = promotion_plot
     manual = (-30., 130.)
@@ -144,8 +144,9 @@ def test_promotion_renders_before_first_primary_publication(promotion_plot, monk
     if scale == "manual_before":
         assert target.setColorbarManualRange(*manual)
     promoted, overlay, publications, original = _promote_with_pending_primary(main, target, monkeypatch)
-    promoted.relevel_refresh.setChecked(scale == "auto_on")
-    if scale == "manual_pending":
+    refresh_on = scale in ("auto_on", "manual_refresh_on")
+    promoted.relevel_refresh.setChecked(refresh_on)
+    if scale in ("manual_pending", "manual_refresh_on"):
         promoted.colorbar_min_text.setText(str(manual[0]))
         promoted.colorbar_max_text.setText(str(manual[1]))
         promoted._apply_colorbar_manual_fields()
@@ -163,7 +164,8 @@ def test_promotion_renders_before_first_primary_publication(promotion_plot, monk
     np.testing.assert_array_equal(promoted.image.getLevels(), final_levels)
     np.testing.assert_array_equal(promoted.heatmap_mesh.getLevels(), final_levels)
     assert promoted.bar.colorMap().name == "plasma"
-    assert promoted.relevel_refresh.isChecked() == (scale == "auto_on")
+    assert promoted.relevel_refresh.isChecked() == refresh_on
+    assert promoted.relevel_refresh.isEnabled() == (not scale.startswith("manual"))
 
 
 @pytest.mark.parametrize("first_result", ["cancelled", "failed", "empty", "nonfinite"])

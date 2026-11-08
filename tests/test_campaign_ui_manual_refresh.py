@@ -38,14 +38,11 @@ def _layer_values(layer, heatmap):
     return np.asarray(layer.data_grid) if heatmap else layer.getOriginalDataset()[1]
 
 
-def _manual_refresh(plot, control):
-    if control == "button":
-        plot.refreshPlotButton.click()
-    else:
-        action = next(action for action in plot.findChildren(QtGui.QAction)
-                      if action.text() == "&Refresh")
-        assert any(shortcut.toString() == "R" for shortcut in action.shortcuts())
-        action.trigger()
+def _manual_refresh(plot):
+    action = next(action for action in plot.findChildren(QtGui.QAction)
+                  if action.text() == "&Refresh")
+    assert any(shortcut.toString() == "R" for shortcut in action.shortcuts())
+    action.trigger()
 
 
 @contextmanager
@@ -96,7 +93,7 @@ def _live_mixed_plot(tmp_path, monkeypatch, host_heatmap, source_heatmap, *, vis
             append(0, 2)
             window = MainWindow()
             window.startupDatabaseTimer.stop()
-            window.monitor.stop()
+            window.spinBox.setValue(0)
             monkeypatch.setattr(window, "show_error", lambda *args: errors.append(args))
             window.close_database(status=False)
             assert window.load_file(str(path))
@@ -108,7 +105,6 @@ def _live_mixed_plot(tmp_path, monkeypatch, host_heatmap, source_heatmap, *, vis
                 window.openPlot(guid=saver.dataset.guid, params=[parameters[name]])
                 _wait_for(lambda: len(window.windows) > count)
                 plot = window.windows[-1]
-                plot.spinBox.setValue(0)
                 _wait_for(lambda: _idle(plot))
                 return plot
 
@@ -128,14 +124,8 @@ def _live_mixed_plot(tmp_path, monkeypatch, host_heatmap, source_heatmap, *, vis
             for plot in (host, source):
                 assert plot.spinBox.value() == 0
                 assert not plot.monitor.isActive()
-            if visible:
-                # Exercise actual main-window polling while both plots pause.
-                timeouts = []
-                window.monitor.timeout.connect(lambda: timeouts.append(True))
-                assert window.monitor.isActive()
-                _wait_for(lambda: bool(timeouts))
-            else:
-                assert not window.monitor.isActive()
+            assert window.spinBox.value() == 0
+            assert not window.monitor.isActive()
             try:
                 yield window, host, layer, append
             finally:
@@ -173,7 +163,7 @@ def test_manual_refresh_does_not_recurse_through_mutual_overlays(tmp_path, monke
         assert reverse.from_win is host
         counts = _record_loads(monkeypatch, host, source)
         append(2, 4)
-        host.refreshPlotButton.click()
+        _manual_refresh(host)
         _wait_for(lambda: _idle(host) and _idle(source))
         assert counts == {host: 1, source: 1}
         np.testing.assert_array_equal(layer.getOriginalDataset()[1], [11, 12, 13, 14])
@@ -188,7 +178,7 @@ def test_manual_refresh_updates_cut_and_heatmap_from_same_dataset(tmp_path, monk
         source.z_index = [0, 0]
         source.openSweep("h")
         cut = window.windows[-1]
-        cut.spinBox.setValue(0)
+        assert cut.spinBox.value() == 0
         _wait_for(lambda: _idle(cut))
         window.post_admin()
         box = next(box for box in host.option_boxes if box.option_box.isEnabled())
@@ -198,7 +188,7 @@ def test_manual_refresh_updates_cut_and_heatmap_from_same_dataset(tmp_path, monk
         cut_layer = host.lines[cut._trace_key]
         counts = _record_loads(monkeypatch, host, source, cut)
         append(2, 6)
-        host.refreshPlotButton.click()
+        _manual_refresh(host)
         _wait_for(lambda: all(_idle(plot) for plot in (host, source, cut)))
         assert counts == {host: 1, source: 1, cut: 1}
         np.testing.assert_array_equal(layer.data_grid, [[11, 12], [13, 14], [15, 16]])
@@ -220,11 +210,11 @@ def test_manual_refresh_coalesces_busy_sources_and_close_cancels(tmp_path, monke
         # No GUI event processing between clicks: the first workers have not
         # published, so two more requests must coalesce into one final load.
         for _ in range(3):
-            host.refreshPlotButton.click()
+            _manual_refresh(host)
         _wait_for(lambda: _idle(host) and _idle(source))
         assert counts == {host: 2, source: 2}
         np.testing.assert_array_equal(_layer_values(layer, heatmap).ravel(), [11, 12, 13, 14])
-        host.refreshPlotButton.click()
+        _manual_refresh(host)
         host.close()
         _wait_for(lambda: _idle(host) and _idle(source))
         assert not window.windows
@@ -245,7 +235,7 @@ def test_applying_primary_operations_does_not_refresh_secondary_source(tmp_path,
         assert counts == {host: 1, source: 0}
         np.testing.assert_array_equal(host.line.getOriginalDataset()[1], [1, 2, 3, 4])
         np.testing.assert_array_equal(layer.data_grid, [[11, 12]])
-        host.refreshPlotButton.click()
+        _manual_refresh(host)
         _wait_for(lambda: _idle(host) and _idle(source))
         assert counts == {host: 2, source: 1}
         np.testing.assert_array_equal(layer.data_grid, [[11, 12], [13, 14]])
@@ -254,7 +244,7 @@ def test_applying_primary_operations_does_not_refresh_secondary_source(tmp_path,
 @pytest.mark.parametrize("host_heatmap", [False, True], ids=["line_host", "heatmap_host"])
 @pytest.mark.parametrize("source_heatmap", [False, True], ids=["line_source", "heatmap_source"])
 @pytest.mark.parametrize("visible", [False, True], ids=["hidden", "visible"])
-@pytest.mark.parametrize("control", ["button", "menu"])
+@pytest.mark.parametrize("control", ["main_button", "plot_menu"])
 def test_manual_refresh_updates_paused_sources(
     tmp_path, monkeypatch, host_heatmap, source_heatmap, visible, control,
 ):
@@ -265,7 +255,10 @@ def test_manual_refresh_updates_paused_sources(
         for start, end in ((2, 4), (4, 6)):
             append(start, end)
             previous_source_worker = source.worker
-            _manual_refresh(host, control)
+            if control == "main_button":
+                window.refreshDatabaseButton.click()
+            else:
+                _manual_refresh(host)
             _wait_for(lambda: _idle(host) and _idle(source))
             np.testing.assert_array_equal(_values(host).ravel(), np.arange(1., 1. + end))
             np.testing.assert_array_equal(
@@ -275,6 +268,7 @@ def test_manual_refresh_updates_paused_sources(
             assert source.visible == visible
             assert source._merged_trace_users == 1
             assert window.dataset_holder[source._dataset_key].users == users
+            assert not window.monitor.isActive()
             for plot in (host, source):
                 assert plot.spinBox.value() == 0
                 assert not plot.monitor.isActive()

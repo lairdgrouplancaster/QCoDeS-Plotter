@@ -336,7 +336,7 @@ class MainWindow(
         
         # Force update check on database
         refreshAction = create_action("window.refresh", self)
-        refreshAction.triggered.connect(self.refreshMain)
+        refreshAction.triggered.connect(self.refresh_all)
         fileMenu.addAction(refreshAction)
 
         fileMenu.addSeparator()

@@ -38,8 +38,9 @@ def test_heatmap_refresh_controls_accept_base_class_keyword():
     try:
         window.initRefresh(refrate=1.5)
         assert window.spinBox.value() == 1.5
-        assert window.relevel_refresh.text() == "Autoscale colours on refresh"
-        assert window.toolbarRef.widgetForAction(window.plotStatusAction) is window.plot_status
+        assert window.spinBox.isHidden()
+        assert "toolbarRef" not in window.__dict__
+        assert window.plot_status.parentWidget() is window
     finally:
         sip.delete(window)
 
@@ -1568,6 +1569,10 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
     class CheckBox:
         def __init__(self, checked=False):
             self.checked = checked
+            self.enabled = True
+
+        def setEnabled(self, enabled):
+            self.enabled = enabled
 
         def setChecked(self, checked):
             self.checked = checked
@@ -2593,7 +2598,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertTrue(applied)
         self.assertEqual(window._colorbar_manual_levels, (10.0, 20.0))
         self.assertEqual(window.bar.values, (10, 20))
-        self.assertFalse(window.relevel_refresh.checked)
+        self.assertTrue(window.relevel_refresh.checked)
+        self.assertFalse(window.relevel_refresh.enabled)
 
     def test_auto_colorbar_clears_manual_range_and_uses_data_range(self):
         window = plot2d.__new__(plot2d)
@@ -2605,7 +2611,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         window.setColorbarAuto()
 
         self.assertIsNone(window._colorbar_manual_levels)
-        self.assertTrue(window.relevel_refresh.checked)
+        self.assertFalse(window.relevel_refresh.checked)
+        self.assertTrue(window.relevel_refresh.enabled)
         self.assertEqual(window.bar.values, (0.0, 40.0))
 
     def test_colorbar_autoscale_ignores_empty_and_all_nonfinite_data(self):
@@ -2749,7 +2756,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 self.assertTrue(finish_event.accepted)
                 self.assertEqual(window.bar.values, (-6.0, 106.0))
                 self.assertEqual(window._colorbar_manual_levels, (-6.0, 106.0))
-                self.assertFalse(window.relevel_refresh.checked)
+                self.assertTrue(window.relevel_refresh.checked)
+                self.assertFalse(window.relevel_refresh.enabled)
                 self.assertEqual(window.bar.region.lines[0].position, 63.0)
                 self.assertEqual(window.bar.region.lines[1].position, 191.0)
 

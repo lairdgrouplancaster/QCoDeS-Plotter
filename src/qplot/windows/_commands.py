@@ -320,13 +320,6 @@ COMMANDS: dict[str, CommandSpec] = {
         "View data operations",
         "Show or hide the data operations panel",
     ),
-    "toolbar.refresh": CommandSpec(
-        "toolbar.refresh",
-        "Refresh and status",
-        "Show or hide the refresh and status toolbar",
-        "Ctrl+Alt+R",
-        help_section="All Plot Windows (1D, 2D, and Cuts)",
-    ),
     "toolbar.coordinates": CommandSpec(
         "toolbar.coordinates",
         "Coordinates",
@@ -467,7 +460,6 @@ def toolbar_toggle_command_spec(title: str) -> CommandSpec | None:
 
     """
     by_title = {
-        "Refresh and status": "toolbar.refresh",
         "Coordinates": "toolbar.coordinates",
         "Cut controls": "toolbar.axis_control",
         "Data operations": "toolbar.operations",

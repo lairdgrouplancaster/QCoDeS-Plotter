@@ -8,6 +8,7 @@ from PyQt6 import QtCore, QtGui, QtTest, QtWidgets
 from qplot.configuration.config import config
 from qplot.datahandling import trusted_plot
 from qplot.datahandling.plot_progress import PlotProgress
+from qplot.windows._plot_chrome import install_plot_chrome
 from qplot.windows._plot_feedback import PlotWindowFeedbackMixin
 from qplot.windows._plot_refresh import PlotRefreshMixin
 from qplot.windows._plot_state import PlotStateOverlay
@@ -46,7 +47,7 @@ def test_main_status_persists_at_lower_right_with_update_tooltip(qapplication):
         close_main_window(window)
 
 
-def test_toolbar_status_reserves_visible_right_padding(qapplication):
+def test_plot_status_reserves_visible_right_padding(qapplication):
     status = PlotStatusWidget()
     status.resize(600, 40)
     status.show()
@@ -229,9 +230,9 @@ def test_real_plot_keeps_progress_until_display_commit(tmp_path, monkeypatch, di
         qapplication = QtWidgets.QApplication.instance()
         qapplication.processEvents()
         overlay = plot.plot_state_overlay
-        assert plot.toolbarRef.isVisible()  # This fixture is a completed run.
-        assert plot.toolbarRef.actions()[-1] is plot.plotStatusAction
-        assert plot.plot_status.parentWidget() is plot.toolbarRef
+        assert plot.plot_status.isVisible()  # This fixture is a completed run.
+        assert plot.plot_status.isVisibleTo(plot)
+        assert not hasattr(plot, "toolbarRef")
         assert plot.findChildren(QtWidgets.QStatusBar) == []
         wait_for(lambda: overlay.progress_bar.maximum() == 1000 and overlay.progress_bar.value() > 0)
         assert 0 < overlay.progress_bar.value() < 1000
@@ -239,16 +240,13 @@ def test_real_plot_keeps_progress_until_display_commit(tmp_path, monkeypatch, di
         assert plot.worker.running
         assert overlay.frame.isHidden()
         assert plot.plot_status.progress_panel.isVisible()
-        plot.toolbarRef.toggleViewAction().trigger()
-        assert plot.toolbarRef.isHidden()
         overlay._poll_progress()
-        assert plot.toolbarRef.isHidden()
+        assert plot.plot_status.progress_panel.isVisible()
         release.set()
         wait_for(lambda: not plot.worker.running)
         assert committed == [plot.worker]
         assert overlay.frame.isHidden() and not overlay.progress_timer.isActive()
-        assert plot.toolbarRef.isHidden()
-        plot.toolbarRef.toggleViewAction().trigger()
+        assert plot.plot_status.isVisible()
         assert plot.plot_status.status_label.isVisible()
         expected_points = 12 if dimensions == 2 or arrays else 3
         assert plot.plot_status.message.startswith(f'Loaded {expected_points:,} points in ')
@@ -277,7 +275,7 @@ def test_real_plot_keeps_progress_until_display_commit(tmp_path, monkeypatch, di
         close_main_window(window)
 
 
-def test_toolbar_messages_persist_and_fit_narrow_windows(qapplication):
+def test_header_messages_persist_and_fit_narrow_windows(qapplication):
     class Window(PlotWindowFeedbackMixin, QtWidgets.QMainWindow):
         visible = True
         monitorIntervalChanged = lambda *args: None
@@ -288,6 +286,7 @@ def test_toolbar_messages_persist_and_fit_narrow_windows(qapplication):
     window.monitor = QtCore.QTimer(window)
     plotWidget.initRefresh(window, 1.0)
     feedback = window.plot_status
+    install_plot_chrome(window, feedback)
     overlay = PlotStateOverlay(window, feedback)
     message = 'Loaded 135,751 points for a measurement with a very long name in 0.08 seconds.'
     try:
@@ -298,8 +297,9 @@ def test_toolbar_messages_persist_and_fit_narrow_windows(qapplication):
         assert feedback.message == message
         assert feedback.status_label.toolTip().startswith(message + '\nLast updated: ')
         assert feedback.status_label.width() < feedback.status_label.fontMetrics().horizontalAdvance(message)
-        assert feedback.isVisible() and window.spinBox.isVisible()
-        assert feedback.geometry().left() > window.spinBox.geometry().right()
+        assert feedback.isVisible()
+        assert not window.spinBox.isVisible()
+        assert not hasattr(window, "refreshPlotButton")
         assert window.width() == 550
 
         current = worker(PlotProgress('Reading coordinates', 1, 10))

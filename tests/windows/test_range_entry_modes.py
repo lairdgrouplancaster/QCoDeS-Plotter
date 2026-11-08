@@ -184,7 +184,8 @@ def test_color_center_span_edits_and_auto(heatmap):
     accept(heatmap.colorbar_min_text, heatmap.colorbar_max_text, (30, 80))
     assert heatmap._colorbar_manual_levels == (-10, 70)
     assert tuple(heatmap.bar.levels()) == (-10, 70)
-    assert not heatmap.relevel_refresh.isChecked()
+    assert heatmap.relevel_refresh.isChecked()
+    assert not heatmap.relevel_refresh.isEnabled()
     assert entry.summary.text() == "Minimum -10   ·   Maximum 70"
     heatmap.colorbar_auto_radio.click()
     assert heatmap._colorbar_manual_levels is None

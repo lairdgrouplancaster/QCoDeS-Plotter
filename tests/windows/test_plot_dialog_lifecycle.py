@@ -166,7 +166,7 @@ def _detach_panel(panel, app):
 
 @pytest.mark.parametrize("dialog_plot", ["line", "heatmap"], indirect=True)
 @pytest.mark.parametrize("panel_name", [
-    "axes_dock", "oper_dock", "toolbarRef", "toolbarCo_ord",
+    "axes_dock", "oper_dock", "toolbarCo_ord",
 ])
 def test_plot_close_hides_detached_panels(dialog_plot, panel_name):
     window, plot, app, _guids = dialog_plot
@@ -239,7 +239,7 @@ def test_database_or_application_close_closes_plot_editors(dialog_plot, close_ac
 
 
 @pytest.mark.parametrize("dialog_plot", ["line"], indirect=True)
-@pytest.mark.parametrize("panel_name", ["oper_dock", "toolbarRef", "toolbarCo_ord"])
+@pytest.mark.parametrize("panel_name", ["oper_dock", "toolbarCo_ord"])
 def test_closing_retained_source_closes_editors_and_preserves_refresh(
         dialog_plot, monkeypatch, panel_name):
     window, host, app, guids = dialog_plot
