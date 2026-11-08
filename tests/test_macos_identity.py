@@ -346,9 +346,13 @@ def test_native_gui_uses_qplot_bundle_and_original_venv(tmp_path, desktop_launch
         from PyQt6.QtCore import QTimer
         from PyQt6.QtWidgets import QApplication, QWidget
         from qplot import __main__ as entrypoint, windows
+        from qplot.windows import _desktop_prompt
 
         entrypoint.configure_logging = lambda: None
         entrypoint.install_excepthook = lambda: None
+        # This native Cocoa test checks process identity, not onboarding. Its
+        # zero-delay quit must not race the first-launch invitation's timer.
+        _desktop_prompt.schedule_first_launch_invitation = lambda parent: None
 
         class Window(QWidget):
             def __init__(self, **kwargs):
