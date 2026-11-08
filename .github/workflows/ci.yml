@@ -8,13 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       full-validation:
-        description: Include Linux tests, coverage and source-distribution validation
+        description: Include full Python matrix, Linux tests, coverage and source-distribution validation
         type: boolean
         default: true
   workflow_call:
     inputs:
       full-validation:
-        description: Run the complete Linux, coverage and source-distribution validation
+        description: Run the full Python matrix, Linux tests, coverage and source-distribution validation
         type: boolean
         default: true
       reuse-native:

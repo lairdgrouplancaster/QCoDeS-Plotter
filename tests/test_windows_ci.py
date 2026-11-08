@@ -51,14 +51,15 @@ def test_windows_full_matrix_runs_all_partitions_with_existing_containment(
     assert 'matrix: ${{ fromJSON(inputs.checks) }}' in checks
     planner = runpy.run_path(str(github_directory / "scripts/ci_plan.py"))
     entries = planner["check_matrix"](full_validation)["include"]
+    full_versions = ("3.12", "3.13", "3.14") if full_validation else ("3.14",)
     windows_full = [(entry["python-version"], entry.get("partition", "")) for entry in entries
                     if entry["os"] == "windows-2025" and entry["suite"] == "full"]
-    assert sorted(windows_full) == [(version, f"{index}/4") for version in ("3.12", "3.14")
+    assert sorted(windows_full) == [(version, f"{index}/4") for version in full_versions
                                     for index in range(1, 5)]
     mac_full = [(entry["python-version"], entry.get("partition", "")) for entry in entries
                 if entry["os"] == "macos-latest" and entry["suite"] == "full"]
-    assert sorted(mac_full) == [("3.12", "1/2"), ("3.12", "2/2"),
-                                ("3.14", "1/2"), ("3.14", "2/2")]
+    assert sorted(mac_full) == [(version, f"{index}/2") for version in full_versions
+                               for index in range(1, 3)]
     assert all(not entry.get("partition") for entry in entries if entry["suite"] != "full")
     full_suite = workflow.split(
         "      - name: Run full test suite as a standard Windows user\n", 1,

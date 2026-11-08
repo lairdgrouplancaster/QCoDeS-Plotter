@@ -1,4 +1,4 @@
-"""Keep desktop CI routine; reserve Linux tests for releases and explicit runs."""
+"""Keep routine desktop CI lean; validate every Python fully before releases."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def validation_mode(
         return True, "Validation override unavailable or invalid."
     if event_name not in {"push", "pull_request", "workflow_dispatch", "workflow_call"}:
         return True, "Unknown event requires full validation."
-    return False, "Routine desktop validation; Linux tests run before releases or on request."
+    return False, "Routine desktop validation; full Python and Linux testing run before releases or on request."
 
 
 def check_matrix(full_validation: bool) -> dict[str, list[dict[str, str]]]:
@@ -36,7 +36,7 @@ def check_matrix(full_validation: bool) -> dict[str, list[dict[str, str]]]:
             entry = {
                 "os": runner,
                 "python-version": version,
-                "suite": "compatibility" if version == "3.13" else "full",
+                "suite": "full" if full_validation or version == "3.14" else "compatibility",
                 "native-artifact": artifact,
             }
             if entry["suite"] == "full":

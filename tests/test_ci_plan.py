@@ -1,4 +1,4 @@
-"""Ordinary CI keeps Linux tests for explicit full validation and releases."""
+"""Ordinary CI keeps full Python and Linux testing for explicit runs and releases."""
 
 import importlib.util
 import json
@@ -55,20 +55,24 @@ def test_unknown_events_default_to_full_validation(event_name):
 
 
 @pytest.mark.parametrize("full", [False, True])
-def test_check_matrix_keeps_all_desktop_partitions_and_python_versions(full):
+def test_check_matrix_selects_full_versions_and_keeps_complete_partitions(full):
     entries = plan.check_matrix(full)["include"]
     actual = {(row["os"], row["python-version"], row["suite"], row.get("partition")) for row in entries}
     expected = {
         (runner, version, "full", partition)
         for runner in ("windows-2025", "macos-latest")
-        for version in ("3.12", "3.14")
+        for version in (("3.12", "3.13", "3.14") if full else ("3.14",))
         for partition in (("1/4", "2/4", "3/4", "4/4") if runner == "windows-2025" else ("1/2", "2/2"))
-    } | {(runner, "3.13", "compatibility", None) for runner in ("windows-2025", "macos-latest")}
+    }
+    if not full:
+        expected |= {(runner, version, "compatibility", None)
+                     for runner in ("windows-2025", "macos-latest")
+                     for version in ("3.12", "3.13")}
     compatibility = ("macos-15-intel", "ubuntu-latest") if full else ("macos-15-intel",)
     expected |= {(runner, version, "compatibility", None)
                  for runner in compatibility for version in ("3.12", "3.13", "3.14")}
     assert actual == expected
-    assert len(entries) == len(expected) == (20 if full else 17)
+    assert len(entries) == len(expected) == (24 if full else 13)
     artifacts = {
         "windows-2025": "qplotter-native-windows-x64",
         "macos-latest": "qplotter-native-macos-arm64",
@@ -121,7 +125,7 @@ def test_cli_emits_complete_matrices_without_git_or_event_payload(
     assert outputs["reason"]
     platforms = json.loads(outputs["platforms"])
     assert platforms == plan.platform_matrices(full)
-    assert sum(len(row["checks"]["include"]) for row in platforms.values()) == (20 if full else 17)
+    assert sum(len(row["checks"]["include"]) for row in platforms.values()) == (24 if full else 13)
     assert sum(len(row["installations"]["include"]) for row in platforms.values()) == (12 if full else 9)
     assert f"CI mode: {'full' if full else 'routine'}." in result.stdout
 

@@ -63,7 +63,14 @@ def _request(plot, route, qapplication):
             qapplication.setActiveWindow(plot)
             plot.widget.setFocus()
             qapplication.processEvents()
-            QtTest.QTest.keyClick(plot.widget, QtCore.Qt.Key.Key_0, QtCore.Qt.KeyboardModifier.ControlModifier)
+            try:
+                QtTest.QTest.keyClick(
+                    plot.widget, QtCore.Qt.Key.Key_0, QtCore.Qt.KeyboardModifier.ControlModifier,
+                )
+            finally:
+                # QTest can leave the synthetic modifier active for later widgets.
+                QtTest.QTest.keyRelease(plot.widget, QtCore.Qt.Key.Key_Control)
+            assert not qapplication.keyboardModifiers() & QtCore.Qt.KeyboardModifier.ControlModifier
         assert invoked == [True], "The configured Qt action must actually execute"
     qapplication.processEvents()
 

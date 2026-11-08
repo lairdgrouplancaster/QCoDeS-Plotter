@@ -397,8 +397,8 @@ wheel is rebuilt or republished on that path. The native sdist is still built
 for explicit source-build validation, which may use a compiler in CI.
 
 Ordinary pull requests and pushes to `main` run all four full-suite partitions
-on Windows and both partitions on ARM64 macOS with Python 3.12 and 3.14, and
-the compatibility subset with Python 3.13. Intel macOS runs the compatibility
+on Windows and both partitions on ARM64 macOS with Python 3.14, and
+the compatibility subset with Python 3.12 and 3.13. Intel macOS runs the compatibility
 subset on all three versions. The subset retains database protections,
 concurrent-writer tests and focused Stage 4 coverage. All three desktop
 platforms also run installed-package and compiler-free ordinary/editable
@@ -409,9 +409,11 @@ Ordinary pushes and pull requests use this desktop scope regardless of which
 files changed. Linux tests, coverage and source-distribution validation are
 reserved for releases and explicit full runs.
 
-Full validation adds Linux compatibility and compiler-free installation checks
-on Python 3.12–3.14, the complete Linux coverage suite, and the Linux package
-job. The package job compares both sdists and wheels with the source inventory,
+Full validation runs the complete Windows and ARM64 macOS suites on every
+supported Python version (3.12–3.14), using the same partition counts. It also
+adds Linux compatibility and compiler-free installation checks on Python
+3.12–3.14, the complete Linux coverage suite, and the Linux package job.
+The package job compares both sdists and wheels with the source inventory,
 runs the extracted sdists' complete test suite across two disjoint whole-file
 partitions, each in an isolated venv, and exercises the installed wheel pair in
 another venv. Both package partitions retain the artifact inventory checks and
@@ -426,8 +428,8 @@ stable-ABI wheel across Python versions. Free-threaded CPython and PyPy are not
 part of the advertised support matrix.
 
 Full validation is available through **Actions → CI → Run workflow** with
-**Include Linux tests, coverage and source-distribution validation** selected
-(the manual-run default). Clear that option for a desktop-only manual run.
+**Include full Python matrix, Linux tests, coverage and source-distribution validation**
+selected (the manual-run default). Clear that option for a routine desktop run.
 There is no recurring full-validation schedule. The tag release workflow
 explicitly passes `full-validation: true`, and release tags always require
 full validation, retaining every release gate for that exact tagged revision.
