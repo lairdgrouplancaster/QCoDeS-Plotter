@@ -12,9 +12,11 @@ import pytest
 pytestmark = pytest.mark.pure
 
 CORE_JOBS = (
-    "ci-plan", "lint", "application-artifacts", "native-wheels",
-    "static-analysis", "checks", "platform-wheels",
+    "ci-plan", "lint", "application-artifacts", "native-linux", "native-windows",
+    "native-macos-arm64", "native-macos-intel", "static-analysis",
+    "platform-windows", "platform-macos-arm64", "platform-macos-intel",
 )
+FULL_JOBS = ("platform-linux", "coverage", "coverage-report", "package")
 
 
 @pytest.fixture
@@ -33,8 +35,8 @@ def gate():
         results = {f"needs.{name}.result": "success" for name in CORE_JOBS}
         results.update({
             "needs.ci-plan.outputs.full-validation": scope,
-            "needs.coverage.result": "success" if scope == "true" else "skipped",
-            "needs.package.result": "success" if scope == "true" else "skipped",
+            **{f"needs.{name}.result": "success" if scope == "true" else "skipped"
+               for name in FULL_JOBS},
         })
         results.update(overrides or {})
         expanded = re.sub(
@@ -61,13 +63,13 @@ def test_core_checks_cannot_be_skipped_or_fail_in_either_scope(gate, scope, job,
 
 
 @pytest.mark.parametrize("scope", ["true", "false"])
-@pytest.mark.parametrize("job", ["coverage", "package"])
+@pytest.mark.parametrize("job", FULL_JOBS)
 @pytest.mark.parametrize("result", ["failure", "cancelled", ""])
 def test_optional_checks_never_hide_a_failure(gate, scope, job, result):
     assert gate(scope, {f"needs.{job}.result": result}).returncode != 0
 
 
-@pytest.mark.parametrize("job", ["coverage", "package"])
+@pytest.mark.parametrize("job", FULL_JOBS)
 def test_full_validation_requires_both_linux_full_suites(gate, job):
     assert gate("true", {f"needs.{job}.result": "skipped"}).returncode != 0
 

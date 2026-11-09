@@ -427,8 +427,9 @@ def install_wheels(
 
 def test_extracted_sdist(
     artifact: Path, native_artifact: Path, temporary: Path,
+    *, test_partition: str | None = None,
 ) -> None:
-    """Install and run all tests from the extracted source distribution."""
+    """Install both sdists and run their full suite or one whole-file partition."""
     source = extract_sdist(artifact, temporary / "sdist-source")
     environment = temporary / "sdist-venv"
     python = create_environment(environment)
@@ -442,15 +443,14 @@ def test_extracted_sdist(
     # repository's normal ``pythonpath = ["src"]`` setting would otherwise
     # shadow that installation with the unbuilt extracted source tree.
     # Match CI's two-worker, per-file scheduling; coverage has its own CI job.
-    run(
-        [
-            str(python), "-m", "pytest", "--no-cov",
-            "-n", "2", "--dist=loadfile", "--no-loadscope-reorder",
-            "-o", "pythonpath=", "--timeout=90", "--timeout-method=thread",
-        ],
-        cwd=source,
-        env=test_env,
-    )
+    command = [
+        str(python), "-m", "pytest", "--no-cov",
+        "-n", "2", "--dist=loadfile", "--no-loadscope-reorder",
+        "-o", "pythonpath=", "--timeout=90", "--timeout-method=thread",
+    ]
+    if test_partition is not None:
+        command.append(f"--qplot-ci-partition={test_partition}")
+    run(command, cwd=source, env=test_env)
 
 
 def wheel_smoke_code() -> str:
@@ -3870,7 +3870,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="validate and smoke-test both wheels without requiring sdists",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--test-partition", choices=("1/2", "2/2"),
+        help="run one whole-file sdist test partition; CI must run both partitions",
+    )
+    args = parser.parse_args()
+    if args.test_partition is not None:
+        if args.wheel_only or args.install_only:
+            parser.error("--test-partition requires source-distribution validation")
+        if not args.artifacts:
+            parser.error("--test-partition requires artifact files or directories")
+    return args
 
 
 def main() -> int:
@@ -3911,7 +3921,10 @@ def main() -> int:
             native_sdist = artifacts["qplotter_native_sdist"]
             validate_sdist(sdist, source)
             validate_sdist(native_sdist, source, native=True)
-            test_extracted_sdist(sdist.resolve(), native_sdist.resolve(), temporary)
+            test_extracted_sdist(
+                sdist.resolve(), native_sdist.resolve(), temporary,
+                test_partition=args.test_partition,
+            )
         smoke_test_wheel(
             repository, wheel.resolve(), native_wheel.resolve(), runtime_files, temporary,
         )

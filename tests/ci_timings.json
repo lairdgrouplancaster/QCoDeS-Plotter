@@ -1,1156 +1,1375 @@
 {
   "version": 1,
   "source": {
-    "description": "Bootstrap estimates from first-test-start to last-test-result per file in successful macOS ARM64 Python 3.12 xdist jobs; subsequent refreshes use JUnit setup/call/teardown totals.",
-    "commit": "6b629092ae046fca19efc922b6ba5a61390fa44e",
-    "jobs": [
-      "https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/41846239491/job/126637502221",
-      "https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/41846239491/job/126637502575"
-    ]
+    "description": "Maximum file setup/call/teardown total from successful JUnit reports.",
+    "reports": [
+      "qplot-test-timings-0-windows-2025-3.12-full.xml",
+      "qplot-test-timings-1-windows-2025-3.12-full.xml",
+      "qplot-test-timings-10-macos-latest-3.12-full.xml",
+      "qplot-test-timings-12-macos-latest-3.14-full.xml",
+      "qplot-test-timings-13-macos-latest-3.14-full.xml",
+      "qplot-test-timings-2-windows-2025-3.12-full.xml",
+      "qplot-test-timings-3-windows-2025-3.12-full.xml",
+      "qplot-test-timings-5-windows-2025-3.14-full.xml",
+      "qplot-test-timings-6-windows-2025-3.14-full.xml",
+      "qplot-test-timings-7-windows-2025-3.14-full.xml",
+      "qplot-test-timings-8-windows-2025-3.14-full.xml",
+      "qplot-test-timings-9-macos-latest-3.12-full.xml"
+    ],
+    "commit": "16980b03d3b98d9b72932f46bd1e1c5b69db4a0d",
+    "workflow_run": "https://github.com/lairdgrouplancaster/QCoDeS-Plotter/actions/runs/42518062305"
   },
   "files": {
     "tests/datahandling/test_array_record_metadata.py": {
-      "seconds": 0.222,
+      "seconds": 1.286,
       "tests": 8
     },
+    "tests/datahandling/test_blocked_grid_counts.py": {
+      "seconds": 1.395,
+      "tests": 5
+    },
+    "tests/datahandling/test_cloud_files.py": {
+      "seconds": 0.918,
+      "tests": 10
+    },
+    "tests/datahandling/test_csv_export.py": {
+      "seconds": 7.541,
+      "tests": 24
+    },
+    "tests/datahandling/test_database_info_formatting.py": {
+      "seconds": 0.129,
+      "tests": 18
+    },
+    "tests/datahandling/test_database_probe.py": {
+      "seconds": 0.325,
+      "tests": 17
+    },
     "tests/datahandling/test_database_worker_instance_binding.py": {
-      "seconds": 0.715,
+      "seconds": 13.55,
       "tests": 25
     },
     "tests/datahandling/test_dimensions.py": {
-      "seconds": 0.001,
+      "seconds": 0.009,
       "tests": 2
     },
+    "tests/datahandling/test_export_data.py": {
+      "seconds": 0.004,
+      "tests": 3
+    },
     "tests/datahandling/test_high_dimensional_setpoints.py": {
-      "seconds": 1.957,
+      "seconds": 2.547,
       "tests": 15
     },
     "tests/datahandling/test_inferred_planned_counts.py": {
-      "seconds": 0.26,
+      "seconds": 0.58,
       "tests": 12
     },
     "tests/datahandling/test_integer_record_cache.py": {
-      "seconds": 0.295,
+      "seconds": 0.475,
       "tests": 6
     },
     "tests/datahandling/test_live_acquired_point_counts.py": {
-      "seconds": 4.599,
+      "seconds": 7.79,
       "tests": 6
     },
+    "tests/datahandling/test_numeric_arrays.py": {
+      "seconds": 0.038,
+      "tests": 36
+    },
+    "tests/datahandling/test_numeric_samples.py": {
+      "seconds": 0.238,
+      "tests": 1
+    },
     "tests/datahandling/test_plot_progress.py": {
-      "seconds": 0.464,
+      "seconds": 1.604,
       "tests": 4
     },
     "tests/datahandling/test_qcodes_cache.py": {
-      "seconds": 0.016,
-      "tests": 19
+      "seconds": 0.022,
+      "tests": 22
     },
     "tests/datahandling/test_read_sql.py": {
-      "seconds": 0.336,
+      "seconds": 0.702,
       "tests": 38
     },
     "tests/datahandling/test_read_sql_database_identity.py": {
-      "seconds": 0.007,
+      "seconds": 0.012,
       "tests": 9
     },
     "tests/datahandling/test_readonly.py": {
-      "seconds": 13.973,
+      "seconds": 9.646,
       "tests": 77
     },
+    "tests/datahandling/test_run_metadata.py": {
+      "seconds": 0.154,
+      "tests": 11
+    },
     "tests/datahandling/test_snapshot_planned_setpoints.py": {
-      "seconds": 0.124,
+      "seconds": 1.646,
+      "tests": 6
+    },
+    "tests/datahandling/test_sqlite_identifiers.py": {
+      "seconds": 0.01,
       "tests": 6
     },
     "tests/datahandling/test_stage5c_real_qcodes.py": {
-      "seconds": 212.783,
+      "seconds": 472.046,
       "tests": 142
     },
+    "tests/datahandling/test_supervisor_poll_ownership.py": {
+      "seconds": 0.061,
+      "tests": 24
+    },
     "tests/datahandling/test_trusted_array_preview.py": {
-      "seconds": 0.124,
-      "tests": 11
+      "seconds": 1.454,
+      "tests": 26
     },
     "tests/datahandling/test_trusted_array_record_metadata.py": {
-      "seconds": 2.187,
+      "seconds": 5.732,
       "tests": 17
     },
     "tests/datahandling/test_trusted_database_information.py": {
-      "seconds": 0.057,
+      "seconds": 1.367,
       "tests": 1
     },
     "tests/datahandling/test_trusted_derived_cache.py": {
-      "seconds": 13.536,
+      "seconds": 24.724,
       "tests": 72
     },
     "tests/datahandling/test_trusted_derived_cache_ownership.py": {
-      "seconds": 0.377,
+      "seconds": 2.554,
       "tests": 9
     },
     "tests/datahandling/test_trusted_derived_live_integration.py": {
-      "seconds": 11.575,
+      "seconds": 18.954,
       "tests": 8
     },
     "tests/datahandling/test_trusted_derived_queries.py": {
-      "seconds": 0.008,
+      "seconds": 0.02,
       "tests": 7
     },
     "tests/datahandling/test_trusted_derived_rendering.py": {
-      "seconds": 4.895,
+      "seconds": 5.547,
       "tests": 39
     },
     "tests/datahandling/test_trusted_header_cleanup.py": {
-      "seconds": 0.022,
+      "seconds": 0.016,
       "tests": 6
     },
     "tests/datahandling/test_trusted_heatmap.py": {
-      "seconds": 16.297,
+      "seconds": 41.137,
       "tests": 15
     },
     "tests/datahandling/test_trusted_live.py": {
-      "seconds": 43.439,
+      "seconds": 53.088,
       "tests": 65
     },
     "tests/datahandling/test_trusted_live_partial_frames.py": {
-      "seconds": 7.26,
+      "seconds": 7.052,
       "tests": 8
     },
     "tests/datahandling/test_trusted_live_protocol.py": {
-      "seconds": 0.01,
+      "seconds": 0.014,
       "tests": 8
     },
     "tests/datahandling/test_trusted_live_queries.py": {
-      "seconds": 21.45,
+      "seconds": 53.39,
       "tests": 78
     },
     "tests/datahandling/test_trusted_live_result_limits.py": {
-      "seconds": 19.482,
+      "seconds": 29.623,
       "tests": 23
     },
     "tests/datahandling/test_trusted_live_service.py": {
-      "seconds": 2.255,
+      "seconds": 3.339,
       "tests": 55
     },
     "tests/datahandling/test_trusted_live_stage4_integration.py": {
-      "seconds": 16.613,
+      "seconds": 19.072,
       "tests": 8
     },
     "tests/datahandling/test_trusted_live_supervisor.py": {
-      "seconds": 35.067,
+      "seconds": 42.861,
       "tests": 81
     },
     "tests/datahandling/test_trusted_live_worker_integration.py": {
-      "seconds": 0.351,
+      "seconds": 0.343,
       "tests": 24
     },
     "tests/datahandling/test_trusted_plot.py": {
-      "seconds": 5.135,
+      "seconds": 15.989,
       "tests": 19
     },
     "tests/datahandling/test_trusted_presentation.py": {
-      "seconds": 0.097,
+      "seconds": 0.094,
       "tests": 20
     },
     "tests/datahandling/test_trusted_read_scope.py": {
-      "seconds": 0.563,
+      "seconds": 2.143,
       "tests": 10
     },
     "tests/datahandling/test_trusted_snapshot.py": {
-      "seconds": 6.618,
+      "seconds": 10.088,
       "tests": 38
     },
     "tests/datahandling/test_trusted_source_identifiers.py": {
-      "seconds": 1.156,
+      "seconds": 3.852,
       "tests": 5
     },
     "tests/datahandling/test_trusted_wal_contention.py": {
-      "seconds": 25.939,
+      "seconds": 27.665,
       "tests": 2
     },
     "tests/datahandling/test_trusted_work_coordinator.py": {
-      "seconds": 6.936,
+      "seconds": 9.556,
       "tests": 85
     },
     "tests/datahandling/test_trusted_work_scheduler.py": {
-      "seconds": 0.883,
+      "seconds": 0.968,
       "tests": 61
     },
+    "tests/datahandling/test_volume.py": {
+      "seconds": 0.116,
+      "tests": 5
+    },
     "tests/datahandling/test_wal_lineage_subprocess.py": {
-      "seconds": 5.099,
+      "seconds": 14.594,
       "tests": 11
     },
     "tests/datahandling/test_windows_readonly_lock_cleanup.py": {
-      "seconds": 0.015,
+      "seconds": 0.041,
       "tests": 7
     },
     "tests/test_auxiliary_database_protection.py": {
-      "seconds": 1.02,
+      "seconds": 0.65,
       "tests": 17
     },
     "tests/test_bounded_heatmap_means.py": {
-      "seconds": 3.787,
+      "seconds": 7.505,
       "tests": 49
     },
     "tests/test_bounded_integer_precision.py": {
-      "seconds": 0.337,
+      "seconds": 2.42,
       "tests": 17
     },
     "tests/test_bug_hunt_array_bin_ranges.py": {
-      "seconds": 1.514,
+      "seconds": 3.348,
       "tests": 24
     },
     "tests/test_bug_hunt_auxiliary_safety.py": {
-      "seconds": 0.082,
+      "seconds": 0.442,
       "tests": 5
     },
     "tests/test_bug_hunt_average_view_updates.py": {
-      "seconds": 0.051,
+      "seconds": 0.222,
       "tests": 3
     },
     "tests/test_bug_hunt_bounded_mixed_means.py": {
-      "seconds": 1.637,
+      "seconds": 7.889,
       "tests": 47
     },
     "tests/test_bug_hunt_config.py": {
-      "seconds": 0.895,
+      "seconds": 1.632,
       "tests": 4
     },
     "tests/test_bug_hunt_constant_auto_recovery.py": {
-      "seconds": 8.344,
+      "seconds": 6.861,
       "tests": 5
     },
     "tests/test_bug_hunt_database_refresh.py": {
-      "seconds": 0.145,
+      "seconds": 0.327,
       "tests": 10
     },
     "tests/test_bug_hunt_derivative_cancellation.py": {
-      "seconds": 0.1,
+      "seconds": 0.665,
       "tests": 3
     },
     "tests/test_bug_hunt_duplicate_mean_cancellation.py": {
-      "seconds": 0.115,
+      "seconds": 0.978,
       "tests": 8
     },
     "tests/test_bug_hunt_fill_cancellation.py": {
-      "seconds": 0.082,
+      "seconds": 0.271,
       "tests": 13
     },
     "tests/test_bug_hunt_float_average_performance.py": {
-      "seconds": 9.665,
+      "seconds": 13.779,
       "tests": 14
     },
     "tests/test_bug_hunt_generator_fifo.py": {
-      "seconds": 0.889,
+      "seconds": 1.754,
       "tests": 5
     },
     "tests/test_bug_hunt_generator_safety.py": {
-      "seconds": 0.57,
+      "seconds": 12.589,
       "tests": 26
     },
     "tests/test_bug_hunt_heatmap_display_ranges.py": {
-      "seconds": 39.787,
+      "seconds": 46.33,
       "tests": 21
     },
     "tests/test_bug_hunt_integer_mean_cancellation.py": {
-      "seconds": 0.469,
+      "seconds": 0.537,
       "tests": 17
     },
     "tests/test_bug_hunt_line_display_ranges.py": {
-      "seconds": 10.252,
+      "seconds": 15.138,
       "tests": 20
     },
     "tests/test_bug_hunt_longdouble_samples.py": {
-      "seconds": 0.122,
+      "seconds": 0.219,
       "tests": 5
     },
     "tests/test_bug_hunt_marquee_statistics_performance.py": {
-      "seconds": 8.031,
+      "seconds": 17.678,
       "tests": 10
     },
     "tests/test_bug_hunt_measurement_generator.py": {
-      "seconds": 0.504,
+      "seconds": 2.277,
       "tests": 12
     },
     "tests/test_bug_hunt_measurement_lines.py": {
-      "seconds": 3.316,
+      "seconds": 5.519,
       "tests": 9
     },
     "tests/test_bug_hunt_measurement_previews.py": {
-      "seconds": 1.082,
+      "seconds": 2.497,
       "tests": 24
     },
     "tests/test_bug_hunt_mixed_average_performance.py": {
-      "seconds": 0.306,
+      "seconds": 0.624,
       "tests": 7
     },
     "tests/test_bug_hunt_native_averaging.py": {
-      "seconds": 0.286,
+      "seconds": 0.468,
       "tests": 24
     },
     "tests/test_bug_hunt_object_scan_cancellation.py": {
-      "seconds": 0.544,
+      "seconds": 1.044,
       "tests": 8
     },
     "tests/test_bug_hunt_shaped_coordinate_ranges.py": {
-      "seconds": 1.142,
+      "seconds": 4.242,
       "tests": 19
     },
     "tests/test_bug_hunt_snapshot_fifo.py": {
-      "seconds": 2.059,
+      "seconds": 2.034,
       "tests": 16
     },
     "tests/test_bug_hunt_tiny_heatmap_bins.py": {
-      "seconds": 0.347,
+      "seconds": 5.518,
       "tests": 16
     },
     "tests/test_bug_hunt_ui_cuts.py": {
-      "seconds": 5.447,
+      "seconds": 11.067,
       "tests": 3
     },
     "tests/test_bug_hunt_ui_display_precision.py": {
-      "seconds": 7.873,
+      "seconds": 12.398,
       "tests": 14
     },
     "tests/test_bug_hunt_ui_refresh.py": {
-      "seconds": 0.0,
+      "seconds": 0.007,
       "tests": 1
     },
     "tests/test_campaign_array_expansion_budget.py": {
-      "seconds": 1.17,
+      "seconds": 4.718,
       "tests": 20
     },
     "tests/test_campaign_boolean_derivative.py": {
-      "seconds": 7.984,
+      "seconds": 13.976,
       "tests": 36
     },
     "tests/test_campaign_clipped_trace_reparenting.py": {
-      "seconds": 11.191,
+      "seconds": 9.242,
       "tests": 4
     },
     "tests/test_campaign_diagnostics.py": {
-      "seconds": 0.219,
+      "seconds": 0.5,
       "tests": 12
     },
     "tests/test_campaign_empty_incremental_records.py": {
-      "seconds": 0.82,
+      "seconds": 4.216,
       "tests": 9
     },
     "tests/test_campaign_extended_float_centering.py": {
-      "seconds": 34.29,
+      "seconds": 41.257,
       "tests": 35
     },
     "tests/test_campaign_extended_float_derivative.py": {
-      "seconds": 0.026,
+      "seconds": 0.037,
       "tests": 32
     },
     "tests/test_campaign_extended_float_display.py": {
-      "seconds": 7.115,
+      "seconds": 7.954,
       "tests": 11
     },
     "tests/test_campaign_extended_float_fft.py": {
-      "seconds": 6.218,
+      "seconds": 8.256,
       "tests": 35
     },
     "tests/test_campaign_extended_float_heatmap.py": {
-      "seconds": 1.57,
+      "seconds": 6.318,
       "tests": 19
     },
     "tests/test_campaign_extended_float_previews.py": {
-      "seconds": 9.317,
+      "seconds": 10.32,
       "tests": 32
     },
     "tests/test_campaign_generator_backend.py": {
-      "seconds": 0.117,
+      "seconds": 0.974,
       "tests": 11
     },
     "tests/test_campaign_generator_input.py": {
-      "seconds": 0.009,
+      "seconds": 0.015,
       "tests": 2
     },
     "tests/test_campaign_heatmap_csv_precision.py": {
-      "seconds": 12.075,
+      "seconds": 18.738,
       "tests": 12
     },
     "tests/test_campaign_inferred_array_missing_cells.py": {
-      "seconds": 12.002,
+      "seconds": 17.746,
       "tests": 39
     },
     "tests/test_campaign_inferred_parameter_loading.py": {
-      "seconds": 34.263,
+      "seconds": 51.801,
       "tests": 18
     },
     "tests/test_campaign_live_schema_refresh.py": {
-      "seconds": 0.909,
+      "seconds": 2.083,
       "tests": 3
     },
     "tests/test_campaign_log_symlink_loops.py": {
-      "seconds": 0.012,
+      "seconds": 0.017,
       "tests": 4
     },
     "tests/test_campaign_measurement_coordinate_gaps.py": {
-      "seconds": 1.407,
+      "seconds": 5.938,
       "tests": 39
     },
     "tests/test_campaign_measurement_longdouble_csv.py": {
-      "seconds": 0.024,
+      "seconds": 0.059,
       "tests": 5
     },
     "tests/test_campaign_metadata_omission_recovery.py": {
-      "seconds": 2.083,
+      "seconds": 4.979,
       "tests": 8
     },
     "tests/test_campaign_mixed_extended_clipping.py": {
-      "seconds": 11.353,
+      "seconds": 12.911,
       "tests": 15
     },
     "tests/test_campaign_mixed_extended_finiteness.py": {
-      "seconds": 0.022,
+      "seconds": 0.015,
       "tests": 18
     },
     "tests/test_campaign_narrow_float_clipping.py": {
-      "seconds": 12.523,
+      "seconds": 15.02,
       "tests": 16
     },
     "tests/test_campaign_profiling_scripts.py": {
-      "seconds": 22.858,
+      "seconds": 58.81,
       "tests": 15
     },
     "tests/test_campaign_rounded_uniform_derivative.py": {
-      "seconds": 24.493,
+      "seconds": 27.291,
       "tests": 255
     },
     "tests/test_campaign_safety_cancellation.py": {
-      "seconds": 2.988,
+      "seconds": 4.362,
       "tests": 5
     },
     "tests/test_campaign_singleton_array_previews.py": {
-      "seconds": 12.548,
+      "seconds": 31.597,
       "tests": 68
     },
     "tests/test_campaign_split_storage_safety.py": {
-      "seconds": 1.035,
+      "seconds": 4.943,
       "tests": 3
     },
     "tests/test_campaign_ui_cut_axis_refresh.py": {
-      "seconds": 0.093,
+      "seconds": 3.052,
       "tests": 1
     },
     "tests/test_campaign_ui_cut_ownership.py": {
-      "seconds": 17.101,
+      "seconds": 16.478,
       "tests": 4
     },
     "tests/test_campaign_ui_manual_refresh.py": {
-      "seconds": 66.205,
+      "seconds": 58.5,
       "tests": 21
     },
     "tests/test_campaign_ui_paused_promotion.py": {
-      "seconds": 27.878,
+      "seconds": 38.884,
       "tests": 10
     },
     "tests/test_campaign_ui_pending_drop.py": {
-      "seconds": 22.529,
+      "seconds": 43.225,
       "tests": 18
     },
     "tests/test_campaign_ui_promoted_cut_mapping.py": {
-      "seconds": 18.352,
+      "seconds": 26.77,
       "tests": 6
     },
     "tests/test_campaign_ui_promotion.py": {
-      "seconds": 47.639,
+      "seconds": 61.247,
       "tests": 16
     },
     "tests/test_campaign_wal_artifact_observation.py": {
-      "seconds": 0.026,
+      "seconds": 0.088,
       "tests": 11
     },
     "tests/test_ci_artifacts.py": {
-      "seconds": 0.027,
-      "tests": 6
+      "seconds": 0.032,
+      "tests": 10
+    },
+    "tests/test_ci_gate.py": {
+      "seconds": 0.911,
+      "tests": 61
+    },
+    "tests/test_ci_plan.py": {
+      "seconds": 4.154,
+      "tests": 90
     },
     "tests/test_ci_scheduling.py": {
-      "seconds": 4.138,
-      "tests": 11
+      "seconds": 32.231,
+      "tests": 26
     },
     "tests/test_compiler_free_install.py": {
-      "seconds": 0.612,
+      "seconds": 1.445,
       "tests": 30
     },
     "tests/test_config.py": {
-      "seconds": 1.25,
-      "tests": 79
+      "seconds": 1.35,
+      "tests": 80
+    },
+    "tests/test_config_cli.py": {
+      "seconds": 0.015,
+      "tests": 14
     },
     "tests/test_demo_database_safety.py": {
-      "seconds": 2.012,
+      "seconds": 2.919,
       "tests": 6
     },
     "tests/test_derivative_numeric_ranges.py": {
-      "seconds": 0.913,
+      "seconds": 5.43,
       "tests": 40
     },
     "tests/test_desktop.py": {
-      "seconds": 4.562,
-      "tests": 16
+      "seconds": 2.783,
+      "tests": 31
+    },
+    "tests/test_desktop_associations.py": {
+      "seconds": 0.027,
+      "tests": 11
+    },
+    "tests/test_desktop_sidecars.py": {
+      "seconds": 0.044,
+      "tests": 17
     },
     "tests/test_diagnostics.py": {
-      "seconds": 0.02,
-      "tests": 13
+      "seconds": 0.067,
+      "tests": 16
     },
     "tests/test_distribution_validator.py": {
-      "seconds": 0.463,
-      "tests": 42
+      "seconds": 16.346,
+      "tests": 51
+    },
+    "tests/test_fixture_scope.py": {
+      "seconds": 1.797,
+      "tests": 3
     },
     "tests/test_generation_destination_access.py": {
-      "seconds": 0.222,
+      "seconds": 1.588,
       "tests": 10
     },
     "tests/test_heatmap_cancellation_residuals.py": {
-      "seconds": 0.303,
+      "seconds": 4.679,
       "tests": 9
     },
     "tests/test_heatmap_float_means.py": {
-      "seconds": 0.278,
+      "seconds": 1.781,
       "tests": 12
     },
     "tests/test_heatmap_geometry.py": {
-      "seconds": 0.034,
+      "seconds": 0.038,
       "tests": 33
     },
     "tests/test_independent_heatmap_extremes.py": {
-      "seconds": 0.565,
+      "seconds": 1.298,
       "tests": 10
     },
     "tests/test_liveplot_database_safety.py": {
-      "seconds": 0.111,
+      "seconds": 0.191,
       "tests": 6
     },
+    "tests/test_macos_identity.py": {
+      "seconds": 6.884,
+      "tests": 17
+    },
+    "tests/test_macos_window.py": {
+      "seconds": 0.007,
+      "tests": 7
+    },
     "tests/test_multidimensional_measurements.py": {
-      "seconds": 1.755,
-      "tests": 22
+      "seconds": 21.884,
+      "tests": 31
     },
     "tests/test_native_fft_mixed_coordinates.py": {
-      "seconds": 0.144,
+      "seconds": 1.579,
       "tests": 10
     },
     "tests/test_nonuniform_cancellation.py": {
-      "seconds": 0.046,
+      "seconds": 0.108,
       "tests": 37
     },
     "tests/test_package_import.py": {
-      "seconds": 1.002,
+      "seconds": 2.361,
       "tests": 7
     },
     "tests/test_packaging_split.py": {
-      "seconds": 0.01,
+      "seconds": 0.011,
       "tests": 7
     },
+    "tests/test_plot_result.py": {
+      "seconds": 0.013,
+      "tests": 4
+    },
+    "tests/test_process_shutdown.py": {
+      "seconds": 1.58,
+      "tests": 6
+    },
     "tests/test_release.py": {
-      "seconds": 0.401,
+      "seconds": 1.037,
       "tests": 47
     },
     "tests/test_sample_statistics_accuracy.py": {
-      "seconds": 0.017,
+      "seconds": 0.016,
       "tests": 10
     },
+    "tests/test_shutdown_bootstrap.py": {
+      "seconds": 0.032,
+      "tests": 29
+    },
+    "tests/test_shutdown_protocol.py": {
+      "seconds": 0.038,
+      "tests": 36
+    },
     "tests/test_shutdown_supervisor.py": {
-      "seconds": 28.292,
+      "seconds": 39.459,
       "tests": 102
     },
     "tests/test_testdata.py": {
-      "seconds": 5.991,
-      "tests": 92
+      "seconds": 18.307,
+      "tests": 103
+    },
+    "tests/test_testdata_specifications.py": {
+      "seconds": 0.151,
+      "tests": 13
     },
     "tests/test_time_stress_database_safety.py": {
-      "seconds": 4.043,
+      "seconds": 5.781,
       "tests": 2
     },
     "tests/test_tools.py": {
-      "seconds": 0.089,
+      "seconds": 0.293,
       "tests": 34
     },
+    "tests/test_update_ci_timings.py": {
+      "seconds": 0.025,
+      "tests": 9
+    },
+    "tests/test_update_presentation.py": {
+      "seconds": 0.013,
+      "tests": 13
+    },
     "tests/test_updates.py": {
-      "seconds": 0.019,
+      "seconds": 0.008,
       "tests": 8
     },
     "tests/test_version_info.py": {
-      "seconds": 2.096,
+      "seconds": 4.445,
       "tests": 12
     },
     "tests/test_windows_ci.py": {
-      "seconds": 2.246,
-      "tests": 9
+      "seconds": 1.723,
+      "tests": 10
     },
     "tests/test_windows_shutdown_job.py": {
-      "seconds": 0.468,
+      "seconds": 0.43,
       "tests": 21
     },
     "tests/test_worker_array_heatmaps.py": {
-      "seconds": 5.964,
+      "seconds": 12.905,
       "tests": 81
     },
     "tests/test_worker_array_measurements.py": {
-      "seconds": 0.251,
+      "seconds": 1.253,
       "tests": 8
     },
     "tests/test_worker_boolean_heatmap_missing.py": {
-      "seconds": 6.399,
+      "seconds": 18.367,
       "tests": 144
     },
     "tests/test_worker_complex_heatmaps.py": {
-      "seconds": 0.503,
-      "tests": 20
+      "seconds": 4.021,
+      "tests": 44
     },
     "tests/test_worker_complex_lines.py": {
-      "seconds": 0.019,
-      "tests": 8
+      "seconds": 0.048,
+      "tests": 24
     },
     "tests/test_worker_coordinate_precision.py": {
-      "seconds": 1.802,
+      "seconds": 4.725,
       "tests": 23
     },
     "tests/test_worker_heatmap_limits.py": {
-      "seconds": 0.125,
+      "seconds": 0.363,
       "tests": 17
     },
     "tests/test_worker_nonfinite_sql_heatmaps.py": {
-      "seconds": 15.323,
+      "seconds": 23.805,
       "tests": 32
     },
     "tests/test_worker_shaped_coordinate_validity.py": {
-      "seconds": 3.283,
+      "seconds": 18.189,
       "tests": 50
     },
     "tests/test_worker_sidecar_identities.py": {
-      "seconds": 0.004,
+      "seconds": 0.019,
       "tests": 2
     },
     "tests/widgets/test_high_dimensional_setpoint_display.py": {
-      "seconds": 0.042,
+      "seconds": 0.174,
       "tests": 2
     },
     "tests/widgets/test_measurements_column_width.py": {
-      "seconds": 0.022,
+      "seconds": 0.043,
       "tests": 4
     },
     "tests/widgets/test_operations.py": {
-      "seconds": 0.011,
-      "tests": 6
+      "seconds": 0.059,
+      "tests": 11
     },
     "tests/widgets/test_plot_preview_reuse.py": {
-      "seconds": 0.007,
-      "tests": 4
+      "seconds": 0.017,
+      "tests": 6
     },
     "tests/widgets/test_preview_database_instance.py": {
-      "seconds": 0.59,
+      "seconds": 1.341,
       "tests": 22
     },
     "tests/widgets/test_preview_dragdrop.py": {
-      "seconds": 0.016,
-      "tests": 11
+      "seconds": 0.049,
+      "tests": 21
     },
     "tests/widgets/test_preview_extreme_range.py": {
-      "seconds": 0.053,
+      "seconds": 0.34,
       "tests": 5
     },
+    "tests/widgets/test_preview_multiselect.py": {
+      "seconds": 0.177,
+      "tests": 16
+    },
     "tests/widgets/test_preview_placeholders.py": {
-      "seconds": 0.118,
+      "seconds": 0.076,
       "tests": 17
     },
     "tests/widgets/test_run_details.py": {
-      "seconds": 2.933,
+      "seconds": 2.81,
       "tests": 69
     },
     "tests/widgets/test_run_list.py": {
-      "seconds": 0.718,
+      "seconds": 0.586,
       "tests": 55
     },
     "tests/widgets/test_themes.py": {
-      "seconds": 0.009,
+      "seconds": 0.019,
       "tests": 4
     },
     "tests/windows/test_appearance_bulk_properties.py": {
-      "seconds": 96.033,
+      "seconds": 126.622,
       "tests": 50
     },
     "tests/windows/test_appearance_numeric_keyboard.py": {
-      "seconds": 50.462,
+      "seconds": 54.637,
       "tests": 22
     },
+    "tests/windows/test_appearance_reordering.py": {
+      "seconds": 0.019,
+      "tests": 13
+    },
     "tests/windows/test_appearance_swap_cuts.py": {
-      "seconds": 35.665,
+      "seconds": 52.925,
       "tests": 10
     },
+    "tests/windows/test_application_teardown.py": {
+      "seconds": 13.157,
+      "tests": 8
+    },
     "tests/windows/test_auto_plot.py": {
-      "seconds": 0.022,
+      "seconds": 0.013,
       "tests": 10
     },
     "tests/windows/test_axis_auto_padding_overflow.py": {
-      "seconds": 18.788,
+      "seconds": 26.237,
       "tests": 16
     },
     "tests/windows/test_axis_global_auto_validation.py": {
-      "seconds": 61.917,
+      "seconds": 64.297,
       "tests": 32
     },
     "tests/windows/test_axis_limit_overflow.py": {
-      "seconds": 66.231,
+      "seconds": 78.693,
       "tests": 46
     },
     "tests/windows/test_axis_limit_precision.py": {
-      "seconds": 0.141,
+      "seconds": 0.285,
       "tests": 4
     },
     "tests/windows/test_bounded_shutdown.py": {
-      "seconds": 14.415,
-      "tests": 18
+      "seconds": 14.84,
+      "tests": 12
     },
     "tests/windows/test_centering_extremes.py": {
-      "seconds": 3.92,
+      "seconds": 3.369,
       "tests": 5
     },
     "tests/windows/test_close_confirmation_live_plots.py": {
-      "seconds": 4.102,
+      "seconds": 6.102,
       "tests": 4
     },
     "tests/windows/test_color_scale_locale.py": {
-      "seconds": 44.827,
+      "seconds": 40.899,
       "tests": 99
     },
+    "tests/windows/test_color_scale_refresh.py": {
+      "seconds": 15.912,
+      "tests": 24
+    },
+    "tests/windows/test_color_scale_symmetric.py": {
+      "seconds": 13.247,
+      "tests": 24
+    },
     "tests/windows/test_commands.py": {
-      "seconds": 0.013,
+      "seconds": 0.012,
       "tests": 8
     },
     "tests/windows/test_complex_line_data.py": {
-      "seconds": 10.532,
+      "seconds": 10.451,
       "tests": 6
     },
+    "tests/windows/test_complex_plots.py": {
+      "seconds": 84.702,
+      "tests": 23
+    },
     "tests/windows/test_config_transactions.py": {
-      "seconds": 0.064,
+      "seconds": 0.232,
       "tests": 9
     },
     "tests/windows/test_csv_filenames.py": {
-      "seconds": 0.003,
+      "seconds": 0.008,
       "tests": 3
     },
     "tests/windows/test_csv_shared_coordinates.py": {
-      "seconds": 5.406,
+      "seconds": 5.57,
       "tests": 3
     },
     "tests/windows/test_cursor_precision_preference.py": {
-      "seconds": 3.121,
-      "tests": 16
+      "seconds": 2.989,
+      "tests": 19
     },
     "tests/windows/test_custom_color_dialog_lifecycle.py": {
-      "seconds": 8.468,
+      "seconds": 13.334,
       "tests": 7
     },
     "tests/windows/test_cut_color_lifecycle.py": {
-      "seconds": 11.072,
+      "seconds": 15.949,
       "tests": 7
     },
     "tests/windows/test_cut_cursor_integration.py": {
-      "seconds": 32.39,
+      "seconds": 38.81,
       "tests": 23
     },
+    "tests/windows/test_database_detail_state.py": {
+      "seconds": 0.001,
+      "tests": 1
+    },
     "tests/windows/test_database_information.py": {
-      "seconds": 8.951,
+      "seconds": 16.845,
       "tests": 11
     },
     "tests/windows/test_database_worker_errors.py": {
-      "seconds": 40.969,
+      "seconds": 59.763,
       "tests": 12
     },
+    "tests/windows/test_dataset_registry.py": {
+      "seconds": 0.014,
+      "tests": 5
+    },
     "tests/windows/test_dataset_statistics.py": {
-      "seconds": 2.089,
+      "seconds": 5.155,
       "tests": 47
     },
     "tests/windows/test_derivative_scale.py": {
-      "seconds": 6.733,
+      "seconds": 8.591,
       "tests": 17
     },
+    "tests/windows/test_desktop_integration.py": {
+      "seconds": 0.044,
+      "tests": 5
+    },
+    "tests/windows/test_desktop_prompt.py": {
+      "seconds": 0.078,
+      "tests": 11
+    },
     "tests/windows/test_details_copy_menu_refresh.py": {
-      "seconds": 133.158,
+      "seconds": 71.451,
       "tests": 43
     },
     "tests/windows/test_details_copy_menu_selection.py": {
-      "seconds": 28.695,
+      "seconds": 27.561,
       "tests": 10
     },
     "tests/windows/test_differentiation_integration.py": {
-      "seconds": 43.292,
+      "seconds": 50.232,
       "tests": 39
     },
     "tests/windows/test_error_dialog.py": {
-      "seconds": 0.017,
+      "seconds": 0.032,
       "tests": 5
     },
+    "tests/windows/test_export_names.py": {
+      "seconds": 0.025,
+      "tests": 23
+    },
     "tests/windows/test_export_paths.py": {
-      "seconds": 0.371,
-      "tests": 91
+      "seconds": 1.693,
+      "tests": 99
+    },
+    "tests/windows/test_export_staging.py": {
+      "seconds": 0.047,
+      "tests": 5
+    },
+    "tests/windows/test_export_tasks.py": {
+      "seconds": 4.761,
+      "tests": 10
     },
     "tests/windows/test_extended_clip_operation_chain.py": {
-      "seconds": 7.822,
+      "seconds": 11.998,
       "tests": 16
     },
     "tests/windows/test_filtered_axis_autoscale.py": {
-      "seconds": 107.13,
+      "seconds": 102.445,
       "tests": 45
     },
     "tests/windows/test_font_preferences.py": {
-      "seconds": 0.783,
+      "seconds": 1.172,
       "tests": 12
     },
     "tests/windows/test_free_cursor_axis_assignment.py": {
-      "seconds": 33.186,
+      "seconds": 38.14,
       "tests": 21
     },
     "tests/windows/test_heatmap_appearance.py": {
-      "seconds": 0.098,
+      "seconds": 0.218,
       "tests": 3
     },
     "tests/windows/test_heatmap_color_range.py": {
-      "seconds": 12.482,
+      "seconds": 15.629,
       "tests": 8
     },
     "tests/windows/test_heatmap_layer_integration.py": {
-      "seconds": 18.612,
+      "seconds": 2.114,
       "tests": 1
     },
     "tests/windows/test_heatmap_limit_missing_samples.py": {
-      "seconds": 13.434,
+      "seconds": 23.639,
       "tests": 21
     },
     "tests/windows/test_heatmap_promotion_color_lifecycle.py": {
-      "seconds": 56.106,
-      "tests": 16
+      "seconds": 94.38,
+      "tests": 18
     },
     "tests/windows/test_help_menu.py": {
-      "seconds": 0.072,
+      "seconds": 0.069,
       "tests": 8
     },
     "tests/windows/test_independent_cancellation_mean.py": {
-      "seconds": 3.211,
+      "seconds": 4.389,
       "tests": 6
     },
     "tests/windows/test_independent_native_extremes.py": {
-      "seconds": 9.67,
+      "seconds": 15.156,
       "tests": 12
     },
     "tests/windows/test_limit_integer_integration.py": {
-      "seconds": 23.716,
+      "seconds": 25.915,
       "tests": 15
     },
     "tests/windows/test_live_array_dtypes.py": {
-      "seconds": 8.744,
+      "seconds": 10.309,
       "tests": 8
     },
     "tests/windows/test_main_window.py": {
-      "seconds": 1.739,
-      "tests": 148
+      "seconds": 2.625,
+      "tests": 140
     },
     "tests/windows/test_marquee_menu_lifecycle.py": {
-      "seconds": 15.466,
+      "seconds": 22.891,
       "tests": 16
     },
     "tests/windows/test_marquee_statistics_accuracy.py": {
-      "seconds": 6.407,
+      "seconds": 8.087,
       "tests": 8
     },
     "tests/windows/test_marquee_statistics_domain.py": {
-      "seconds": 22.002,
+      "seconds": 29.713,
       "tests": 20
     },
     "tests/windows/test_merged_trace_metadata.py": {
-      "seconds": 28.343,
+      "seconds": 34.175,
       "tests": 11
     },
     "tests/windows/test_mixed_plot_drops.py": {
-      "seconds": 163.533,
-      "tests": 52
+      "seconds": 167.202,
+      "tests": 56
     },
     "tests/windows/test_native_average_cancellation.py": {
-      "seconds": 0.089,
+      "seconds": 0.096,
       "tests": 5
     },
     "tests/windows/test_native_averaging.py": {
-      "seconds": 57.087,
+      "seconds": 76.333,
       "tests": 40
     },
     "tests/windows/test_native_boolean_derivatives.py": {
-      "seconds": 0.386,
+      "seconds": 0.591,
       "tests": 6
     },
     "tests/windows/test_native_clip_coordinates.py": {
-      "seconds": 22.162,
+      "seconds": 21.396,
       "tests": 17
     },
     "tests/windows/test_native_fft_coordinate_origin.py": {
-      "seconds": 8.475,
+      "seconds": 16.113,
       "tests": 11
     },
     "tests/windows/test_native_fft_coordinates.py": {
-      "seconds": 47.925,
+      "seconds": 78.446,
       "tests": 30
     },
     "tests/windows/test_native_fft_dynamic_range.py": {
-      "seconds": 10.843,
+      "seconds": 11.419,
       "tests": 30
     },
     "tests/windows/test_native_fft_float_precision.py": {
-      "seconds": 24.044,
+      "seconds": 33.854,
       "tests": 17
     },
     "tests/windows/test_native_fft_integer_precision.py": {
-      "seconds": 20.057,
+      "seconds": 25.96,
       "tests": 11
     },
     "tests/windows/test_native_fft_interpolation_scale.py": {
-      "seconds": 16.578,
+      "seconds": 19.041,
       "tests": 32
     },
     "tests/windows/test_native_fft_rebase_precision.py": {
-      "seconds": 52.88,
+      "seconds": 74.007,
       "tests": 45
     },
     "tests/windows/test_native_float_transforms.py": {
-      "seconds": 60.186,
+      "seconds": 62.791,
       "tests": 29
     },
     "tests/windows/test_native_integer_transforms.py": {
-      "seconds": 85.815,
+      "seconds": 93.947,
       "tests": 42
     },
     "tests/windows/test_native_menu_lifecycle.py": {
-      "seconds": 41.088,
+      "seconds": 33.266,
       "tests": 19
     },
+    "tests/windows/test_native_quit.py": {
+      "seconds": 9.188,
+      "tests": 6
+    },
     "tests/windows/test_native_transform_labels.py": {
-      "seconds": 127.695,
+      "seconds": 167.219,
       "tests": 64
     },
     "tests/windows/test_native_transform_snapping.py": {
-      "seconds": 92.593,
+      "seconds": 110.688,
       "tests": 49
     },
     "tests/windows/test_nonuniform_gradient_overflow.py": {
-      "seconds": 0.106,
+      "seconds": 0.511,
       "tests": 16
     },
     "tests/windows/test_numeric_sample_preservation.py": {
-      "seconds": 20.479,
+      "seconds": 23.509,
       "tests": 12
     },
     "tests/windows/test_numerical_stability.py": {
-      "seconds": 9.109,
+      "seconds": 11.087,
       "tests": 29
     },
     "tests/windows/test_offset_precision_regressions.py": {
-      "seconds": 19.309,
+      "seconds": 23.751,
       "tests": 11
     },
     "tests/windows/test_pending_close_all_publication.py": {
-      "seconds": 18.909,
+      "seconds": 18.821,
       "tests": 14
     },
     "tests/windows/test_pending_cut_marker.py": {
-      "seconds": 13.734,
+      "seconds": 20.927,
       "tests": 8
     },
     "tests/windows/test_pending_preview_drop.py": {
-      "seconds": 1.147,
-      "tests": 2
+      "seconds": 10.844,
+      "tests": 3
     },
     "tests/windows/test_planned_integer_array_extent.py": {
-      "seconds": 25.597,
+      "seconds": 44.18,
       "tests": 24
     },
     "tests/windows/test_plot1d.py": {
-      "seconds": 0.586,
+      "seconds": 0.876,
       "tests": 80
     },
     "tests/windows/test_plot1d_snap_precision.py": {
-      "seconds": 12.773,
+      "seconds": 20.05,
       "tests": 28
     },
     "tests/windows/test_plot2d.py": {
-      "seconds": 16.58,
+      "seconds": 0.519,
       "tests": 105
     },
     "tests/windows/test_plot2d_layers.py": {
-      "seconds": 0.661,
+      "seconds": 0.439,
       "tests": 23
     },
+    "tests/windows/test_plot3d.py": {
+      "seconds": 70.207,
+      "tests": 26
+    },
     "tests/windows/test_plot_actions.py": {
-      "seconds": 0.328,
+      "seconds": 0.652,
       "tests": 9
     },
     "tests/windows/test_plot_annotation.py": {
-      "seconds": 5.649,
-      "tests": 7
+      "seconds": 13.139,
+      "tests": 9
+    },
+    "tests/windows/test_plot_chrome.py": {
+      "seconds": 0.424,
+      "tests": 5
+    },
+    "tests/windows/test_plot_csv_modes.py": {
+      "seconds": 5.03,
+      "tests": 15
     },
     "tests/windows/test_plot_csv_precision.py": {
-      "seconds": 38.367,
+      "seconds": 41.808,
       "tests": 31
     },
     "tests/windows/test_plot_dialog_lifecycle.py": {
-      "seconds": 12.239,
-      "tests": 10
+      "seconds": 40.319,
+      "tests": 17
     },
     "tests/windows/test_plot_initialization.py": {
-      "seconds": 4.818,
+      "seconds": 7.451,
       "tests": 10
     },
     "tests/windows/test_plot_integration.py": {
-      "seconds": 111.206,
+      "seconds": 95.037,
       "tests": 36
     },
     "tests/windows/test_plot_overlay_integration.py": {
-      "seconds": 68.451,
+      "seconds": 82.206,
       "tests": 43
     },
     "tests/windows/test_plot_progress_ui.py": {
-      "seconds": 12.152,
+      "seconds": 20.214,
       "tests": 10
     },
     "tests/windows/test_plot_sidecar_binding.py": {
-      "seconds": 0.09,
+      "seconds": 0.411,
       "tests": 11
     },
     "tests/windows/test_plot_tiling.py": {
-      "seconds": 0.059,
+      "seconds": 0.206,
       "tests": 18
     },
+    "tests/windows/test_plot_title.py": {
+      "seconds": 0.002,
+      "tests": 2
+    },
     "tests/windows/test_plot_window.py": {
-      "seconds": 1.745,
+      "seconds": 4.363,
       "tests": 87
     },
     "tests/windows/test_preferences.py": {
-      "seconds": 0.025,
+      "seconds": 0.074,
       "tests": 8
     },
     "tests/windows/test_preferences_lifecycle.py": {
-      "seconds": 0.966,
+      "seconds": 2.026,
       "tests": 15
     },
     "tests/windows/test_preferences_value_preservation.py": {
-      "seconds": 0.106,
-      "tests": 7
+      "seconds": 0.214,
+      "tests": 10
     },
     "tests/windows/test_preview_drop_axes.py": {
-      "seconds": 41.401,
+      "seconds": 39.179,
       "tests": 25
     },
+    "tests/windows/test_range_entry_modes.py": {
+      "seconds": 21.05,
+      "tests": 46
+    },
     "tests/windows/test_refresh_interval_precision.py": {
-      "seconds": 7.662,
-      "tests": 9
+      "seconds": 14.128,
+      "tests": 11
     },
     "tests/windows/test_refresh_lifecycle.py": {
-      "seconds": 0.29,
-      "tests": 24
+      "seconds": 0.268,
+      "tests": 18
+    },
+    "tests/windows/test_run_csv_batch.py": {
+      "seconds": 9.948,
+      "tests": 11
     },
     "tests/windows/test_run_csv_export_race.py": {
-      "seconds": 4.428,
-      "tests": 68
+      "seconds": 59.8,
+      "tests": 70
     },
     "tests/windows/test_run_csv_mixed_integer_precision.py": {
-      "seconds": 13.732,
+      "seconds": 30.899,
       "tests": 36
     },
     "tests/windows/test_run_duration_wal.py": {
-      "seconds": 7.264,
+      "seconds": 9.963,
       "tests": 10
     },
     "tests/windows/test_run_menu_source_lifecycle.py": {
-      "seconds": 12.607,
+      "seconds": 14.987,
       "tests": 14
     },
     "tests/windows/test_run_preview_selection_race.py": {
-      "seconds": 24.961,
+      "seconds": 30.168,
       "tests": 5
     },
     "tests/windows/test_settings_decoder_limits.py": {
-      "seconds": 0.245,
+      "seconds": 0.356,
       "tests": 5
     },
+    "tests/windows/test_shared_refresh.py": {
+      "seconds": 4.631,
+      "tests": 6
+    },
+    "tests/windows/test_shutdown_coordinator.py": {
+      "seconds": 0.007,
+      "tests": 7
+    },
+    "tests/windows/test_signal_blocking.py": {
+      "seconds": 0.01,
+      "tests": 9
+    },
     "tests/windows/test_snap_choice_promotion.py": {
-      "seconds": 26.468,
+      "seconds": 42.228,
       "tests": 8
     },
+    "tests/windows/test_snapshot_session.py": {
+      "seconds": 0.054,
+      "tests": 15
+    },
     "tests/windows/test_source_promotion_native_controls.py": {
-      "seconds": 34.863,
+      "seconds": 46.964,
       "tests": 16
     },
     "tests/windows/test_svg_export_integration.py": {
-      "seconds": 11.989,
+      "seconds": 23.728,
       "tests": 12
     },
     "tests/windows/test_synthetic_fixture_connections.py": {
-      "seconds": 0.088,
+      "seconds": 0.371,
       "tests": 6
     },
     "tests/windows/test_testdata_gui.py": {
-      "seconds": 1.847,
+      "seconds": 0.975,
       "tests": 26
     },
+    "tests/windows/test_thumbnail_csv_export.py": {
+      "seconds": 16.69,
+      "tests": 9
+    },
     "tests/windows/test_tiny_tick_labels.py": {
-      "seconds": 5.247,
+      "seconds": 7.395,
       "tests": 7
     },
     "tests/windows/test_trusted_derived_live_counts.py": {
-      "seconds": 0.314,
+      "seconds": 1.691,
       "tests": 2
     },
     "tests/windows/test_trusted_derived_qt.py": {
-      "seconds": 1.441,
-      "tests": 70
+      "seconds": 4.851,
+      "tests": 73
     },
     "tests/windows/test_trusted_derived_wal_grid_ui.py": {
-      "seconds": 29.752,
+      "seconds": 55.625,
       "tests": 1
     },
     "tests/windows/test_trusted_derived_wal_snapshot_ui.py": {
-      "seconds": 0.0,
+      "seconds": 6.779,
       "tests": 1
     },
     "tests/windows/test_trusted_derived_wal_tiers_ui.py": {
-      "seconds": 6.979,
+      "seconds": 16.165,
       "tests": 1
     },
     "tests/windows/test_trusted_derived_wal_ui.py": {
-      "seconds": 7.546,
+      "seconds": 11.976,
       "tests": 1
     },
     "tests/windows/test_trusted_live_ui.py": {
-      "seconds": 1.333,
-      "tests": 90
+      "seconds": 1.76,
+      "tests": 69
     },
     "tests/windows/test_trusted_plot_launch.py": {
-      "seconds": 19.678,
+      "seconds": 34.625,
       "tests": 24
     },
     "tests/windows/test_typed_run_keyboard_launch.py": {
-      "seconds": 9.891,
+      "seconds": 12.423,
       "tests": 12
     },
     "tests/windows/test_unloaded_database_export.py": {
-      "seconds": 47.83,
+      "seconds": 103.573,
       "tests": 67
     },
     "tests/windows/test_update_checks.py": {
-      "seconds": 0.838,
-      "tests": 14
+      "seconds": 0.323,
+      "tests": 15
     },
     "tests/windows/test_variable_array_records.py": {
-      "seconds": 18.271,
+      "seconds": 22.489,
       "tests": 22
     },
     "tests/windows/test_visual_smoke.py": {
-      "seconds": 7.951,
+      "seconds": 13.09,
       "tests": 1
     },
     "tests/windows/test_window_controls.py": {
-      "seconds": 0.111,
+      "seconds": 0.112,
       "tests": 4
     },
     "tests/windows/test_window_menu_target_lifecycle.py": {
-      "seconds": 44.663,
+      "seconds": 56.793,
       "tests": 30
     }
   }

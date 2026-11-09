@@ -12,6 +12,7 @@ from unittest.mock import Mock, call
 
 import pytest
 
+from scripts import validate_distribution as validator
 from scripts.validate_distribution import (
     ENTRYPOINT_DELEGATION_SITECUSTOMIZE,
     NATIVE_EXTENSION_MEMBERS,
@@ -551,6 +552,105 @@ def test_install_pair_cannot_fall_back_to_an_index(tmp_path, monkeypatch):
     with pytest.raises(subprocess.CalledProcessError):
         install_wheels(tmp_path / 'python', app, native)
     assert run.call_count == 1, 'No dependency/index resolution after a missing local wheel'
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("partition", [None, "1/2", "2/2"])
+def test_sdist_partition_preserves_installed_source_isolation(tmp_path, monkeypatch, partition):
+    app = tmp_path / "qplotter.tar.gz"
+    native = tmp_path / "qplotter_native.tar.gz"
+    source = tmp_path / "sdist-source"
+    native_source = tmp_path / "native-sdist-source"
+    python = tmp_path / "sdist-venv" / "bin" / "python"
+    extract = Mock(side_effect=[source, native_source])
+    run = Mock()
+    monkeypatch.setattr(validator, "extract_sdist", extract)
+    monkeypatch.setattr(validator, "create_environment", Mock(return_value=python))
+    monkeypatch.setattr(validator, "run", run)
+    monkeypatch.setenv("PYTHONPATH", "must-not-shadow-installed-sdists")
+
+    validator.test_extracted_sdist(app, native, tmp_path, test_partition=partition)
+
+    extract.assert_has_calls([call(app, source), call(native, native_source)])
+    installation, tests = run.call_args_list
+    assert installation.args[0] == [
+        str(python), "-m", "pip", "install", str(native_source), f"{source}[dev]",
+    ]
+    command = tests.args[0]
+    assert command[:3] == [str(python), "-m", "pytest"]
+    assert command[command.index("-n") + 1] == "2"
+    assert "--dist=loadfile" in command
+    assert "--no-loadscope-reorder" in command
+    assert command[command.index("-o") + 1] == "pythonpath="
+    assert tests.kwargs["cwd"] == source
+    assert "PYTHONPATH" not in tests.kwargs["env"]
+    assert [item for item in command if item.startswith("--qplot-ci-partition=")] == (
+        [] if partition is None else [f"--qplot-ci-partition={partition}"]
+    )
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("partition", [None, "1/2", "2/2"])
+def test_sdist_partition_retains_all_artifact_checks_and_wheel_smoke(
+    tmp_path, monkeypatch, partition,
+):
+    arguments = ["validate_distribution.py", str(tmp_path)]
+    if partition is not None:
+        arguments.extend(["--test-partition", partition])
+    monkeypatch.setattr(sys, "argv", arguments)
+    artifacts = {
+        f"{package}_{kind}": tmp_path / f"{package}.{kind}"
+        for package in ("qplotter", "qplotter_native")
+        for kind in ("wheel", "sdist")
+    }
+    source = set()
+    runtime_files = {"qplot/__init__.py"}
+    monkeypatch.setattr(validator, "source_files", Mock(return_value=source))
+    monkeypatch.setattr(validator, "find_artifacts", Mock(return_value=artifacts))
+    wheel = Mock(return_value=runtime_files)
+    sdist = Mock()
+    tests = Mock()
+    smoke = Mock()
+    monkeypatch.setattr(validator, "validate_wheel", wheel)
+    monkeypatch.setattr(validator, "validate_sdist", sdist)
+    monkeypatch.setattr(validator, "test_extracted_sdist", tests)
+    monkeypatch.setattr(validator, "smoke_test_wheel", smoke)
+
+    assert validator.main() == 0
+
+    wheel.assert_has_calls([
+        call(artifacts["qplotter_wheel"], source),
+        call(artifacts["qplotter_native_wheel"], source, native=True),
+    ])
+    sdist.assert_has_calls([
+        call(artifacts["qplotter_sdist"], source),
+        call(artifacts["qplotter_native_sdist"], source, native=True),
+    ])
+    tests.assert_called_once()
+    assert tests.call_args.args[:2] == (
+        artifacts["qplotter_sdist"].resolve(), artifacts["qplotter_native_sdist"].resolve(),
+    )
+    assert tests.call_args.kwargs == {"test_partition": partition}
+    smoke.assert_called_once()
+    assert smoke.call_args.args[1:4] == (
+        artifacts["qplotter_wheel"].resolve(), artifacts["qplotter_native_wheel"].resolve(),
+        runtime_files,
+    )
+
+
+@pytest.mark.pure
+@pytest.mark.parametrize("arguments", [
+    ["--test-partition", "0/2", "dist"],
+    ["--test-partition", "1/3", "dist"],
+    ["--test-partition", "1/2", "--wheel-only", "dist"],
+    ["--test-partition", "2/2", "--install-only", "dist"],
+    ["--test-partition", "1/2", "--check-clean"],
+])
+def test_sdist_partition_rejects_missing_or_incompatible_validation(monkeypatch, arguments):
+    monkeypatch.setattr(sys, "argv", ["validate_distribution.py", *arguments])
+    with pytest.raises(SystemExit) as error:
+        validator.parse_args()
+    assert error.value.code == 2
 
 
 @pytest.mark.parametrize('fault', [None, 'changed-native', 'checkout-native', 'checkout-app', 'old-version'])

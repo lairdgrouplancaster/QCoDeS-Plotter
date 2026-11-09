@@ -1,4 +1,4 @@
-"""Routine CI is allowed only after a complete, non-sensitive Git comparison."""
+"""Ordinary CI keeps full Python and Linux testing for explicit runs and releases."""
 
 import importlib.util
 import json
@@ -18,188 +18,61 @@ plan = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(plan)
 
 
-@pytest.fixture
-def git_repository(tmp_path):
-    repository = tmp_path / "repository"
-    repository.mkdir()
-
-    def git(*arguments):
-        return subprocess.run(
-            ["git", "-c", "user.name=CI policy tests", "-c", "user.email=ci@example.invalid",
-             "-c", "commit.gpgsign=false", *arguments],
-            cwd=repository, check=True, capture_output=True, text=True,
-        ).stdout.strip()
-
-    git("init")
-    (repository / "README.md").write_text("Initial documentation\n")
-    (repository / "pyproject.toml").write_text("# Initial dependencies\n")
-    git("add", ".")
-    git("commit", "-m", "Initial fixture")
-    return repository, git
-
-
-def pushed_mode(repository, before, after):
-    return plan.validation_mode(
-        "push", {"before": before, "after": after}, "refs/heads/main", "false",
-        repository=repository,
-    )[0]
-
-
-@pytest.mark.parametrize("event_name,ref,override", [
-    ("pull_request", "refs/pull/1/merge", "true"),
-    ("push", "refs/heads/main", "true"),
-    ("schedule", "refs/heads/main", "false"),
-    ("workflow_dispatch", "refs/heads/topic", "false"),
-    ("push", "refs/tags/v1.7.0", "false"),
-    ("push", "refs/tags/native-and-app/v1.7.0", "false"),
-    ("push", "refs/heads/main", ""),
-    ("push", "refs/heads/main", "unexpected"),
+@pytest.mark.parametrize("event_name,ref", [
+    ("push", "refs/heads/main"),
+    ("pull_request", "refs/pull/1/merge"),
+    ("workflow_dispatch", "refs/heads/topic"),
+    ("workflow_call", "refs/heads/main"),
 ])
-def test_full_triggers_do_not_need_comparison(monkeypatch, tmp_path, event_name, ref, override):
-    def forbidden(*args, **kwargs):
-        pytest.fail("Full validation must not need Git history")
+def test_ordinary_events_use_routine_validation_without_an_override(event_name, ref):
+    full, reason = plan.validation_mode(event_name, ref, "false")
+    assert not full and reason
 
-    monkeypatch.setattr(plan.subprocess, "run", forbidden)
-    full, reason = plan.validation_mode(event_name, None, ref, override, repository=tmp_path)
+
+@pytest.mark.parametrize("event_name", [
+    "push", "pull_request", "workflow_dispatch", "workflow_call", "unexpected",
+])
+def test_explicit_full_validation_is_honoured_for_every_event(event_name):
+    full, reason = plan.validation_mode(event_name, "refs/heads/main", "true")
     assert full and reason
 
 
-@pytest.mark.parametrize("event_name,event", [
-    ("push", None), ("push", []), ("push", {}),
-    ("push", {"before": "0" * 40, "after": "a" * 40}),
-    ("push", {"before": "a" * 40, "after": "0" * 40}),
-    ("push", {"before": "--name-only", "after": "a" * 40}),
-    ("pull_request", {}), ("pull_request", {"pull_request": []}),
-    ("pull_request", {"pull_request": {"base": None, "head": {"sha": "a" * 40}}}),
-    ("pull_request", {"pull_request": {"base": {"sha": "b" * 40}, "head": {}}}),
-    ("unexpected", {"before": "b" * 40, "after": "a" * 40}),
-])
-def test_unusable_event_selects_full(tmp_path, event_name, event):
-    assert plan.validation_mode(event_name, event, "refs/heads/main", "false", repository=tmp_path)[0]
+@pytest.mark.parametrize("event_name", ["push", "workflow_dispatch", "workflow_call"])
+@pytest.mark.parametrize("ref", ["refs/tags/v1.7.0", "refs/tags/native-and-app/v1.7.0"])
+def test_release_tags_cannot_disable_full_validation(event_name, ref):
+    assert plan.validation_mode(event_name, ref, "false")[0]
 
 
-@pytest.mark.parametrize("error", [
-    OSError("Git unavailable"),
-    subprocess.CalledProcessError(128, "git"),
-    subprocess.TimeoutExpired("git", 60),
-])
-def test_comparison_failure_selects_full(monkeypatch, tmp_path, error):
-    def fail(*args, **kwargs):
-        raise error
-
-    monkeypatch.setattr(plan.subprocess, "run", fail)
-    assert pushed_mode(tmp_path, "a" * 40, "b" * 40)
+@pytest.mark.parametrize("override", ["", "TRUE", "False", "unexpected"])
+@pytest.mark.parametrize("event_name", ["push", "workflow_dispatch", "workflow_call"])
+def test_missing_or_invalid_override_selects_full_validation(event_name, override):
+    assert plan.validation_mode(event_name, "refs/heads/main", override)[0]
 
 
-@pytest.mark.parametrize("path", [
-    ".github/workflows/ci.yml", ".github/scripts/ci_plan.py", "native/src/reader.c",
-    "scripts/release.py", "scripts/validate_distribution.py",
-    "src/qplot/datahandling/readonly.py", "tests/datahandling/test_trusted_live.py",
-    "src/qplot/_auxiliary_paths.py", "src/qplot/testdata.py", "src/qplot/_testdata_samples.py",
-    "pyproject.toml", "MANIFEST.in", "setup.cfg", "requirements.txt",
-    "requirements-dev.in", "constraints-test.txt", "uv.lock", "poetry.lock", "Pipfile.lock",
-    "requirements/dev.txt", "constraints/linux.txt", "requirements.lock",
-    "environment.yml", "pylock.ci.toml", "subproject/pyproject.toml",
-    "tests/test_distribution_validator.py", "tests/test_packaging_split.py",
-    "tests/test_package_import.py", "tests/test_native_reader.py", "tests/test_release.py",
-    "tests/test_ci_plan.py", "tests/test_compiler_free_install.py", "tests/test_testdata.py",
-    "tests/test_testdata_specifications.py", "tests/conftest.py", "tests/_ci_scheduling.py",
-    "tests/ci_timings.json", "tests/test_windows_ci.py", "tests/test_update_ci_timings.py",
-    "tests/test_auxiliary_database_protection.py", "tests/test_bug_hunt_auxiliary_safety.py",
-    "tests/test_bug_hunt_generator_fifo.py",
-])
-def test_safety_distribution_dependencies_and_ci_are_sensitive(path):
-    assert plan.sensitive_path(path)
-
-
-@pytest.mark.parametrize("path", [
-    "README.md", "CONTRIBUTING.md", "docs/architecture.md", "src/qplot/windows/_plot_actions.py",
-    "src/qplot/tools/plot_tools.py", "tests/windows/test_plot_csv_precision.py",
-    "tests/test_config.py", "tests/test_desktop.py", "docs/requirements-explanation.md",
-    "src/qplot/assets/qplot.svg",
-])
-def test_other_changes_keep_routine_validation(path):
-    assert not plan.sensitive_path(path)
-
-
-@pytest.mark.parametrize("change", ["delete", "rename_out", "rename_in", "edit"])
-def test_git_comparison_keeps_deleted_and_renamed_sensitive_paths(git_repository, change):
-    repository, git = git_repository
-    before = git("rev-parse", "HEAD")
-    if change == "delete":
-        (repository / "pyproject.toml").unlink()
-    elif change == "rename_out":
-        (repository / "pyproject.toml").rename(repository / "ordinary.md")
-    elif change == "rename_in":
-        (repository / "README.md").rename(repository / "requirements.txt")
-    else:
-        (repository / "pyproject.toml").write_text("# Changed dependency\n")
-    git("add", "--all")
-    git("commit", "-m", "Sensitive change")
-    assert pushed_mode(repository, before, git("rev-parse", "HEAD"))
-
-
-def test_push_compares_entire_commit_range(git_repository):
-    repository, git = git_repository
-    before = git("rev-parse", "HEAD")
-    (repository / "pyproject.toml").write_text("# Actual dependency change\n")
-    git("add", ".")
-    git("commit", "-m", "Dependency")
-    (repository / "README.md").write_text("Changed documentation\n")
-    git("add", ".")
-    git("commit", "-m", "Documentation")
-    assert pushed_mode(repository, before, git("rev-parse", "HEAD"))
-
-
-@pytest.mark.skipif(os.name == "nt", reason="Windows filenames cannot contain newlines")
-def test_newline_filename_is_not_split_into_sensitive_paths(git_repository):
-    repository, git = git_repository
-    before = git("rev-parse", "HEAD")
-    # A line-based parser could invent a pyproject.toml change from this name.
-    (repository / "notes\npyproject.toml").write_text("More documentation\n")
-    git("add", ".")
-    git("commit", "-m", "Unusual filename")
-    assert not pushed_mode(repository, before, git("rev-parse", "HEAD"))
-
-
-def test_pull_request_compares_from_merge_base_not_changed_target_branch(git_repository):
-    repository, git = git_repository
-    original = git("rev-parse", "HEAD")
-    (repository / "README.md").write_text("Feature documentation\n")
-    git("add", ".")
-    git("commit", "-m", "Feature")
-    head = git("rev-parse", "HEAD")
-    git("checkout", "--detach", original)
-    (repository / "pyproject.toml").write_text("# Already accepted base change\n")
-    git("add", ".")
-    git("commit", "-m", "Target branch advanced")
-    base = git("rev-parse", "HEAD")
-    event = {"pull_request": {"base": {"sha": base}, "head": {"sha": head}}}
-    assert not plan.validation_mode(
-        "pull_request", event, "refs/pull/1/merge", "false", repository=repository,
-    )[0]
-
-
-def test_missing_git_revision_selects_full(git_repository):
-    repository, git = git_repository
-    assert pushed_mode(repository, "f" * 40, git("rev-parse", "HEAD"))
+@pytest.mark.parametrize("event_name", ["", "schedule", "unexpected"])
+def test_unknown_events_default_to_full_validation(event_name):
+    assert plan.validation_mode(event_name, "refs/heads/main", "false")[0]
 
 
 @pytest.mark.parametrize("full", [False, True])
-def test_check_matrix_keeps_all_desktop_partitions_and_python_versions(full):
+def test_check_matrix_selects_full_versions_and_keeps_complete_partitions(full):
     entries = plan.check_matrix(full)["include"]
     actual = {(row["os"], row["python-version"], row["suite"], row.get("partition")) for row in entries}
     expected = {
         (runner, version, "full", partition)
         for runner in ("windows-2025", "macos-latest")
-        for version in ("3.12", "3.14")
+        for version in (("3.12", "3.13", "3.14") if full else ("3.14",))
         for partition in (("1/4", "2/4", "3/4", "4/4") if runner == "windows-2025" else ("1/2", "2/2"))
-    } | {(runner, "3.13", "compatibility", None) for runner in ("windows-2025", "macos-latest")}
+    }
+    if not full:
+        expected |= {(runner, version, "compatibility", None)
+                     for runner in ("windows-2025", "macos-latest")
+                     for version in ("3.12", "3.13")}
     compatibility = ("macos-15-intel", "ubuntu-latest") if full else ("macos-15-intel",)
     expected |= {(runner, version, "compatibility", None)
                  for runner in compatibility for version in ("3.12", "3.13", "3.14")}
     assert actual == expected
-    assert len(entries) == len(expected) == (20 if full else 17)
+    assert len(entries) == len(expected) == (24 if full else 13)
     artifacts = {
         "windows-2025": "qplotter-native-windows-x64",
         "macos-latest": "qplotter-native-macos-arm64",
@@ -224,42 +97,66 @@ def test_installation_matrix_keeps_each_platform_and_python_pair(full):
         assert row["native-artifact"] == f"qplotter-native-{row['platform']}"
 
 
-@pytest.mark.parametrize("payload", ["invalid JSON", "[]", None])
-def test_cli_missing_or_invalid_event_emits_safe_complete_outputs(tmp_path, payload):
-    event = tmp_path / "event.json"
-    if payload is not None:
-        event.write_text(payload)
+@pytest.mark.parametrize("event_name,ref,override,full", [
+    ("push", "refs/heads/main", "false", False),
+    ("pull_request", "refs/pull/1/merge", "false", False),
+    ("workflow_dispatch", "refs/heads/main", "false", False),
+    ("workflow_call", "refs/heads/main", "false", False),
+    ("workflow_dispatch", "refs/heads/main", "true", True),
+    ("workflow_call", "refs/heads/main", "true", True),
+    ("push", "refs/tags/v1.7.0", "false", True),
+    ("unexpected", "refs/heads/main", "false", True),
+    ("push", "refs/heads/main", "", True),
+])
+def test_cli_emits_complete_matrices_without_git_or_event_payload(
+    tmp_path, event_name, ref, override, full,
+):
     output = tmp_path / "outputs"
     result = subprocess.run(
         [sys.executable, str(SCRIPT)], cwd=tmp_path, check=True, capture_output=True, text=True,
-        env={**os.environ, "GITHUB_EVENT_NAME": "push", "GITHUB_EVENT_PATH": str(event),
-             "GITHUB_REF": "refs/heads/main", "QPLOT_FULL_VALIDATION": "false",
+        env={**os.environ, "PATH": "", "GITHUB_EVENT_NAME": event_name,
+             "GITHUB_EVENT_PATH": str(tmp_path / "missing-event.json"),
+             "GITHUB_REF": ref, "QPLOT_FULL_VALIDATION": override,
              "GITHUB_OUTPUT": str(output)},
     )
     outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
-    assert set(outputs) == {"full-validation", "checks", "installations", "reason"}
-    assert outputs["full-validation"] == "true"
-    assert len(json.loads(outputs["checks"])["include"]) == 20
-    assert len(json.loads(outputs["installations"])["include"]) == 12
-    assert "CI mode: full." in result.stdout
+    assert set(outputs) == {"full-validation", "platforms", "reason"}
+    assert outputs["full-validation"] == str(full).lower()
+    assert outputs["reason"]
+    platforms = json.loads(outputs["platforms"])
+    assert platforms == plan.platform_matrices(full)
+    assert sum(len(row["checks"]["include"]) for row in platforms.values()) == (24 if full else 13)
+    assert sum(len(row["installations"]["include"]) for row in platforms.values()) == (12 if full else 9)
+    assert f"CI mode: {'full' if full else 'routine'}." in result.stdout
 
 
-def test_cli_emits_routine_outputs_only_for_successful_safe_comparison(git_repository, tmp_path):
-    repository, git = git_repository
-    before = git("rev-parse", "HEAD")
-    (repository / "README.md").write_text("Changed documentation\n")
-    git("add", ".")
-    git("commit", "-m", "Documentation")
-    event = tmp_path / "event.json"
-    event.write_text(json.dumps({"before": before, "after": git("rev-parse", "HEAD")}))
-    output = tmp_path / "outputs"
-    subprocess.run(
-        [sys.executable, str(SCRIPT)], cwd=repository, check=True, capture_output=True, text=True,
-        env={**os.environ, "GITHUB_EVENT_NAME": "push", "GITHUB_EVENT_PATH": str(event),
-             "GITHUB_REF": "refs/heads/main", "QPLOT_FULL_VALIDATION": "false",
-             "GITHUB_OUTPUT": str(output)},
-    )
-    outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
-    assert outputs["full-validation"] == "false"
-    assert len(json.loads(outputs["checks"])["include"]) == 17
-    assert len(json.loads(outputs["installations"])["include"]) == 9
+@pytest.mark.parametrize("full", [False, True])
+def test_platform_matrices_preserve_every_check_once_and_bind_matching_artifacts(full):
+    platforms = plan.platform_matrices(full)
+    assert set(platforms) == {"linux-x86_64", "windows-x64", "macos-arm64", "macos-intel"}
+    for suite, expected in (("checks", plan.check_matrix(full)),
+                            ("installations", plan.installation_matrix(full))):
+        actual = []
+        for platform, matrices in platforms.items():
+            rows = matrices[suite]["include"]
+            assert bool(rows) == (full or platform != "linux-x86_64")
+            assert all(row["native-artifact"] == f"qplotter-native-{platform}" for row in rows)
+            actual.extend(rows)
+        canonical = lambda row: json.dumps(row, sort_keys=True)
+        assert sorted(actual, key=canonical) == sorted(expected["include"], key=canonical)
+
+
+def test_workflow_offers_explicit_full_validation_and_keeps_release_gates():
+    workflows = SCRIPT.parents[1] / "workflows"
+    ci = (workflows / "ci.yml").read_text()
+    assert "\n  schedule:" not in ci
+    dispatch = ci.split("  workflow_dispatch:\n", 1)[1].split("  workflow_call:\n", 1)[0]
+    assert "full-validation:" in dispatch
+    assert "type: boolean" in dispatch and "default: true" in dispatch
+    planning = ci.split("\n  ci-plan:\n", 1)[1].split("\n  lint:\n", 1)[0]
+    assert "QPLOT_FULL_VALIDATION: ${{ inputs.full-validation || false }}" in planning
+    assert "fetch-depth: 0" not in planning
+    release = (workflows / "release.yml").read_text()
+    validation = release.split("  validate:\n", 1)[1].split("  prepare:\n", 1)[0]
+    assert "uses: ./.github/workflows/ci.yml" in validation
+    assert "full-validation: true" in validation

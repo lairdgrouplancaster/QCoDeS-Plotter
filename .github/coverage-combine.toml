@@ -1,0 +1,4 @@
+# The audited wheels match this checkout. Map installed source paths from both
+# Linux runners back to the checkout so reporting needs no runtime installation.
+[tool.coverage.paths]
+qplot = ["src/qplot", "*/site-packages/qplot"]

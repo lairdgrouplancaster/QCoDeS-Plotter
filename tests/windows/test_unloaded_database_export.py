@@ -10,7 +10,9 @@ from PyQt6 import QtGui, QtPrintSupport
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter, ImageExporter, SVGExporter
 
+from qplot.configuration.config import config
 from qplot.testdata import instruction_collection_contents
+from qplot.updates import CHECK_ON_LAUNCH_KEY
 from qplot.windows import _database_actions, _export_paths
 from qplot.windows import main as main_window
 from tests._window_lifecycle import close_main_window
@@ -26,6 +28,8 @@ from tests.windows.test_svg_export_integration import select_exporter
 @pytest.fixture
 def source_plot(tmp_path, monkeypatch):
     configure_temp_qplot(monkeypatch, tmp_path)
+    # Background update checks save settings through the same guarded syscalls.
+    config().update(CHECK_ON_LAUNCH_KEY, False)
     database = tmp_path / "source.db"
     run_id, guid = _create_run(database, 3)
     before = _database_artifact_state(database)

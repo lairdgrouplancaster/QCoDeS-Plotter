@@ -340,9 +340,11 @@ def test_workflow_gates_uploads_and_verifies_native_before_application():
     assert "needs.verify-native.result == 'success'" in text
     ci = (REPOSITORY / ".github/workflows/ci.yml").read_text()
     assert "workflow_call:" in ci
-    assert "if: ${{ !inputs.reuse-native }}" in ci
-    assert "if: inputs.reuse-native" in ci
-    assert "python scripts/release.py fetch-native" in ci
+    native = (REPOSITORY / ".github/workflows/ci-native.yml").read_text()
+    assert "if: ${{ !inputs.reuse-native }}" in native
+    assert "if: inputs.reuse-native" in native
+    assert "python scripts/release.py fetch-native" in native
+    assert ci.count("reuse-native: ${{ inputs.reuse-native || false }}") == 4
     public = text.split('  public-installations:\n', 1)[1]
     assert 'needs: [prepare, verify-application]' in public
     assert 'python-version: ["3.12", "3.13", "3.14"]' in public

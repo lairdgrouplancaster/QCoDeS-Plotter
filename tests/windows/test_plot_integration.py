@@ -788,6 +788,12 @@ def release_windows_database_locks(window, database_path, *extra_datasets):
     if os.name != "nt":
         return
 
+    release_test_database_readers(window, database_path, *extra_datasets)
+
+
+def release_test_database_readers(window, database_path, *extra_datasets):
+    """Quiesce test-owned readers while retaining handles for reload assertions."""
+
     derived_bridge = getattr(window, "_trusted_derived_bridge", None)
     if derived_bridge is not None:
         derived_bridge.clear_database()
@@ -797,7 +803,7 @@ def release_windows_database_locks(window, database_path, *extra_datasets):
         window
     )
     for service in tuple(window._retired_trusted_read_services):
-        assert service.wait_closed(10), "Trusted reader retained Windows file handles"
+        assert service.wait_closed(10), "Trusted reader retained database file handles"
     database_actions_module.DatabaseActionsMixin._reap_retired_trusted_read_services(
         window
     )
@@ -2668,6 +2674,10 @@ def test_live_wal_preview_exports_use_fresh_per_run_captures(
             assert window.infoBox.preview.database_path == ""
             assert window.infoBox.preview._workers == {}
 
+            # Keep the displayed first-row capture stable while exports read
+            # fresh data. A live plot timer would submit unrelated captures to
+            # the shared service and update the cache this test retains.
+            window.spinBox.setValue(0)
             window.openPlot(guid=guid, show=False)
             wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
             plot = window.windows[-1]
@@ -3852,13 +3862,27 @@ def test_loaded_path_test_database_generation_uses_replacement_reload(
         assert window.ds is None
         initial_guid = window._selected_run_guid
         assert initial_guid
+        window.spinBox.setValue(0)
         window.openPlot(guid=initial_guid, show=False)
         wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         old_plot = window.windows[-1]
         wait_for(lambda: not getattr(old_plot.worker, "running", False))
         old_handle = window.dataset_holder[old_plot._dataset_key]
 
-        release_windows_database_locks(window, database_path)
+        # Unlike a POSIX rename, the synthetic generator requires an exclusive
+        # SQLite lock on every platform. Release background readers without
+        # invalidating the old GUI handles before the replacement callback.
+        original_artifacts = trusted_database_artifact_state(database_path)
+        release_test_database_readers(window, database_path)
+        assert window._trusted_read_service is None
+        assert not window._retired_trusted_read_services
+        assert not window._trusted_derived_bridge.background_active()
+        assert window.dataset_holder[old_plot._dataset_key] is old_handle
+        assert not old_handle.closed
+        assert old_plot in window.windows
+        assert_database_artifacts_unchanged_except_trusted_shm(
+            database_path, original_artifacts,
+        )
         generate_database(
             [replacement_specification],
             database_path,

@@ -377,12 +377,17 @@ metadata, thumbnails, and previews; the competing legacy producers remain
 disabled. The bridge module and Stage 5C source regressions participate in the
 same exact wheel/sdist inventory and configured mypy checks.
 
-CI builds the application wheel and sdist once on Python 3.12. A separate native
-build matrix produces one `cp311-abi3` wheel each for Windows x64, macOS ARM64,
+CI builds the application wheel and sdist once on Python 3.12. Separate native
+build jobs produce one `cp311-abi3` wheel each for Windows x64, macOS ARM64,
 macOS Intel, and Linux x86_64. Linux uses cibuildwheel's `manylinux_2_28` image
 and auditwheel repair rather than publishing an ordinary Ubuntu
 `linux_x86_64` wheel. cibuildwheel also audits the stable ABI. The Linux build
-produces the native sdist. These jobs upload immutable artifacts; every consumer
+produces the native sdist. Each platform has an independent build job and its
+test and installation jobs wait only for that platform's native wheel and the
+shared application artifacts. Linux analysis and full validation can therefore
+start even when a macOS runner is queued. The build and platform validation
+steps live in reusable workflows called from the same revision as CI.
+These jobs upload immutable artifacts; every consumer
 downloads the application and matching native artifact from the same workflow
 run, without choosing another run, branch, or release. For an application-only
 release the native matrix instead downloads the exact pinned PyPI version for
@@ -391,31 +396,45 @@ those files through the same validation/upload/consumer pipeline. No native
 wheel is rebuilt or republished on that path. The native sdist is still built
 for explicit source-build validation, which may use a compiler in CI.
 
-Ordinary pull requests and pushes to `main` run both full-suite partitions on
-Windows and ARM64 macOS with Python 3.12 and 3.14, and the compatibility subset
-with Python 3.13. Intel macOS runs the compatibility subset on all three
-versions. The subset retains database protections, concurrent-writer tests and
-focused Stage 4 coverage. All three desktop platforms also run installed-package
-and compiler-free ordinary/editable installation acceptance on Python
+Ordinary pull requests and pushes to `main` run all four full-suite partitions
+on Windows and both partitions on ARM64 macOS with Python 3.14, and
+the compatibility subset with Python 3.12 and 3.13. Intel macOS runs the compatibility
+subset on all three versions. The subset retains database protections,
+concurrent-writer tests and focused Stage 4 coverage. All three desktop
+platforms also run installed-package and compiler-free ordinary/editable
+installation acceptance on Python
 3.12–3.14. Ubuntu Ruff, application/native builds and mypy remain part of every
 run; mypy uses the same run's Linux native wheel and application artifact.
+Ordinary pushes and pull requests use this desktop scope regardless of which
+files changed. Linux tests, coverage and source-distribution validation are
+reserved for releases and explicit full runs.
 
-Full validation adds Linux compatibility and compiler-free installation checks
-on Python 3.12–3.14, the complete Linux coverage suite, and the Linux package
-job. The package job compares both sdists and wheels with the source inventory,
-runs the extracted sdists' complete test suite in an isolated venv, and exercises
-the installed wheel pair in another venv. Each platform reuses its same
+Full validation runs the complete Windows and ARM64 macOS suites on every
+supported Python version (3.12–3.14), using the same partition counts. It also
+adds Linux compatibility and compiler-free installation checks on Python
+3.12–3.14, the complete Linux coverage suite, and the Linux package job.
+The package job compares both sdists and wheels with the source inventory,
+runs the extracted sdists' complete test suite across two disjoint whole-file
+partitions, each in an isolated venv, and exercises the installed wheel pair in
+another venv. Both package partitions retain the artifact inventory checks and
+installed-wheel smoke. Linux coverage also uses two whole-file partitions;
+both must pass and publish their data before the combined coverage report can
+pass. Installed-wheel coverage paths map back to the matching checkout for
+reporting. Every partition retains two pytest workers. The committed timing
+profile balances files using measured setup, call and teardown times; refresh
+it with `scripts/update_ci_timings.py` and complete successful JUnit reports
+from all partitions. Each platform reuses its same
 stable-ABI wheel across Python versions. Free-threaded CPython and PyPy are not
 part of the advertised support matrix.
 
-Full validation runs weekly on Mondays at 04:23 UTC and is available manually
-through **Actions → CI → Run workflow** after this workflow is merged to
-`main`. Native-code, database-reader, packaging, dependency and CI-path changes
-also select full validation automatically; a missing change comparison defaults
-to full validation. The tag release workflow explicitly passes
-`full-validation: true`, retaining every release gate for that exact tagged
-revision. Ordinary and full runs publish the same aggregate **Required checks**
-status, which checks the jobs required by the selected mode.
+Full validation is available through **Actions → CI → Run workflow** with
+**Include full Python matrix, Linux tests, coverage and source-distribution validation**
+selected (the manual-run default). Clear that option for a routine desktop run.
+There is no recurring full-validation schedule. The tag release workflow
+explicitly passes `full-validation: true`, and release tags always require
+full validation, retaining every release gate for that exact tagged revision.
+Ordinary and full runs publish the same aggregate **Required checks** status,
+which checks the jobs required by the selected mode.
 
 The validator writes a real `if __name__ == "__main__"`-guarded smoke script
 into a temporary directory outside the repository and runs it with isolated
