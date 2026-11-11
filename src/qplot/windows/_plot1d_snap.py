@@ -360,7 +360,7 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
 
     def _update_coordinate_context(self, label=None):
-        """Show ``Run N: measurement vs setpoint`` for the active trace."""
+        """Show the active measurement against its plotted setpoints."""
 
         trace_label = self.__dict__.get("trace_label")
         if trace_label is None:
@@ -436,6 +436,12 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             vertical_name,
             source_axis,
             )
+
+        if source is self and self.operation_kind == "plot2d":
+            horizontal = f"{horizontal} and {vertical}"
+            vertical = self._parameter_display_name(
+                source, source_options.get("z", source.param.name), "z",
+                )
 
         display_label = getattr(self, "_trace_display_label", None)
         if label is not None and callable(display_label):
