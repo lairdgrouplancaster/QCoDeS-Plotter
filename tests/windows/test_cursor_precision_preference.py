@@ -61,6 +61,8 @@ def test_free_and_heatmap_readouts(cfg, heatmap, figures, expected):
         view_to_data=lambda axis, value: value,
         _set_cursor_index_label=lambda text: None,
         _nearest_1d_array_index=lambda value: None,
+        _clear_cursor_highlight=lambda: None,
+        _highlight_cursor_heatmap=lambda: None,
         heatmap_sample_at=lambda x, y: (0, 0, x, y, x),
         formatNum=plotWidget.formatNum,
     )
@@ -96,6 +98,7 @@ def test_coordinate_fields_have_equal_stable_fixed_widths(cfg, window_type, poin
     window = window_type.__new__(window_type)
     qtw.QMainWindow.__init__(window)
     widget = pg.PlotWidget()
+    window.widget = widget
     window.setCentralWidget(widget)
     window.plot = widget.getPlotItem()
     window.config = cfg

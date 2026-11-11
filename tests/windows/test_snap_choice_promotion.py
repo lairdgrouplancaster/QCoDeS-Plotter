@@ -87,7 +87,8 @@ def _assert_pointer_mode(host, snapping):
             xRange=(-0.5, 2.5), yRange=(5, 25), padding=0,
         )
     qtw.QApplication.processEvents()
-    scene_point = owner.mapViewToScene(QtCore.QPointF(0.75, 1.25))
+    # Keep the pointer within the screen-space snap radius of the sample.
+    scene_point = owner.mapViewToScene(QtCore.QPointF(0.99, 1.01))
     pixel = host.widget.mapFromScene(scene_point)
     viewport = host.widget.viewport()
     event = QtGui.QMouseEvent(
@@ -113,8 +114,8 @@ def _assert_pointer_mode(host, snapping):
             assert host.pos_labels["index"].text() == "[1,1]"
             assert not host.pos_labels["z"].isHidden()
         else:
-            assert float(host.pos_labels["x"].text()) == pytest.approx(0.75, abs=0.02)
-            assert float(host.pos_labels["y"].text()) == pytest.approx(1.25, abs=0.02)
+            assert float(host.pos_labels["x"].text()) == pytest.approx(0.99, abs=0.005)
+            assert float(host.pos_labels["y"].text()) == pytest.approx(1.01, abs=0.005)
         assert "snapped to point" not in host.trace_label.text()
         assert host._snap_marker_view is None
     assert host.snap_to_trace_action.isChecked() is snapping

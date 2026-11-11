@@ -167,7 +167,8 @@ class PlotHoverHighlight:
         ))
         if (kind == self._kind and item is self.active_item
                 and sides == self.axis_sides and colourbar is self._colourbar
-                and warnings == self.warning_axes):
+                and warnings == self.warning_axes
+                and all(not sip.isdeleted(effect) for _, effect in self._effects)):
             self.refresh()
             return
 

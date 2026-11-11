@@ -178,6 +178,11 @@ class SnapToTraceTestCase(unittest.TestCase):
         plot = widget.getPlotItem()
         plot.setXRange(-10.0, 10.0, padding=0)
         axis = plot.getAxis("bottom")
+        # Endpoint labels fit the 15-pixel margin at this explicit font size,
+        # independently of the platform's default font and DPI scaling.
+        font = QtGui.QFont()
+        font.setPixelSize(12)
+        axis.setStyle(tickFont=font)
         image = QtGui.QImage(
             800,
             600,

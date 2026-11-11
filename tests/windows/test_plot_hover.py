@@ -19,6 +19,7 @@ from tests.windows.test_mixed_plot_drops import (
 from tests.windows.test_native_transform_labels import (
     no_callback_errors as no_callback_errors,
 )
+from tests.windows.test_plot_integration import wait_for
 from tests.windows.test_plot_overlay_integration import (
     _assign_trace_axes,
 )
@@ -226,6 +227,8 @@ def test_stationary_cursor_follows_trace_axis_and_style_changes(loaded_plot, no_
     assert window.line.graphicsEffect().opacity() == 0.55
     style.opacity = 1.0
     window._apply_trace_style(window.label, window.line)
+    # Style changes schedule a cursor refresh after the renderer has updated.
+    wait_for(lambda: window.line.scatter.graphicsEffect() is not None)
     assert window.line.graphicsEffect() is None
     assert window.line.scatter.graphicsEffect().isEnabled()
     assert window._hover_highlight.active_item is window.line
@@ -290,7 +293,10 @@ def test_stationary_cursor_tracks_secondary_source_publication(loaded_plot, no_c
     source = line.from_win
     source.axis_data["y"] = source.axis_data["y"] + 0.3
     source.trace_updated.emit()
-    qtw.QApplication.processEvents()
+    wait_for(lambda: (
+        window._hover_highlight.active_item is line
+        and float(window.pos_labels["y"].text()) == pytest.approx(30.3)
+    ))
     assert window._last_cursor_scene_pos == point
     assert window._hover_highlight.active_item is line
     assert float(window.pos_labels["y"].text()) == pytest.approx(30.3)

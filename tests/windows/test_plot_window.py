@@ -46,6 +46,7 @@ from qplot.windows._range_entry import RangeEntry
 from qplot.windows._widgets import treeWidgets
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot2d import plot2d
+from tests.windows.test_plot_integration import wait_for
 
 _PRINT_DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
 
@@ -3311,7 +3312,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             original_field_width = x_controls.minText.width()
             expanded_size = original_size + QtCore.QSize(240, 120)
             dialog.resize(expanded_size)
-            qtw.QApplication.processEvents()
+            wait_for(lambda: x_controls.minText.width() > original_field_width)
             self.assertEqual(dialog.size(), expanded_size)
             self.assertGreater(x_controls.minText.width(), original_field_width)
             dialog.resize(original_size)

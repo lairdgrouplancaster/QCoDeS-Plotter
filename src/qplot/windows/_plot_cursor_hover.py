@@ -174,7 +174,9 @@ class PlotCursorHoverMixin(_PlotCursorHoverBase):
         if callable(hide_marker) and "snap_marker" in self.__dict__:
             hide_marker()
         clear_report = getattr(self, "_clear_snap_report", None)
-        if callable(clear_report):
+        # Hide/leave events can arrive after closeEvent released the dataset.
+        # Clearing transient graphics must not reacquire metadata for that plot.
+        if callable(clear_report) and not self.__dict__.get("_closed", False):
             clear_report()
         hide_pixel = getattr(self, "hide_hover_pixel_outline", None)
         if callable(hide_pixel):

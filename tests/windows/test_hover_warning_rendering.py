@@ -111,9 +111,11 @@ def test_downward_label_keeps_warning_upright_and_moves_with_rotation(
     hover.set_trace(line, ("bottom", "right"), warning_axes=("right",))
     badge = hover.warning_badges["right"]
     axis.label.setRotation(90)
+    # Let the pending axis layout finish before positioning the rotated label.
+    # Its default placement assumes the usual upward-facing right-hand label.
+    qapplication.processEvents()
     bounds = axis.label.boundingRect()
     axis.label.setPos(axis.width() + 5, axis.height() / 2 - bounds.width() / 2)
-    qapplication.processEvents()
     assert badge.rotation() == 0
     assert badge.sceneBoundingRect().top() > axis.label.sceneBoundingRect().bottom()
     with hover.suspended():

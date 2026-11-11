@@ -119,3 +119,22 @@ def test_disappearing_heatmap_releases_axes_without_pointer_movement(
         hover.clear()
         widget.close()
         widget.deleteLater()
+
+
+def test_same_trace_restores_effects_deleted_during_style_changes(qapplication):
+    widget = pg.PlotWidget()
+    plot = widget.getPlotItem()
+    line = plot.plot([0, 1], [0, 1], symbol="o")
+    hover = PlotHoverHighlight(SimpleNamespace(plot=plot))
+    try:
+        hover.set_trace(line, ("bottom", "left"))
+        effect = line.scatter.graphicsEffect()
+        line.scatter.setGraphicsEffect(None)
+        assert sip.isdeleted(effect)
+        hover.set_trace(line, ("bottom", "left"))
+        assert line.scatter.graphicsEffect().isEnabled()
+        assert hover.active_item is line
+    finally:
+        hover.clear()
+        widget.close()
+        widget.deleteLater()
