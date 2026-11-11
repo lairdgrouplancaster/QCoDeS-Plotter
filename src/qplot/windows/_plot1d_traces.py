@@ -1012,6 +1012,9 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         
         # Remove line from viewbox
         line = self.lines[selected_key]
+        highlight = self.__dict__.get("_hover_highlight")
+        if highlight is not None and highlight.active_item is line:
+            self._clear_cursor_hover()
         self.lines.pop(selected_key)
         self._trace_styles.pop(selected_key, None)
         self._ensure_trace_controls().pop(selected_key, None)
@@ -1325,6 +1328,8 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         if callable(set_z):
             set_z(z)
         self._update_native_precision_status()
+        if "_hover_highlight" in self.__dict__:
+            self._refresh_cursor_hover()
 
 
 class _TracePreviewDelegate(CenteredPreviewDelegate):

@@ -585,7 +585,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         window.right_vb = None
         window.lines = {"main": line}
 
-        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.1, 3.8))
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.0, 4.0)) + QtCore.QPointF(2, -3)
 
         label, x_value, y_value, viewbox, point_number = window._nearest_trace_point(scene_pos)
 
@@ -604,7 +604,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         window.right_vb = None
         window.lines = {"main": line}
 
-        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 19.0))
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 20.0)) + QtCore.QPointF(0, 2)
 
         _label, _x_value, y_value, _viewbox, point_number = (
             window._nearest_trace_point(scene_pos)
@@ -616,7 +616,7 @@ class SnapToTraceTestCase(unittest.TestCase):
     def test_nearest_trace_point_ignores_hidden_traces(self):
         widget = pg.GraphicsLayoutWidget()
         plot_item = widget.addPlot()
-        hidden_line = plot_item.plot(x=[1.0], y=[100.0])
+        hidden_line = plot_item.plot(x=[1.0], y=[0.0])
         visible_line = plot_item.plot(x=[1.0], y=[0.0])
         hidden_line.setVisible(False)
         window = plot1d.__new__(plot1d)
@@ -627,7 +627,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             "visible": visible_line,
             }
 
-        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 100.0))
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 0.0))
 
         label, x_value, y_value, viewbox, point_number = window._nearest_trace_point(scene_pos)
 
@@ -650,7 +650,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             "high": high_line,
             }
 
-        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 9.5))
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 10.0)) + QtCore.QPointF(0, 2)
 
         label, x_value, y_value, viewbox, point_number = window._nearest_trace_point(scene_pos)
 
@@ -683,7 +683,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             np.testing.assert_allclose(view_x, [0.0, 1.0, 2.0])
             np.testing.assert_allclose(view_y, [0.0, 1.0, 2.0])
 
-            scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.05, 0.95))
+            scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 1.0)) + QtCore.QPointF(2, -2)
             nearest = window._nearest_trace_point(scene_pos)
 
             label, x_value, y_value, viewbox, point_number = nearest
@@ -835,7 +835,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         window._show_snap_marker = lambda *_args: None
 
         try:
-            scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(4.8, 24.0))
+            scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(5.0, 25.0)) + QtCore.QPointF(-2, 2)
 
             plot1d.mouseMoved(window, scene_pos)
 

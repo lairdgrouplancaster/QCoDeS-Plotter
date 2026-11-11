@@ -87,8 +87,16 @@ def plot_axis_entries(target: Any):
         yield from entries()
 
 
-def dataset_axis_warnings(target: Any, kind: str, key: Any) -> tuple[str, ...]:
-    """Explain mismatches with the quantities labelling the assigned plot axes."""
+@dataclass(frozen=True)
+class AxisWarning:
+    """One incompatible displayed axis and its Plot Appearance explanation."""
+
+    axis: str
+    message: str
+
+
+def dataset_axis_warning_details(target: Any, kind: str, key: Any) -> tuple[AxisWarning, ...]:
+    """Share the exact mismatch decision between Plot Appearance and hovering."""
     references: dict[str, tuple[_AxisIdentity, Any]] = {}
     for side, identity, parameter in plot_axis_entries(target):
         references.setdefault(side, (identity, parameter))
@@ -105,7 +113,7 @@ def dataset_axis_warnings(target: Any, kind: str, key: Any) -> tuple[str, ...]:
             reason = f"{side} axis: dataset {quantity(parameter)} does not match plot {quantity(plot_parameter)}."
             if identity.name != reference.name and (identity.independent or reference.independent):
                 reason += f" Coordinate names differ (dataset: {identity.name}; plot: {reference.name})."
-            reasons.append(reason)
+            reasons.append(AxisWarning(side.lower(), reason))
     if kind == "heatmap":
         layer = target.heatmaps[key]
         source = target if layer is target else layer.from_win
@@ -114,8 +122,16 @@ def dataset_axis_warnings(target: Any, kind: str, key: Any) -> tuple[str, ...]:
         unit = getattr(parameter, "unit", None)
         plot_unit = getattr(plot_parameter, "unit", None)
         if unit is None or plot_unit is None or str(unit).strip() != str(plot_unit).strip():
-            reasons.append(f"Colour scale: dataset {quantity(parameter)} does not match plot {quantity(plot_parameter)}.")
+            reasons.append(AxisWarning(
+                "colour_scale",
+                f"Colour scale: dataset {quantity(parameter)} does not match plot {quantity(plot_parameter)}.",
+            ))
     return tuple(reasons)
+
+
+def dataset_axis_warnings(target: Any, kind: str, key: Any) -> tuple[str, ...]:
+    """Explain mismatches with the quantities labelling the assigned plot axes."""
+    return tuple(warning.message for warning in dataset_axis_warning_details(target, kind, key))
 
 
 def _occupied_axes(target: Any) -> dict[str, _AxisIdentity]:

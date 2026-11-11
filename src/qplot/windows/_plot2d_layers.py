@@ -1492,6 +1492,8 @@ class Plot2DLayerMixin(PlotHost):
             target.autoRange()
         self._sync_secondary_heatmap_view_ranges(layer=None if layer is self else layer)
         self._schedule_heatmap_view_validation()
+        if "_hover_highlight" in self.__dict__:
+            self._refresh_cursor_hover()
 
     def _set_layer_axes(self, layer: Any, x_axis: str, y_axis: str) -> None:
         """Assign one heatmap to any of the four displayed axis pairs."""
