@@ -3303,6 +3303,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             for field, value in zip(
                 (x_controls.minText, x_controls.maxText),
                 ("0.010012718532581035", "0.010017029084329264"),
+                strict=True,
             ):
                 self.assertGreaterEqual(
                     field.width(), field.fontMetrics().horizontalAdvance(value) + 12,
