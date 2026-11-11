@@ -75,6 +75,7 @@ class ReorderAppearanceTable(qtw.QTableWidget):
     ) -> None:
         super().__init__(0, 3, dialog)
         self.dialog = dialog
+        self._column_widths_initialised = False
         self._reorder_mime_type = mime_type
         self._dragged_rows: list[int] = []
         self._drag_origin = QtCore.QModelIndex()
@@ -92,6 +93,25 @@ class ReorderAppearanceTable(qtw.QTableWidget):
             "background-color: palette(highlight);"
         )
         self._drop_indicator.hide()
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        """Fit the initial layout once, retaining subsequent manual widths."""
+        super().showEvent(event)
+        if self._column_widths_initialised:
+            return
+        self._column_widths_initialised = True
+        self.resizeColumnToContents(self.dialog._COL_ID)
+        self.resizeColumnToContents(self.dialog._COL_PREVIEW)
+        measurement_column = self.dialog._COL_MEASUREMENT
+        other_widths = sum(
+            self.columnWidth(column)
+            for column in range(self.columnCount())
+            if column != measurement_column
+        )
+        self.setColumnWidth(
+            measurement_column,
+            max(0, self.viewport().width() - other_widths),
+        )
 
     def selectRow(self, row: int) -> None:
         """Select a whole row reliably before the table has been displayed."""
@@ -254,7 +274,7 @@ def configure_appearance_table(
     table.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
     table.setIconSize(QtCore.QSize(64, 22))
     table.setHorizontalScrollBarPolicy(
-        QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
     )
     table.setToolTip(f"Drag a {item_name} up or down to change its order.")
     table.setDragEnabled(True)
@@ -281,16 +301,7 @@ def configure_appearance_table(
                 header_item.setFont(item_font)
         horizontal_header.setFixedHeight(24)
         horizontal_header.setSectionResizeMode(
-            dialog._COL_ID,
-            qtw.QHeaderView.ResizeMode.ResizeToContents,
-        )
-        horizontal_header.setSectionResizeMode(
-            dialog._COL_PREVIEW,
-            qtw.QHeaderView.ResizeMode.ResizeToContents,
-        )
-        horizontal_header.setSectionResizeMode(
-            dialog._COL_MEASUREMENT,
-            qtw.QHeaderView.ResizeMode.Stretch,
+            qtw.QHeaderView.ResizeMode.Interactive,
         )
 
     vertical_header = table.verticalHeader()

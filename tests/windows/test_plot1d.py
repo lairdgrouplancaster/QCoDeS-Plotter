@@ -1873,12 +1873,12 @@ class SnapToTraceTestCase(unittest.TestCase):
                 dialog.table.horizontalHeader().sectionResizeMode(
                     dialog._COL_MEASUREMENT
                 ),
-                qtw.QHeaderView.ResizeMode.Stretch,
+                qtw.QHeaderView.ResizeMode.Interactive,
                 )
             self.assertEqual(dialog.table.columnCount(), 3)
             self.assertEqual(
                 dialog.table.horizontalScrollBarPolicy(),
-                QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+                QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded,
                 )
             self.assertFalse(hasattr(dialog, "order"))
             self.assertFalse(hasattr(dialog, "move_up_button"))
