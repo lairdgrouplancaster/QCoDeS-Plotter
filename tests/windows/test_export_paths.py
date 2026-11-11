@@ -384,7 +384,7 @@ def test_unsuffixed_existing_export_decline_preserves_exact_target(tmp_path, kin
     assert harness.errors == []
     dialog_options = save_dialog.call_args.kwargs["options"]
     assert dialog_options & qtw.QFileDialog.Option.DontConfirmOverwrite
-    assert dialog_options & qtw.QFileDialog.Option.DontUseNativeDialog
+    assert not dialog_options & qtw.QFileDialog.Option.DontUseNativeDialog
     assert str(final_path) in question.call_args.args[2]
 
 
