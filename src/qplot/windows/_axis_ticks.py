@@ -98,7 +98,7 @@ def _tick_positions(min_val, max_val, spacing, offset):
 
 def _visible_horizontal_tick_positions(axis, positions, min_val, max_val, size,
                                        spacing):
-    """Return ticks whose labels fit completely within a horizontal axis."""
+    """Return ticks whose labels fit within the axis and its label margin."""
 
     if getattr(axis, "orientation", None) not in ("bottom", "top") or size <= 0:
         return positions
@@ -107,12 +107,17 @@ def _visible_horizontal_tick_positions(axis, positions, min_val, max_val, size,
     strings = _clean_tick_strings(axis, positions, scale, spacing)
     font = axis.style.get("tickFont") or qtw.QApplication.font()
     metrics = QtGui.QFontMetricsF(font)
+    # Match AxisItem.boundingRect(): False permits a 15-pixel overhang,
+    # True permits none, and an integer specifies the margin explicitly.
+    hide_overlapping = axis.style.get("hideOverlappingLabels", True)
+    margin = (15 if hide_overlapping is False else
+              0 if hide_overlapping is True else int(hide_overlapping))
     data_range = max_val - min_val
     visible = []
     for position, string in zip(positions, strings, strict=True):
         pixel = ((position - min_val) / data_range) * size
         half_width = metrics.boundingRect(string).width() / 2.0
-        if half_width <= pixel <= size - half_width:
+        if half_width - margin <= pixel <= size + margin - half_width:
             visible.append(position)
     return visible
 
@@ -290,6 +295,6 @@ def _configure_major_ticks(axis, count):
     if getattr(current_tick_strings, "__func__", None) is not _clean_tick_strings:
         axis._qplot_original_tick_strings = current_tick_strings
         axis.tickStrings = MethodType(_clean_tick_strings, axis)
-    axis.setStyle(maxTickLevel=1, maxTextLevel=0)
+    axis.setStyle(maxTickLevel=1, maxTextLevel=0, hideOverlappingLabels=False)
     axis.picture = None
     axis.update()

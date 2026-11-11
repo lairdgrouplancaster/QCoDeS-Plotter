@@ -95,7 +95,8 @@ class SnapToTraceTestCase(unittest.TestCase):
             for axis in owner.axes.values():
                 self.assertEqual(
                     axis.styles,
-                    [{"maxTickLevel": 1, "maxTextLevel": 0}],
+                    [{"maxTickLevel": 1, "maxTextLevel": 0,
+                      "hideOverlappingLabels": False}],
                     )
                 self.assertIsNone(axis.picture)
                 self.assertEqual(axis.updates, 1)
@@ -190,8 +191,8 @@ class SnapToTraceTestCase(unittest.TestCase):
         self.addCleanup(dispose_plot_widget)
 
         for target, expected in (
-                (3, ["-5", "0", "5"]),
-                (4, ["-5", "0", "5"]),
+                (3, ["-10", "0", "10"]),
+                (4, ["-10", "-5", "0", "5", "10"]),
                 ):
             ticks_module._configure_major_ticks(axis, target)
             qtw.QApplication.processEvents()
@@ -199,6 +200,37 @@ class SnapToTraceTestCase(unittest.TestCase):
             self.assertEqual([spec[2] for spec in specs[2]], expected)
         # End painting before unittest begins destroying the native widget.
         painter.end()
+
+    def test_horizontal_endpoint_labels_preserve_exact_range(self):
+        widget = pg.PlotWidget()
+        self.addCleanup(widget.close)
+        widget.resize(800, 400)
+        widget.show()
+        plot = widget.getPlotItem()
+        plot.showAxis("top")
+        image = QtGui.QImage(800, 400, QtGui.QImage.Format.Format_ARGB32)
+        painter = QtGui.QPainter(image)
+        try:
+            for lower, upper, expected in (
+                    (0.0, 0.01, ["0", "2", "4", "6", "8", "10"]),
+                    (0.0003, 0.0097, ["2", "4", "6", "8"]),
+                    ):
+                plot.setXRange(lower, upper, padding=0)
+                for side in ("bottom", "top"):
+                    axis = plot.getAxis(side)
+                    axis.setLabel("Time", units="s")
+                    ticks_module._configure_major_ticks(axis, 5)
+                qtw.QApplication.processEvents()
+                for side in ("bottom", "top"):
+                    with self.subTest(side=side, lower=lower, upper=upper):
+                        axis = plot.getAxis(side)
+                        specs = axis.generateDrawSpecs(painter)
+                        self.assertEqual([spec[2] for spec in specs[2]], expected)
+                        self.assertEqual(axis.range, [lower, upper])
+                        for rect, _, _ in specs[2]:
+                            self.assertTrue(axis.boundingRect().contains(rect))
+        finally:
+            painter.end()
 
     def test_tick_positions_are_bounded_and_precision_aware(self):
         self.assertEqual(
