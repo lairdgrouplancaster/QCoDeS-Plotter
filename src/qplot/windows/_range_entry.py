@@ -1,5 +1,6 @@
 """Shared input-format selector for axis and color-scale ranges."""
 
+from collections.abc import Callable
 from math import isfinite
 
 from PyQt6 import QtCore, QtGui
@@ -35,6 +36,10 @@ class RangeEntry(qtw.QWidget):
         super().__init__(parent)
         self._fields = first, second
         self._labels = first_label, second_label
+        self._manual_styles = {
+            widget: widget.styleSheet() for widget in (*self._fields, *self._labels)
+        }
+        self._automatic: bool | None = None
         self._accessible_prefix = accessible_prefix
         self._limits = (0.0, 1.0)
         self._displayed_values = self._limits
@@ -71,7 +76,7 @@ class RangeEntry(qtw.QWidget):
             layout.addWidget(button, 1)
         self.min_max_button.setChecked(True)
         self.setStyleSheet(
-            "QPushButton { padding: 5px 8px; border: 1px solid palette(mid); "
+            "QPushButton { padding: 3px 8px; border: 1px solid palette(mid); "
             "border-radius: 0; background: palette(button); color: palette(button-text); }"
             # The right segment owns the single shared divider. Only the
             # outside corners are rounded, so both buttons read as one control.
@@ -90,6 +95,48 @@ class RangeEntry(qtw.QWidget):
         )
         self.group.idClicked.connect(self._change_format)
         self.set_limits(*self._limits)
+
+    def bind_auto_mode(
+        self,
+        auto_radio: qtw.QRadioButton,
+        start_manual: Callable[[tuple[float, float]], object],
+    ) -> None:
+        """Freeze automatic limits on the first real edit, preserving the draft."""
+        self._auto_radio = auto_radio
+        self._start_manual = start_manual
+        auto_radio.toggled.connect(self.set_automatic)
+        for field in self._fields:
+            field.textEdited.connect(self._begin_manual_edit)
+            field.setToolTip(
+                (field.toolTip() + "\n" if field.toolTip() else "")
+                + "Editing switches to Manual. Press Enter or leave the field to apply."
+            )
+        self.set_automatic(auto_radio.isChecked())
+
+    def set_automatic(self, automatic: bool) -> None:
+        """Mute automatic values without disabling keyboard or mouse editing."""
+        if self._automatic == automatic:
+            return
+        self._automatic = automatic
+        for widget, original_style in self._manual_styles.items():
+            muted_style = (
+                "QLineEdit { color: palette(mid); background-color: palette(window); }"
+                if isinstance(widget, qtw.QLineEdit) else
+                "QLabel { color: palette(mid); }"
+            )
+            widget.setStyleSheet(original_style + (muted_style if automatic else ""))
+
+    def _begin_manual_edit(self, _text: str) -> None:
+        if not self._auto_radio.isChecked():
+            return
+        drafts = [(field.text(), field.cursorPosition()) for field in self._fields]
+        self._start_manual(self._limits)
+        # Switching modes may synchronise controls. Keep the user's first
+        # keystroke, including incomplete input such as a minus sign.
+        for field, (text, cursor) in zip(self._fields, drafts, strict=True):
+            with QtCore.QSignalBlocker(field):
+                field.setText(text)
+                field.setCursorPosition(cursor)
 
     def _change_format(self, index: int) -> None:
         self.center_span = bool(index)
@@ -114,7 +161,8 @@ class RangeEntry(qtw.QWidget):
             self._fields, self._labels, names, values, strict=True,
         ):
             blocker = QtCore.QSignalBlocker(field)
-            field.setText(f"{value:.17g}")
+            # Keep the shortest spelling that round-trips to the same float.
+            field.setText(repr(value))
             field.setCursorPosition(0)
             label.setText(name)
             label.setBuddy(field)
@@ -124,7 +172,7 @@ class RangeEntry(qtw.QWidget):
             f"{name} {value:.6g}" for name, value in zip(summary_names, summary_values, strict=True)
         ))
         self.summary.setToolTip("   ·   ".join(
-            f"{name} {value:.17g}" for name, value in zip(summary_names, summary_values, strict=True)
+            f"{name} {value!r}" for name, value in zip(summary_names, summary_values, strict=True)
         ))
 
     def restore(self) -> None:

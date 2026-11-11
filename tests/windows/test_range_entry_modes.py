@@ -4,6 +4,7 @@ import sys
 from copy import deepcopy
 
 import numpy as np
+import pyqtgraph as pg
 import pytest
 from PyQt6 import QtCore, QtTest
 
@@ -57,6 +58,113 @@ def accept(first, second, values):
     first.setText(str(values[0]))
     second.setText(str(values[1]))
     QtTest.QTest.keyClick(first, QtCore.Qt.Key.Key_Return)
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+@pytest.mark.parametrize("center_span", [False, True])
+def test_typing_axis_limit_freezes_auto_and_preserves_first_keystroke(
+    axis_window, axis, center_span,
+):
+    window = axis_window
+    window.open_axis_scale_dialog(axis)
+    ui = window._axis_scale_controls[axis]
+    if center_span:
+        click(ui.rangeEntry.center_span_button)
+    original = deepcopy(window.vb.getState()["targetRange"])
+    automatic_style = ui.minText.styleSheet()
+    assert "palette(mid)" in automatic_style
+    assert ui.minText.isEnabled() and not ui.minText.isReadOnly()
+    ui.minText.setFocus()
+    QtTest.QTest.keyClick(ui.minText, QtCore.Qt.Key.Key_Return)
+    assert ui.autoRadio.isChecked()
+    ui.minText.selectAll()
+    QtTest.QTest.keyClicks(ui.minText, "-")
+    assert ui.minText.text() == "-"
+    assert ui.manualRadio.isChecked()
+    assert ui.minText.styleSheet() != automatic_style
+    assert window.vb.getState()["targetRange"] == original
+    assert window.vb.autoRangeEnabled()[window._axis_scale_axis_number(axis)] is False
+    QtTest.QTest.keyClicks(ui.minText, "1.5")
+    QtTest.QTest.keyClick(ui.minText, QtCore.Qt.Key.Key_Return)
+    assert float(ui.minText.text()) == -1.5
+    click(ui.autoRadio)
+    assert ui.minText.styleSheet() == automatic_style
+
+
+@pytest.mark.parametrize("center_span", [False, True])
+def test_typing_color_limit_freezes_auto_and_preserves_first_keystroke(heatmap, center_span):
+    entry = heatmap.colorbar_range_entry
+    if center_span:
+        click(entry.center_span_button)
+    field = heatmap.colorbar_min_text
+    original = tuple(heatmap.bar.levels())
+    automatic_style = field.styleSheet()
+    assert "palette(mid)" in automatic_style
+    assert field.isEnabled() and not field.isReadOnly()
+    field.setFocus()
+    QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
+    assert heatmap.colorbar_auto_radio.isChecked()
+    field.selectAll()
+    QtTest.QTest.keyClicks(field, "-")
+    assert field.text() == "-"
+    assert heatmap.colorbar_manual_radio.isChecked()
+    assert field.styleSheet() != automatic_style
+    assert heatmap._colorbar_manual_levels == original
+    assert tuple(heatmap.bar.levels()) == original
+    QtTest.QTest.keyClicks(field, "1.5")
+    QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
+    assert float(field.text()) == -1.5
+    click(heatmap.colorbar_auto_radio)
+    assert field.styleSheet() == automatic_style
+
+
+@pytest.mark.parametrize("axis, number", [("x", 0), ("y", 1)])
+def test_axis_link_none_unlinks_without_confusing_a_view_name(axis_window, axis, number):
+    target = pg.ViewBox(name="None")
+    try:
+        axis_window.open_axis_scale_dialog(axis)
+        combo = axis_window._axis_scale_controls[axis].linkCombo
+        assert combo.currentText() == "None"
+        assert combo.currentData() == ""
+        combo.setCurrentIndex(combo.findData("None"))
+        assert axis_window.vb.linkedView(number) is target
+        axis_window._sync_axis_scale_controls(axis)
+        assert combo.currentData() == "None"
+        combo.setCurrentIndex(combo.findData(""))
+        assert axis_window.vb.linkedView(number) is None
+    finally:
+        target.unregister()
+        target.deleteLater()
+
+
+@pytest.mark.parametrize("texts", [
+    ("9.9", "10.2"),
+    ("0.010012718532581035", "0.010017029084329264"),
+    ("1.2345678901234567", "2.234567890123457"),
+])
+def test_axis_manual_limits_use_shortest_exact_text(axis_window, texts):
+    ui = axis_window._axis_scale_controls["x"]
+    accept(ui.minText, ui.maxText, texts)
+    assert (ui.minText.text(), ui.maxText.text()) == texts
+    assert tuple(axis_window.vb.viewRange()[0]) == tuple(map(float, texts))
+    click(ui.rangeEntry.center_span_button)
+    click(ui.rangeEntry.min_max_button)
+    assert (ui.minText.text(), ui.maxText.text()) == texts
+
+
+@pytest.mark.parametrize("texts", [
+    ("9.9", "10.2"),
+    ("0.010012718532581035", "0.010017029084329264"),
+    ("1.2345678901234567", "2.234567890123457"),
+])
+def test_color_manual_limits_use_shortest_exact_text(heatmap, texts):
+    first, second = heatmap.colorbar_min_text, heatmap.colorbar_max_text
+    accept(first, second, texts)
+    assert (first.text(), second.text()) == texts
+    assert heatmap._colorbar_manual_levels == tuple(map(float, texts))
+    click(heatmap.colorbar_range_entry.center_span_button)
+    click(heatmap.colorbar_range_entry.min_max_button)
+    assert (first.text(), second.text()) == texts
 
 
 @pytest.mark.parametrize("axis", ["x", "y"])
