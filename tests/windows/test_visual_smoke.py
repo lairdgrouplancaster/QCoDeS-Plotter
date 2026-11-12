@@ -63,7 +63,7 @@ def test_demo_screenshot_workflow_generates_nonblank_images(tmp_path):
     env["TMPDIR"] = str(temp_dir)
 
     result = subprocess.run(
-        [sys.executable, "scripts/capture_demo_screenshots.py"],
+        [sys.executable, "scripts/capture_demo_screenshots.py", "--smoke-test"],
         cwd=repo_root,
         env=env,
         capture_output=True,

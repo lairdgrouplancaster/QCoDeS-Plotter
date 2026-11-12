@@ -1,0 +1,13 @@
+# Capture tools only. Install the candidate application and native package
+# alongside this file: python -m pip install ./native -e . -r requirements/screenshots.txt
+# Pin the libraries that determine data and rendering; record all resolved
+# transitive dependencies in the generation record. Review updates together.
+PyQt6==6.11.0
+PyQt6-Qt6==6.11.2
+PyQt6-sip==13.13.0
+pyqtgraph==0.14.0
+numpy==2.5.3
+pandas==3.0.6
+qcodes==0.61.0
+matplotlib==3.11.2
+Pillow==12.3.0

@@ -77,6 +77,23 @@ preview image is produced. The temporary database is removed automatically.
 
 ## `capture_demo_screenshots.py`
 
+Use the candidate application and matching native package with
+`requirements/screenshots.txt`. The script captures real qPlot windows with
+isolated settings, fixed synthetic data and bounded readiness checks. It stages
+and validates all four images and records provenance before installing the set.
+For release preparation, workflow bootstrap and final pre-tag verification, see
+[documentation releases](../docs/documentation-releases.md).
+
+## `screenshot_support.py`
+
+`validate` checks committed PNGs and their documentation references without
+requiring fresh screenshots for ordinary code PRs. `verify-release` additionally
+checks the candidate's input fingerprint, application version, generation checks
+and hashes of the reviewed set. Use `--require-clean --generation-id RUN/ATTEMPT`
+on the final candidate before tagging. This command does not authorise tagging.
+
+## Screenshot capture command
+
 Generates the PNG screenshots used by `docs/demo-data.md`:
 
 ```console

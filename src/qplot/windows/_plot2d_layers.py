@@ -1794,9 +1794,11 @@ class _HeatmapAppearanceControls(qtw.QWidget):
             "Choose an available measurement to add."
         )
         self.add_heatmap_button = qtw.QPushButton("Add Heatmap", self)
+        self.add_heatmap_button.setToolTip("Add the selected measurement as a heatmap in this plot.")
         self.add_heatmap_button.setObjectName("heatmapAppearanceAddButton")
         self.add_heatmap_button.setEnabled(False)
         self.remove_heatmap_button = qtw.QPushButton("Remove Heatmap", self)
+        self.remove_heatmap_button.setToolTip("Remove the selected secondary heatmaps from this plot.")
         self.remove_heatmap_button.setObjectName("heatmapAppearanceRemoveButton")
         self.remove_heatmap_button.setEnabled(False)
         actions.addWidget(self.add_heatmap_combo, 1)
@@ -1821,6 +1823,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         self.color_scale_name.setObjectName("heatmapColorScaleName")
         color_scale_layout.addWidget(self.color_scale_name, 0, 0)
         self.color_scale_preview = qtw.QLabel()
+        self.color_scale_preview.setToolTip("Colours used for the selected heatmap, from low to high values.")
         self.color_scale_preview.setObjectName("heatmapColorScalePreview")
         self.color_scale_preview.setMinimumWidth(170)
         self.color_scale_preview.setFixedHeight(18)
@@ -1828,7 +1831,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         color_scale_layout.addWidget(self.color_scale_preview, 1, 0)
         self.color_scale_button = qtw.QPushButton("Colour scale…")
         self.color_scale_button.setObjectName("heatmapColorScaleButton")
-        self.color_scale_button.setToolTip("Open the Colour scale dialog.")
+        self.color_scale_button.setToolTip("Choose the colour map and limits.")
         color_scale_layout.addWidget(
             self.color_scale_button,
             2,
@@ -1840,8 +1843,10 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         panel_layout.addWidget(color_scale_group)
 
         self.visible = qtw.QCheckBox("Visible")
+        self.visible.setToolTip("Show or hide the selected heatmaps without removing them from the plot.")
         self.visible.setChecked(True)
         self.opacity = _OpacitySpinBox()
+        self.opacity.setToolTip("Set the opacity of the selected heatmaps: 0% is transparent and 100% is opaque.")
         self.opacity.setObjectName("heatmapAppearanceOpacity")
         self.opacity.setRange(0, 100)
         self.opacity.setValue(100)
@@ -1850,6 +1855,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
             qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed
         )
         self.opacity_slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.opacity_slider.setToolTip("Set the opacity of the selected heatmaps: 0% is transparent and 100% is opaque.")
         self.opacity_slider.setObjectName("heatmapAppearanceOpacitySlider")
         self.opacity_slider.setRange(0, 100)
         self.opacity_slider.setValue(100)

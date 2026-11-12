@@ -12,6 +12,7 @@ import math
 import os
 import secrets
 import stat
+import sys
 import tempfile
 import threading
 import time
@@ -2143,6 +2144,27 @@ class TrustedLiveReader:
                 f"The native trusted VFS rejected a prohibited operation{location}."
             )
         if status.kind == "io":
+            if status.artifact == "shm" and status.operation in {
+                "shm_proof_open", "shm_proof_post_open",
+            }:
+                shm_path = self._source.database_instance.resolved_path + "-shm"
+                guidance = (
+                    "Check that qPlot can access this file and its folder. "
+                    "SQLite needs read and write access to this coordination file, "
+                    "even though the measurement database is read-only."
+                )
+                if sys.platform == "darwin":
+                    guidance += (
+                        "\n\nOn macOS, check System Settings → Privacy & Security → "
+                        "Files and Folders. Allow access to the database's folder "
+                        "for qPlot, or for the application used to launch it "
+                        "(for example, Terminal), then reopen the database."
+                    )
+                return TrustedLiveSourceIOError(
+                    "qPlot could not open or verify the database's SQLite "
+                    f"coordination file:\n{shm_path}\n\n{guidance}"
+                    f"\n\nTechnical details:{location}."
+                )
             return TrustedLiveSourceIOError(
                 f"The native trusted VFS reported a source I/O failure{location}."
             )
@@ -2510,6 +2532,42 @@ class TrustedLiveReader:
             deadline=deadline,
             cancel_event=cancel_event,
         )[0]
+
+    def export_backup(self, destination, *, progress):
+        """Copy into a private APSW destination with bounded source read steps.
+
+        Called only by the isolated database-export process. SQLite releases
+        the source read transaction after each step; changes between steps
+        cause SQLite to restart the backup. The parent enforces cancellation
+        and a hard deadline even if native IO stalls.
+        """
+        connection = self._require_open()
+        with destination.backup("main", connection, "main") as backup:
+            while not backup.done:
+                connection, control = self._start_operation(
+                    timeout=5.0, deadline=None, cancel_event=None,
+                )
+                installed = False
+                error = None
+                try:
+                    control.native_sequence = self._read_native_status().sequence
+                    self._validate_native_source(begin_reads=True)
+                    installed = True
+                    self._install_operation_handlers(connection, control)
+                    self._raise_if_operation_aborted(control)
+                    backup.step(256)
+                    self._raise_if_operation_aborted(control)
+                except BaseException as caught:
+                    error = caught
+                cleanup = self._finish_operation(
+                    connection, control, transaction_started=False,
+                    handlers_installed=installed, publication_pending=error is None,
+                )
+                if cleanup is not None:
+                    raise cleanup from error
+                if error is not None:
+                    raise error
+                progress(backup.page_count - backup.remaining, backup.page_count)
 
     def data_version(
         self,

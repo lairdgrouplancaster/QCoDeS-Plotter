@@ -404,6 +404,31 @@ class plotWidget(
 
     def _init_native_transform_labels(self):
         """Coordinate line transforms before any native curve update runs."""
+        control_tips = {
+            "fftCheck": "Display the Fourier spectrum of each trace against frequency.",
+            "derivativeCheck": "Display the derivative of each trace with respect to its X coordinate.",
+            "phasemapCheck": "Plot the derivative of each trace against its Y value.",
+            "subtractMeanCheck": "Subtract each trace's mean value before displaying it.",
+            "logXCheck": "Use a base-10 logarithmic horizontal axis; non-positive values are not shown.",
+            "logYCheck": "Use a base-10 logarithmic vertical axis; non-positive values are not shown.",
+            "downsampleCheck": "Reduce the number of displayed samples using the selected method.",
+            "pointsGroup": "Use the Appearance dialog to show dots or markers on qPlot traces.",
+            "autoPointsCheck": "Use the Appearance dialog to configure point symbols on qPlot traces.",
+            "xGridCheck": "Show grid lines at horizontal-axis tick positions.",
+            "yGridCheck": "Show grid lines at vertical-axis tick positions.",
+            "gridAlphaSlider": "Set grid-line opacity, from transparent to opaque.",
+            "alphaGroup": "Enable opacity adjustment for plotted traces.",
+            "autoAlphaCheck": "Use full trace opacity. Clear this option to use the opacity slider.",
+            "alphaSlider": "Set trace opacity, from transparent to opaque.",
+        }
+        for name, tooltip in control_tips.items():
+            control = getattr(self.plot.ctrl, name)
+            if not control.toolTip():
+                control.setToolTip(tooltip)
+        self.plot.ctrl.downsampleSpin.setToolTip(
+            "Number of samples per group when downsampling. The downsampling method "
+            "(mean, subsample, or peak) is set by right-clicking on an individual plot."
+        )
         native_slots = {
             "fftCheck": self.plot.updateSpectrumMode,
             "derivativeCheck": self.plot.updateDerivativeMode,
@@ -971,11 +996,13 @@ class plotWidget(
 
         form = qtw.QFormLayout(dialog)
         width_spin = qtw.QSpinBox(dialog)
+        width_spin.setToolTip("Width of the plot area in pixels, excluding toolbars and window borders.")
         width_spin.setRange(1, 20_000)
         width_spin.setSuffix(" px")
         width_spin.setValue(max(1, current_size.width()))
 
         height_spin = qtw.QSpinBox(dialog)
+        height_spin.setToolTip("Height of the plot area in pixels, excluding toolbars and window borders.")
         height_spin.setRange(1, 20_000)
         height_spin.setSuffix(" px")
         height_spin.setValue(max(1, current_size.height()))
@@ -1103,6 +1130,8 @@ class plotWidget(
         
         # Store for later use
         self.axis_dropdown = {"x": x_dropdown, "y": y_dropdown}
+        x_dropdown.setToolTip("Choose the measurement coordinate plotted horizontally.")
+        y_dropdown.setToolTip("Choose the measurement coordinate plotted vertically.")
         
         # Add options to menus and place correct axes using dataset.depends_on_. 
         # This was set to match plottr

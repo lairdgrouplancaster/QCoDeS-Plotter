@@ -202,6 +202,7 @@ class UpdateChecker(QtCore.QObject):
         if buttons is not None:
             copy = buttons.addButton("Copy upgrade command", qtw.QDialogButtonBox.ButtonRole.ActionRole)
             if copy is not None:
+                copy.setToolTip("Copy the upgrade command to run yourself; this does not install an update.")
                 copy.setObjectName("copyUpdateCommandButton")
 
                 def copy_command():

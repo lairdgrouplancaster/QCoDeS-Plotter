@@ -1,0 +1,67 @@
+name: Prepare release documentation
+
+on:
+  workflow_dispatch:
+    inputs:
+      application-version:
+        description: Intended application version from pyproject.toml
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  screenshots:
+    name: Generate and validate release screenshots
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      QT_QPA_PLATFORM: offscreen
+      MPLCONFIGDIR: ${{ runner.temp }}/qplot-matplotlib-cache
+      PIP_ONLY_BINARY: apsw
+      QPLOT_EXPECTED_VERSION: ${{ inputs.application-version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Qt system library
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libegl1
+      - name: Install candidate application, candidate native reader and capture tools
+        run: |
+          python -m venv .venv-mac
+          .venv-mac/bin/python -m pip install ./native -e . -r requirements/screenshots.txt
+      - name: Generate all four screenshots with application and shutdown checks
+        run: >-
+          .venv-mac/bin/python scripts/capture_demo_screenshots.py
+          --expected-version "$QPLOT_EXPECTED_VERSION"
+      - name: Check generation record against this candidate
+        run: >-
+          .venv-mac/bin/python scripts/screenshot_support.py verify-release
+          --generation-id "$GITHUB_RUN_ID/$GITHUB_RUN_ATTEMPT"
+      - name: Build documentation in a separate environment
+        run: |
+          python -m venv "$RUNNER_TEMP/qplot-docs"
+          "$RUNNER_TEMP/qplot-docs/bin/python" -m pip install -r requirements/docs.txt
+          "$RUNNER_TEMP/qplot-docs/bin/python" -m mkdocs build --strict
+      - name: Upload complete set for the release preparation pull request
+        uses: actions/upload-artifact@v4
+        with:
+          name: qplot-release-screenshots-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: |
+            docs/assets/qplot-main-window.png
+            docs/assets/qplot-line-plot.png
+            docs/assets/qplot-heatmap.png
+            docs/assets/qplot-color-scale-dialog.png
+            docs/assets/qplot-screenshots.json
+      - name: Record remaining maintainer checks
+        run: |
+          echo 'Include all five artefact files in the release preparation PR; review all four images.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Run pre-tag verification on the final candidate. This workflow does not authorise or create tags.' >> "$GITHUB_STEP_SUMMARY"

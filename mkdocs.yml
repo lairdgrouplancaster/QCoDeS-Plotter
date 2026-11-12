@@ -1,0 +1,39 @@
+site_name: qPlot
+site_description: QCoDeS measurement data viewer
+repo_url: https://github.com/lairdgrouplancaster/QCoDeS-Plotter
+docs_dir: docs
+site_dir: site
+theme:
+  name: readthedocs
+hooks:
+  - scripts/docs_hooks.py
+nav:
+  - Home: index.md
+  - User guide: user-guide.md
+  - Configuration: configuration.md
+  - Demo data and screenshots: demo-data.md
+  - Troubleshooting: troubleshooting.md
+  - Development:
+      - Architecture: architecture.md
+      - Trusted live reader: trusted-live-reader.md
+      - Distribution and releases: distribution.md
+      - Documentation releases: documentation-releases.md
+# Keep internal review reports, build requirements, provenance and unused
+# branding proposals out of the published website, rather than merely the nav.
+exclude_docs: |
+  /code-quality-*
+  /maintainability-*
+  /assets/branding/
+  /assets/qplot-screenshots.json
+  **/*.db
+  **/*.db-*
+  **/*.log
+  **/*.py
+  **/*.json
+  **/*.zip
+validation:
+  nav:
+    omitted_files: warn
+  links:
+    not_found: warn
+    anchors: info

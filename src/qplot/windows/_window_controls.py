@@ -360,6 +360,7 @@ def ask_confirmation_with_dont_ask_again(
     box.setDefaultButton(default_button)
 
     dont_ask_again = qtw.QCheckBox(DO_NOT_ASK_AGAIN_LABEL)
+    dont_ask_again.setToolTip("If you confirm this action, disable this confirmation in future. Re-enable it in Preferences.")
     box.setCheckBox(dont_ask_again)
 
     reply = box.exec()

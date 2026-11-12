@@ -193,18 +193,29 @@ The committed screenshots below are generated from a small synthetic database.
 Run:
 
 ```console
-python scripts/capture_demo_screenshots.py
+MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-mac/bin/python scripts/capture_demo_screenshots.py
+MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-mac/bin/python scripts/screenshot_support.py validate
 ```
 
 The script creates a temporary synthetic database under the system temp
 directory by default, starts qPlot offscreen, and overwrites the PNG files in
 `docs/assets`. Set `QPLOT_DEMO_WORKDIR` to choose a different working folder,
 or `QPLOT_DEMO_ASSET_DIR` to write screenshots somewhere other than
-`docs/assets`.
+`docs/assets`. The full set is staged and validated before replacement; a
+failed capture or shutdown preserves the approved files. Generation also writes
+`qplot-screenshots.json`, recording source inputs, environment and image hashes.
+Use the project venv on Windows, with `python` when activated or its explicit
+Python executable as described in the project instructions.
 
 Each run uses a fresh private database directory inside the working folder and
 removes it after the plots close. Existing databases and their sidecars in the
 working folder are preserved.
+
+Every release preparation cycle requires a new generation, successful checks
+and visual review of all four images in the release preparation PR. Follow
+[the documentation release process](documentation-releases.md), including the
+final pre-tag verification command. Independent captures need not have identical
+pixels; hashes identify the exact files approved for that release.
 
 ## Generate Synthetic Data
 

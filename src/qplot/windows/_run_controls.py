@@ -134,7 +134,9 @@ class RunControlsMixin:
         self.measurementBox.setMaximumWidth(46)
         self.measurementBox.setFixedWidth(46)
         self.measurementBox.setText("*")
-        self.measurementBox.setToolTip("Measurement to plot; * to plot all")
+        self.measurementBox.setToolTip(
+            "Enter a measurement number (starting at 1), or * to plot every measurement in the run."
+        )
         self.measurementBox.returnPressed.connect(self._open_entered_run)
         sublayout.addWidget(self.measurementBox)
 
@@ -147,7 +149,9 @@ class RunControlsMixin:
         self.plotRunButton.setToolButtonStyle(
             QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
             )
-        self.plotRunButton.setToolTip("Plot (Ctrl+Return)")
+        self.plotRunButton.setToolTip(
+            "Plot the run and measurement specified by the ID and Measurement fields (Ctrl+Return)."
+        )
         self.plotRunButton.setAccessibleName("Plot measurement")
         self.plotRunButton.setFixedHeight(26)
         self.plotRunButton.clicked.connect(self._open_entered_run)

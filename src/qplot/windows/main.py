@@ -344,6 +344,11 @@ class MainWindow(
         export_runs = create_action("run.export_selected", self)
         export_runs.triggered.connect(self.export_selected_runs_csv)
         fileMenu.addAction(export_runs)
+        from ._database_export import export_database
+
+        export_database_action = create_action("database.export_copy", self)
+        export_database_action.triggered.connect(lambda: export_database(self))
+        fileMenu.addAction(export_database_action)
         exports_progress = create_action("exports.show", self)
         exports_progress.triggered.connect(self.show_csv_exports)
         fileMenu.addAction(exports_progress)
@@ -491,6 +496,9 @@ class MainWindow(
         database_load_layout.setSpacing(6)
 
         self.databaseLoadProgress = qtw.QProgressBar()
+        self.databaseLoadProgress.setToolTip(
+            "Database loading progress. A moving indicator means the total work is not yet known."
+        )
         self.databaseLoadProgress.setObjectName("databaseLoadProgress")
         self.databaseLoadProgress.setRange(0, 0)
         self.databaseLoadProgress.setTextVisible(False)
