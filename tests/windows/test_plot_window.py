@@ -3263,21 +3263,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             main_line = host.plot.plot(x=[200.0, 400.0], y=[10.0, 20.0])
             host.vb.setXRange(-100.0, 100.0, padding=0)
-            # Exercise Qt layout growth without the native window manager
-            # constraining the requested size to the CI desktop's work area.
-            dialog = host._create_axis_scale_dialog()
-            dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen)
-            # Give the dialog an explicit initial size before showing it.
-            # Otherwise Qt's offscreen plugin can size the child layouts using
-            # the default window geometry before adjusting the dialog itself.
-            dialog.resize(dialog.sizeHint())
             host.open_axis_scale_dialog("x")
 
             dialog = host._axis_scale_dialog
-            qtw.QApplication.processEvents()
-            # Showing the controls polishes their styles and can change the
-            # minimum layout size. Use that final size for the resize baseline.
-            dialog.adjustSize()
             qtw.QApplication.processEvents()
             self.assertEqual(dialog.windowTitle(), "Axis scaling")
             self.assertEqual(set(host._axis_scale_controls), {"x", "y", "x2", "y2"})
@@ -3291,6 +3279,13 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertFalse(host._axis_scale_tabs.isTabEnabled(3))
             self.assertGreaterEqual(host._axis_scale_tabs.width(), 360)
             x_controls = host._axis_scale_controls["x"]
+            # Windows' offscreen plugin can leave this visible page's grid
+            # geometry empty until the first resize. Lay it out before taking
+            # the baseline, rather than comparing unlaid-out field sizes.
+            x_controls.gridLayout.setGeometry(
+                x_controls.minText.parentWidget().contentsRect(),
+            )
+            self.assertFalse(x_controls.gridLayout.geometry().isEmpty())
             self.assertEqual(x_controls.manualRadio.text(), "Manual")
             self.assertEqual(x_controls.autoRadio.text(), "Auto")
             self.assertEqual(x_controls.minimumLabel.text(), "Minimum")
