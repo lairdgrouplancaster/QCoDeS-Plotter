@@ -189,6 +189,8 @@ class SnapToTraceTestCase(unittest.TestCase):
             QtGui.QImage.Format.Format_ARGB32,
         )
         painter = QtGui.QPainter(image)
+        # generateDrawSpecs normally inherits this font from AxisItem.paint.
+        painter.setFont(font)
 
         def dispose_plot_widget():
             widget.close()

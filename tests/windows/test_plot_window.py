@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pyqtgraph as pg
 import qcodes
-from PyQt6 import QtCore, QtGui, QtPrintSupport, sip
+from PyQt6 import QtCore, QtGui, QtPrintSupport, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import (
     CSVExporter,
@@ -3267,6 +3267,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host.open_axis_scale_dialog("x")
 
             dialog = host._axis_scale_dialog
+            self.assertTrue(QtTest.QTest.qWaitForWindowExposed(dialog))
+            qtw.QApplication.processEvents()
             self.assertEqual(dialog.windowTitle(), "Axis scaling")
             self.assertEqual(set(host._axis_scale_controls), {"x", "y", "x2", "y2"})
             self.assertEqual(

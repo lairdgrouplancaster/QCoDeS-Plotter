@@ -29,6 +29,10 @@ from tests.windows.test_plot_overlay_integration import (
 
 
 def _move_to_sample(window, line, index):
+    # Tiling can leave fixture windows too small for a data area at larger
+    # platform fonts. Settle a usable viewport before choosing a scene point.
+    window.resize(1000, 700)
+    wait_for(lambda: window.width() == 1000 and window.height() == 700)
     x, y = line.getData()
     point = line.getViewBox().mapViewToScene(
         QtCore.QPointF(float(x[index]), float(y[index]))
@@ -210,14 +214,15 @@ def test_hiding_active_trace_clears_highlight(loaded_plot, no_callback_errors):
     _assert_highlighted_axes(window, ())
 
 
-def test_stationary_cursor_follows_trace_axis_and_style_changes(loaded_plot, no_callback_errors):
+def test_stationary_cursor_follows_trace_style_changes(loaded_plot, no_callback_errors):
     window = loaded_plot
+    _assign_trace_axes(window, window.label, "Top", "Right")
     point = _move_to_sample(window, window.line, 20)
     style = window._trace_styles[window.label]
     style.line_enabled = False
     style.markers_enabled = True
     style.opacity = 0.55
-    _assign_trace_axes(window, window.label, "Top", "Right")
+    window._apply_trace_style(window.label, window.line)
 
     assert window._last_cursor_scene_pos == point
     assert window._hover_highlight.active_item is window.line
@@ -236,6 +241,9 @@ def test_stationary_cursor_follows_trace_axis_and_style_changes(loaded_plot, no_
 
 def test_stationary_cursor_refreshes_when_trace_data_changes(loaded_plot, no_callback_errors):
     window = loaded_plot
+    window._create_axis_scale_dialog()
+    window._apply_axis_scale_manual_limits("x", [-1, 65])
+    window._apply_axis_scale_manual_limits("y", [0, 85])
     point = _move_to_sample(window, window.line, 20)
     x, y = (values.copy() for values in window.line.getOriginalDataset())
     window.line.setData(x=x + 0.2, y=y + 0.3)
@@ -318,6 +326,7 @@ def test_stationary_cursor_tracks_secondary_source_publication(loaded_plot, no_c
 @pytest.mark.parametrize("mixed_plot", ["heatmap"], indirect=True)
 def test_hiding_active_heatmap_removes_its_extent_and_colourbar_highlight(mixed_plot):
     _main, window, _runs = mixed_plot
+    window.resize(1000, 700)
     window.show()
     qtw.QApplication.processEvents()
     point = window._primary_heatmap_viewbox().mapViewToScene(QtCore.QPointF(1, 10))
@@ -337,6 +346,7 @@ def test_hiding_active_heatmap_removes_its_extent_and_colourbar_highlight(mixed_
 @pytest.mark.parametrize("mixed_plot", ["heatmap"], indirect=True)
 def test_heatmap_hover_preserves_pixels_and_follows_axis_assignment(mixed_plot):
     _main, window, _runs = mixed_plot
+    window.resize(1000, 700)
     window.show()
     original = window.dataGrid.copy()
     renderers = window._heatmap_render_items(window)
