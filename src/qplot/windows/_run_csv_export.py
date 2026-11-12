@@ -161,6 +161,7 @@ class BatchCsvDialog(qtw.QDialog):
         layout.addWidget(runs)
         form = qtw.QFormLayout()
         self.parameters = qtw.QComboBox()
+        self.parameters.setToolTip("Export every measurement in each selected run, or choose one measurement shared by all selected runs.")
         self.parameters.addItem("All measurements in each run", None)
         for name in sorted(common_parameters):
             self.parameters.addItem(name, (name,))
@@ -175,6 +176,7 @@ class BatchCsvDialog(qtw.QDialog):
         choose_folder = buttons.button(qtw.QDialogButtonBox.StandardButton.Ok)
         assert choose_folder is not None
         choose_folder.setText("Choose folder…")
+        choose_folder.setToolTip("Choose the destination folder and review the proposed CSV filenames.")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)

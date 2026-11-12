@@ -935,16 +935,19 @@ class fixed_var_picker(qtw.QWidget):
         
         # Create box to change paramater
         self.option_box = expandingComboBox()
+        self.option_box.setToolTip("Choose the coordinate held fixed while viewing a cut through the heatmap.")
         self.option_box.addItems(items)
         row_1.addWidget(self.option_box)
         
         # Switches fixed parameter
         self.slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.slider.setToolTip("Move through the recorded values of the fixed coordinate.")
         self.slider.setTickPosition(qtw.QSlider.TickPosition.TicksBelow)
         row_2.addWidget(self.slider)
         
         # Update user to change
         self.text_box = qtw.QLineEdit()
+        self.text_box.setToolTip("Recorded value of the fixed coordinate for the displayed cut.")
         self.text_box.setReadOnly(True)
         self.text_box.setMaximumWidth(main._label_width)
         row_2.addWidget(self.text_box)

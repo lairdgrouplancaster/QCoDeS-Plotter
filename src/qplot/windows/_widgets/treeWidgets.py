@@ -1788,6 +1788,15 @@ class moreInfo(qtw.QTabWidget):
         self.addTab(self.metadata, "Metadata")
         self.addTab(self.snapshot, "Snapshot")
         self.addTab(self.raw, "Raw key-value")
+        for index, tooltip in enumerate((
+            "Summary of the selected run, including acquisition status and timing.",
+            "Measured parameters and the setpoints on which they depend.",
+            "Measurement previews. Double-click a supported preview to open its plot.",
+            "Metadata recorded with this run.",
+            "Instrument and station settings captured in the QCoDeS snapshot.",
+            "Raw key-value fields recorded for this run.",
+        )):
+            self.setTabToolTip(index, tooltip)
         self.currentChanged.connect(self._preview_tab_changed)
         self._preview_tab_changed(self.currentIndex())
 

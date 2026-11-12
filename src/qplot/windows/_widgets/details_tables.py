@@ -157,12 +157,14 @@ class TrustedFullValueDialog(qtw.QDialog):
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self.text_edit = qtw.QPlainTextEdit(self)
+        self.text_edit.setToolTip("Complete metadata value. Select text and use the copy shortcut to copy just that selection.")
         self.text_edit.setObjectName("trustedFullValueText")
         self.text_edit.setReadOnly(True)
         self.text_edit.setLineWrapMode(qtw.QPlainTextEdit.LineWrapMode.NoWrap)
 
         self.select_all_button = qtw.QPushButton("Select All", self)
         self.copy_button = qtw.QPushButton("Copy", self)
+        self.copy_button.setToolTip("Copy the complete metadata value, regardless of the text selection.")
         self.close_button = qtw.QPushButton("Close", self)
         self.select_all_button.clicked.connect(self.text_edit.selectAll)
         self.copy_button.clicked.connect(self.copy_value)

@@ -108,6 +108,14 @@ if (
         def __init__(self, scene: Any, owner: Any):
             self._qplot_owner_ref = weakref.ref(owner)
             super().__init__(scene)
+            for control, tooltip in (
+                (self.ui.itemTree, "Choose the plot item to export."),
+                (self.ui.formatList, "Choose the file or clipboard format for this export."),
+                (self.ui.copyBtn, "Copy the selected plot item to the clipboard using these export settings."),
+                (self.ui.exportBtn, "Choose a destination and save using these export settings."),
+            ):
+                if not control.toolTip():
+                    control.setToolTip(tooltip)
             self.csv_scope = qtw.QLabel(self)
             self.csv_scope.setObjectName("csvExportScope")
             self.csv_scope.setWordWrap(True)
@@ -177,6 +185,21 @@ if (
                     params.removeChild(params.child("columnMode"))
                 values.sigValueChanged.connect(self._update_csv_scope)
                 self._update_csv_scope()
+            parameter_tips = {
+                "width": "Export width in pixels. Changing this also adjusts the height to preserve the aspect ratio.",
+                "height": "Export height in pixels. Changing this also adjusts the width to preserve the aspect ratio.",
+                "antialias": "Smooth the edges of lines and text in the exported image.",
+                "background": "Choose the export background colour, including its transparency.",
+                "invertValue": "Invert image brightness while retaining colour hues.",
+                "separator": "Choose the character separating values in the exported text file.",
+                "columnMode": "Use separate X columns for each trace, or share one X column when coordinates match.",
+                "values": "Choose which plot values to export. The description below explains the selected scope.",
+            }
+            exporter: Any = self.currentExporter
+            for parameter in exporter.parameters().children():
+                tip = parameter_tips.get(parameter.name())
+                if tip and not parameter.opts.get("tip"):
+                    parameter.setOpts(tip=tip)
             self.ui.exportBtn.setEnabled(
                 exporter_type in _SAFE_PYQTGRAPH_FILE_EXPORTERS
             )

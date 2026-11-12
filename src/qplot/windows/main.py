@@ -491,6 +491,9 @@ class MainWindow(
         database_load_layout.setSpacing(6)
 
         self.databaseLoadProgress = qtw.QProgressBar()
+        self.databaseLoadProgress.setToolTip(
+            "Database loading progress. A moving indicator means the total work is not yet known."
+        )
         self.databaseLoadProgress.setObjectName("databaseLoadProgress")
         self.databaseLoadProgress.setRange(0, 0)
         self.databaseLoadProgress.setTextVisible(False)
