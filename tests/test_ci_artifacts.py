@@ -134,8 +134,24 @@ def test_all_source_suites_publish_portable_timing_reports(workflow):
                  'Run compatibility test suite', 'Run compatibility test suite as a standard Windows user'):
         command = checks.split(f'      - name: {step}\n', 1)[1].split('      - name:', 1)[0]
         assert 'junit_family=xunit1' in command and '--junitxml=' in command
+        assert '--no-loadscope-reorder' in command
+        if 'compatibility' in step:
+            assert '@${{ matrix.test-list }}' in command
     assert 'path: ${{ env.QPLOT_CI_TEST_REPORT }}' in checks
     assert 'QPLOT_CI_TEST_REPORT=$(Join-Path $standardTemp' in checks
+
+
+def test_source_test_cache_matches_the_wheel_dependency_installer(workflow):
+    workflows, repository = workflow
+    checks = job(workflows['platform'], 'checks')
+    assert 'cache: pip' in checks
+    assert 'cache-dependency-path: pyproject.toml' in checks
+    assert 'setup-uv' not in checks and 'uv pip install' not in checks
+    installer = (repository / 'scripts/validate_distribution.py').read_text()
+    install_wheels = installer.split('def install_wheels(', 1)[1].split('\ndef ', 1)[0]
+    assert "'-m', 'pip', 'install'" in install_wheels
+    assert "'--no-index', '--no-deps'" in install_wheels
+    assert '--audit-path dist/wheel-installation-audit.py' in checks
 
 
 def test_publication_native_builds_are_arch_specific_and_manylinux_repaired(workflow):

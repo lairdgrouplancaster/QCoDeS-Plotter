@@ -93,7 +93,7 @@ def test_windows_full_matrix_runs_all_partitions_with_existing_containment(
 
 
 @pytest.mark.parametrize("suite", ["full", "compatibility"])
-@pytest.mark.parametrize("python_version", ["3.12.10", "3.13.15"])
+@pytest.mark.parametrize("python_version", ["3.12.10", "3.13.15", "3.14.10"])
 def test_windows_source_suite_fits_standard_user_command_line(
     github_directory: Path, suite: str, python_version: str
 ) -> None:
@@ -111,6 +111,8 @@ def test_windows_source_suite_fits_standard_user_command_line(
     # Measure the expanded environment path, not the short PowerShell token.
     report_path = r"D:\a\_temp\qplot-standard-user\qplot-test-results.xml"
     arguments = [arg.replace("$env:QPLOT_CI_TEST_REPORT", report_path) for arg in arguments]
+    arguments = [arg.replace("${{ matrix.test-list }}", ".github/pytest-compatibility-routine.txt")
+                 for arg in arguments]
     executable = (
         rf"C:\hostedtoolcache\windows\Python\{python_version}\x64\python.exe"
     )

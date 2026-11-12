@@ -38,19 +38,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          version: "0.12.5"
-          python-version: ${{ matrix.python-version }}
-          enable-cache: "auto"
-          # Reuse downloaded packages across unrelated workflow edits;
-          # uv still resolves and installs the requested tool versions below.
-          cache-dependency-glob: "**/pyproject.toml"
-          cache-local-path: ${{ runner.tool_cache }}/uv-cache
-          # Keep downloaded wheels available for subsequent CI runs.
-          prune-cache: false
+          # validate_distribution.py installs the audited wheel pair and its
+          # dependencies with pip. Cache the installer actually used here.
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Configure test report path
         if: runner.os != 'Windows'
@@ -86,7 +77,7 @@ jobs:
 
       - name: Require the pinned APSW platform wheel
         run: >-
-          uv pip install --system --only-binary apsw apsw==3.53.4.0
+          python -m pip install --only-binary apsw apsw==3.53.4.0
 
       - name: Install package and test tools
         run: >-
@@ -215,9 +206,10 @@ jobs:
           MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
         run: >-
           python -m pytest -o pythonpath= --no-cov --maxfail=1 -n 2 --dist=loadfile
+          --no-loadscope-reorder
           --timeout=90 --timeout-method=thread --durations=20
           -o junit_family=xunit1 --junitxml="$QPLOT_CI_TEST_REPORT"
-          @.github/pytest-compatibility.txt
+          @${{ matrix.test-list }}
 
       - name: Run compatibility test suite as a standard Windows user
         if: matrix.suite == 'compatibility' && runner.os == 'Windows'
@@ -229,9 +221,10 @@ jobs:
           $arguments = @(
             "-m", "pytest", "-o", "pythonpath=", "--no-cov", "--maxfail=1",
             "-n", "2", "--dist=loadfile",
+            "--no-loadscope-reorder",
             "--timeout=90", "--timeout-method=thread", "--durations=20",
             "-o", "junit_family=xunit1", "--junitxml=$env:QPLOT_CI_TEST_REPORT",
-            "@.github/pytest-compatibility.txt"
+            "@${{ matrix.test-list }}"
           )
           & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
             -FilePath $python `

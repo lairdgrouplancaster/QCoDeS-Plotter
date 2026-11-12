@@ -1,0 +1,6 @@
+@.github/pytest-compatibility.txt
+--deselect=tests/datahandling/test_trusted_live_queries.py::test_exact_stage5c_ten_run_specification_publishes_every_large_shape
+--deselect=tests/datahandling/test_trusted_live_queries.py::test_unfinalized_interleaved_complete_prefix_becomes_logical_and_resumes_append
+--deselect=tests/datahandling/test_trusted_live_queries.py::test_unfinalized_interleaved_partial_final_row_uses_planned_extent
+--deselect=tests/datahandling/test_trusted_live_result_limits.py::test_exact_row_and_aggregate_cell_boundaries_succeed
+--deselect=tests/datahandling/test_trusted_snapshot.py::test_wide_near_scalar_limit_has_a_fixed_rendered_prefix

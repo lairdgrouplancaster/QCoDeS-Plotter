@@ -409,6 +409,23 @@ Ordinary pushes and pull requests use this desktop scope regardless of which
 files changed. Linux tests, coverage and source-distribution validation are
 reserved for releases and explicit full runs.
 
+Routine compatibility runs use `.github/pytest-compatibility-routine.txt`,
+which includes the complete compatibility list and deselects five large-data
+stress cases: the ten-run shape specification, two large interleaved-grid
+prefix checks, the maximum row/cell reply, and the near-limit snapshot.
+All other compatibility checks remain, including database protections,
+concurrent writers, shutdown and real GUI integration. The complete Python
+3.14 suites still run these five cases on Windows and ARM64 macOS on every PR.
+Full validation uses `.github/pytest-compatibility.txt` without exclusions,
+including on Intel macOS and Linux.
+
+Both full and compatibility suites start expensive files first using the
+committed timing profile and `--no-loadscope-reorder`, keeping each file on one
+of two workers. Source-test jobs cache pip downloads, matching the installer
+used by `validate_distribution.py`; the current run's application/native wheels
+are still installed and audited explicitly. Compiler-free installation
+acceptance continues to use fresh environments without package caches.
+
 Full validation runs the complete Windows and ARM64 macOS suites on every
 supported Python version (3.12–3.14), using the same partition counts. It also
 adds Linux compatibility and compiler-free installation checks on Python
