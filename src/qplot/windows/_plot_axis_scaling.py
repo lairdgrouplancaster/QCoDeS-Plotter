@@ -606,16 +606,11 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         ui: Any = axisCtrlTemplate_generic.Ui_Form()
         ui.setupUi(widget)
         widget.setMaximumWidth(qtw.QWIDGETSIZE_MAX)
-        widget.setMinimumWidth(340)
         # Fit typical full-precision decimal limits without reserving space
         # for the longest possible exponent. The dialog can still be widened.
         for field in (ui.minText, ui.maxText):
             field.setMinimumWidth(
                 field.fontMetrics().horizontalAdvance("0.888888888888888888") + 12
-            )
-            field.setMaximumWidth(qtw.QWIDGETSIZE_MAX)
-            field.setSizePolicy(
-                qtw.QSizePolicy.Policy.Expanding, qtw.QSizePolicy.Policy.Fixed,
             )
 
         ui.mouseCheck.setText("Allow zoom/pan")
@@ -785,6 +780,11 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             lambda _checked=False, axis=axis: self._axis_scale_copy_auto_limits(axis)
         )
 
+        # Let the controls determine the page minimum at native font sizes and
+        # display scaling. Resolve it before the tabs size the shared dialog.
+        ui.gridLayout.setSizeConstraint(qtw.QLayout.SizeConstraint.SetMinimumSize)
+        widget.ensurePolished()
+        ui.gridLayout.activate()
         return widget
 
     def _sync_axis_scale_controls(self, axis: _AxisName) -> None:
@@ -1482,7 +1482,6 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         layout.setSpacing(10)
         tabs = qtw.QTabWidget(dialog)
         tabs.setObjectName("axisScaleTabs")
-        tabs.setMinimumWidth(360)
         tabs.tabBar().setExpanding(True)
         tabs.tabBar().setUsesScrollButtons(False)
         tabs.setStyleSheet(

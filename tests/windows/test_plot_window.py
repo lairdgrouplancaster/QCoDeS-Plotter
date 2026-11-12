@@ -3156,6 +3156,20 @@ class RunListParentLookupTestCase(unittest.TestCase):
             window.vb.deleteLater()
 
     def test_axis_scale_controls_move_from_context_menu_to_dialogs(self):
+        self._check_axis_scale_dialog_controls()
+
+    def test_axis_scale_dialog_fits_large_native_font(self):
+        app = qtw.QApplication.instance()
+        original_font = app.font()
+        font = QtGui.QFont(original_font)
+        font.setPixelSize(24)
+        app.setFont(font)
+        try:
+            self._check_axis_scale_dialog_controls()
+        finally:
+            app.setFont(original_font)
+
+    def _check_axis_scale_dialog_controls(self):
         class Host(qtw.QMainWindow):
             copy_coordinates = plotWidget.copy_coordinates
             initContextMenu = plotWidget.initContextMenu
@@ -3279,13 +3293,11 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertFalse(host._axis_scale_tabs.isTabEnabled(3))
             self.assertGreaterEqual(host._axis_scale_tabs.width(), 360)
             x_controls = host._axis_scale_controls["x"]
-            # Windows' offscreen plugin can leave this visible page's grid
-            # geometry empty until the first resize. Lay it out before taking
-            # the baseline, rather than comparing unlaid-out field sizes.
-            x_controls.gridLayout.setGeometry(
-                x_controls.minText.parentWidget().contentsRect(),
-            )
             self.assertFalse(x_controls.gridLayout.geometry().isEmpty())
+            self.assertGreaterEqual(
+                x_controls.minText.parentWidget().width(),
+                x_controls.gridLayout.minimumSize().width(),
+            )
             self.assertEqual(x_controls.manualRadio.text(), "Manual")
             self.assertEqual(x_controls.autoRadio.text(), "Auto")
             self.assertEqual(x_controls.minimumLabel.text(), "Minimum")
