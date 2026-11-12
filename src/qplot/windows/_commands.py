@@ -207,10 +207,17 @@ COMMANDS: dict[str, CommandSpec] = {
         "Export raw measurements from selected runs, one CSV per run",
         object_name="exportSelectedRunsCsvAction",
     ),
+    "database.export_copy": CommandSpec(
+        "database.export_copy",
+        "Export Database Copy…",
+        "Create a standalone QCoDeS database containing committed data, including "
+        "data in the WAL. The original is unchanged.",
+        object_name="exportDatabaseCopyAction",
+    ),
     "exports.show": CommandSpec(
         "exports.show",
-        "CSV Export &Progress…",
-        "Show background CSV exports and cancellation controls",
+        "View Export &Progress…",
+        "Show background exports and cancellation controls",
         object_name="showCsvExportsAction",
     ),
     "testdata.open_bundled_folder": CommandSpec(

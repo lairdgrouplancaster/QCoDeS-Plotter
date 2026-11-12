@@ -553,6 +553,13 @@ revision and platform/Python jobs, after the workflow actually runs.
 
 ## Release automation
 
+Before creating a tag, complete the separate
+[documentation release preparation](documentation-releases.md): generate and
+validate a new screenshot set, include all four images and their record in the
+release PR, obtain visual review, and verify the final candidate's fingerprint
+and approved image hashes. The manually triggered preparation workflow has
+read-only repository access and does not change the publishing workflow below.
+
 `.github/workflows/release.yml` runs on two tag forms, each requiring the exact
 application version from `pyproject.toml`:
 
@@ -657,7 +664,9 @@ Version 1.7.0 contains Python-only changes and retains the published native
 remain unchanged.
 
 Complete the account setup and merge the reviewed packaging/release changes
-to `main`. With application `1.7.0` and native `1.0.1`, use the configured
+and this cycle's reviewed screenshot set to `main`. Complete pre-tag screenshot
+verification from [the documentation process](documentation-releases.md#local-generation-and-pre-tag-verification).
+With application `1.7.0` and native `1.0.1`, use the configured
 Git remote/credentials:
 
 ```console
@@ -683,6 +692,11 @@ subsequent release/PR operations if supported, never `gh`.
 Update the application version (for example to `1.7.1`) and changelog, keep
 the exact native/APSW pins when still compatible, and merge the changes. Do
 not change native sources/ABI under an existing native version. Then:
+
+Regenerate and review screenshots for this preparation cycle, merge the entire
+approved set and its record, then run the clean-candidate pre-tag verification
+from [the documentation process](documentation-releases.md#local-generation-and-pre-tag-verification)
+before the tag commands below.
 
 ```console
 git fetch origin
@@ -779,6 +793,14 @@ Before creating a tagged release:
     commands above, review both validation and PyPI verification, then announce
     user-facing changes. GitHub release creation is optional and uses the
     connected GitHub app when available.
+
+Before step 14, require a successful **Prepare release documentation** run for
+this cycle and **Documentation and image checks** on the release PR. Review
+all four screenshots visually, merge all five generated files with the intended
+release inputs, and run `scripts/screenshot_support.py verify-release
+--require-clean --generation-id RUN_ID/ATTEMPT` on that exact final candidate.
+See [documentation releases](documentation-releases.md) for bootstrap and
+freshness rules. No tag may precede inclusion of the reviewed files.
 
 ## Future Options
 

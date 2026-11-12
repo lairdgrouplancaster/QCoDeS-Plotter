@@ -12,7 +12,9 @@ For trusted live viewing of a local WAL-mode database, qPlot's pinned SQLite rea
 
 All main-database and WAL handles used by qPlot must remain physically read-only. Reader transactions must be short, bounded, and cancellable so that viewing does not indefinitely delay QCoDeS checkpoints.
 
-The sole additional exception is explicit synthetic test-database generation. That workflow may create temporary files and create or atomically replace only the exact output path selected by the user. Replacing an existing file requires explicit user confirmation.
+Explicit synthetic test-database generation may create temporary files and create or atomically replace only the exact output path selected by the user. Replacing an existing file requires explicit user confirmation.
+
+Explicit database-copy export may create private temporary databases and their sidecars, and publish a standalone database only at the new output path selected by the user. It must not replace an existing file or use a destination with existing SQLite sidecars. The source main database and WAL remain physically read-only through the pinned reader or the existing protected snapshot reader. Export must not checkpoint or change the source journal mode. Temporary export databases may be written and removed, including on cancellation or failure.
 
 For trusted live reading, the selected local database directory and its path components are assumed trusted and are not expected to be concurrently redirected by a hostile actor. qPlot need not resist adversarial namespace substitution. SQLite’s standard handling of the exact -shm, including permission-mode normalization such as POSIX fchmod, is permitted. Trusted live reading must run unprivileged.
 
@@ -117,3 +119,32 @@ Do not use the GitHub CLI (`gh`) or require `gh auth` for repository work.
 Use the configured Git remote and credentials for `git fetch`, `git push`, and tag pushes. Use the connected GitHub app for pull-request operations.
 
 If GitHub release creation is needed but unavailable through the connected app, stop and ask for direction; do not fall back to `gh`.
+
+## Release documentation screenshots
+
+During every release preparation cycle, regenerate all four documentation
+screenshots with `scripts/capture_demo_screenshots.py` from the actual candidate
+application and its appropriate native dependency, using isolated configuration
+and deterministic synthetic QCoDeS data. Run the screenshot/data/render/shutdown
+validation and a strict MkDocs build. Include all four PNGs and their generation
+record in the release preparation pull request and require visual review before
+release approval. Never substitute generated representations of the UI.
+
+Before creating a release tag, run `scripts/screenshot_support.py verify-release
+--require-clean --generation-id RUN_ID/ATTEMPT` on the intended final candidate.
+Relevant source, resource, native or dependency input changes require regeneration
+and review. Committing generated files or merging may change the commit SHA;
+freshness is determined by the documented input fingerprint and the reviewed
+image hashes. Use a new generation record for every preparation cycle.
+
+Follow `docs/documentation-releases.md` for workflow bootstrap, artefact inclusion,
+validation and remaining manual pre-tag checks. Ordinary PRs need documentation
+and image checks but do not need fresh captures for every code change. Read the
+Docs builds committed, approved images and must not run the Qt application.
+Keep screenshot tooling separate from documentation build dependencies.
+
+Preserve the database-access invariant above. Screenshot automation must not
+write to existing measurement databases or their protected sidecars. Keep
+`.github/workflows/release.yml` and publishing behaviour unchanged unless the
+user explicitly approves changes. Do not push, merge, tag, publish or change
+remote settings without explicit approval.

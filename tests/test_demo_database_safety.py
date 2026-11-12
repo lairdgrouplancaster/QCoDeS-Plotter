@@ -19,6 +19,7 @@ from qcodes.parameters import ManualParameter
 @pytest.fixture
 def screenshot_script(tmp_path, monkeypatch):
     source = Path(__file__).resolve().parents[1]
+    monkeypatch.syspath_prepend(str(source / "scripts"))
     monkeypatch.setenv("QPLOT_DEMO_WORKDIR", str(tmp_path))
     spec = importlib.util.spec_from_file_location(
         "owned_screenshot_script", source / "scripts" / "capture_demo_screenshots.py"
@@ -94,23 +95,23 @@ def test_repeated_generation_preserves_existing_qcodes_database_and_sidecars(
         experiment.conn.close()
 
 
-def test_main_keeps_private_database_alive_until_capture_failure_cleanup(
+def test_main_preserves_approved_files_on_worker_failure(
     screenshot_script, tmp_path, monkeypatch
 ):
-    observed = []
-    monkeypatch.setattr(screenshot_script, "configure_environment", lambda: None)
+    assets = tmp_path / "approved"
+    assets.mkdir()
+    existing = assets / "qplot-main-window.png"
+    existing.write_bytes(b"approved set sentinel")
 
-    def capture(database_path, line_guid, heatmap_guid):
-        _assert_demo_values(database_path, line_guid, heatmap_guid)
-        observed.append(database_path)
+    def capture(staged, work, timeout, **kwargs):
+        (staged / "qplot-main-window.png").write_bytes(b"partial output")
         raise RuntimeError("owned screenshot failure")
 
-    monkeypatch.setattr(screenshot_script, "capture_screenshots", capture)
+    monkeypatch.setattr(screenshot_script, "run_worker", capture)
     with pytest.raises(RuntimeError, match="owned screenshot failure"):
-        screenshot_script.main()
-    assert len(observed) == 1
-    assert not observed[0].parent.exists()
-    assert list(tmp_path.iterdir()) == []
+        screenshot_script.main(["--smoke-test", "--output", str(assets)])
+    assert existing.read_bytes() == b"approved set sentinel"
+    assert list(tmp_path.iterdir()) == [assets]
 
 
 @pytest.fixture

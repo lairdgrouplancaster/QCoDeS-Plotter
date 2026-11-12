@@ -1,5 +1,6 @@
 import os
 import stat
+import sys
 import unicodedata
 from dataclasses import replace
 from pathlib import Path
@@ -1372,3 +1373,28 @@ def test_stage_replaced_by_protected_hardlink_is_not_unlinked(tmp_path):
     assert _path_artifact_state(staged_paths[0]) == alias_before
     assert not target.exists()
     _assert_database_unchanged(database_path, source_before)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS file visibility flags")
+@pytest.mark.parametrize("replace_existing", [False, True])
+def test_export_clears_hidden_staging_flag_before_publication(tmp_path, replace_existing):
+    from qplot.windows._export_paths import StagedExport
+
+    target = tmp_path / "visible.csv"
+    if replace_existing:
+        target.write_bytes(b"previous export")
+    destination = prepare_export_destination(
+        None, str(target), replacement_confirmed=replace_existing,
+    )
+    stage = StagedExport(destination)
+    try:
+        stage.write(lambda filename: Path(filename).write_bytes(b"complete export"))
+        # Reproduce Finder marking a private stage hidden before GUI publication.
+        os.chflags(stage.stage_path, stat.UF_HIDDEN | stat.UF_NODUMP)
+        assert os.stat(stage.stage_path).st_flags & stat.UF_HIDDEN
+        stage.publish()
+        assert target.read_bytes() == b"complete export"
+        assert not target.stat().st_flags & stat.UF_HIDDEN
+        assert target.stat().st_flags & stat.UF_NODUMP
+    finally:
+        stage.close()

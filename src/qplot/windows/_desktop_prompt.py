@@ -58,8 +58,14 @@ def show_first_launch_invitation(parent: qtw.QWidget) -> qtw.QMessageBox | None:
     prompt.setWindowIcon(icon)
     prompt.setIconPixmap(icon.pixmap(QtCore.QSize(64, 64), prompt.devicePixelRatioF()))
     setup = prompt.addButton("Set up…", qtw.QMessageBox.ButtonRole.AcceptRole)
+    if setup is not None:
+        setup.setToolTip("Open desktop integration options before installing anything.")
     later = prompt.addButton("Later", qtw.QMessageBox.ButtonRole.RejectRole)
+    if later is not None:
+        later.setToolTip("Dismiss this invitation for now; ask again on a future launch.")
     never = prompt.addButton("Don’t ask again", qtw.QMessageBox.ButtonRole.NoRole)
+    if never is not None:
+        never.setToolTip("Stop showing this invitation. Desktop integration remains available from Help.")
     prompt.setDefaultButton(later)
     prompt.setEscapeButton(later)
     prompt.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)

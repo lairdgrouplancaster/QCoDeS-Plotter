@@ -199,6 +199,16 @@ class PreferencesDialog(qtw.QDialog):
         if apply_button is None:
             raise RuntimeError("Preferences dialog Apply button is not available.")
         apply_button.clicked.connect(self.apply_preferences)
+        apply_button.setToolTip("Save and apply these preferences without closing this dialog.")
+        for standard_button, tooltip in (
+            (qtw.QDialogButtonBox.StandardButton.Ok,
+             "Save and apply these preferences, then close this dialog."),
+            (qtw.QDialogButtonBox.StandardButton.Cancel,
+             "Close without applying further changes. Changes already applied are kept."),
+        ):
+            button = self.buttonBox.button(standard_button)
+            if button is not None:
+                button.setToolTip(tooltip)
         self.restoreDefaultsButton = self.buttonBox.button(
             qtw.QDialogButtonBox.StandardButton.RestoreDefaults
             )
@@ -223,6 +233,7 @@ class PreferencesDialog(qtw.QDialog):
 
         self.themeCombo = qtw.QComboBox(tab)
         self.themeCombo.setObjectName("themePreferenceCombo")
+        self.themeCombo.setToolTip("Choose the colour theme for qPlot windows and plots.")
         self.themeCombo.setAccessibleName("Theme")
         for label, value in THEME_OPTIONS:
             self.themeCombo.addItem(label, value)
@@ -305,6 +316,7 @@ class PreferencesDialog(qtw.QDialog):
 
         self.previewSizeSpin = qtw.QSpinBox(tab)
         self.previewSizeSpin.setObjectName("previewSizePreferenceSpin")
+        self.previewSizeSpin.setToolTip("Set the size of measurement thumbnails in the run list and Preview tab.")
         self.previewSizeSpin.setAccessibleName("Preview size")
         self.previewSizeSpin.setRange(50, 1000)
         self.previewSizeSpin.setSingleStep(50)
@@ -332,6 +344,7 @@ class PreferencesDialog(qtw.QDialog):
 
         self.refreshRateSpin = qtw.QDoubleSpinBox(tab)
         self.refreshRateSpin.setObjectName("refreshRatePreferenceSpin")
+        self.refreshRateSpin.setToolTip("Default interval between automatic refreshes, in seconds. Zero disables automatic refresh.")
         self.refreshRateSpin.setAccessibleName("Default refresh interval")
         self.refreshRateSpin.setRange(0.0, 10_000.0)
         self.refreshRateSpin.setSingleStep(0.1)
@@ -350,6 +363,7 @@ class PreferencesDialog(qtw.QDialog):
 
         self.mouseModeCombo = qtw.QComboBox(tab)
         self.mouseModeCombo.setObjectName("mouseModePreferenceCombo")
+        self.mouseModeCombo.setToolTip("Choose whether dragging in a plot pans the view or draws a zoom rectangle.")
         self.mouseModeCombo.setAccessibleName("Mouse mode")
         for label, value in MOUSE_MODE_OPTIONS:
             self.mouseModeCombo.addItem(label, value)
@@ -359,6 +373,7 @@ class PreferencesDialog(qtw.QDialog):
         self.copyPlotImageResolutionCombo.setObjectName(
             "copyPlotImageResolutionPreferenceCombo"
             )
+        self.copyPlotImageResolutionCombo.setToolTip("Choose the resolution of plot images copied to the clipboard.")
         self.copyPlotImageResolutionCombo.setAccessibleName(
             "Copy plot image resolution"
             )
@@ -396,6 +411,7 @@ class PreferencesDialog(qtw.QDialog):
 
         self.defaultLoadPathEdit = qtw.QLineEdit(tab)
         self.defaultLoadPathEdit.setObjectName("defaultLoadPathPreferenceEdit")
+        self.defaultLoadPathEdit.setToolTip("Folder initially offered when loading a database. Leave blank to use the normal file-dialog location.")
         self.defaultLoadPathEdit.setAccessibleName("Default load location")
         self.defaultLoadPathEdit.setPlaceholderText("No default folder")
         path_layout.addWidget(self.defaultLoadPathEdit, 1)
@@ -434,6 +450,7 @@ class PreferencesDialog(qtw.QDialog):
             tab,
             )
         self.confirmCloseAllCheck.setObjectName("confirmCloseAllPreferenceCheck")
+        self.confirmCloseAllCheck.setToolTip("Ask for confirmation before closing all plot windows.")
         self.confirmCloseAllCheck.setAccessibleName(
             "Confirm before closing all plot windows"
             )
@@ -441,6 +458,7 @@ class PreferencesDialog(qtw.QDialog):
 
         self.confirmQuitCheck = qtw.QCheckBox("Confirm before quit", tab)
         self.confirmQuitCheck.setObjectName("confirmQuitPreferenceCheck")
+        self.confirmQuitCheck.setToolTip("Ask for confirmation before quitting qPlot.")
         self.confirmQuitCheck.setAccessibleName("Confirm before quit")
         layout.addWidget(self.confirmQuitCheck)
 
@@ -448,6 +466,7 @@ class PreferencesDialog(qtw.QDialog):
             "Warn before adding data with incompatible axes", tab,
         )
         self.confirmIncompatibleAxesCheck.setObjectName("confirmIncompatibleAxesPreferenceCheck")
+        self.confirmIncompatibleAxesCheck.setToolTip("Warn when added data has coordinate names or units that differ from the current plot.")
         self.confirmIncompatibleAxesCheck.setAccessibleName(
             "Warn before adding data with incompatible axes"
         )
@@ -465,6 +484,7 @@ class PreferencesDialog(qtw.QDialog):
 
         self.maxThreadsSpin = qtw.QSpinBox(tab)
         self.maxThreadsSpin.setObjectName("maxThreadsPreferenceSpin")
+        self.maxThreadsSpin.setToolTip("Maximum number of background worker threads used to load and process data.")
         self.maxThreadsSpin.setAccessibleName("Maximum worker threads")
         self.maxThreadsSpin.setRange(1, 999)
         self._add_row(form, "&Maximum worker threads:", self.maxThreadsSpin)
@@ -535,6 +555,7 @@ class PreferencesDialog(qtw.QDialog):
 
         self.delGracePeriodSpin = qtw.QDoubleSpinBox(tab)
         self.delGracePeriodSpin.setObjectName("deleteGracePreferenceSpin")
+        self.delGracePeriodSpin.setToolTip("Time to retain unused datasets in memory before releasing them. Reopening them during this period can be quicker.")
         self.delGracePeriodSpin.setAccessibleName("Dataset release grace period")
         self.delGracePeriodSpin.setRange(0.0, 300.0)
         self.delGracePeriodSpin.setSingleStep(1.0)
@@ -548,6 +569,7 @@ class PreferencesDialog(qtw.QDialog):
 
         self.cloudSyncTimeoutSpin = qtw.QDoubleSpinBox(tab)
         self.cloudSyncTimeoutSpin.setObjectName("cloudSyncPreferenceSpin")
+        self.cloudSyncTimeoutSpin.setToolTip("Maximum time to wait for a cloud-stored file to become available locally.")
         self.cloudSyncTimeoutSpin.setAccessibleName("Cloud sync timeout")
         self.cloudSyncTimeoutSpin.setRange(1.0, 3600.0)
         self.cloudSyncTimeoutSpin.setSingleStep(10.0)
@@ -564,10 +586,12 @@ class PreferencesDialog(qtw.QDialog):
             "Check for updates on launch (at most once a day)", tab,
         )
         self.checkUpdatesOnLaunchCheck.setObjectName("checkUpdatesOnLaunchPreferenceCheck")
+        self.checkUpdatesOnLaunchCheck.setToolTip("Check PyPI for newer qPlot releases in the background, at most once a day. Requires an Internet connection.")
         self.checkUpdatesOnLaunchCheck.setAccessibleName("Check for updates on launch")
         layout.addWidget(self.checkUpdatesOnLaunchCheck)
         self.includePrereleasesCheck = qtw.QCheckBox("Include pre-release versions", tab)
         self.includePrereleasesCheck.setObjectName("includePrereleasesPreferenceCheck")
+        self.includePrereleasesCheck.setToolTip("Include development and preview releases when checking for updates.")
         layout.addWidget(self.includePrereleasesCheck)
         hint = qtw.QLabel(
             "Launch checks run in the background and notify you only about newer releases. "

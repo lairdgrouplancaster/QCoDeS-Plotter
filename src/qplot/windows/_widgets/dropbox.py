@@ -37,6 +37,7 @@ class picker_1d(qtw.QWidget):
         
         # Selection box
         self.option_box = expandingComboBox(*args, **kargs)
+        self.option_box.setToolTip("Choose the measurement displayed by this trace.")
         self.option_box.setSizePolicy(qtw.QSizePolicy.Policy.Expanding, qtw.QSizePolicy.Policy.Fixed)
         self.reset_box(items, item_data=item_data)
         self.option_box.currentIndexChanged.connect(self.selectedOption)
@@ -55,6 +56,7 @@ class picker_1d(qtw.QWidget):
         
         # Axis side picker
         self.axis_side = expandingComboBox()
+        self.axis_side.setToolTip("Choose whether this trace uses the left or right vertical axis.")
         self.axis_side.addItems(["Left", "Right"])
         self.axis_side.setCurrentIndex(0)
         row_2.addWidget(self.axis_side)
@@ -64,6 +66,7 @@ class picker_1d(qtw.QWidget):
         
         # Line colour picker
         self.color_box = colorBox(cfg)
+        self.color_box.setToolTip("Choose the colour of this trace.")
         self.color_box.setFixedWidth(self.color_box_width)
         row_2.addWidget(self.color_box)
         

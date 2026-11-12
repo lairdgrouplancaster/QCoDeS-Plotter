@@ -140,7 +140,9 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         layout.setSpacing(8)
 
         self.colorbar_manual_radio = qtw.QRadioButton("Manual")
+        self.colorbar_manual_radio.setToolTip("Set fixed colour limits using the range fields.")
         self.colorbar_auto_radio = qtw.QRadioButton("Auto")
+        self.colorbar_auto_radio.setToolTip("Calculate colour limits automatically from the data.")
         if "relevel_refresh" not in self.__dict__:
             self._init_colorbar_refresh_control()
         self.symmetric_color = qtw.QCheckBox("Symmetric")
@@ -171,14 +173,18 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
                 style.standardIcon(qtw.QStyle.StandardPixmap.SP_BrowserReload)
             )
         self.colorbar_colormap_table = qtw.QTableWidget()
+        self.colorbar_colormap_table.setToolTip("Select a colour map to apply it to this heatmap.")
         for spec in _COLORBAR_FILTERS.values():
             setattr(self, spec.widget_name, qtw.QCheckBox(spec.label))
+            getattr(self, spec.widget_name).setToolTip(f"Include {spec.label} colour maps in the list.")
         self.colorbar_cet_subtype_checks = {}
         self.colorbar_matplotlib_subtype_checks = {}
         for subtype, label in _CET_COLORBAR_SUBTYPES:
             self.colorbar_cet_subtype_checks[subtype] = qtw.QCheckBox(label)
+            self.colorbar_cet_subtype_checks[subtype].setToolTip(f"Include {label.lower()} CET colour maps in the list.")
         for subtype, label in _MATPLOTLIB_COLORBAR_SUBTYPES:
             self.colorbar_matplotlib_subtype_checks[subtype] = qtw.QCheckBox(label)
+            self.colorbar_matplotlib_subtype_checks[subtype].setToolTip(f"Include {label.lower()} Matplotlib colour maps in the list.")
         self._init_colorbar_colormap_table()
 
         validator = QtGui.QDoubleValidator(cast(QtCore.QObject, self))

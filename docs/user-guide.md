@@ -759,6 +759,21 @@ secondary axes, and the axis labels follow the displayed quantities.
 
 ## Export
 
+Use `File -> Export Database Copy…` to create a standalone `.db` for sharing.
+Choose a new filename; existing files and destinations with SQLite sidecars
+cannot be replaced. The copy includes committed data in the WAL and opens
+without the original sidecar files. qPlot does not checkpoint or modify the
+source database or WAL.
+Databases whose measurements are stored in separate raw-data files cannot be
+exported as a standalone database by this command.
+
+Acquisition can continue during export. The result is a consistent database
+snapshot taken during the export, which may contain an unfinished run. Data
+still buffered in QCoDeS is not included. Continued writes can cause SQLite to
+restart copying pages; pause acquisition and retry if export cannot finish.
+The copy preserves run IDs, GUIDs, metadata and measurement values, but is not
+promised to be byte-for-byte identical to the original file.
+
 The main-window **CSV…** button exports raw measurement values, including their
 setpoints, without plot operations. Select or enter a Run ID and choose a
 measurement number, or `*` for all measurements. Preview context menus can also
@@ -789,11 +804,14 @@ in display order. The drag image shows the number of measurements being copied.
 Dragging an unselected thumbnail carries just that measurement. The usual
 axis compatibility choices and one-volume-per-window limit still apply.
 
-CSV capture and writing run in the background. The **CSV exports** window shows
+Database copies and CSV exports run in the background. The **Exports** window shows
 progress and lets you cancel selected or all pending exports. Hide it to keep
-working, and reopen it from `File -> CSV Export Progress…`. A failed or cancelled
+working, and reopen it from `File -> View Export Progress…`. A failed or cancelled
 export leaves its destination unchanged; files already completed remain saved.
-Switching or closing the database cancels pending raw exports. Closing a plot
+Successful exports show **Export complete** with a tick. When all exports have
+finished, **Hide** becomes **Done**; for a single successful export, the completion
+message also shows the output path, which you can select and copy.
+Switching or closing the database cancels pending database copies and raw exports. Closing a plot
 cancels its pending plot exports.
 
 In a plot's export dialog, select **CSV data** and check **Values**:

@@ -114,7 +114,9 @@ class operations_options_base(qtw.QWidget):
         # Controls order to perform and user inputs
         self.list_order = draggableListWidget()
         self.list_order.setDragDropMode(qtw.QAbstractItemView.DragDropMode.InternalMove)
-        self.list_order.setToolTip("Drag Items to Control Operation Order")
+        self.list_order.setToolTip(
+            "Drag operations up or down to change the order in which they are applied."
+        )
         self.main_layout.addWidget(self.list_order)
 
         # Buttons
@@ -133,6 +135,7 @@ class operations_options_base(qtw.QWidget):
 
         # Allows user to toggle options
         self.list_options = qtw.QListWidget()
+        self.list_options.setToolTip("Tick an operation to add it to the processing order, then use Apply/Refresh.")
         # Some platform styles draw the vertical scrollbar as an overlay.  Keep
         # the option-row controls clear of that area, rather than allowing the
         # checkboxes to extend underneath it.
@@ -365,6 +368,16 @@ class rowItem(qtw.QListWidgetItem):
         elif input_type in [int, float, Decimal, str]: # Textbox input
             line_edit = qtw.QLineEdit()
             self.input = line_edit
+            input_help = {
+                "Limit Maximum": "Replace values above this limit with the limit.",
+                "Limit Minimum": "Replace values below this limit with the limit.",
+                "Fill Below": "Fill gaps down each column with the preceding value, up to this many cells. Only gaps bounded by data are filled; zero disables filling.",
+                "Fill Right": "Fill gaps along each row with the preceding value, up to this many cells. Only gaps bounded by data are filled; zero disables filling.",
+            }
+            line_edit.setToolTip(
+                input_help.get(label, f"Enter the value for {label}.")
+                + " Use Apply/Refresh to update the plot."
+            )
             # Restrict user input to reduce errors
             if input_type is int:
                 line_edit.setValidator(QtGui.QIntValidator())
@@ -381,6 +394,7 @@ class rowItem(qtw.QListWidgetItem):
             combo_box = expandingComboBox()
             self.input = combo_box
             combo_box.addItems(list(input_type))
+            combo_box.setToolTip(f"Choose the setting for {label}, then use Apply/Refresh.")
             
         else:
             raise TypeError(

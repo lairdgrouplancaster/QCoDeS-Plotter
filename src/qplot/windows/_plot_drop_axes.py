@@ -165,6 +165,7 @@ class DropAxisPlan:
         )
         box.setDefaultButton(qtw.QMessageBox.StandardButton.Cancel)
         do_not_show_again = qtw.QCheckBox("Do not show again", box)
+        do_not_show_again.setToolTip("Disable future incompatible-axis warnings. Re-enable them in Preferences.")
         box.setCheckBox(do_not_show_again)
         result = box.exec()
         if result == qtw.QMessageBox.StandardButton.Ok and do_not_show_again.isChecked():

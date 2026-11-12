@@ -6,6 +6,7 @@ import ntpath
 import os
 import re
 import stat
+import sys
 import tempfile
 import unicodedata
 from collections.abc import Callable, Iterable, Mapping
@@ -322,6 +323,7 @@ class StagedExport:
         if before_publish is not None:
             before_publish()
         self._verify()
+        self._clear_hidden_flag()
         publish = (_replace_approved_target if self.destination.target_existed
                    else _publish_new_target)
         publish(
@@ -332,6 +334,44 @@ class StagedExport:
         self.published = True
         _sync_parent_directory(self.parent_fd)
         return True
+
+    def _clear_hidden_flag(self) -> None:
+        """Prevent a macOS staging-file flag from hiding the published output.
+
+        Finder may mark dot-prefixed stages UF_HIDDEN. Renaming or linking
+        keeps that inode flag, even when the final filename has no leading dot.
+        Only change the verified private stage, never an existing destination.
+        """
+        if sys.platform != "darwin":
+            return
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
+        fd = os.open(
+            self.stage_path if self.parent_fd is None else self.stage_name,
+            flags,
+            **({} if self.parent_fd is None else {"dir_fd": self.parent_fd}),
+        )
+        try:
+            status = os.fstat(fd)
+            if (_stage_identity(status) != self.stage_identity
+                    or not stat.S_ISREG(status.st_mode) or status.st_nlink != 1):
+                raise UnsafeExportDestinationError(
+                    "The private export staging file changed unexpectedly."
+                )
+            if status.st_flags & stat.UF_HIDDEN:
+                # Python exposes only pathname-based chflags on macOS. Use
+                # the native descriptor API so a substituted pathname cannot
+                # redirect this metadata change onto a measurement database.
+                import ctypes
+
+                fchflags = ctypes.CDLL(None, use_errno=True).fchflags
+                fchflags.argtypes = (ctypes.c_int, ctypes.c_uint)
+                fchflags.restype = ctypes.c_int
+                if fchflags(fd, status.st_flags & ~stat.UF_HIDDEN) != 0:
+                    error = ctypes.get_errno()
+                    raise OSError(error, os.strerror(error), self.stage_path)
+        finally:
+            os.close(fd)
 
     def close(self) -> None:
         if self.closed:

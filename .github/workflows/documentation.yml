@@ -1,0 +1,34 @@
+name: Documentation
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  documentation:
+    name: Documentation and image checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install documentation tools and PNG decoder
+        run: |
+          python -m venv .venv-mac
+          .venv-mac/bin/python -m pip install -r requirements/docs.txt Pillow==12.3.0
+      # Ordinary code PRs may legitimately leave screenshot inputs stale.
+      # Freshness and generation are mandatory only during release preparation.
+      - name: Validate committed PNGs and documentation references
+        run: .venv-mac/bin/python scripts/screenshot_support.py validate
+      - name: Build committed documentation and images
+        run: .venv-mac/bin/python -m mkdocs build --strict

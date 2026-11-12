@@ -68,6 +68,7 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         )
         self.add_item_combo.setToolTip("Choose a 1D, 2D or 3D dataset to add.")
         self.add_item_button = qtw.QPushButton("Add", self)
+        self.add_item_button.setToolTip("Add the selected dataset to this plot.")
         self.remove_item_button = qtw.QPushButton("Remove", self)
         actions = qtw.QHBoxLayout()
         actions.addWidget(self.add_item_combo, 1)
@@ -107,7 +108,10 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
             self.controls_stack.setCurrentWidget(self.trace_controls_panel)
             super()._sync_controls_from_selection()
         self.remove_item_button.setEnabled(self._can_remove_items(selected))
-        self.remove_item_button.setToolTip(self.owner.plot_item_removal_error(selected) or "")
+        self.remove_item_button.setToolTip(
+            self.owner.plot_item_removal_error(selected)
+            or "Remove the selected secondary datasets from this plot."
+        )
 
     def _can_remove_items(self, selected):
         entries = set(self.owner._plot_item_order)

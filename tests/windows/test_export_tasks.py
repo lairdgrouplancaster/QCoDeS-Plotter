@@ -80,11 +80,18 @@ def test_export_task_keeps_gui_responsive_and_validates_on_gui(export_window, tm
     try:
         wait_for(lambda: started.is_set() and len(ticks) >= 3)
         assert not task.done
+        assert task.manager.dismiss_button.text() == "Hide"
+        assert "in progress" in task.manager.summary.text()
         assert not target.exists()
         assert window._shutdown.resources.inspect().active
         release.set()
         wait_for(lambda: task.done)
         assert task.error is None
+        assert task.row.text(1) == "Export complete"
+        assert task.bar.format() == "Complete"
+        assert task.manager.dismiss_button.text() == "Done"
+        assert "Export complete" in task.manager.summary.text()
+        assert str(target) in task.manager.summary.text()
         assert task.result == {"rows": 2}
         assert target.read_text(encoding="utf-8") == "x,y\n1,7\n2,9\n"
         assert validation_threads == [gui_thread]
