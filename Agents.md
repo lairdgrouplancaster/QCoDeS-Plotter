@@ -12,7 +12,9 @@ For trusted live viewing of a local WAL-mode database, qPlot's pinned SQLite rea
 
 All main-database and WAL handles used by qPlot must remain physically read-only. Reader transactions must be short, bounded, and cancellable so that viewing does not indefinitely delay QCoDeS checkpoints.
 
-The sole additional exception is explicit synthetic test-database generation. That workflow may create temporary files and create or atomically replace only the exact output path selected by the user. Replacing an existing file requires explicit user confirmation.
+Explicit synthetic test-database generation may create temporary files and create or atomically replace only the exact output path selected by the user. Replacing an existing file requires explicit user confirmation.
+
+Explicit database-copy export may create private temporary databases and their sidecars, and publish a standalone database only at the new output path selected by the user. It must not replace an existing file or use a destination with existing SQLite sidecars. The source main database and WAL remain physically read-only through the pinned reader or the existing protected snapshot reader. Export must not checkpoint or change the source journal mode. Temporary export databases may be written and removed, including on cancellation or failure.
 
 For trusted live reading, the selected local database directory and its path components are assumed trusted and are not expected to be concurrently redirected by a hostile actor. qPlot need not resist adversarial namespace substitution. SQLite’s standard handling of the exact -shm, including permission-mode normalization such as POSIX fchmod, is permitted. Trusted live reading must run unprivileged.
 

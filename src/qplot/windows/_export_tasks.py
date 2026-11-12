@@ -34,7 +34,7 @@ class _ExportWorker(QtCore.QRunnable):
             )
             task.check_cancelled()
             if task.result is False:
-                raise RuntimeError("The CSV writer did not produce an export.")
+                raise RuntimeError("The export writer did not produce an export.")
         except BaseException as error:
             task.error = error.with_traceback(None)
         finally:
@@ -82,7 +82,7 @@ class ExportTask:
 
     def check_cancelled(self) -> None:
         if self.cancelled:
-            raise ExportCancelled("CSV export cancelled.")
+            raise ExportCancelled("Export cancelled.")
 
     def cancel(self, *_args) -> None:
         with self._lock:
@@ -113,11 +113,13 @@ class ExportTaskManager(QtCore.QObject):
         self.timer.setInterval(50)
         self.timer.timeout.connect(self.poll)
         self.dialog = qtw.QDialog(main)
-        self.dialog.setWindowTitle("CSV exports")
+        self.dialog.setWindowTitle("Exports")
         self.dialog.setModal(False)
         self.dialog.resize(660, 280)
         layout = qtw.QVBoxLayout(self.dialog)
         self.summary = qtw.QLabel("Exports run in the background. Completed files are kept if you cancel.")
+        self.summary.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.summary.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
         self.tree = qtw.QTreeWidget()
@@ -140,10 +142,10 @@ class ExportTaskManager(QtCore.QObject):
         self.cancel_button.clicked.connect(self.cancel_all)
         buttons.addWidget(self.cancel_button)
         buttons.addStretch()
-        hide = qtw.QPushButton("Hide")
-        hide.setToolTip("Hide this window while exports continue in the background.")
-        hide.clicked.connect(self.dialog.hide)
-        buttons.addWidget(hide)
+        self.dismiss_button = qtw.QPushButton("Done")
+        self.dismiss_button.setToolTip("Close the export progress window.")
+        self.dismiss_button.clicked.connect(self.dialog.hide)
+        buttons.addWidget(self.dismiss_button)
         layout.addLayout(buttons)
 
     def start(self, owner, *, title, destination, writer, before_publish=None,
@@ -174,6 +176,9 @@ class ExportTaskManager(QtCore.QObject):
         if closed is not None and hasattr(closed, "connect"):
             closed.connect(task.cancel)
         self.cancel_button.setEnabled(True)
+        self.dismiss_button.setText("Hide")
+        self.dismiss_button.setToolTip("Hide this window while exports continue in the background.")
+        self.summary.setText("Export in progress. Completed files are kept if you cancel.")
         self.dialog.show()
         self.timer.start()
         self._dispatch()
@@ -264,10 +269,27 @@ class ExportTaskManager(QtCore.QObject):
             if task.done:
                 key = "saved" if task.stage.published else "cancelled" if task.cancelled else "failed"
                 counts[key] += 1
-        self.summary.setText(
-            f"{counts['saved']} saved · {counts['cancelled']} cancelled · "
-            f"{counts['failed']} failed · {len(self.tasks)} pending. "
-            "Completed files are kept if you cancel."
+        details = (
+            f"{counts['saved']} exported · {counts['cancelled']} cancelled · "
+            f"{counts['failed']} failed"
+        )
+        if self.tasks:
+            summary = f"Export in progress. {details} · {len(self.tasks)} pending."
+        elif counts['saved'] == len(self.history) and self.history:
+            if len(self.history) == 1:
+                summary = (
+                    "Export complete. Your file is ready:\n"
+                    f"{self.history[0].destination.filename}"
+                )
+            else:
+                summary = f"Exports complete. {counts['saved']} files are ready."
+        else:
+            summary = f"Exports finished. {details}."
+        self.summary.setText(summary)
+        self.dismiss_button.setText("Hide" if self.tasks else "Done")
+        self.dismiss_button.setToolTip(
+            "Hide this window while exports continue in the background."
+            if self.tasks else "Close the export progress window."
         )
         self.cancel_button.setEnabled(bool(self.tasks))
         self._update_cancel_selected_button()
@@ -291,13 +313,13 @@ class ExportTaskManager(QtCore.QObject):
             task.error = error.with_traceback(None)
         except BaseException as error:
             task.error = error.with_traceback(None)
-            log_exception("CSV export failed", error, __name__)
+            log_exception("Export failed", error, __name__)
         finally:
             try:
                 task.stage.close()
             except Exception as error:
                 task.error = error.with_traceback(None)
-                log_exception("CSV export cleanup failed", error, __name__)
+                log_exception("Export cleanup failed", error, __name__)
             task.done = True
             self.tasks.discard(task)
             task.owner.__dict__.get("_export_tasks", set()).discard(task)
@@ -313,25 +335,28 @@ class ExportTaskManager(QtCore.QObject):
             task.before_publish = None
         task.bar.setRange(0, 100)
         task.bar.setValue(100 if task.stage.published else 0)
-        status = "Saved" if task.stage.published else "Cancelled" if task.cancelled else "Failed"
+        status = "Export complete" if task.stage.published else "Cancelled" if task.cancelled else "Failed"
         task.row.setText(1, status)
+        task.bar.setFormat("Complete" if task.stage.published else status)
+        if task.stage.published:
+            task.row.setIcon(1, self.dialog.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogApplyButton))
         if task.error is not None:
             task.row.setToolTip(1, str(task.error))
         if task.stage.published and task.on_success is not None:
             try:
                 task.on_success(task.result)
             except Exception as error:
-                log_exception("CSV completion notification failed", error, __name__)
+                log_exception("Export completion notification failed", error, __name__)
         elif task.error is not None and not task.cancelled and not _window_is_retired(task.owner):
             handled = False
             if task.on_failure is not None:
                 try:
                     handled = bool(task.on_failure(task.error))
                 except Exception as error:
-                    log_exception("CSV failure notification failed", error, __name__)
+                    log_exception("Export failure notification failed", error, __name__)
             show_status = getattr(task.owner, "show_status", None)
             if not handled and callable(show_status):
-                show_status(f"CSV export failed: {task.error}", 8000)
+                show_status(f"Export failed: {task.error}", 8000)
         task.on_success = None
         task.on_failure = None
         # Completed progress rows must not retain a closed plot's datasets,

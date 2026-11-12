@@ -230,6 +230,25 @@ or temporarily unavailable. Finish or pause the writing transaction and
 refresh; qPlot will not fall back to a source mode that could expose
 uncommitted pages or modify the database and its sidecars.
 
+## SQLite Coordination file cannot be opened
+
+If loading reports that qPlot cannot open or verify the SQLite coordination
+file (`-shm`), check access to that file and its containing folder. Earlier
+versions describe this as `shm/shm_proof_open` with SQLite code 14. This is an
+access or file-verification failure, not a finding that the measurement data
+is corrupt.
+
+On macOS, privacy controls can permit access to the selected `.db` while
+blocking its neighbouring `-shm`. Open **System Settings → Privacy & Security →
+Files and Folders**, expand **qPlot** (or the application used to launch it,
+such as Terminal), and enable the relevant folder, for example **Downloads
+Folder**. Then reopen the database. Different launching applications can have
+different permissions. See Apple's [Downloads folder access guide](https://support.apple.com/en-gb/guide/mac-help/mchld27a5c7a/mac).
+
+SQLite needs read and write access to the SHM coordination file; the main
+database and WAL remain read-only in qPlot. Do not delete sidecars to work
+around an access failure while applications may still be using the database.
+
 ## A OneDrive Database Waits for Sync
 
 On macOS, OneDrive and other cloud providers can leave a `.db` file as an

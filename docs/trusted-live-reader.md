@@ -27,6 +27,31 @@ broker/helper. Raw CSV exports now use that same run-prefix capture in a
 cancellable background task. A narrowly eligible snapshot fallback session
 retains its read-only dataset route.
 
+## Explicit database-copy export
+
+`File -> Export Database Copy…` runs an incremental SQLite backup in a separate
+spawned process. Trusted sources use the pinned `TrustedLiveReader` VFS with
+256-page backup steps, source-identity validation and transaction-release
+checks after every step. Snapshot sources use the existing protected snapshot
+reader. The export never falls back from an accepted trusted source to an
+unprotected SQLite connection.
+
+Only parent-owned scratch databases are writable. Their journal mode is
+normalised to DELETE before a standalone integrity check, then the completed
+file is copied into the shared export framework's private stage. GUI-owned
+publication rechecks the source, selected database generation and destination.
+Only a new destination without SQLite sidecars is permitted. Cancellation,
+failure or a source change prevents publication. The export task owns child
+termination and temporary-file cleanup; its overall deadline is 30 minutes.
+The child watchdog also exits on parent loss or a stalled operation, with a
+ten-second hard limit between backup steps and sixty seconds for preparation
+or final validation. All reader scratch directories are inside the parent's
+temporary folder so forced termination does not orphan intermediate copies.
+
+SQLite may restart the backup when another connection writes between steps.
+The result therefore represents a consistent committed state during export,
+not necessarily the state when the user selected the menu item.
+
 ## Explicit plotting
 
 Plot-all, Run, indexed measurement, preview, and overlay actions request a
