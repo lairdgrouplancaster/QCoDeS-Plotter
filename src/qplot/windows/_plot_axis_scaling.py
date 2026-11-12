@@ -613,6 +613,10 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             field.setMinimumWidth(
                 field.fontMetrics().horizontalAdvance("0.888888888888888888") + 12
             )
+            field.setMaximumWidth(qtw.QWIDGETSIZE_MAX)
+            field.setSizePolicy(
+                qtw.QSizePolicy.Policy.Expanding, qtw.QSizePolicy.Policy.Fixed,
+            )
 
         ui.mouseCheck.setText("Allow zoom/pan")
         ui.mouseCheck.setToolTip(

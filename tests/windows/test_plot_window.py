@@ -3338,6 +3338,28 @@ class RunListParentLookupTestCase(unittest.TestCase):
                     "original_page_size": original_page_size,
                     "original_grid_geometry": original_grid_geometry,
                     "grid_geometry": x_controls.gridLayout.geometry(),
+                    "grid_enabled": x_controls.gridLayout.isEnabled(),
+                    "grid_minimum_size": x_controls.gridLayout.minimumSize(),
+                    "grid_size_hint": x_controls.gridLayout.sizeHint(),
+                    "fields": [
+                        {
+                            "name": field.objectName(),
+                            "visible": field.isVisible(),
+                            "hidden": field.isHidden(),
+                            "geometry": field.geometry(),
+                            "minimum_size": field.minimumSize(),
+                            "maximum_size": field.maximumSize(),
+                            "size_hint": field.sizeHint(),
+                            "horizontal_policy": field.sizePolicy().horizontalPolicy(),
+                            "item_geometry": x_controls.gridLayout.itemAt(
+                                x_controls.gridLayout.indexOf(field),
+                            ).geometry(),
+                            "cell_geometry": x_controls.gridLayout.cellRect(2, column),
+                        }
+                        for column, field in enumerate(
+                            (x_controls.minText, x_controls.maxText), start=1,
+                        )
+                    ],
                 },
             )
             dialog.resize(original_size)
