@@ -339,7 +339,9 @@ class ExportTaskManager(QtCore.QObject):
         task.row.setText(1, status)
         task.bar.setFormat("Complete" if task.stage.published else status)
         if task.stage.published:
-            task.row.setIcon(1, self.dialog.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogApplyButton))
+            style = self.dialog.style()
+            if style is not None:
+                task.row.setIcon(1, style.standardIcon(qtw.QStyle.StandardPixmap.SP_DialogApplyButton))
         if task.error is not None:
             task.row.setToolTip(1, str(task.error))
         if task.stage.published and task.on_success is not None:
