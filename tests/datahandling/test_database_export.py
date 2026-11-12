@@ -2,6 +2,7 @@
 
 import hashlib
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -37,7 +38,7 @@ def test_export_standalone_preserves_source(tmp_path, live):
             cancelled=lambda: False, progress=lambda *args: progress.append(args),
         )
         assert before == {str(p): (digest(p), p.stat().st_mtime_ns) for p in protected}
-        with sqlite3.connect(stage.as_uri() + "?mode=ro&immutable=1", uri=True) as copy:
+        with closing(sqlite3.connect(stage.as_uri() + "?mode=ro&immutable=1", uri=True)) as copy:
             assert copy.execute("SELECT run_id FROM runs").fetchall() == [(196,), (197,)]
             assert copy.execute("PRAGMA integrity_check").fetchone() == ("ok",)
             assert copy.execute("PRAGMA journal_mode").fetchone() == ("delete",)
@@ -49,7 +50,7 @@ def test_export_standalone_preserves_source(tmp_path, live):
 
 def test_cancel_during_copy_does_not_write_stage(tmp_path):
     path = tmp_path / "source.db"
-    with sqlite3.connect(path) as writer:
+    with closing(sqlite3.connect(path)) as writer, writer:
         writer.execute("CREATE TABLE runs(run_id INTEGER PRIMARY KEY, value BLOB)")
         writer.execute("INSERT INTO runs VALUES (1, zeroblob(3000000))")
     stage = tmp_path / "stage.db"
@@ -69,7 +70,7 @@ def test_cancel_during_copy_does_not_write_stage(tmp_path):
 
 def test_replaced_source_is_rejected(tmp_path):
     source = tmp_path / "source.db"
-    with sqlite3.connect(source) as writer:
+    with closing(sqlite3.connect(source)) as writer, writer:
         writer.execute("CREATE TABLE runs(run_id INTEGER)")
     instance = database_instance(source)
     source.rename(tmp_path / "old.db")
@@ -85,7 +86,7 @@ def test_replaced_source_is_rejected(tmp_path):
 
 def test_total_deadline_stops_child(tmp_path):
     source = tmp_path / "source.db"
-    with sqlite3.connect(source) as writer:
+    with closing(sqlite3.connect(source)) as writer, writer:
         writer.execute("CREATE TABLE runs(run_id INTEGER)")
     stage = tmp_path / "stage.db"
     stage.touch()
@@ -98,7 +99,7 @@ def test_total_deadline_stops_child(tmp_path):
 
 def test_existing_staging_contents_are_not_overwritten(tmp_path):
     source = tmp_path / "source.db"
-    with sqlite3.connect(source) as writer:
+    with closing(sqlite3.connect(source)) as writer, writer:
         writer.execute("CREATE TABLE runs(run_id INTEGER)")
     before = source.read_bytes()
     with pytest.raises(ValueError, match="private staging"):
@@ -141,7 +142,7 @@ def test_real_qcodes_copy_preserves_metadata_and_measurements(tmp_path):
 
 def test_external_results_are_not_misrepresented_as_standalone(tmp_path):
     source = tmp_path / "source.db"
-    with sqlite3.connect(source) as writer:
+    with closing(sqlite3.connect(source)) as writer, writer:
         writer.execute("CREATE TABLE runs(run_id INTEGER, raw_data_db_path TEXT)")
         writer.execute("INSERT INTO runs VALUES (1, 'unavailable-external.db')")
     stage = tmp_path / "stage.db"
@@ -175,7 +176,7 @@ def test_writer_can_commit_during_export(tmp_path):
         export_database_copy(target, instance=database_instance(source), live=True,
                              cancelled=lambda: False, progress=progress)
         assert committed
-        with sqlite3.connect(target.as_uri() + "?mode=ro&immutable=1", uri=True) as copy:
+        with closing(sqlite3.connect(target.as_uri() + "?mode=ro&immutable=1", uri=True)) as copy:
             assert copy.execute("SELECT run_id FROM runs ORDER BY run_id").fetchall() in (
                 [(197,)], [(197,), (198,), (199,)],
             )
