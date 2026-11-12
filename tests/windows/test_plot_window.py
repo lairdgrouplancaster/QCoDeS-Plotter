@@ -3267,16 +3267,18 @@ class RunListParentLookupTestCase(unittest.TestCase):
             # constraining the requested size to the CI desktop's work area.
             dialog = host._create_axis_scale_dialog()
             dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen)
+            # Give the dialog an explicit initial size before showing it.
+            # Otherwise Qt's offscreen plugin can size the child layouts using
+            # the default window geometry before adjusting the dialog itself.
+            dialog.resize(dialog.sizeHint())
             host.open_axis_scale_dialog("x")
 
             dialog = host._axis_scale_dialog
             qtw.QApplication.processEvents()
-            # Settle every tab's initial layout before measuring its children.
-            # Offscreen platform plugins need not deliver native expose events.
-            dialog.layout().activate()
-            for page in host._axis_scale_tabs.findChildren(qtw.QWidget):
-                if page.layout() is not None:
-                    page.layout().activate()
+            # Showing the controls polishes their styles and can change the
+            # minimum layout size. Use that final size for the resize baseline.
+            dialog.adjustSize()
+            qtw.QApplication.processEvents()
             self.assertEqual(dialog.windowTitle(), "Axis scaling")
             self.assertEqual(set(host._axis_scale_controls), {"x", "y", "x2", "y2"})
             self.assertEqual(
@@ -3320,6 +3322,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
                     field.width(), field.fontMetrics().horizontalAdvance(value) + 12,
                 )
             original_field_width = x_controls.minText.width()
+            original_page_size = x_controls.minText.parentWidget().size()
+            original_grid_geometry = x_controls.gridLayout.geometry()
             expanded_size = original_size + QtCore.QSize(240, 120)
             dialog.resize(expanded_size)
             dialog.layout().activate()
@@ -3336,6 +3340,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
                     "page_visible": x_controls.minText.parentWidget().isVisible(),
                     "field_size": x_controls.minText.size(),
                     "original_field_width": original_field_width,
+                    "original_page_size": original_page_size,
+                    "original_grid_geometry": original_grid_geometry,
                     "grid_geometry": x_controls.gridLayout.geometry(),
                 },
             )
