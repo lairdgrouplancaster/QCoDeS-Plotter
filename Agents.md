@@ -119,3 +119,32 @@ Do not use the GitHub CLI (`gh`) or require `gh auth` for repository work.
 Use the configured Git remote and credentials for `git fetch`, `git push`, and tag pushes. Use the connected GitHub app for pull-request operations.
 
 If GitHub release creation is needed but unavailable through the connected app, stop and ask for direction; do not fall back to `gh`.
+
+## Release documentation screenshots
+
+During every release preparation cycle, regenerate all four documentation
+screenshots with `scripts/capture_demo_screenshots.py` from the actual candidate
+application and its appropriate native dependency, using isolated configuration
+and deterministic synthetic QCoDeS data. Run the screenshot/data/render/shutdown
+validation and a strict MkDocs build. Include all four PNGs and their generation
+record in the release preparation pull request and require visual review before
+release approval. Never substitute generated representations of the UI.
+
+Before creating a release tag, run `scripts/screenshot_support.py verify-release
+--require-clean --generation-id RUN_ID/ATTEMPT` on the intended final candidate.
+Relevant source, resource, native or dependency input changes require regeneration
+and review. Committing generated files or merging may change the commit SHA;
+freshness is determined by the documented input fingerprint and the reviewed
+image hashes. Use a new generation record for every preparation cycle.
+
+Follow `docs/documentation-releases.md` for workflow bootstrap, artefact inclusion,
+validation and remaining manual pre-tag checks. Ordinary PRs need documentation
+and image checks but do not need fresh captures for every code change. Read the
+Docs builds committed, approved images and must not run the Qt application.
+Keep screenshot tooling separate from documentation build dependencies.
+
+Preserve the database-access invariant above. Screenshot automation must not
+write to existing measurement databases or their protected sidecars. Keep
+`.github/workflows/release.yml` and publishing behaviour unchanged unless the
+user explicitly approves changes. Do not push, merge, tag, publish or change
+remote settings without explicit approval.
