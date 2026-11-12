@@ -46,7 +46,6 @@ from qplot.windows._range_entry import RangeEntry
 from qplot.windows._widgets import treeWidgets
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot2d import plot2d
-from tests.windows.test_plot_integration import wait_for
 
 _PRINT_DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
 
@@ -3272,6 +3271,12 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             dialog = host._axis_scale_dialog
             qtw.QApplication.processEvents()
+            # Settle every tab's initial layout before measuring its children.
+            # Offscreen platform plugins need not deliver native expose events.
+            dialog.layout().activate()
+            for page in host._axis_scale_tabs.findChildren(qtw.QWidget):
+                if page.layout() is not None:
+                    page.layout().activate()
             self.assertEqual(dialog.windowTitle(), "Axis scaling")
             self.assertEqual(set(host._axis_scale_controls), {"x", "y", "x2", "y2"})
             self.assertEqual(
@@ -3317,9 +3322,23 @@ class RunListParentLookupTestCase(unittest.TestCase):
             original_field_width = x_controls.minText.width()
             expanded_size = original_size + QtCore.QSize(240, 120)
             dialog.resize(expanded_size)
-            wait_for(lambda: x_controls.minText.width() > original_field_width)
+            dialog.layout().activate()
+            qtw.QApplication.processEvents()
             self.assertEqual(dialog.size(), expanded_size)
-            self.assertGreater(x_controls.minText.width(), original_field_width)
+            self.assertGreater(
+                x_controls.minText.width(), original_field_width,
+                {
+                    "original_dialog_size": original_size,
+                    "dialog_size": dialog.size(),
+                    "tab_size": host._axis_scale_tabs.size(),
+                    "current_tab": host._axis_scale_tabs.currentIndex(),
+                    "page_size": x_controls.minText.parentWidget().size(),
+                    "page_visible": x_controls.minText.parentWidget().isVisible(),
+                    "field_size": x_controls.minText.size(),
+                    "original_field_width": original_field_width,
+                    "grid_geometry": x_controls.gridLayout.geometry(),
+                },
+            )
             dialog.resize(original_size)
             qtw.QApplication.processEvents()
             self.assertEqual(dialog.size(), original_size)
