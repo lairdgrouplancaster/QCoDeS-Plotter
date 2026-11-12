@@ -178,8 +178,6 @@ class SnapToTraceTestCase(unittest.TestCase):
         plot = widget.getPlotItem()
         plot.setXRange(-10.0, 10.0, padding=0)
         axis = plot.getAxis("bottom")
-        # Endpoint labels fit the 15-pixel margin at this explicit font size,
-        # independently of the platform's default font and DPI scaling.
         font = QtGui.QFont()
         font.setPixelSize(12)
         axis.setStyle(tickFont=font)
@@ -197,11 +195,17 @@ class SnapToTraceTestCase(unittest.TestCase):
 
         self.addCleanup(dispose_plot_widget)
 
-        for target, expected in (
-                (3, ["-10", "0", "10"]),
-                (4, ["-10", "-5", "0", "5", "10"]),
+        # Exercise both clipped and visible endpoints explicitly. Whether a
+        # signed label fits the default 15-pixel margin depends on the font
+        # metrics of the native paint device, including Windows DPI scaling.
+        for target, margin, expected in (
+                (3, 0, ["-5", "0", "5"]),
+                (4, 0, ["-5", "0", "5"]),
+                (3, 64, ["-10", "0", "10"]),
+                (4, 64, ["-10", "-5", "0", "5", "10"]),
                 ):
             ticks_module._configure_major_ticks(axis, target)
+            axis.setStyle(hideOverlappingLabels=margin)
             qtw.QApplication.processEvents()
             specs = axis.generateDrawSpecs(painter)
             self.assertEqual([spec[2] for spec in specs[2]], expected)

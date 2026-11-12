@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pyqtgraph as pg
 import qcodes
-from PyQt6 import QtCore, QtGui, QtPrintSupport, QtTest, sip
+from PyQt6 import QtCore, QtGui, QtPrintSupport, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import (
     CSVExporter,
@@ -3264,10 +3264,13 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             main_line = host.plot.plot(x=[200.0, 400.0], y=[10.0, 20.0])
             host.vb.setXRange(-100.0, 100.0, padding=0)
+            # Exercise Qt layout growth without the native window manager
+            # constraining the requested size to the CI desktop's work area.
+            dialog = host._create_axis_scale_dialog()
+            dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DontShowOnScreen)
             host.open_axis_scale_dialog("x")
 
             dialog = host._axis_scale_dialog
-            self.assertTrue(QtTest.QTest.qWaitForWindowExposed(dialog))
             qtw.QApplication.processEvents()
             self.assertEqual(dialog.windowTitle(), "Axis scaling")
             self.assertEqual(set(host._axis_scale_controls), {"x", "y", "x2", "y2"})
