@@ -11,6 +11,7 @@ from ._commands import command_spec, command_with_status, create_action
 from ._complex_plots import show_complex_line_readout
 from ._native_transforms import NativePlotDataItem
 from ._plot_host import PlotHost
+from ._trace_snap_geometry import TraceSnapGeometry
 
 if TYPE_CHECKING:
     class _Plot1DSnapBase(PlotHost, qtw.QMainWindow):
@@ -40,6 +41,9 @@ else:
 
 SNAP_TO_TRACE_COMMAND = command_spec("plot.snap_to_trace")
 SNAP_TO_TRACE_SHORTCUT_LABEL = SNAP_TO_TRACE_COMMAND.shortcut_display_text()
+# Qt scene coordinates use logical pixels, so the capture radius stays the
+# same size when zooming data or moving between display pixel densities.
+SNAP_RADIUS_PIXELS = 12.0
 
 
 @dataclass(frozen=True)
@@ -203,6 +207,43 @@ def _scene_distance_squared(
     return (first.x() - second.x()) ** 2 + (first.y() - second.y()) ** 2
 
 
+@dataclass
+class _LineSnapCache:
+    source: Any
+    settings: tuple
+    connection: Any
+    geometry: TraceSnapGeometry
+
+
+def _line_snap_geometry(line):
+    """Reuse preparation until samples or native processing settings change."""
+    if (line is None or not _line_is_snap_visible(line)
+            or getattr(line, "_qplot_precision_error", None)):
+        return None
+    source = getattr(line, "_dataset", None)
+    opts = getattr(line, "opts", {})
+    settings = tuple(opts.get(key, False) for key in (
+        "subtractMeanMode", "fftMode", "derivativeMode", "phasemapMode",
+    )) + tuple(opts.get("logMode", (False, False)))
+    connection = opts.get("connect", "all")
+    cached = getattr(line, "_qplot_snap_cache", None)
+    # PlotDataItem replaces its source dataset on setData, including live
+    # publication of an array which was modified in place. Keep the source
+    # itself, rather than its id, so object-id reuse cannot produce stale hits.
+    if (source is not None and cached is not None and cached.source is source
+            and cached.settings == settings and cached.connection is connection):
+        return cached.geometry
+    data = _line_snap_data(line)
+    if data is None:
+        if cached is not None:
+            line._qplot_snap_cache = None
+        return None
+    geometry = TraceSnapGeometry(data.x_view, data.y_view, data.x_raw, data.y_raw, connection)
+    if source is not None:
+        line._qplot_snap_cache = _LineSnapCache(source, settings, connection, geometry)
+    return geometry
+
+
 class Plot1DSnapMixin(_Plot1DSnapBase):
     """Snap-to-trace cursor readout for line and mixed plot windows."""
 
@@ -235,7 +276,8 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             checkable=True,
             )
         self.snap_to_trace_action.setToolTip(
-            "Lock the coordinate readout to the nearest plotted data point"
+            f"Snap within {SNAP_RADIUS_PIXELS:g} screen pixels of a line or scatter point. "
+            "Coordinates show a measured sample."
             )
         self.register_shortcut(
             self.snap_to_trace_action,
@@ -289,6 +331,8 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         if not enabled:
             self._hide_snap_marker()
             self._clear_snap_report()
+        if "_hover_highlight" in self.__dict__:
+            self._refresh_cursor_hover()
 
 
     @QtCore.pyqtSlot(object)
@@ -298,6 +342,10 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
         """
         self._last_cursor_scene_pos = pos
+        readout = self.__dict__.get("cursor_readout")
+        default_tooltip = self.__dict__.get("_cursor_readout_default_tooltip")
+        if readout is not None and default_tooltip is not None:
+            readout.setToolTip(default_tooltip)
         snapping = bool(
             self.snap_to_trace_action is not None
             and self.snap_to_trace_action.isChecked()
@@ -311,15 +359,14 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             return
 
         if not self.plot.sceneBoundingRect().contains(pos):
-            self._hide_snap_marker()
-            self._clear_snap_report()
+            self._clear_cursor_hover()
             self._set_cursor_index_label("")
             return
 
         nearest = self._nearest_trace_point(pos)
         if nearest is None:
             self._hide_snap_marker()
-            self._clear_snap_report()
+            self._update_coordinate_context()
             super().mouseMoved(pos)
             return
 
@@ -337,6 +384,7 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             super().mouseMoved(pos)
             return
         self._show_snap_report(nearest.label)
+        self._highlight_cursor_trace(line)
         if snapping:
             self._show_snap_marker(
                 nearest.x_view_value, nearest.y_view_value, nearest.viewbox,
@@ -357,10 +405,13 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
         """
         self._update_coordinate_context()
+        highlight = self.__dict__.get("_hover_highlight")
+        if highlight is not None:
+            highlight.clear()
 
 
     def _update_coordinate_context(self, label=None):
-        """Show ``Run N: measurement vs setpoint`` for the active trace."""
+        """Show the active measurement against its plotted setpoints."""
 
         trace_label = self.__dict__.get("trace_label")
         if trace_label is None:
@@ -437,6 +488,12 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             source_axis,
             )
 
+        if source is self and self.operation_kind == "plot2d":
+            horizontal = f"{horizontal} and {vertical}"
+            vertical = self._parameter_display_name(
+                source, source_options.get("z", source.param.name), "z",
+                )
+
         display_label = getattr(self, "_trace_display_label", None)
         if label is not None and callable(display_label):
             tooltip = str(display_label(label, line))
@@ -463,7 +520,7 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
 
     def _nearest_trace_point(self, scene_pos):
         """
-        Finds the plotted data point nearest to the mouse position.
+        Find the nearest plotted data point within the screen-space snap radius.
 
         """
         nearest = None
@@ -473,31 +530,28 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         if lines is None:
             lines = {self.label: self.__dict__.get("line")}
         for label, line in lines.items():
-            data = _line_snap_data(line)
-            if data is None:
+            geometry = _line_snap_geometry(line)
+            if geometry is None:
                 continue
 
             viewbox = self._viewbox_for_line(line)
-            sample, distance = self._nearest_scene_trace_sample(
-                data.x_view,
-                data.y_view,
-                scene_pos,
-                viewbox,
-                data.x_raw,
-                data.y_raw,
-                )
-            if sample is None:
+            pen = getattr(line, "opts", {}).get("pen")
+            segments = pen is not None and pg.mkPen(pen).style() != QtCore.Qt.PenStyle.NoPen
+            result = geometry.nearest(scene_pos, viewbox, SNAP_RADIUS_PIXELS, segments=segments)
+            if result is None:
                 continue
+            index, distance = result
 
             if nearest_distance is None or distance < nearest_distance:
+                view_index = int(np.searchsorted(geometry.indices, index))
                 nearest = _NearestTracePoint(
                     label=label,
-                    x_value=sample.x_value,
-                    y_value=sample.y_value,
+                    x_value=float(geometry.raw_x[index]),
+                    y_value=float(geometry.raw_y[index]),
                     viewbox=viewbox,
-                    point_number=sample.point_number,
-                    x_view_value=sample.x_view_value,
-                    y_view_value=sample.y_view_value,
+                    point_number=index + 1,
+                    x_view_value=float(geometry.x[view_index]),
+                    y_view_value=float(geometry.y[view_index]),
                     )
                 nearest_distance = distance
 

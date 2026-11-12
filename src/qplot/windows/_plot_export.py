@@ -1,5 +1,6 @@
 import os
 import weakref
+from contextlib import nullcontext
 from os import path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -70,6 +71,12 @@ _SAFE_PYQTGRAPH_COPY_EXPORTERS = (ImageExporter, SVGExporter)
 CSV_UNDERLYING_VALUES = "Underlying plot samples"
 CSV_TRANSFORMED_VALUES = "Transformed plot values"
 CSV_HEATMAP_VALUES = "Current primary heatmap grid"
+
+
+def _without_hover_highlight(window: Any):
+    """Keep transient inspection cues out of published plot graphics."""
+    highlight = window.__dict__.get("_hover_highlight")
+    return highlight.suspended() if highlight is not None else nullcontext()
 
 
 def _csv_shared_coordinates_match(reference: Any, candidate: Any) -> bool:
@@ -557,12 +564,13 @@ class PlotExportMixin(_PlotExportBase):
             painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
             painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
             painter.fillRect(printable, QtGui.QColor("white"))
-            widget.render(
-                painter,
-                destination,
-                source,
-                QtCore.Qt.AspectRatioMode.IgnoreAspectRatio,
-            )
+            with _without_hover_highlight(self):
+                widget.render(
+                    painter,
+                    destination,
+                    source,
+                    QtCore.Qt.AspectRatioMode.IgnoreAspectRatio,
+                )
         finally:
             print_finished = painter.end()
 
@@ -897,10 +905,11 @@ class PlotExportMixin(_PlotExportBase):
                     ),
                 )
                 return True
-            saved = write_export_atomically(
-                destination,
-                writer,
-            )
+            with _without_hover_highlight(self):
+                saved = write_export_atomically(
+                    destination,
+                    writer,
+                )
         except Exception as err:
             log_exception("PyQtGraph plot export failed", err, __name__)
             self.show_status("Could not export plot.", 5000)
@@ -980,16 +989,17 @@ class PlotExportMixin(_PlotExportBase):
             self.show_status("Copy is disabled for that export format.", 5000)
             return False
         try:
-            if type(exporter) is SVGExporter:
-                clipboard = qtw.QApplication.clipboard()
-                if clipboard is None:
-                    raise RuntimeError("No clipboard available.")
-                mime_data = QtCore.QMimeData()
-                mime_data.setData("image/svg+xml", QtCore.QByteArray(svg_bytes(exporter)))
-                clipboard.setMimeData(mime_data)
-                result = None
-            else:
-                result = exporter.export(copy=True)
+            with _without_hover_highlight(self):
+                if type(exporter) is SVGExporter:
+                    clipboard = qtw.QApplication.clipboard()
+                    if clipboard is None:
+                        raise RuntimeError("No clipboard available.")
+                    mime_data = QtCore.QMimeData()
+                    mime_data.setData("image/svg+xml", QtCore.QByteArray(svg_bytes(exporter)))
+                    clipboard.setMimeData(mime_data)
+                    result = None
+                else:
+                    result = exporter.export(copy=True)
         except Exception as err:
             log_exception("PyQtGraph plot copy failed", err, __name__)
             self.show_status("Could not copy plot.", 5000)
@@ -1249,7 +1259,8 @@ class PlotExportMixin(_PlotExportBase):
         Captures the plot widget without the surrounding QMainWindow chrome.
 
         """
-        return self.widget.grab()
+        with _without_hover_highlight(self):
+            return self.widget.grab()
 
 
     def copy_plot_image_as_svg(self) -> bool:
@@ -1319,11 +1330,12 @@ class PlotExportMixin(_PlotExportBase):
 
         painter = QtGui.QPainter(generator)
         try:
-            scene.render(
-                painter,
-                QtCore.QRectF(0, 0, size.width(), size.height()),
-                self._plot_svg_source_rect(widget),
-                )
+            with _without_hover_highlight(self):
+                scene.render(
+                    painter,
+                    QtCore.QRectF(0, 0, size.width(), size.height()),
+                    self._plot_svg_source_rect(widget),
+                    )
         finally:
             painter.end()
             buffer.close()
@@ -1475,7 +1487,8 @@ class PlotExportMixin(_PlotExportBase):
             size.height(),
             blockSignal=exporter.heightChanged,
             )
-        return exporter.export(toBytes=True)
+        with _without_hover_highlight(self):
+            return exporter.export(toBytes=True)
 
 
     def _plot_image_size_for_dpi(self, dpi: float) -> QtCore.QSize:

@@ -3156,6 +3156,20 @@ class RunListParentLookupTestCase(unittest.TestCase):
             window.vb.deleteLater()
 
     def test_axis_scale_controls_move_from_context_menu_to_dialogs(self):
+        self._check_axis_scale_dialog_controls()
+
+    def test_axis_scale_dialog_fits_large_native_font(self):
+        app = qtw.QApplication.instance()
+        original_font = app.font()
+        font = QtGui.QFont(original_font)
+        font.setPixelSize(24)
+        app.setFont(font)
+        try:
+            self._check_axis_scale_dialog_controls()
+        finally:
+            app.setFont(original_font)
+
+    def _check_axis_scale_dialog_controls(self):
         class Host(qtw.QMainWindow):
             copy_coordinates = plotWidget.copy_coordinates
             initContextMenu = plotWidget.initContextMenu
@@ -3266,6 +3280,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host.open_axis_scale_dialog("x")
 
             dialog = host._axis_scale_dialog
+            qtw.QApplication.processEvents()
             self.assertEqual(dialog.windowTitle(), "Axis scaling")
             self.assertEqual(set(host._axis_scale_controls), {"x", "y", "x2", "y2"})
             self.assertEqual(
@@ -3276,28 +3291,92 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertTrue(host._axis_scale_tabs.isTabEnabled(1))
             self.assertFalse(host._axis_scale_tabs.isTabEnabled(2))
             self.assertFalse(host._axis_scale_tabs.isTabEnabled(3))
-            self.assertEqual(host._axis_scale_tabs.width(), 360)
+            self.assertGreaterEqual(host._axis_scale_tabs.width(), 360)
             x_controls = host._axis_scale_controls["x"]
+            self.assertFalse(x_controls.gridLayout.geometry().isEmpty())
+            self.assertGreaterEqual(
+                x_controls.minText.parentWidget().width(),
+                x_controls.gridLayout.minimumSize().width(),
+            )
             self.assertEqual(x_controls.manualRadio.text(), "Manual")
             self.assertEqual(x_controls.autoRadio.text(), "Auto")
             self.assertEqual(x_controls.minimumLabel.text(), "Minimum")
             self.assertEqual(x_controls.maximumLabel.text(), "Maximum")
-            self.assertEqual(x_controls.invertCheck.text(), "Reverse Axis")
-            self.assertEqual(x_controls.mouseCheck.text(), "Allow Zoom/Pan")
-            self.assertEqual(x_controls.logCheck.text(), "Log Scale")
+            self.assertEqual(x_controls.invertCheck.text(), "Reverse axis")
+            self.assertEqual(x_controls.mouseCheck.text(), "Allow zoom/pan")
+            self.assertEqual(x_controls.logCheck.text(), "Log scale")
             self.assertTrue(x_controls.logCheck.isEnabled())
             self.assertFalse(x_controls.logCheck.isChecked())
             self.assertEqual(
                 x_controls.visibleOnlyCheck.text(),
-                "Autoscale from Visible Data",
+                "Autoscale from visible data",
                 )
             self.assertEqual(
                 x_controls.autoPanCheck.text(),
-                "Follow New Data, Keep Span",
+                "Follow new data, keep span",
                 )
-            self.assertEqual(x_controls.label.text(), "Link Axis:")
+            self.assertEqual(x_controls.label.text(), "Link axis:")
+            self.assertEqual(x_controls.linkCombo.currentText(), "None")
             self.assertIsInstance(x_controls.linkCombo, qtw.QComboBox)
-            self.assertEqual(x_controls.manualRadio.parentWidget().width(), 340)
+            self.assertGreaterEqual(x_controls.manualRadio.parentWidget().width(), 340)
+            original_size = dialog.size()
+            for field, value in zip(
+                (x_controls.minText, x_controls.maxText),
+                ("0.010012718532581035", "0.010017029084329264"),
+                strict=True,
+            ):
+                self.assertGreaterEqual(
+                    field.width(), field.fontMetrics().horizontalAdvance(value) + 12,
+                )
+            original_field_width = x_controls.minText.width()
+            original_page_size = x_controls.minText.parentWidget().size()
+            original_grid_geometry = x_controls.gridLayout.geometry()
+            expanded_size = original_size + QtCore.QSize(240, 120)
+            dialog.resize(expanded_size)
+            dialog.layout().activate()
+            qtw.QApplication.processEvents()
+            self.assertEqual(dialog.size(), expanded_size)
+            self.assertGreater(
+                x_controls.minText.width(), original_field_width,
+                {
+                    "original_dialog_size": original_size,
+                    "dialog_size": dialog.size(),
+                    "tab_size": host._axis_scale_tabs.size(),
+                    "current_tab": host._axis_scale_tabs.currentIndex(),
+                    "page_size": x_controls.minText.parentWidget().size(),
+                    "page_visible": x_controls.minText.parentWidget().isVisible(),
+                    "field_size": x_controls.minText.size(),
+                    "original_field_width": original_field_width,
+                    "original_page_size": original_page_size,
+                    "original_grid_geometry": original_grid_geometry,
+                    "grid_geometry": x_controls.gridLayout.geometry(),
+                    "grid_enabled": x_controls.gridLayout.isEnabled(),
+                    "grid_minimum_size": x_controls.gridLayout.minimumSize(),
+                    "grid_size_hint": x_controls.gridLayout.sizeHint(),
+                    "fields": [
+                        {
+                            "name": field.objectName(),
+                            "visible": field.isVisible(),
+                            "hidden": field.isHidden(),
+                            "geometry": field.geometry(),
+                            "minimum_size": field.minimumSize(),
+                            "maximum_size": field.maximumSize(),
+                            "size_hint": field.sizeHint(),
+                            "horizontal_policy": field.sizePolicy().horizontalPolicy(),
+                            "item_geometry": x_controls.gridLayout.itemAt(
+                                x_controls.gridLayout.indexOf(field),
+                            ).geometry(),
+                            "cell_geometry": x_controls.gridLayout.cellRect(2, column),
+                        }
+                        for column, field in enumerate(
+                            (x_controls.minText, x_controls.maxText), start=1,
+                        )
+                    ],
+                },
+            )
+            dialog.resize(original_size)
+            qtw.QApplication.processEvents()
+            self.assertEqual(dialog.size(), original_size)
             tab_bar = host._axis_scale_tabs.tabBar()
             self.assertIn("QTabBar::tab:selected", host._axis_scale_tabs.styleSheet())
             self.assertIn("palette(highlight)", host._axis_scale_tabs.styleSheet())
@@ -3338,15 +3417,15 @@ class RunListParentLookupTestCase(unittest.TestCase):
             copy_button = x_controls.copyAutoLimitsButton
             self.assertEqual(
                 copy_button.toolTip(),
-                f"Set manual limits to {auto_limits[0]:.17g} and {auto_limits[1]:.17g}.",
+                f"Set manual limits to {float(auto_limits[0])!r} and {float(auto_limits[1])!r}.",
                 )
 
             host._axis_scale_custom_auto_axes.add("x")
             host.vb.setXRange(-3.0, 4.0, padding=0)
             self.assertNotIn("x", host._axis_scale_custom_auto_axes)
             self.assertTrue(host._axis_scale_controls["x"].manualRadio.isChecked())
-            self.assertEqual(host._axis_scale_controls["x"].minText.text(), "-3")
-            self.assertEqual(host._axis_scale_controls["x"].maxText.text(), "4")
+            self.assertEqual(host._axis_scale_controls["x"].minText.text(), "-3.0")
+            self.assertEqual(host._axis_scale_controls["x"].maxText.text(), "4.0")
 
             copy_button.click()
             applied_limits = (
@@ -3562,7 +3641,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             window._update_axis_scale_auto_limits_tooltip("x")
             self.assertEqual(
                 x_controls.copyAutoLimitsButton.toolTip(),
-                "Set manual limits to 1 and 100.",
+                "Set manual limits to 1.0 and 100.0.",
             )
             window._axis_scale_copy_auto_limits("x")
             self.assertEqual(float(x_controls.minText.text()), 1.0)
@@ -3830,7 +3909,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 )
             self.assertEqual(
                 copy_button.toolTip(),
-                "Set manual limits to -4 and 8.",
+                "Set manual limits to -4.0 and 8.0.",
                 )
             copy_button.click()
             self.assertEqual(host._colorbar_manual_levels, (-4.0, 8.0))

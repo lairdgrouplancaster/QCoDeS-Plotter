@@ -31,6 +31,38 @@ from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import plot2d
 
 
+@pytest.mark.parametrize("swapped", [False, True])
+@pytest.mark.parametrize("signal_label", ["Signal", ""])
+def test_heatmap_coordinate_context_includes_measurement_and_both_setpoints(swapped, signal_label):
+    window = plot2d.__new__(plot2d)
+    qtw.QMainWindow.__init__(window)
+    window._dataset_key = DatasetKey("database.db", "guid")
+    window._dataset_holder = {
+        window._dataset_key: DatasetHandle(SimpleNamespace(run_id=15)),
+    }
+    window.param = SimpleNamespace(name="signal", label=signal_label)
+    window.param_dict = {
+        "signal": window.param,
+        "gate": SimpleNamespace(name="gate", label="Gate voltage"),
+        "bias": SimpleNamespace(name="bias", label="Source-drain voltage"),
+    }
+    window._axis_selection = {
+        "x": "bias" if swapped else "gate",
+        "y": "gate" if swapped else "bias",
+        "z": "signal",
+    }
+    window.label = "Heatmap source"
+    window.trace_label = qtw.QLabel(window)
+    window.toolbarCo_ord = qtw.QToolBar(window)
+    try:
+        window._update_coordinate_context()
+        axes = "Source-drain voltage and Gate voltage" if swapped else "Gate voltage and Source-drain voltage"
+        assert window.trace_label.text() == f"Run 15: {signal_label or 'signal'} vs {axes}"
+        assert window.trace_label.toolTip() == "Heatmap source"
+    finally:
+        sip.delete(window)
+
+
 def test_heatmap_refresh_controls_accept_base_class_keyword():
     window = plot2d.__new__(plot2d)
     qtw.QMainWindow.__init__(window)

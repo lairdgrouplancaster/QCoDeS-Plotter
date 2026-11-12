@@ -354,7 +354,10 @@ class _RefreshPublicationHarness(database_actions.DatabaseActionsMixin):
                 },
             }
         )
-        self.RunList.setCurrentItem(self.RunList._item_for_guid("guid-1"))
+        self.RunList.setCurrentItem(
+            self.RunList._item_for_guid("guid-1"), 0,
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
         self.selection_updates: list[str | None] = []
         self.empty_state_syncs = 0
         self.status_messages = []
@@ -400,7 +403,9 @@ def test_refresh_publication_replays_selection_changed_during_qt_yield():
     second = harness.RunList._item_for_guid("guid-2")
     assert first is not None
     assert second is not None
-    harness.RunList.setCurrentItem(first)
+    harness.RunList.setCurrentItem(
+        first, 0, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+    )
     harness.RunList.selected.connect(harness.updateSelected)
     page = {
         run_id: {
@@ -413,9 +418,11 @@ def test_refresh_publication_replays_selection_changed_during_qt_yield():
     }
 
     def change_selection(*_args) -> None:
-        harness.RunList.clearSelection()
-        second.setSelected(True)
-        harness.RunList.setCurrentItem(second)
+        # Specify the selection command so native keyboard modifiers cannot
+        # toggle the row back off during this simulated user selection.
+        harness.RunList.setCurrentItem(
+            second, 0, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
 
     try:
         with (

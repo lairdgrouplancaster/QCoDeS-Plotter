@@ -39,6 +39,7 @@ from ._plot_axis_scaling import (
     _PowerScaledAxisItem,
 )
 from ._plot_chrome import install_plot_chrome
+from ._plot_cursor_hover import PlotCursorHoverMixin
 from ._plot_export import PlotExportMixin
 from ._plot_feedback import PlotWindowFeedbackMixin
 from ._plot_marquee import PlotMarqueeMixin
@@ -172,6 +173,7 @@ class _CursorReadout(qtw.QWidget):
 
 
 class plotWidget(
+    PlotCursorHoverMixin,
     PlotAnnotationMixin,
     PlotWindowFeedbackMixin,
     PlotAxisScalingMixin,
@@ -716,7 +718,10 @@ class plotWidget(
         has_depth = getattr(self, "cursor_has_depth", False)
         values = "X, Y, depth, value" if has_depth else (
             "X, Y, value" if getattr(self, "operation_kind", None) == "plot2d" else "X, Y")
-        container.setToolTip(f"Square brackets show zero-based indices.\nValues in parentheses: ({values}).")
+        self._cursor_readout_default_tooltip = (
+            f"Square brackets show zero-based indices.\nValues in parentheses: ({values})."
+        )
+        container.setToolTip(self._cursor_readout_default_tooltip)
         # Allow small plot windows to clip the readout without increasing their
         # minimum width, while retaining its full size hint when space permits.
         container.setMinimumWidth(1)
@@ -756,6 +761,7 @@ class plotWidget(
         self.apply_cursor_label_widths()
         self.trace_updated.connect(self._update_cursor_index_width)
 
+        self._init_cursor_hover()
         self.plot.scene().sigMouseMoved.connect(self.mouseMoved)
     
     
@@ -1701,6 +1707,7 @@ class plotWidget(
         Unused but required by slot.
 
         """
+        self._clear_cursor_hover()
         # Qt leaves child windows visible when their parent is merely closed.
         # Hide detached panels and reject editors before releasing the dataset
         # so they cannot act on a closed plot. Keep their widgets alive for
@@ -1754,6 +1761,7 @@ class plotWidget(
         self._last_cursor_scene_pos = pos
         # Ignore if not in plot widget
         if not self.plot.sceneBoundingRect().contains(pos):
+            self._clear_cursor_hover()
             self._set_cursor_index_label("")
             if hasattr(self, "hide_hover_pixel_outline"):
                 self.hide_hover_pixel_outline()
@@ -1823,6 +1831,7 @@ class plotWidget(
                 else None
                 )
             if sample is not None:
+                self._highlight_cursor_heatmap()
                 i, j, x, y, z = sample
                 index_txt = f"[{i},{j}]"
                 x_txt = self.format_cursor_number(x)
@@ -1836,12 +1845,14 @@ class plotWidget(
                 else:
                     self.z_index = [i, j]
             else:
+                self._clear_cursor_highlight()
                 self.pos_labels["z"].setText("")
                 if hasattr(self, "hide_hover_pixel_outline"):
                     self.hide_hover_pixel_outline()
                 else:
                     self.z_index = None
         else:
+            self._clear_cursor_highlight()
             index = self._nearest_1d_array_index(mousePoint.x())
             if index is not None:
                 index_txt = f"[{index}]"

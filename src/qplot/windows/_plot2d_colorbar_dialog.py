@@ -284,6 +284,9 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
                 )
             )
         self.colorbar_manual_radio.clicked.connect(self._apply_colorbar_manual_fields)
+        self.colorbar_range_entry.bind_auto_mode(
+            self.colorbar_auto_radio, lambda limits: self.setColorbarManualRange(*limits),
+        )
         self.colorbar_min_text.editingFinished.connect(self._apply_colorbar_manual_fields)
         self.colorbar_max_text.editingFinished.connect(self._apply_colorbar_manual_fields)
         self.colorbar_auto_radio.clicked.connect(self.setColorbarAuto)
@@ -551,6 +554,9 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
     def _sync_colorbar_scale_mode(self):
         """Suspend refresh autoscaling in manual mode, retaining the choice."""
         manual = self.__dict__.get("_colorbar_manual_levels") is not None
+        entry = self.__dict__.get("colorbar_range_entry")
+        if entry is not None:
+            entry.set_automatic(not manual)
         for name, checked in (("colorbar_manual_radio", manual), ("colorbar_auto_radio", not manual)):
             widget = self.__dict__.get(name)
             if widget is not None:
@@ -584,7 +590,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             button.setToolTip("Auto limits are unavailable for the colour scale.")
             return
         button.setToolTip(
-            f"Set manual limits to {levels[0]:.6g} and {levels[1]:.6g}."
+            f"Set manual limits to {float(levels[0])!r} and {float(levels[1])!r}."
         )
 
     @QtCore.pyqtSlot()

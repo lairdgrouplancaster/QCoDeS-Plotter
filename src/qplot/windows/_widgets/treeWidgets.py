@@ -179,7 +179,7 @@ class RunList(qtw.QTreeWidget):
         "Size",
     )
     column_widths = {
-        "ID": 44,
+        "ID": 60,
         "Measurements": DEFAULT_MEASUREMENTS_COLUMN_WIDTH,
         "Experiment": 120,
         "Sample": 112,
@@ -208,7 +208,7 @@ class RunList(qtw.QTreeWidget):
         "GUID": "00000000-0000-0000-0000-000000000000",
     }
     readable_column_widths = {
-        "ID": 37,
+        "ID": 60,
         "Measurements": DEFAULT_MEASUREMENTS_COLUMN_WIDTH,
         "Experiment": 96,
         "Sample": 88,
@@ -222,7 +222,7 @@ class RunList(qtw.QTreeWidget):
         "GUID": 220,
     }
     minimum_column_widths = {
-        "ID": 34,
+        "ID": 60,
         "Measurements": 84,
         "Experiment": 80,
         "Sample": 72,

@@ -95,7 +95,8 @@ class SnapToTraceTestCase(unittest.TestCase):
             for axis in owner.axes.values():
                 self.assertEqual(
                     axis.styles,
-                    [{"maxTickLevel": 1, "maxTextLevel": 0}],
+                    [{"maxTickLevel": 1, "maxTextLevel": 0,
+                      "hideOverlappingLabels": False}],
                     )
                 self.assertIsNone(axis.picture)
                 self.assertEqual(axis.updates, 1)
@@ -177,28 +178,70 @@ class SnapToTraceTestCase(unittest.TestCase):
         plot = widget.getPlotItem()
         plot.setXRange(-10.0, 10.0, padding=0)
         axis = plot.getAxis("bottom")
+        font = QtGui.QFont()
+        font.setPixelSize(12)
+        axis.setStyle(tickFont=font)
         image = QtGui.QImage(
             800,
             600,
             QtGui.QImage.Format.Format_ARGB32,
         )
         painter = QtGui.QPainter(image)
+        # generateDrawSpecs normally inherits this font from AxisItem.paint.
+        painter.setFont(font)
 
         def dispose_plot_widget():
             widget.close()
 
         self.addCleanup(dispose_plot_widget)
 
-        for target, expected in (
-                (3, ["-5", "0", "5"]),
-                (4, ["-5", "0", "5"]),
+        # Exercise both clipped and visible endpoints explicitly. Whether a
+        # signed label fits the default 15-pixel margin depends on the font
+        # metrics of the native paint device, including Windows DPI scaling.
+        for target, margin, expected in (
+                (3, 0, ["-5", "0", "5"]),
+                (4, 0, ["-5", "0", "5"]),
+                (3, 64, ["-10", "0", "10"]),
+                (4, 64, ["-10", "-5", "0", "5", "10"]),
                 ):
             ticks_module._configure_major_ticks(axis, target)
+            axis.setStyle(hideOverlappingLabels=margin)
             qtw.QApplication.processEvents()
             specs = axis.generateDrawSpecs(painter)
             self.assertEqual([spec[2] for spec in specs[2]], expected)
         # End painting before unittest begins destroying the native widget.
         painter.end()
+
+    def test_horizontal_endpoint_labels_preserve_exact_range(self):
+        widget = pg.PlotWidget()
+        self.addCleanup(widget.close)
+        widget.resize(800, 400)
+        widget.show()
+        plot = widget.getPlotItem()
+        plot.showAxis("top")
+        image = QtGui.QImage(800, 400, QtGui.QImage.Format.Format_ARGB32)
+        painter = QtGui.QPainter(image)
+        try:
+            for lower, upper, expected in (
+                    (0.0, 0.01, ["0", "2", "4", "6", "8", "10"]),
+                    (0.0003, 0.0097, ["2", "4", "6", "8"]),
+                    ):
+                plot.setXRange(lower, upper, padding=0)
+                for side in ("bottom", "top"):
+                    axis = plot.getAxis(side)
+                    axis.setLabel("Time", units="s")
+                    ticks_module._configure_major_ticks(axis, 5)
+                qtw.QApplication.processEvents()
+                for side in ("bottom", "top"):
+                    with self.subTest(side=side, lower=lower, upper=upper):
+                        axis = plot.getAxis(side)
+                        specs = axis.generateDrawSpecs(painter)
+                        self.assertEqual([spec[2] for spec in specs[2]], expected)
+                        self.assertEqual(axis.range, [lower, upper])
+                        for rect, _, _ in specs[2]:
+                            self.assertTrue(axis.boundingRect().contains(rect))
+        finally:
+            painter.end()
 
     def test_tick_positions_are_bounded_and_precision_aware(self):
         self.assertEqual(
@@ -553,7 +596,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         window.right_vb = None
         window.lines = {"main": line}
 
-        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.1, 3.8))
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(2.0, 4.0)) + QtCore.QPointF(2, -3)
 
         label, x_value, y_value, viewbox, point_number = window._nearest_trace_point(scene_pos)
 
@@ -572,7 +615,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         window.right_vb = None
         window.lines = {"main": line}
 
-        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 19.0))
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 20.0)) + QtCore.QPointF(0, 2)
 
         _label, _x_value, y_value, _viewbox, point_number = (
             window._nearest_trace_point(scene_pos)
@@ -584,7 +627,7 @@ class SnapToTraceTestCase(unittest.TestCase):
     def test_nearest_trace_point_ignores_hidden_traces(self):
         widget = pg.GraphicsLayoutWidget()
         plot_item = widget.addPlot()
-        hidden_line = plot_item.plot(x=[1.0], y=[100.0])
+        hidden_line = plot_item.plot(x=[1.0], y=[0.0])
         visible_line = plot_item.plot(x=[1.0], y=[0.0])
         hidden_line.setVisible(False)
         window = plot1d.__new__(plot1d)
@@ -595,7 +638,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             "visible": visible_line,
             }
 
-        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 100.0))
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 0.0))
 
         label, x_value, y_value, viewbox, point_number = window._nearest_trace_point(scene_pos)
 
@@ -618,7 +661,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             "high": high_line,
             }
 
-        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 9.5))
+        scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 10.0)) + QtCore.QPointF(0, 2)
 
         label, x_value, y_value, viewbox, point_number = window._nearest_trace_point(scene_pos)
 
@@ -651,7 +694,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             np.testing.assert_allclose(view_x, [0.0, 1.0, 2.0])
             np.testing.assert_allclose(view_y, [0.0, 1.0, 2.0])
 
-            scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.05, 0.95))
+            scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(1.0, 1.0)) + QtCore.QPointF(2, -2)
             nearest = window._nearest_trace_point(scene_pos)
 
             label, x_value, y_value, viewbox, point_number = nearest
@@ -803,7 +846,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         window._show_snap_marker = lambda *_args: None
 
         try:
-            scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(4.8, 24.0))
+            scene_pos = plot_item.vb.mapViewToScene(QtCore.QPointF(5.0, 25.0)) + QtCore.QPointF(-2, 2)
 
             plot1d.mouseMoved(window, scene_pos)
 
@@ -1841,12 +1884,12 @@ class SnapToTraceTestCase(unittest.TestCase):
                 dialog.table.horizontalHeader().sectionResizeMode(
                     dialog._COL_MEASUREMENT
                 ),
-                qtw.QHeaderView.ResizeMode.Stretch,
+                qtw.QHeaderView.ResizeMode.Interactive,
                 )
             self.assertEqual(dialog.table.columnCount(), 3)
             self.assertEqual(
                 dialog.table.horizontalScrollBarPolicy(),
-                QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff,
+                QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded,
                 )
             self.assertFalse(hasattr(dialog, "order"))
             self.assertFalse(hasattr(dialog, "move_up_button"))

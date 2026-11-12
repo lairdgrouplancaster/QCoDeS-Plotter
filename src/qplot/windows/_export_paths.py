@@ -127,10 +127,7 @@ def choose_export_path(
     existing_target_validator: Callable[[str], Any] | None = None,
 ) -> ExportDestinationTransaction | None:
     """Choose, normalize, and approve the exact path that may be replaced."""
-    dialog_options = (
-        qtw.QFileDialog.Option.DontConfirmOverwrite
-        | qtw.QFileDialog.Option.DontUseNativeDialog
-    )
+    dialog_options = qtw.QFileDialog.Option.DontConfirmOverwrite
     filename = qtw.QFileDialog.getSaveFileName(
         parent,
         caption,
@@ -170,10 +167,7 @@ def choose_export_path_with_suffixes(
     """
     policy = ExportSuffixPolicy(tuple(allowed_suffixes), default_suffix)
 
-    dialog_options = (
-        qtw.QFileDialog.Option.DontConfirmOverwrite
-        | qtw.QFileDialog.Option.DontUseNativeDialog
-    )
+    dialog_options = qtw.QFileDialog.Option.DontConfirmOverwrite
     filename, selected_filter = qtw.QFileDialog.getSaveFileName(
         parent,
         caption,

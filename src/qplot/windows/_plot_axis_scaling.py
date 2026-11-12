@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 import numpy.typing as npt
 import pyqtgraph as pg
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.graphicsItems.ViewBox import axisCtrlTemplate_generic
 
@@ -239,6 +239,27 @@ class _AutoLimitsButton(qtw.QToolButton):
         if event.type() == QtCore.QEvent.Type.ToolTip:
             self._refresh_tooltip()
         return super().event(event)
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        super().paintEvent(event)
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        group = (
+            QtGui.QPalette.ColorGroup.Active if self.isEnabled()
+            else QtGui.QPalette.ColorGroup.Disabled
+        )
+        painter.setPen(QtGui.QPen(
+            self.palette().color(group, QtGui.QPalette.ColorRole.ButtonText), 1.4,
+        ))
+        painter.translate(self.rect().center())
+        # Outward arrows between limits indicate fitting the data range.
+        for x1, y1, x2, y2 in (
+            (-8, -5, -8, 5), (8, -5, 8, 5), (-5, 0, 5, 0),
+            (-5, 0, -2, -3), (-5, 0, -2, 3),
+            (5, 0, 2, -3), (5, 0, 2, 3),
+        ):
+            painter.drawLine(QtCore.QLineF(x1, y1, x2, y2))
+        painter.end()
 
 
 class PlotAxisScalingMixin(_PlotAxisScalingBase):
@@ -584,28 +605,34 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         widget = qtw.QWidget()
         ui: Any = axisCtrlTemplate_generic.Ui_Form()
         ui.setupUi(widget)
-        widget.setFixedWidth(340)
+        widget.setMaximumWidth(qtw.QWIDGETSIZE_MAX)
+        # Fit typical full-precision decimal limits without reserving space
+        # for the longest possible exponent. The dialog can still be widened.
+        for field in (ui.minText, ui.maxText):
+            field.setMinimumWidth(
+                field.fontMetrics().horizontalAdvance("0.888888888888888888") + 12
+            )
 
-        ui.mouseCheck.setText("Allow Zoom/Pan")
+        ui.mouseCheck.setText("Allow zoom/pan")
         ui.mouseCheck.setToolTip(
             "Allow mouse-wheel zooming and drag-panning for this axis."
         )
-        ui.invertCheck.setText("Reverse Axis")
+        ui.invertCheck.setText("Reverse axis")
         ui.invertCheck.setToolTip(
             "Reverse this axis so values increase in the opposite direction."
         )
         ui.invertCheck.setMinimumWidth(ui.invertCheck.sizeHint().width())
         ui.mouseCheck.setMinimumWidth(ui.mouseCheck.sizeHint().width())
-        ui.visibleOnlyCheck.setText("Autoscale from Visible Data")
+        ui.visibleOnlyCheck.setText("Autoscale from visible data")
         ui.visibleOnlyCheck.setToolTip(
             "When autoscaling, use only data visible within the other axis's "
             "current range."
         )
-        ui.autoPanCheck.setText("Follow New Data, Keep Span")
+        ui.autoPanCheck.setText("Follow new data, keep span")
         ui.autoPanCheck.setToolTip(
             "Follow new data by moving this axis without changing its displayed span."
         )
-        ui.logCheck = qtw.QCheckBox("Log Scale", widget)
+        ui.logCheck = qtw.QCheckBox("Log scale", widget)
         ui.logCheck.setObjectName("axisScaleLogCheck")
         ui.logCheck.setToolTip(
             "Display this axis on a base-10 logarithmic scale. Values at or "
@@ -615,10 +642,14 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             "Percentage of the data range included during autoscaling. Lower "
             "values can reduce the influence of extreme spikes."
         )
-        ui.linkCombo.setToolTip(
-            "Match this axis's displayed range to the corresponding axis in "
-            "another linked plot."
+        ui.label.setText("Link axis:")
+        link_tooltip = (
+            "Link this axis to the corresponding axis in another plot so their "
+            "ranges move together when zooming or panning. "
+            "Select None to control this axis independently."
         )
+        ui.label.setToolTip(link_tooltip)
+        ui.linkCombo.setToolTip(link_tooltip)
 
         # The upstream form is intentionally very dense and relies on the
         # order of two unlabelled edits to communicate minimum/maximum.  Keep
@@ -628,14 +659,15 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             pass
         ui.gridLayout.setContentsMargins(8, 8, 8, 8)
         ui.gridLayout.setHorizontalSpacing(6)
-        ui.gridLayout.setVerticalSpacing(5)
+        ui.gridLayout.setVerticalSpacing(3)
 
         ui.minimumLabel = qtw.QLabel("Minimum", widget)
         ui.minimumLabel.setObjectName("axisScaleMinimumLabel")
         ui.maximumLabel = qtw.QLabel("Maximum", widget)
         ui.maximumLabel.setObjectName("axisScaleMaximumLabel")
-        ui.minimumLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
-        ui.maximumLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        label_alignment = QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignBottom
+        ui.minimumLabel.setAlignment(label_alignment)
+        ui.maximumLabel.setAlignment(label_alignment)
         ui.rangeEntry = RangeEntry(
             ui.minText, ui.maxText, ui.minimumLabel, ui.maximumLabel,
             accessible_prefix=f"{axis.upper()} axis", parent=widget,
@@ -646,42 +678,66 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             widget,
         )
         ui.copyAutoLimitsButton.setObjectName("copyAutoLimitsButton")
-        ui.copyAutoLimitsButton.setAccessibleName("Use auto limits as manual limits")
+        ui.copyAutoLimitsButton.setAccessibleName("Use automatic limits")
         ui.copyAutoLimitsButton.setFixedSize(26, 24)
-        style = qtw.QApplication.style()
-        if style is not None:
-            ui.copyAutoLimitsButton.setIcon(
-                style.standardIcon(qtw.QStyle.StandardPixmap.SP_BrowserReload)
-            )
+        ui.copyAutoLimitsButton.setAutoRaise(True)
+
+        ui.autoPercentLabel = qtw.QLabel("Data range:", widget)
+        ui.autoPercentLabel.setBuddy(ui.autoPercentSpin)
+        ui.autoPercentSpin.setAccessibleName("Automatic data range percentage")
+        ui.autoPercentSpin.setFixedWidth(ui.autoPercentSpin.sizeHint().width() + 12)
+        auto_percent_layout = qtw.QHBoxLayout()
+        auto_percent_layout.setContentsMargins(0, 0, 0, 0)
+        auto_percent_layout.setSpacing(6)
+        auto_percent_layout.addWidget(ui.autoPercentLabel)
+        auto_percent_layout.addWidget(ui.autoPercentSpin)
+        auto_percent_layout.addStretch()
 
         ui.rangeSeparator = qtw.QFrame(widget)
         ui.rangeSeparator.setObjectName("axisScaleRangeSeparator")
-        ui.rangeSeparator.setFrameShape(qtw.QFrame.Shape.HLine)
-        ui.rangeSeparator.setFrameShadow(qtw.QFrame.Shadow.Sunken)
         ui.linkSeparator = qtw.QFrame(widget)
         ui.linkSeparator.setObjectName("axisScaleLinkSeparator")
-        ui.linkSeparator.setFrameShape(qtw.QFrame.Shape.HLine)
-        ui.linkSeparator.setFrameShadow(qtw.QFrame.Shadow.Sunken)
+        for separator in (ui.rangeSeparator, ui.linkSeparator):
+            separator.setFrameShape(qtw.QFrame.Shape.HLine)
+            separator.setFrameShadow(qtw.QFrame.Shadow.Plain)
+            separator.setStyleSheet("color: palette(mid);")
+            separator.setFixedHeight(13)
 
-        ui.gridLayout.addWidget(ui.rangeEntry, 0, 0, 1, 4)
+        ui.gridLayout.addWidget(
+            ui.rangeEntry, 0, 1, 1, 2,
+            QtCore.Qt.AlignmentFlag.AlignHCenter | QtCore.Qt.AlignmentFlag.AlignTop,
+        )
+        ui.gridLayout.setRowMinimumHeight(0, ui.rangeEntry.sizeHint().height() + 10)
         ui.gridLayout.addWidget(ui.minimumLabel, 1, 1)
         ui.gridLayout.addWidget(ui.maximumLabel, 1, 2)
         ui.gridLayout.addWidget(ui.manualRadio, 2, 0)
         ui.gridLayout.addWidget(ui.minText, 2, 1)
         ui.gridLayout.addWidget(ui.maxText, 2, 2)
         ui.gridLayout.addWidget(ui.copyAutoLimitsButton, 2, 3)
+        ui.rangeEntry.summary.setContentsMargins(0, 0, 0, 6)
         ui.gridLayout.addWidget(ui.rangeEntry.summary, 3, 1, 1, 3)
-        ui.gridLayout.addWidget(ui.autoRadio, 4, 0)
-        ui.gridLayout.addWidget(ui.autoPercentSpin, 4, 1, 1, 2)
-        ui.gridLayout.addWidget(ui.visibleOnlyCheck, 5, 1, 1, 3)
-        ui.gridLayout.addWidget(ui.autoPanCheck, 6, 1, 1, 3)
-        ui.gridLayout.addWidget(ui.rangeSeparator, 7, 0, 1, 4)
-        ui.gridLayout.addWidget(ui.logCheck, 8, 0, 1, 4)
-        ui.gridLayout.addWidget(ui.invertCheck, 9, 0, 1, 2)
-        ui.gridLayout.addWidget(ui.mouseCheck, 9, 2, 1, 2)
-        ui.gridLayout.addWidget(ui.linkSeparator, 10, 0, 1, 4)
-        ui.gridLayout.addWidget(ui.label, 11, 0)
-        ui.gridLayout.addWidget(ui.linkCombo, 11, 1, 1, 3)
+        ui.gridLayout.addWidget(
+            ui.autoRadio, 4, 0, 2, 1, QtCore.Qt.AlignmentFlag.AlignVCenter,
+        )
+        ui.gridLayout.addLayout(
+            auto_percent_layout, 4, 1, 2, 1, QtCore.Qt.AlignmentFlag.AlignVCenter,
+        )
+        # Keep a small gap between checkbox rows without widening label-to-field gaps.
+        ui.gridLayout.addWidget(
+            ui.visibleOnlyCheck, 4, 2, 1, 2, QtCore.Qt.AlignmentFlag.AlignTop,
+        )
+        ui.gridLayout.setRowMinimumHeight(4, ui.visibleOnlyCheck.sizeHint().height() - 1)
+        ui.gridLayout.addWidget(ui.autoPanCheck, 5, 2, 1, 2)
+        ui.gridLayout.addWidget(ui.rangeSeparator, 6, 0, 1, 4)
+        ui.gridLayout.addWidget(
+            ui.logCheck, 7, 0, 1, 4, QtCore.Qt.AlignmentFlag.AlignTop,
+        )
+        ui.gridLayout.setRowMinimumHeight(7, ui.logCheck.sizeHint().height() - 1)
+        ui.gridLayout.addWidget(ui.invertCheck, 8, 0, 1, 2)
+        ui.gridLayout.addWidget(ui.mouseCheck, 8, 2, 1, 2)
+        ui.gridLayout.addWidget(ui.linkSeparator, 9, 0, 1, 4)
+        ui.gridLayout.addWidget(ui.label, 10, 0)
+        ui.gridLayout.addWidget(ui.linkCombo, 10, 1, 1, 3)
         ui.gridLayout.setColumnStretch(1, 1)
         ui.gridLayout.setColumnStretch(2, 1)
         self._axis_scale_controls[axis] = ui
@@ -692,6 +748,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         ui.manualRadio.clicked.connect(
             lambda _checked=False, axis=axis: self._axis_scale_manual_clicked(axis)
             )
+        ui.rangeEntry.bind_auto_mode(ui.autoRadio, lambda _limits: ui.manualRadio.click())
         ui.minText.editingFinished.connect(
             lambda axis=axis: self._axis_scale_range_text_changed(axis)
             )
@@ -723,6 +780,11 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             lambda _checked=False, axis=axis: self._axis_scale_copy_auto_limits(axis)
         )
 
+        # Let the controls determine the page minimum at native font sizes and
+        # display scaling. Resolve it before the tabs size the shared dialog.
+        ui.gridLayout.setSizeConstraint(qtw.QLayout.SizeConstraint.SetMinimumSize)
+        widget.ensurePolished()
+        ui.gridLayout.activate()
         return widget
 
     def _sync_axis_scale_controls(self, axis: _AxisName) -> None:
@@ -767,6 +829,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             )
             ui.autoRadio.setChecked(auto_range is not False)
             ui.manualRadio.setChecked(auto_range is False)
+            ui.rangeEntry.set_automatic(auto_range is not False)
             if auto_range is not False and auto_range is not True:
                 ui.autoPercentSpin.setValue(int(auto_range * 100))
 
@@ -820,12 +883,15 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         current = viewbox.getState(copy=False)["linkedViews"][axis_number] or ""
 
         ui.linkCombo.clear()
+        ui.linkCombo.addItem("None", "")
         if source_combo is None:
             return
         for index in range(source_combo.count()):
-            ui.linkCombo.addItem(source_combo.itemText(index))
+            name = source_combo.itemText(index)
+            if name:
+                ui.linkCombo.addItem(name, name)
 
-        index = ui.linkCombo.findText(current)
+        index = ui.linkCombo.findData(current)
         ui.linkCombo.setCurrentIndex(max(index, 0))
 
     def _axis_scale_bound_item_groups(
@@ -1022,7 +1088,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             return
         assert data_limits is not None
         button.setToolTip(
-            f"Set manual limits to {data_limits[0]:.17g} and {data_limits[1]:.17g}."
+            f"Set manual limits to {float(data_limits[0])!r} and {float(data_limits[1])!r}."
         )
 
     def _axis_scale_copy_auto_limits(self, axis: _AxisName) -> None:
@@ -1251,9 +1317,9 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         ui = self._axis_scale_controls[axis]
         viewbox = self._axis_scale_viewbox(axis)
         if self._axis_scale_dimension(axis) == "x":
-            viewbox.setXLink(str(ui.linkCombo.currentText()))
+            viewbox.setXLink(ui.linkCombo.currentData() or None)
         else:
-            viewbox.setYLink(str(ui.linkCombo.currentText()))
+            viewbox.setYLink(ui.linkCombo.currentData() or None)
 
     def _axis_scale_auto_pan_toggled(self, axis: _AxisName, checked: bool) -> None:
         # Store the option on its semantic axis even when qPlot, rather than
@@ -1416,7 +1482,6 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         layout.setSpacing(10)
         tabs = qtw.QTabWidget(dialog)
         tabs.setObjectName("axisScaleTabs")
-        tabs.setFixedWidth(360)
         tabs.tabBar().setExpanding(True)
         tabs.tabBar().setUsesScrollButtons(False)
         tabs.setStyleSheet(
@@ -1433,10 +1498,10 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         layout.addWidget(tabs)
 
         buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
-        buttons.setContentsMargins(0, 0, 28, 0)
+        buttons.setContentsMargins(0, 0, 0, 0)
         buttons.rejected.connect(dialog.close)
         layout.addWidget(buttons)
-        layout.setSizeConstraint(qtw.QLayout.SizeConstraint.SetFixedSize)
+        layout.setSizeConstraint(qtw.QLayout.SizeConstraint.SetMinimumSize)
 
         self._axis_scale_tabs = tabs
         self._axis_scale_dialog = dialog
