@@ -80,6 +80,16 @@ def test_check_matrix_selects_full_versions_and_keeps_complete_partitions(full):
         "ubuntu-latest": "qplotter-native-linux-x86_64",
     }
     assert all(row["native-artifact"] == artifacts[row["os"]] for row in entries)
+    for row in entries:
+        if row["suite"] == "compatibility":
+            expected_list = (
+                ".github/pytest-compatibility.txt" if full
+                else ".github/pytest-compatibility-routine.txt"
+            )
+            assert row["test-list"] == expected_list
+            assert (SCRIPT.parents[2] / row["test-list"]).is_file()
+        else:
+            assert "test-list" not in row
 
 
 @pytest.mark.parametrize("full", [False, True])

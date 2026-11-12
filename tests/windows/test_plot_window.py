@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pyqtgraph as pg
 import qcodes
-from PyQt6 import QtCore, QtGui, QtPrintSupport, sip
+from PyQt6 import QtCore, QtGui, QtPrintSupport, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import (
     CSVExporter,
@@ -3280,7 +3280,34 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host.open_axis_scale_dialog("x")
 
             dialog = host._axis_scale_dialog
-            qtw.QApplication.processEvents()
+            x_controls = host._axis_scale_controls["x"]
+
+            def wait_for_page_layout():
+                # Font/style events can queue another layout pass. A single
+                # processEvents() can leave the grid temporarily invalidated.
+                page = x_controls.minText.parentWidget()
+                deadline = QtCore.QDeadlineTimer(2000)
+                while not deadline.hasExpired():
+                    qtw.QApplication.processEvents(
+                        QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 10,
+                    )
+                    geometry = x_controls.gridLayout.geometry()
+                    if (
+                        page.isVisible()
+                        and not geometry.isEmpty()
+                        and geometry == page.contentsRect()
+                    ):
+                        return
+                    QtTest.QTest.qWait(5)
+                self.fail({
+                    "message": "Axis page layout did not settle within 2 seconds",
+                    "page_visible": page.isVisible(),
+                    "page_contents": page.contentsRect(),
+                    "grid_geometry": x_controls.gridLayout.geometry(),
+                    "dialog_size": dialog.size(),
+                })
+
+            wait_for_page_layout()
             self.assertEqual(dialog.windowTitle(), "Axis scaling")
             self.assertEqual(set(host._axis_scale_controls), {"x", "y", "x2", "y2"})
             self.assertEqual(
@@ -3292,7 +3319,6 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertFalse(host._axis_scale_tabs.isTabEnabled(2))
             self.assertFalse(host._axis_scale_tabs.isTabEnabled(3))
             self.assertGreaterEqual(host._axis_scale_tabs.width(), 360)
-            x_controls = host._axis_scale_controls["x"]
             self.assertFalse(x_controls.gridLayout.geometry().isEmpty())
             self.assertGreaterEqual(
                 x_controls.minText.parentWidget().width(),
@@ -3333,8 +3359,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             original_grid_geometry = x_controls.gridLayout.geometry()
             expanded_size = original_size + QtCore.QSize(240, 120)
             dialog.resize(expanded_size)
-            dialog.layout().activate()
-            qtw.QApplication.processEvents()
+            wait_for_page_layout()
             self.assertEqual(dialog.size(), expanded_size)
             self.assertGreater(
                 x_controls.minText.width(), original_field_width,
@@ -3375,7 +3400,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 },
             )
             dialog.resize(original_size)
-            qtw.QApplication.processEvents()
+            wait_for_page_layout()
             self.assertEqual(dialog.size(), original_size)
             tab_bar = host._axis_scale_tabs.tabBar()
             self.assertIn("QTabBar::tab:selected", host._axis_scale_tabs.styleSheet())

@@ -54,6 +54,12 @@ def check_matrix(full_validation: bool) -> dict[str, list[dict[str, str]]]:
             "suite": "compatibility",
             "native-artifact": artifact,
         } for version in PYTHON_VERSIONS)
+    for entry in entries:
+        if entry["suite"] == "compatibility":
+            entry["test-list"] = (
+                ".github/pytest-compatibility.txt" if full_validation
+                else ".github/pytest-compatibility-routine.txt"
+            )
     return {"include": entries}
 
 
