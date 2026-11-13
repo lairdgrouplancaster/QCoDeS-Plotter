@@ -284,6 +284,8 @@ class MainWindow(
         self.status_label.setObjectName("mainStatusMessage")
         self.status_label.setAccessibleName("Main window status")
         status_bar = cast(qtw.QStatusBar, self.statusBar())
+        status_bar.setContentsMargins(8, 0, 8, 0)
+        status_bar.addPermanentWidget(self.refreshStateLabel)
         status_bar.addPermanentWidget(self.status_label, 1)
         startup_elapsed = perf_counter() - startup_start
         self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")

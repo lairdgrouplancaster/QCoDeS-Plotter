@@ -275,6 +275,7 @@ class RefreshTimerLifecycleTestCase(unittest.TestCase):
         self.assertFalse(self.window.monitor.isActive())
 
     def test_load_pause_failure_cancel_and_unload_follow_committed_state(self):
+        self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: paused")
         with TemporaryDirectory() as directory:
             source = Path(directory) / "source.db"
             source.write_bytes(b"source")
@@ -282,19 +283,26 @@ class RefreshTimerLifecycleTestCase(unittest.TestCase):
             self.window._apply_refresh_interval(0.1)
             self.assertTrue(self.window.monitor.isActive())
 
+            self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: on")
+
             # Starting a replacement/load pauses refresh. A failed or
             # cancelled request can resume only while the old instance remains
             # committed; unload cannot.
             self.window._database_load_active = True
             self.window._update_automatic_refresh_timer()
             self.assertFalse(self.window.monitor.isActive())
+            self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: paused")
             self.window._database_load_active = False
             self.window._update_automatic_refresh_timer()
             self.assertTrue(self.window.monitor.isActive())
+            self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: on")
             self.window._loaded_database_instance = None
             self.window._update_automatic_refresh_timer()
 
         self.assertFalse(self.window.monitor.isActive())
+        self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: paused")
+        self.window.spinBox.setValue(0)
+        self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: off")
 
     def test_repeated_setting_changes_do_not_multiply_timeout_callbacks_or_touch_source(self):
         with TemporaryDirectory() as directory:

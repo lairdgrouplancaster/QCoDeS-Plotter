@@ -98,7 +98,7 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | Key | Type | Default | Validation | Purpose |
 | --- | --- | --- | --- | --- |
 | `GUI.plot_frame_fraction` | number | `0.47` | `0 < value < 1` | Fraction of a plot window used for the plot frame. |
-| `GUI.main_frame_size` | integer array | `[780, 700]` | exactly 2 items, each `1 <= value <= 16777215` | Initial main-window width and height. |
+| `GUI.main_frame_size` | integer array | `[900, 700]` | exactly 2 items, each `1 <= value <= 16777215` | Initial main-window width and height. |
 | `GUI.preview_size` | integer | `200` | `50 <= value <= 1000` | Preview thumbnail size in pixels. |
 | `GUI.run_table_column_widths` | integer array | `[]` | empty or exactly 12 items, each `32 <= value <= 16777215` | Saved run-table column widths in display order; an empty array uses responsive widths. |
 | `GUI.run_table_visible_columns` | string array | `["run_id", "measurements", "setpoints", "started", "status", "duration", "size"]` | unique run-table column IDs | Columns shown in the run table, in the table's fixed display order. |

@@ -1482,6 +1482,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         layout.setSpacing(10)
         tabs = qtw.QTabWidget(dialog)
         tabs.setObjectName("axisScaleTabs")
+        tabs.setDocumentMode(True)
         tabs.tabBar().setExpanding(True)
         tabs.tabBar().setUsesScrollButtons(False)
         tabs.setStyleSheet(

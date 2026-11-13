@@ -179,23 +179,23 @@ class RunList(qtw.QTreeWidget):
         "Size",
     )
     column_widths = {
-        "ID": 60,
-        "Measurements": DEFAULT_MEASUREMENTS_COLUMN_WIDTH,
+        "ID": 48,
+        "Measurements": DEFAULT_MEASUREMENTS_COLUMN_WIDTH + 50,
         "Experiment": 120,
         "Sample": 112,
         "Name": 150,
         "Status": 140,
         "Duration": 96,
-        "Size": 62,
+        "Size": 78,
         "Started": 142,
         "Completed": 142,
         "GUID": 286,
     }
     elastic_column_widths = {
-        "Setpoints": 170,
+        "Setpoints": 200,
     }
     representative_column_values = {
-        "ID": "9999",
+        "ID": "999",
         "Experiment": "experiment-name",
         "Sample": "sample-name",
         "Name": "run-name",
@@ -203,12 +203,12 @@ class RunList(qtw.QTreeWidget):
         "Started": "2026-05-04 13:05:16",
         "Status": "Interrupted (100.0%)",
         "Duration": "57,116.6 s",
-        "Size": "116 MB",
+        "Size": "unknown",
         "Completed": "2026-05-04 13:05:16",
         "GUID": "00000000-0000-0000-0000-000000000000",
     }
     readable_column_widths = {
-        "ID": 60,
+        "ID": 48,
         "Measurements": DEFAULT_MEASUREMENTS_COLUMN_WIDTH,
         "Experiment": 96,
         "Sample": 88,
@@ -217,12 +217,12 @@ class RunList(qtw.QTreeWidget):
         "Started": 128,
         "Status": 132,
         "Duration": 84,
-        "Size": 54,
+        "Size": 70,
         "Completed": 128,
         "GUID": 220,
     }
     minimum_column_widths = {
-        "ID": 60,
+        "ID": 48,
         "Measurements": 84,
         "Experiment": 80,
         "Sample": 72,

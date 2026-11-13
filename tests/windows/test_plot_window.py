@@ -3309,6 +3309,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertIsInstance(x_controls.linkCombo, qtw.QComboBox)
             self.assertGreaterEqual(x_controls.manualRadio.parentWidget().width(), 340)
             original_size = dialog.size()
+            original_tab_width = host._axis_scale_tabs.tabBar().tabRect(0).width()
             for field, value in zip(
                 (x_controls.minText, x_controls.maxText),
                 ("0.010012718532581035", "0.010017029084329264"),
@@ -3324,6 +3325,10 @@ class RunListParentLookupTestCase(unittest.TestCase):
             dialog.resize(expanded_size)
             wait_for_page_layout()
             self.assertEqual(dialog.size(), expanded_size)
+            tab_bar = host._axis_scale_tabs.tabBar()
+            self.assertEqual(tab_bar.width(), host._axis_scale_tabs.width())
+            self.assertGreater(tab_bar.tabRect(0).width(), original_tab_width)
+            self.assertEqual(tab_bar.tabRect(3).right() + 1, tab_bar.width())
             self.assertGreater(
                 x_controls.minText.width(), original_field_width,
                 {
@@ -3366,6 +3371,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
             wait_for_page_layout()
             self.assertEqual(dialog.size(), original_size)
             tab_bar = host._axis_scale_tabs.tabBar()
+            self.assertEqual(tab_bar.width(), host._axis_scale_tabs.width())
+            self.assertEqual(tab_bar.tabRect(0).width(), original_tab_width)
             self.assertIn("QTabBar::tab:selected", host._axis_scale_tabs.styleSheet())
             self.assertIn("palette(highlight)", host._axis_scale_tabs.styleSheet())
             self.assertGreaterEqual(tab_bar.tabRect(0).left(), 0)
