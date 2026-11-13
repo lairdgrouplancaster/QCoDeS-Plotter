@@ -62,6 +62,18 @@ def _configure_application_identity(app):
     """
     from qplot._icons import application_icon
 
+    if sys.platform == "win32":
+        # The Start Menu shortcut runs wscript.exe, but the taskbar window is
+        # owned by this Python process. Give it qPlot's own shell identity.
+        import ctypes
+
+        shell = ctypes.windll.shell32
+        shell.SetCurrentProcessExplicitAppUserModelID.argtypes = [ctypes.c_wchar_p]
+        shell.SetCurrentProcessExplicitAppUserModelID.restype = ctypes.c_long
+        result = shell.SetCurrentProcessExplicitAppUserModelID("uk.ac.lancaster.qplot")
+        if result < 0:
+            raise OSError(f"Could not set qPlot taskbar identity (HRESULT 0x{result & 0xffffffff:08x})")
+
     app.setApplicationName("qPlot")
     app.setWindowIcon(application_icon())
     if hasattr(app, "setApplicationDisplayName"):
