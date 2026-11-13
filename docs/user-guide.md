@@ -787,6 +787,14 @@ source database or WAL.
 Databases whose measurements are stored in separate raw-data files cannot be
 exported as a standalone database by this command.
 
+Use `File -> Export Selected Runs as Database…` to export only the selected
+runs. This includes every measurement, snapshot and metadata field in those
+runs, with their experiment records. Run IDs and GUIDs are preserved. Links to
+unselected runs remain as provenance references; those runs are not included.
+The export compacts a private copy, so temporary space for the whole database
+is needed. Database exports offer only the entire database or selected runs;
+measurement selection applies only to CSV.
+
 Acquisition can continue during export. The result is a consistent database
 snapshot taken during the export, which may contain an unfinished run. Data
 still buffered in QCoDeS is not included. Continued writes can cause SQLite to
@@ -794,16 +802,18 @@ restart copying pages; pause acquisition and retry if export cannot finish.
 The copy preserves run IDs, GUIDs, metadata and measurement values, but is not
 promised to be byte-for-byte identical to the original file.
 
-The main-window **CSV…** button exports raw measurement values, including their
+The main-window **Export CSV…** button exports raw measurement values, including their
 setpoints, without plot operations. Select or enter a Run ID and choose a
 measurement number, or `*` for all measurements. Preview context menus can also
-export one measurement. Independent measurements are placed side by side, with
+export one measurement using **Export This Measurement as CSV…**. The button
+always uses the neighbouring Run ID and Measurement controls, regardless of
+the table selection. Independent measurements are placed side by side, with
 parameter names prefixed when exporting several measurements; shorter columns
 have blank trailing cells. Array records are expanded into their individual
 samples without rounding stored integer or extended-precision values.
 
 To export several runs, use Shift-click or Ctrl-click (Cmd-click on macOS) to
-select rows, then **CSV…**, the selected rows' context menu, or
+select rows, then use the selected rows' context menu or
 `File -> Export Selected Runs as CSV…`. Choose all measurements or a named
 measurement shared by the selected runs, then choose an output folder. qPlot
 writes one file per run and asks before replacing an existing file. Each run
@@ -815,7 +825,7 @@ and do not need a writer checkpoint or a whole-database copy.
 You can also select individual measurement thumbnails in the run table or the
 Preview pane. Ctrl-click (Cmd-click on macOS) toggles a thumbnail; Shift-click
 selects a range in the current display order. Right-click a selected thumbnail
-and choose **Export Selected Thumbnails as CSV…**, then choose a folder. This
+and choose **Export Selected Measurements as CSV…**, then choose a folder. This
 writes one raw CSV per selected measurement, including its setpoints. Selecting
 two measurements from the same run produces two files. Selection is local to
 the run table or Preview pane, and remains highlighted as previews finish
