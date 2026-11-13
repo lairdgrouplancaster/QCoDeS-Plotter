@@ -1745,6 +1745,8 @@ class moreInfo(qtw.QTabWidget):
     def __init__(self, *args, preview_size=None):
         super().__init__(*args)
         self.setObjectName("runDetailsTabs")
+        self.setDocumentMode(True)
+        self.tabBar().setExpanding(True)
         self._trusted_full_values = {}
         self._full_value_dialog = None
         self._trusted_detail_identity = None
