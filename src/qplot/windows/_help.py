@@ -41,7 +41,9 @@ status bar at the bottom of the window before assuming a load has failed.</p>
 """
 
 
-def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
+def add_help_menu(
+    window: qtw.QMainWindow, *, include_desktop_integration: bool = False,
+) -> qtw.QMenu:
     """
     Adds qPlot's shared Help menu to a main or plot window.
 
@@ -89,17 +91,18 @@ def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
     update_action.triggered.connect(lambda: check_for_updates(window))
     help_menu.addAction(update_action)
 
-    desktop_action = QtGui.QAction("Set Up or Remove Desktop Integration…", window)
-    desktop_action.setObjectName("desktopIntegrationAction")
-    desktop_action.triggered.connect(lambda: show_desktop_integration(window))
-    settings_menu = next(
-        (action.menu() for action in menu_bar.actions()
-         if action.text().replace("&", "") == "Settings"),
-        None,
-    )
-    if settings_menu is None:
-        settings_menu = menu_bar.addMenu("&Settings")
-    settings_menu.addAction(desktop_action)
+    if include_desktop_integration:
+        desktop_action = QtGui.QAction("Set Up or Remove Desktop Integration…", window)
+        desktop_action.setObjectName("desktopIntegrationAction")
+        desktop_action.triggered.connect(lambda: show_desktop_integration(window))
+        settings_menu = next(
+            (action.menu() for action in menu_bar.actions()
+             if action.text().replace("&", "") == "Settings"),
+            None,
+        )
+        if settings_menu is None:
+            settings_menu = menu_bar.addMenu("&Settings")
+        settings_menu.addAction(desktop_action)
 
     about_action = QtGui.QAction("&About qPlot", window)
     about_action.setObjectName("aboutQplotAction")

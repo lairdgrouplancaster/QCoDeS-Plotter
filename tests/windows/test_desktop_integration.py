@@ -58,13 +58,15 @@ def test_failed_start_allows_retry(dialog):
     assert "Could not start" in dialog.output.toPlainText()
 
 
-def test_help_and_about_offer_dialog(qapplication, monkeypatch):
+def test_settings_and_about_offer_dialog(qapplication, monkeypatch):
     from qplot.windows import _help
 
     opened = Mock()
     monkeypatch.setattr(_help, "show_desktop_integration", opened)
     window = qtw.QMainWindow()
-    menu = add_help_menu(window)
+    add_help_menu(window, include_desktop_integration=True)
+    menu = next(a.menu() for a in window.menuBar().actions()
+                if a.text().replace("&", "") == "Settings")
     next(a for a in menu.actions() if a.objectName() == "desktopIntegrationAction").trigger()
     opened.assert_called_once_with(window)
     about = show_about(window)

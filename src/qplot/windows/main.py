@@ -415,7 +415,7 @@ class MainWindow(
             )
         prefMenu.addSeparator()
         add_restore_defaults_option(self, prefMenu)
-        add_help_menu(self)
+        add_help_menu(self, include_desktop_integration=True)
 
     def initFile(self):
         """
