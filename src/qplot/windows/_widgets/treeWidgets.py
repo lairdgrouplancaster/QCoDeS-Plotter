@@ -187,12 +187,12 @@ class RunList(qtw.QTreeWidget):
         "Status": 140,
         "Duration": 96,
         "Size": 62,
+        "Started": 142,
         "Completed": 142,
         "GUID": 286,
     }
     elastic_column_widths = {
         "Setpoints": 170,
-        "Started": 142,
     }
     representative_column_values = {
         "ID": "9999",
@@ -1216,26 +1216,18 @@ class RunList(qtw.QTreeWidget):
         else:
             extra_width = max(0, available_width - preferred_width)
             widths = dict(preferred_widths)
-            if "Setpoints" in widths and "Started" in widths:
-                setpoints_extra = (extra_width * 2) // 3
-                widths["Setpoints"] += setpoints_extra
-                widths["Started"] += extra_width - setpoints_extra
-            else:
-                elastic_name = next(
-                    (
-                        name
-                        for name in (
-                            "Setpoints",
-                            "Name",
-                            "Started",
-                            "Experiment",
-                            "Sample",
-                            "GUID",
-                        )
-                        if name in widths
-                    ),
-                    visible_names[-1],
-                )
+            elastic_name = next(
+                (
+                    name
+                    for name in ("Setpoints", "Name", "Experiment", "Sample", "GUID")
+                    if name in widths
+                ),
+                next(
+                    (name for name in reversed(visible_names) if name != "Started"),
+                    None,
+                ),
+            )
+            if elastic_name is not None:
                 widths[elastic_name] += extra_width
 
         self._resizing_columns = True
