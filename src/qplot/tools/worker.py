@@ -55,6 +55,7 @@ from qplot.tools.plot_result import PlotLoadResult, capture_plot_result
 from . import data2matrix
 from .finite_means import FiniteBinMeans
 from .heatmap_geometry import (
+    MAX_AGGREGATED_HEATMAP_CELLS,
     bounded_grid_shape,
     canonicalize_heatmap_data,
     spatial_axis_bins,
@@ -65,7 +66,8 @@ if TYPE_CHECKING:
 
 MAX_FULL_HEATMAP_POINTS = 2_000_000
 MAX_SQL_HEATMAP_SOURCE_ROWS = 250_000
-MAX_SQL_HEATMAP_GRID_SIDE = 800
+MAX_SQL_HEATMAP_GRID_SIDE = None  # Optional legacy API override; default is the cell budget.
+MAX_ARRAY_HEATMAP_AXIS_VALUES = 262_144
 MAX_SQL_HEATMAP_GRID_CELLS = 250_000
 SQL_HEATMAP_SAMPLES_PER_CELL = 4
 CANCELLATION_CHUNK_SIZE = 65_536
@@ -112,7 +114,7 @@ class loader(QtCore.QRunnable):
                  force_sql_heatmap: bool = False,
                  max_full_heatmap_points: int = MAX_FULL_HEATMAP_POINTS,
                  max_heatmap_grid_cells: int = MAX_SQL_HEATMAP_GRID_CELLS,
-                 max_heatmap_grid_side: int = MAX_SQL_HEATMAP_GRID_SIDE,
+                 max_heatmap_grid_side: int | None = MAX_SQL_HEATMAP_GRID_SIDE,
                  heatmap_axis_ranges: dict | None = None,
                  heatmap_full_axis_ranges: dict | None = None,
                  database_identity=None,
@@ -171,7 +173,10 @@ class loader(QtCore.QRunnable):
         self.force_sql_heatmap = force_sql_heatmap
         self.max_full_heatmap_points = max(1, int(max_full_heatmap_points))
         self.max_heatmap_grid_cells = max(1, int(max_heatmap_grid_cells))
-        self.max_heatmap_grid_side = max(1, int(max_heatmap_grid_side))
+        self.max_heatmap_grid_side = (
+            self.max_heatmap_grid_cells if max_heatmap_grid_side is None
+            else max(1, int(max_heatmap_grid_side))
+        )
         self.heatmap_axis_ranges = heatmap_axis_ranges
         self.heatmap_full_axis_ranges = heatmap_full_axis_ranges
         self.database_identity = database_identity
@@ -1293,9 +1298,10 @@ class loader(QtCore.QRunnable):
         self._complex_parts_bytes = 0
         buffered: list[tuple[np.ndarray, np.ndarray, np.ndarray]] | None = []
         source_count = matching_count = 0
-        # Keep exact coordinates only while an axis could fit on screen.
-        # Once saturated, retain its extrema and bin it on the second pass.
-        axis_limit = max(1, self.max_heatmap_grid_side)
+        # Bound coordinate bookkeeping independently of display preferences.
+        # Once saturated, retain extrema and a cardinality lower bound, then
+        # bin on the second pass. The default display budget fits in this set.
+        axis_limit = MAX_ARRAY_HEATMAP_AXIS_VALUES
         unique: list[set[float] | None] = [set(), set()]
         precision_sensitive = [False, False]
         lower = [np.inf, np.inf]
@@ -2302,7 +2308,13 @@ class loader(QtCore.QRunnable):
             "max_heatmap_grid_side",
             MAX_SQL_HEATMAP_GRID_SIDE,
             )
-        return bounded_grid_shape(x_count, y_count, max_cells=max_cells, max_side=max_side)
+        shape = bounded_grid_shape(x_count, y_count, max_cells=max_cells, max_side=max_side)
+        if shape[0] * shape[1] > MAX_AGGREGATED_HEATMAP_CELLS:
+            raise OperationExecutionError(
+                "The heatmap exceeds its bounded aggregation memory budget. "
+                "Reduce Maximum heatmap grid cells to at most 2,000,000."
+            )
+        return shape
 
 
     def _scaled_axis_indices(self, values, bin_count, bounds=None):

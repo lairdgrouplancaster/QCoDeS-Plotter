@@ -92,7 +92,9 @@ def test_default_bounded_load_with_final_infinite_coordinate(tmp_path, monkeypat
         for worker in workers:
             run_worker(worker)
         for worker in workers:
-            assert worker.dataGrid.shape == (500, 500)
+            # Retain the source's approximately 2:1 shape within the cell
+            # budget, instead of clipping both source dimensions to 800.
+            assert worker.dataGrid.shape == (706, 353)
             assert worker.aggregated_heatmap_source
             assert worker.total_point_count_estimate == 2_002_000
             info = worker.heatmap_downsample_info

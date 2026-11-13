@@ -373,6 +373,8 @@
                     "default": 250000
                 },
                 "max_heatmap_grid_side": {
+                    "deprecated": true,
+                    "description": "Legacy setting retained for compatibility; the application now derives axis limits from max_heatmap_grid_cells.",
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 2000000000,

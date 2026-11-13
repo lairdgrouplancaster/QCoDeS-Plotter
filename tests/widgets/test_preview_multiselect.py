@@ -169,7 +169,7 @@ def test_context_and_keyboard_menu_preserve_group(table, monkeypatch):
     table.batchExportRequested.connect(emitted.append)
 
     def export(menu, *_args):
-        assert [action.text() for action in menu.actions()] == ["Export Selected Thumbnails as CSV…"]
+        assert [action.text() for action in menu.actions()] == ["Export Selected Measurements as CSV…"]
         menu.actions()[0].trigger()
 
     _context(labels[0], monkeypatch, export)
@@ -187,7 +187,7 @@ def test_right_click_unselected_thumbnail_uses_single_action(table, monkeypatch)
     _click(labels[1], QtCore.Qt.KeyboardModifier.ControlModifier)
     captured = []
     _context(labels[4], monkeypatch, lambda menu, *_: captured.extend(action.text() for action in menu.actions()))
-    assert captured == ["&Plot", "&Export CSV...", "Generate &stats..."]
+    assert captured == ["&Plot", "Export This &Measurement as CSV…", "Generate &stats..."]
     assert selected_preview_targets(table) == (preview_key(labels[4]),)
 
 

@@ -424,6 +424,8 @@ Common actions:
 * `Help -> Check for Updates…` checks PyPI for a newer qPlot release and shows
   release notes and upgrade instructions. Stable releases are selected by
   default; withdrawn releases and incompatible application wheels are ignored.
+  `Help -> About qPlot` also offers `Check for Updates`, with the result shown
+  below the installed version and build details in the same dialog.
   `Preferences -> Updates` can enable checks on launch (off by default) and
   include pre-release versions. Launch checks run in the background, at most
   once every 24 hours, and notify you only when a newer release is available.
@@ -574,6 +576,24 @@ When multiple traces use different Y axes:
 * Secondary traces attached to the right axis cannot be rotated.
 
 ### Heatmaps
+
+`Preferences -> Performance -> Maximum heatmap grid cells` sets the total
+cell budget for aggregated heatmaps (250,000 by default). A grid that fits is
+kept at its available resolution; larger grids reduce both dimensions
+proportionally. If one dimension reaches one bin, the other can use the
+remaining budget. For example, 2,000 by 100 fits unchanged, while 1,000 by
+1,000 becomes 500 by 500. Window resizing does not change this budget.
+
+There is no separate per-axis preference. The legacy
+`runtime_settings.max_heatmap_grid_side` entry remains readable in existing
+settings files but is no longer used by the application. `Full-resolution
+heatmap limit` remains a separate control for full-resolution loading and
+operations. Streaming coordinate discovery has its own bounded memory: after
+262,144 distinct values on an axis it uses spatial bins and a lower-bound
+coordinate count, so extreme shapes can use less than the requested budget.
+Aggregated grids have an internal limit of two million cells; Preferences
+allows budgets up to that limit. Older settings requesting larger grids remain
+readable, but a plot that would exceed this allocation limit reports an error.
 
 Heatmaps support multiple compatible maps in one window. When a snapshot
 fallback session supplies a heatmap preview thumbnail, drag it from the run

@@ -1095,10 +1095,6 @@ class PlotActionsMixin:
                 operation="exporting run data",
                 ):
             return
-        selected_ids = getattr(self.RunList, "selected_run_ids", lambda: [])()
-        if len(selected_ids) > 1:
-            self.export_selected_runs_csv()
-            return
         request = self._run_csv_export_request()
         if request is None:
             return

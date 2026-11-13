@@ -1260,7 +1260,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                     for col in range(run_list.columnCount())
                 ],
                 [
-                    "ID",
+                    "Run",
                     "Experiment",
                     "Sample",
                     "Measurements",

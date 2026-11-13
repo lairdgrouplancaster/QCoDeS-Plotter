@@ -174,7 +174,6 @@ class PreferencesDialogTestCase(unittest.TestCase):
             self.assertEqual(dialog.maxThreadsSpin.value(), 8)
             self.assertEqual(dialog.maxFullHeatmapPointsSpin.value(), 3_000_000)
             self.assertEqual(dialog.maxHeatmapGridCellsSpin.value(), 500_000)
-            self.assertEqual(dialog.maxHeatmapGridSideSpin.value(), 1_200)
             self.assertEqual(dialog.delGracePeriodSpin.value(), 15.5)
             self.assertEqual(dialog.cloudSyncTimeoutSpin.value(), 240.0)
         finally:
@@ -206,7 +205,6 @@ class PreferencesDialogTestCase(unittest.TestCase):
             dialog.maxThreadsSpin.setValue(9)
             dialog.maxFullHeatmapPointsSpin.setValue(3_000_000)
             dialog.maxHeatmapGridCellsSpin.setValue(500_000)
-            dialog.maxHeatmapGridSideSpin.setValue(1_200)
             dialog.delGracePeriodSpin.setValue(20.0)
             dialog.cloudSyncTimeoutSpin.setValue(300.0)
 
@@ -229,7 +227,6 @@ class PreferencesDialogTestCase(unittest.TestCase):
                 ("runtime_settings.max_threads", 9),
                 ("runtime_settings.max_full_heatmap_points", 3_000_000),
                 ("runtime_settings.max_heatmap_grid_cells", 500_000),
-                ("runtime_settings.max_heatmap_grid_side", 1_200),
                 ("runtime_settings.del_grace_period", 20.0),
                 ("runtime_settings.cloud_sync_timeout", 300.0),
                 ])

@@ -83,3 +83,26 @@ def test_switch_database_before_publication_cancels(export_window, tmp_path, mon
     finally:
         release.set()
         wait_for(lambda: task.done)
+
+
+def test_selected_database_action_captures_only_run_selection(export_window, tmp_path, monkeypatch):
+    window, errors = export_window
+    _, target = prepare(window, tmp_path, monkeypatch)
+    monkeypatch.setattr(window.RunList, "selected_run_ids", lambda: [197])
+    captured = []
+    def write(filename, **kwargs):
+        captured.append(kwargs["run_ids"])
+        Path(filename).write_bytes(b"test copy")
+    monkeypatch.setattr(_database_export, "export_database_copy", write)
+    window.findChild(QtGui.QAction, "exportSelectedRunsDatabaseAction").trigger()
+    wait_for(lambda: not window._export_task_manager.tasks)
+    assert captured == [(197,)]
+    assert target.exists()
+    assert not errors
+
+
+def test_selected_database_empty_selection_does_not_export(export_window, monkeypatch):
+    window, _ = export_window
+    monkeypatch.setattr(window.RunList, "selected_run_ids", lambda: [])
+    monkeypatch.setattr(_database_export, "start_export_task", lambda **_: pytest.fail("Unexpected export"))
+    _database_export.export_database(window, selected=True)

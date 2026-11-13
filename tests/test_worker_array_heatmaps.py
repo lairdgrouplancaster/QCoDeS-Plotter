@@ -596,16 +596,16 @@ def test_partial_planned_array_scan_preserves_nonuniform_short_axis(
         assert worker.aggregated_heatmap_source is streamed
         if swapped:
             np.testing.assert_array_equal(worker.axis_data["x"], slow_values)
-            assert worker.axis_data["y"].size == 800
-            assert worker.dataGrid.shape == (800, 3)
+            assert worker.axis_data["y"].size == 1001
+            assert worker.dataGrid.shape == (1001, 3)
             np.testing.assert_allclose(
                 worker.dataGrid,
                 np.broadcast_to(slow_values, worker.dataGrid.shape),
             )
         else:
-            assert worker.axis_data["x"].size == 800
+            assert worker.axis_data["x"].size == 1001
             np.testing.assert_array_equal(worker.axis_data["y"], slow_values)
-            assert worker.dataGrid.shape == (3, 800)
+            assert worker.dataGrid.shape == (3, 1001)
             np.testing.assert_allclose(
                 worker.dataGrid,
                 np.broadcast_to(slow_values[:, None], worker.dataGrid.shape),
@@ -634,9 +634,9 @@ def test_partial_planned_array_viewport_reload_preserves_nonuniform_short_axis(
         )
         run_worker(worker)
 
-        assert worker.axis_data["x"].size == 800
+        assert worker.axis_data["x"].size == 801
         np.testing.assert_array_equal(worker.axis_data["y"], slow_values)
-        assert worker.dataGrid.shape == (3, 800)
+        assert worker.dataGrid.shape == (3, 801)
         for row, slow in zip(worker.dataGrid, slow_values, strict=True):
             finite = np.isfinite(row)
             assert np.any(finite)
@@ -732,9 +732,9 @@ def test_bounded_heatmap_spatial_means_and_visible_range(tmp_path, monkeypatch, 
         assert worker.heatmap_downsample_info["source_aggregated"]
         assert worker.heatmap_downsample_info["aggregated_source_row_count"] == (8 if visible else 12)
         if arrays:
-            # Saturated coordinate sets must not be reported as exact counts.
-            assert worker.heatmap_downsample_info["unique_x_count"] is None
-            assert worker.heatmap_downsample_info["exact_cell_count"] is None
+            # Display binning no longer discards exact coordinate counts.
+            assert worker.heatmap_downsample_info["unique_x_count"] == (4 if visible else 6)
+            assert worker.heatmap_downsample_info["exact_cell_count"] == (8 if visible else 12)
 
 
 @pytest.mark.parametrize("fortran_column", ["fast", "signal"])

@@ -134,6 +134,7 @@ def test_streaming_precision_guard_after_unique_set_saturates(tmp_path, monkeypa
     # set before the last sample arrives; no unbounded history may be retained.
     coordinates = np.array([2**53 + 1, 0, 2**53] if discarded_inexact else [0, 2**53, 2**53 + 1])
     monkeypatch.setattr(worker_module, "CANCELLATION_CHUNK_SIZE", 1)
+    monkeypatch.setattr(worker_module, "MAX_ARRAY_HEATMAP_AXIS_VALUES", 1)
     with coordinate_dataset(tmp_path, coordinates=coordinates) as dataset:
         worker = coordinate_worker(dataset, force_sql_heatmap=True, max_heatmap_grid_side=1)
         finished, errors = run_coordinate_worker(worker)

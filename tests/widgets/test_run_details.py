@@ -2842,8 +2842,8 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             captured_action_texts,
             [
-                ["Plot", "Export CSV...", "Generate stats..."],
-                ["Plot", "Export CSV...", "Generate stats..."],
+                ["Plot", "Export This Measurement as CSV…", "Generate stats..."],
+                ["Plot", "Export This Measurement as CSV…", "Generate stats..."],
             ],
         )
 
@@ -2885,7 +2885,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             export_action = next(
                 action
                 for action in captured_actions
-                if action.text().replace("&", "") == "Export CSV..."
+                if action.text().replace("&", "") == "Export This Measurement as CSV…"
             )
             export_action.trigger()
 

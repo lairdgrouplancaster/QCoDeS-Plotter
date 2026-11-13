@@ -145,8 +145,8 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.default_refresh_rate` | number | `1` | `0 <= value <= 10000` | Shared interval for the run table and all live plots, in seconds; zero disables automatic refresh everywhere. |
 | `runtime_settings.max_threads` | integer | `4` | `1 <= value <= 999` | Maximum worker threads for background loading. |
 | `runtime_settings.max_full_heatmap_points` | integer | `2000000` | `1 <= value <= 2000000000` | Maximum estimated points loaded at full resolution before 2D plot windows use SQL spatial aggregation. |
-| `runtime_settings.max_heatmap_grid_cells` | integer | `250000` | `1 <= value <= 2000000000` | Maximum cells in a downsampled heatmap display grid. |
-| `runtime_settings.max_heatmap_grid_side` | integer | `800` | `1 <= value <= 2000000000` | Maximum bins on either axis of a downsampled heatmap display grid. |
+| `runtime_settings.max_heatmap_grid_cells` | integer | `250000` | `1 <= value <= 2000000000` | Total cell budget for an aggregated heatmap, shared proportionally across its axes. Preferences allows up to 2,000,000; actual aggregated allocations above that internal limit are rejected. |
+| `runtime_settings.max_heatmap_grid_side` | integer | `800` | `1 <= value <= 2000000000` | Deprecated. Accepted for settings-file compatibility but ignored by the application; the total cell budget now determines axis limits. |
 | `runtime_settings.del_grace_period` | number | `10` | `0 <= value <= 300` | Seconds to retain an unused plot dataset connection for quick reopening. |
 | `runtime_settings.cloud_sync_timeout` | number | `120` | `1 <= value <= 3600` | Seconds to wait for cloud storage to hydrate a database before failing. |
 | `updates.check_on_launch` | boolean | `true` | `true` or `false` | Check PyPI in the background after launch, at most once every 24 hours. |

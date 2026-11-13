@@ -1499,7 +1499,7 @@ class PreviewImageLabel(qtw.QLabel):
 
         batch_signal = getattr(scope, "batchExportRequested", None)
         if len(targets) > 1 and batch_signal is not None:
-            export_action = QtGui.QAction("Export Selected Thumbnails as CSV…", menu)
+            export_action = QtGui.QAction("Export Selected Measurements as CSV…", menu)
             menu.addAction(export_action)
             export_action.triggered.connect(
                 lambda: batch_signal.emit(targets) if is_current() else None,
@@ -1514,7 +1514,7 @@ class PreviewImageLabel(qtw.QLabel):
         )
         menu.addAction(plot_action)
 
-        export_action = QtGui.QAction("&Export CSV...", menu)
+        export_action = QtGui.QAction("Export This &Measurement as CSV…", menu)
         export_action.triggered.connect(
             lambda: self.exportRequested.emit(self.parameter) if is_current() else None,
         )

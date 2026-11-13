@@ -173,7 +173,8 @@ class UpdateChecker(QtCore.QObject):
             if dialog is not None and not sip.isdeleted(dialog) and dialog.isVisible():
                 browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
                 if browser is not None:
-                    browser.setHtml(message.html)
+                    prefix = str(dialog.property("qplotUpdatePrefixHtml") or "")
+                    browser.setHtml(prefix + message.html)
                     self._set_upgrade_command(dialog, message.upgrade_command)
                     shown = True
         parent = self._automatic_parent() if self._automatic_parent is not None else None
@@ -227,6 +228,17 @@ class UpdateChecker(QtCore.QObject):
                 browser.setHtml(CHECKING_MESSAGE.html)
         self._set_upgrade_command(dialog, CHECKING_MESSAGE.upgrade_command)
         self.check(parent.config, dialog=dialog)
+        return dialog
+
+    def show_in_about(self, dialog, config):
+        """Show check results below the installed version and build details."""
+        browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
+        if browser is not None:
+            prefix = str(dialog.property("qplotUpdatePrefixHtml") or "")
+            browser.setHtml(prefix + CHECKING_MESSAGE.html)
+        dialog.resize(dialog.width(), max(dialog.height(), 520))
+        self._set_upgrade_command(dialog, "")
+        self.check(config, dialog=dialog)
         return dialog
 
     def shutdown(self):

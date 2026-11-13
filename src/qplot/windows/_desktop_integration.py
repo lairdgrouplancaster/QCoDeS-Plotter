@@ -57,8 +57,7 @@ class DesktopIntegrationDialog(qtw.QDialog):
         layout.addWidget(self.associations)
         note = qtw.QLabel(
             "Install/update replaces an existing qPlot launcher at this location. "
-            "Remove deletes its registered integration and owned shortcut. "
-            "Your measurement files are never changed."
+            "Remove deletes its registered integration and owned shortcut."
         )
         note.setWordWrap(True)
         layout.addWidget(note)
@@ -68,10 +67,10 @@ class DesktopIntegrationDialog(qtw.QDialog):
         self.output.setAccessibleName("Desktop integration progress")
         layout.addWidget(self.output)
         buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
-        self.install_button = qtw.QPushButton("Install/update")
+        self.install_button = qtw.QPushButton("Install/update integration")
         self.install_button.setToolTip("Install or replace the qPlot launcher at the chosen location with the selected integration options.")
         buttons.addButton(self.install_button, qtw.QDialogButtonBox.ButtonRole.ActionRole)
-        self.remove_button = qtw.QPushButton("Remove")
+        self.remove_button = qtw.QPushButton("Remove integration")
         self.remove_button.setToolTip("Remove the registered qPlot integration and its owned shortcut.")
         buttons.addButton(self.remove_button, qtw.QDialogButtonBox.ButtonRole.ActionRole)
         self.close_button = buttons.button(qtw.QDialogButtonBox.StandardButton.Close)

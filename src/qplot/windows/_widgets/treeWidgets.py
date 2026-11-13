@@ -319,6 +319,7 @@ class RunList(qtw.QTreeWidget):
 
         self.setColumnCount(len(self.cols))
         self.setHeaderLabels(self.cols)
+        self.headerItem().setText(self.column_ids.index("run_id"), "Run")
         header = self.header()
         if header is not None:
             header.setStretchLastSection(False)
@@ -1117,7 +1118,7 @@ class RunList(qtw.QTreeWidget):
         columns_menu = menu.addMenu("Columns")
         visible_ids = set(self.visible_column_ids())
         for column_id in self.column_ids:
-            label = self.column_labels[column_id]
+            label = self.headerItem().text(self.column_ids.index(column_id))
             action = columns_menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(column_id in visible_ids)

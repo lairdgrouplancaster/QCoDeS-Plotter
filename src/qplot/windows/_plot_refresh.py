@@ -453,8 +453,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
             "max_heatmap_grid_cells": self.config.get(
                 "runtime_settings.max_heatmap_grid_cells"
                 ),
+            # Retain the loader keyword for custom factories, but derive it
+            # from the cell budget rather than the obsolete axis preference.
             "max_heatmap_grid_side": self.config.get(
-                "runtime_settings.max_heatmap_grid_side"
+                "runtime_settings.max_heatmap_grid_cells"
                 ),
             "heatmap_axis_ranges": heatmap_axis_ranges,
             "heatmap_full_axis_ranges": heatmap_full_axis_ranges,

@@ -113,7 +113,7 @@ class RunControlsMixin:
         sublayout.setContentsMargins(8, 0, 8, 2)
         sublayout.setSpacing(6)
 
-        sublayout.addWidget(qtw.QLabel("ID:"))
+        sublayout.addWidget(qtw.QLabel("Run ID:"))
 
         self.selected_run_id = None
 
@@ -122,7 +122,7 @@ class RunControlsMixin:
         self.run_idBox.setFixedWidth(58)
         self.run_idBox.setValidator(QIntValidator())
         self.run_idBox.setPlaceholderText("ID")
-        self.run_idBox.setToolTip("Run ID to plot")
+        self.run_idBox.setToolTip("Run ID to plot or export as CSV")
         self.run_idBox.textEdited.connect(self.update_run_id)
         self.run_idBox.editingFinished.connect(self.sync_run_id_selection)
         self.run_idBox.returnPressed.connect(self._open_entered_run)
@@ -135,7 +135,7 @@ class RunControlsMixin:
         self.measurementBox.setFixedWidth(46)
         self.measurementBox.setText("*")
         self.measurementBox.setToolTip(
-            "Enter a measurement number (starting at 1), or * to plot every measurement in the run."
+            "Enter a measurement number (starting at 1), or * for every measurement in the run, to plot or export as CSV."
         )
         self.measurementBox.returnPressed.connect(self._open_entered_run)
         sublayout.addWidget(self.measurementBox)
@@ -162,13 +162,21 @@ class RunControlsMixin:
         self.exportCsvButton.setIcon(
             self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogSaveButton)
             )
-        self.exportCsvButton.setText("CSV…")
+        self.exportCsvButton.setText("Export CSV…")
         self.exportCsvButton.setToolButtonStyle(
             QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
             )
-        self.exportCsvButton.setToolTip(
-            "Export raw measurement values as CSV (multiple selected runs: batch export)"
-            )
+        def update_export_scope():
+            run = self.run_idBox.text().strip()
+            measurement = self.measurementBox.text().strip()
+            scope = "all measurements" if measurement == "*" else f"measurement {measurement}"
+            description = f"Export {scope} from run {run} as CSV (raw values)."
+            self.exportCsvButton.setToolTip(description)
+            self.exportCsvButton.setAccessibleDescription(description)
+            self.exportCsvButton.setEnabled(bool(run and measurement))
+        self.run_idBox.textChanged.connect(update_export_scope)
+        self.measurementBox.textChanged.connect(update_export_scope)
+        update_export_scope()
         self.exportCsvButton.setAccessibleName("Export raw measurement values to CSV")
         self.exportCsvButton.setFixedHeight(26)
         self.exportCsvButton.clicked.connect(self.exportRunCsv)

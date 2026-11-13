@@ -46,7 +46,7 @@ def _export_context_selection(monkeypatch, label):
 
     def choose(menu, *_args):
         actions = [action for action in menu.actions()
-                   if "export selected thumbnails" in action.text().replace("&", "").lower()]
+                   if "export selected measurements" in action.text().replace("&", "").lower()]
         assert len(actions) == 1
         observed.append(actions[0].text())
         actions[0].trigger()

@@ -346,9 +346,18 @@ class MainWindow(
         fileMenu.addAction(export_runs)
         from ._database_export import export_database
 
+        export_selected_database = create_action("database.export_selected", self)
+        export_selected_database.triggered.connect(lambda: export_database(self, selected=True))
+        fileMenu.addAction(export_selected_database)
         export_database_action = create_action("database.export_copy", self)
         export_database_action.triggered.connect(lambda: export_database(self))
         fileMenu.addAction(export_database_action)
+        def update_export_actions():
+            has_selection = bool(self.RunList.selected_run_ids())
+            export_runs.setEnabled(has_selection)
+            export_selected_database.setEnabled(has_selection)
+            export_database_action.setEnabled(getattr(self, "_loaded_database_instance", None) is not None)
+        fileMenu.aboutToShow.connect(update_export_actions)
         exports_progress = create_action("exports.show", self)
         exports_progress.triggered.connect(self.show_csv_exports)
         fileMenu.addAction(exports_progress)

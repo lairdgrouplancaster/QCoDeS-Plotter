@@ -183,3 +183,51 @@ def test_writer_can_commit_during_export(tmp_path):
             assert copy.execute("PRAGMA integrity_check").fetchone() == ("ok",)
     finally:
         writer.close()
+
+@pytest.mark.parametrize("live", [False, True])
+def test_selected_runs_reopen_in_qcodes(tmp_path, live):
+    from qcodes.dataset import initialise_or_create_database_at, load_or_create_experiment, Measurement, load_by_id
+    from qcodes.dataset.sqlite.database import connect
+    path = tmp_path / "qcodes.db"
+    initialise_or_create_database_at(str(path), journal_mode="WAL" if live else "DELETE")
+    with closing(connect(str(path))) as writer:
+        runs = []
+        for i in range(3):
+            experiment = load_or_create_experiment(f"experiment-{i}", "sample", conn=writer)
+            measurement = Measurement(exp=experiment)
+            measurement.register_custom_parameter("x")
+            measurement.register_custom_parameter("y", setpoints=("x",))
+            with measurement.run(write_in_background=False) as saver:
+                saver.add_result(("x", i), ("y", i + 10))
+                saver.dataset.add_metadata("note", f"run-{i}")
+                saver.dataset.add_snapshot('{"station": {}}', overwrite=True)
+                runs.append((saver.dataset.run_id, saver.dataset.guid, saver.dataset.table_name))
+        # An unfinished run must remain unfinished in the copy.
+        writer.execute("UPDATE runs SET is_completed=0, completed_timestamp=NULL WHERE run_id=?", (runs[2][0],))
+        writer.commit()
+        protected = [path] + ([Path(str(path) + "-wal")] if live else [])
+        before = {str(p): (digest(p), p.stat().st_mtime_ns) for p in protected}
+        stage = tmp_path / "selected.db"
+        stage.touch()
+        export_database_copy(stage, instance=database_instance(path), live=live,
+                             cancelled=lambda: False, progress=lambda *_: None,
+                             run_ids=[runs[0][0], runs[2][0]])
+        assert before == {str(p): (digest(p), p.stat().st_mtime_ns) for p in protected}
+    with closing(connect(str(stage))) as exported:
+        assert exported.execute("SELECT run_id FROM runs ORDER BY run_id").fetchall() == [(runs[0][0],), (runs[2][0],)]
+        assert exported.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] == 2
+        assert exported.execute("SELECT name FROM sqlite_master WHERE name=?", (runs[1][2],)).fetchone() is None
+        assert exported.execute("PRAGMA foreign_key_check").fetchall() == []
+        for i in (0, 2):
+            dataset = load_by_id(runs[i][0], conn=exported)
+            assert dataset.guid == runs[i][1]
+            assert dataset.metadata["note"] == f"run-{i}"
+            assert dataset.snapshot == {"station": {}}
+            assert dataset.get_parameter_data()["y"]["y"].tolist() == [i + 10]
+            assert dataset.completed == (i == 0)
+
+
+def test_empty_run_selection_rejected(tmp_path):
+    with pytest.raises(ValueError, match="Select at least"):
+        export_database_copy(tmp_path / "unused", instance=None, live=False,
+                             cancelled=lambda: False, progress=lambda *_: None, run_ids=[])

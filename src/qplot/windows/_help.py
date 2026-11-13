@@ -146,16 +146,43 @@ def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
         rows.append(f"<p><b>Commit:</b> {escape(str(info['commit']))}</p>")
     if info.get("pull_request"):
         rows.append(f"<p><b>Pull request:</b> #{escape(str(info['pull_request']))}</p>")
-    return _show_help_dialog(
-        parent, "About qPlot",
+    html = (
         heading
         + "".join(rows)
         + '<p><a href="https://github.com/lairdgrouplancaster/QCoDeS-Plotter">'
-        "Project on GitHub</a></p>",
+        "Project on GitHub</a></p>"
+    )
+    dialog = _show_help_dialog(
+        parent, "About qPlot", html,
         "qplotAboutDialog",
         size=(580, 320),
         icon=application_icon(),
     )
+    dialog.setProperty("qplotUpdatePrefixHtml", html + "<hr>")
+    buttons = dialog.findChild(qtw.QDialogButtonBox)
+    if buttons is not None:
+        check_button = buttons.addButton(
+            "Check for Updates", qtw.QDialogButtonBox.ButtonRole.ActionRole,
+        )
+        check_button.setObjectName("aboutCheckForUpdatesButton")
+        check_button.setToolTip("Check PyPI for a newer qPlot release.")
+
+        def check_about_updates():
+            from ._updates import update_checker
+
+            owner = parent
+            while owner is not None and not hasattr(owner, "config"):
+                owner = owner.parentWidget()
+            if owner is not None:
+                settings = cast(Any, owner).config
+            else:
+                from qplot.configuration.config import config
+
+                settings = config()
+            update_checker().show_in_about(dialog, settings)
+
+        check_button.clicked.connect(check_about_updates)
+    return dialog
 
 
 def show_quick_start(parent: qtw.QWidget | None = None) -> qtw.QDialog:

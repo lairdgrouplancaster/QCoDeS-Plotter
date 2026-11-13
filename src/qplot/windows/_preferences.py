@@ -18,6 +18,7 @@ from qplot.datahandling.complex_data import (
     COMPLEX_COMPONENT_OPTIONS,
     COMPLEX_ND_KEY,
 )
+from qplot.tools.heatmap_geometry import MAX_AGGREGATED_HEATMAP_CELLS
 from qplot.updates import CHECK_ON_LAUNCH_KEY, INCLUDE_PRERELEASES_KEY
 
 from ._commands import create_action
@@ -37,6 +38,7 @@ THEME_OPTIONS = (
     ("Dark", "dark"),
     ("PyQt", "pyqt"),
     )
+
 
 MOUSE_MODE_KEY = "user_preference.mouse_mode"
 MOUSE_MODE_OPTIONS = (
@@ -84,7 +86,6 @@ _PREFERENCE_CONTROLS = (
     ("runtime_settings.max_threads", "maxThreadsSpin"),
     ("runtime_settings.max_full_heatmap_points", "maxFullHeatmapPointsSpin"),
     ("runtime_settings.max_heatmap_grid_cells", "maxHeatmapGridCellsSpin"),
-    ("runtime_settings.max_heatmap_grid_side", "maxHeatmapGridSideSpin"),
     ("runtime_settings.del_grace_period", "delGracePeriodSpin"),
     ("runtime_settings.cloud_sync_timeout", "cloudSyncTimeoutSpin"),
     (CHECK_ON_LAUNCH_KEY, "checkUpdatesOnLaunchCheck"),
@@ -147,6 +148,16 @@ class _PreferenceBinding:
             control.toggled.connect(mark_edited)
 
 
+class _PreferencesTabBar(qtw.QTabBar):
+    """Stretch headings across the page, including after Qt relayouts."""
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        parent = self.parentWidget()
+        if parent is not None and self.width() != parent.width():
+            self.resize(parent.width(), self.height())
+
+
 class PreferencesDialog(qtw.QDialog):
     """
     Dialog for editing common config-backed qPlot preferences.
@@ -178,12 +189,23 @@ class PreferencesDialog(qtw.QDialog):
         layout.setSpacing(10)
 
         tabs = qtw.QTabWidget(self)
+        tabs.setTabBar(_PreferencesTabBar(tabs))
+        tabs.tabBar().setExpanding(True)
+        tabs.addTab(self._general_tab(), "General")
         tabs.addTab(self._appearance_tab(), "Appearance")
-        tabs.addTab(self._interaction_tab(), "Interaction")
-        tabs.addTab(self._files_tab(), "Files")
-        tabs.addTab(self._confirmations_tab(), "Confirmations")
-        tabs.addTab(self._runtime_tab(), "Runtime")
+        tabs.addTab(self._plotting_tab(), "Plotting")
+        tabs.addTab(self._files_tab(), "Files && export")
+        tabs.addTab(self._performance_tab(), "Performance")
         tabs.addTab(self._updates_tab(), "Updates")
+        # Include every heading in the initial width, using the active font
+        # and platform style rather than a fixed pixel estimate.
+        tabs.setElideMode(QtCore.Qt.TextElideMode.ElideNone)
+        margins = layout.contentsMargins()
+        self.setMinimumWidth(max(
+            self.minimumWidth(),
+            tabs.tabBar().sizeHint().width() + margins.left() + margins.right()
+            + 2 * tabs.style().pixelMetric(qtw.QStyle.PixelMetric.PM_DefaultFrameWidth),
+        ))
         layout.addWidget(tabs)
 
         self.buttonBox = qtw.QDialogButtonBox(
@@ -224,12 +246,14 @@ class PreferencesDialog(qtw.QDialog):
         self.restoreDefaultsButton.clicked.connect(self.restore_defaults)
         layout.addWidget(self.buttonBox)
 
-    def _appearance_tab(self):
+    def _general_tab(self):
         tab = qtw.QWidget(self)
         form = qtw.QFormLayout(tab)
         form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setContentsMargins(8, 8, 8, 8)
         form.setSpacing(8)
+
+        self._add_section(form, "Interface")
 
         self.themeCombo = qtw.QComboBox(tab)
         self.themeCombo.setObjectName("themePreferenceCombo")
@@ -239,57 +263,107 @@ class PreferencesDialog(qtw.QDialog):
             self.themeCombo.addItem(label, value)
         self._add_row(form, "&Theme:", self.themeCombo)
 
-        for attribute, label, options in (
-            ("complex1dCombo", "1D complex plots:", COMPLEX_1D_OPTIONS),
-            ("complexNdCombo", "Higher-dimensional complex plots:", COMPLEX_COMPONENT_OPTIONS),
-        ):
-            combo = qtw.QComboBox(tab)
-            combo.setObjectName(attribute + "Preference")
-            combo.setAccessibleName(label.rstrip(":"))
-            combo.setToolTip(
-                "Choose how complex measurements are plotted. The cursor readout "
-                "retains the original complex value and setpoints."
+        self.previewSizeSpin = qtw.QSpinBox(tab)
+        self.previewSizeSpin.setObjectName("previewSizePreferenceSpin")
+        self.previewSizeSpin.setToolTip(
+            "Width and height of images in the Preview tab, in logical pixels. "
+            "Run-list thumbnails have a separate fixed size."
+        )
+        self.previewSizeSpin.setAccessibleName("Preview image size")
+        self.previewSizeSpin.setRange(50, 1000)
+        self.previewSizeSpin.setSingleStep(50)
+        self.previewSizeSpin.setSuffix(" px")
+        self._add_row(form, "&Preview image size:", self.previewSizeSpin)
+
+        self._add_section(form, "New window grid")
+
+        self.plotTileRowsSpin = qtw.QSpinBox(tab)
+        self.plotTileRowsSpin.setObjectName("plotTileRowsPreferenceSpin")
+        self.plotTileRowsSpin.setAccessibleName("Window grid rows")
+        self.plotTileRowsSpin.setRange(1, 10)
+        self.plotTileRowsSpin.setToolTip(
+            "Rows in the screen grid used to size and place newly opened plots"
             )
-            for text, value in options:
-                combo.addItem(text, value)
-            setattr(self, attribute, combo)
-            self._add_row(form, label, combo)
+
+        self.plotTileColumnsSpin = qtw.QSpinBox(tab)
+        self.plotTileColumnsSpin.setObjectName("plotTileColumnsPreferenceSpin")
+        self.plotTileColumnsSpin.setAccessibleName("Window grid columns")
+        self.plotTileColumnsSpin.setRange(1, 10)
+        self.plotTileColumnsSpin.setToolTip(
+            "Columns in the screen grid; plots fill left to right, then top "
+            "to bottom, wrapping after the last cell. Existing plots stay in place."
+            )
+        grid_widget = qtw.QWidget(tab)
+        grid_layout = qtw.QHBoxLayout(grid_widget)
+        grid_layout.setContentsMargins(0, 0, 0, 0)
+        grid_layout.setSpacing(8)
+        grid_layout.addWidget(self.plotTileRowsSpin, 1)
+        columns_label = qtw.QLabel("&Columns:", grid_widget)
+        columns_label.setBuddy(self.plotTileColumnsSpin)
+        grid_layout.addWidget(columns_label)
+        grid_layout.addWidget(self.plotTileColumnsSpin, 1)
+        self._add_row(form, "&Rows:", grid_widget, self.plotTileRowsSpin)
+
+        self._add_section(form, "Live data")
+
+        self.refreshRateSpin = qtw.QDoubleSpinBox(tab)
+        self.refreshRateSpin.setObjectName("refreshRatePreferenceSpin")
+        self.refreshRateSpin.setToolTip("Default interval between automatic refreshes, in seconds. Zero disables automatic refresh.")
+        self.refreshRateSpin.setAccessibleName("Default refresh interval")
+        self.refreshRateSpin.setRange(0.0, 10_000.0)
+        self.refreshRateSpin.setSingleStep(0.1)
+        self.refreshRateSpin.setDecimals(1)
+        self.refreshRateSpin.setSuffix(" s")
+        self._add_row(form, "&Default refresh interval:", self.refreshRateSpin)
+
+        self._add_section(form, "Closing windows")
+
+        self.confirmCloseAllCheck = qtw.QCheckBox(
+            "Confirm before closing all plot windows",
+            tab,
+            )
+        self.confirmCloseAllCheck.setObjectName("confirmCloseAllPreferenceCheck")
+        self.confirmCloseAllCheck.setToolTip("Ask for confirmation before closing all plot windows.")
+        self.confirmCloseAllCheck.setAccessibleName(
+            "Confirm before closing all plot windows"
+            )
+        form.addRow(self.confirmCloseAllCheck)
+
+        self.confirmQuitCheck = qtw.QCheckBox("Confirm before quitting qPlot", tab)
+        self.confirmQuitCheck.setObjectName("confirmQuitPreferenceCheck")
+        self.confirmQuitCheck.setToolTip("Ask for confirmation before quitting qPlot.")
+        self.confirmQuitCheck.setAccessibleName("Confirm before quitting qPlot")
+        form.addRow(self.confirmQuitCheck)
+
+        return tab
+
+    def _appearance_tab(self):
+        tab = qtw.QWidget(self)
+        form = qtw.QFormLayout(tab)
+        form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setContentsMargins(8, 8, 8, 8)
+        form.setSpacing(8)
+
+        self._add_section(form, "Text and annotations")
 
         self.fontSizeSpin = qtw.QSpinBox(tab)
         self.fontSizeSpin.setObjectName("fontSizePreferenceSpin")
-        self.fontSizeSpin.setAccessibleName("Graph font size")
+        self.fontSizeSpin.setAccessibleName("Plot font size")
         self.fontSizeSpin.setRange(6, 36)
         self.fontSizeSpin.setSuffix(" pt")
         self.fontSizeSpin.setToolTip(
             "Font size for graph axis labels, tick numbers, and colour scales"
             )
-        self._add_row(form, "Graph &font size:", self.fontSizeSpin)
+        self._add_row(form, "Plot &font size:", self.fontSizeSpin)
 
-        self.showSourceAnnotationCheck = qtw.QCheckBox("Show source annotation", tab)
+        self.showSourceAnnotationCheck = qtw.QCheckBox("Show database and run details above plots", tab)
         self.showSourceAnnotationCheck.setObjectName("showSourceAnnotationPreferenceCheck")
         self.showSourceAnnotationCheck.setToolTip(
             "Show the database, run IDs and parameters above plots, including in exports"
             )
         form.addRow(self.showSourceAnnotationCheck)
 
-        self.cursorSignificantFiguresSpin = qtw.QSpinBox(tab)
-        self.cursorSignificantFiguresSpin.setObjectName("cursorSignificantFiguresPreferenceSpin")
-        self.cursorSignificantFiguresSpin.setAccessibleName("Cursor significant figures")
-        self.cursorSignificantFiguresSpin.setRange(1, 17)
-        self.cursorSignificantFiguresSpin.setToolTip(
-            "Significant figures for the x, y, and z cursor coordinates, including snapped values"
-            )
-        self._add_row(form, "Cursor significant &figures:", self.cursorSignificantFiguresSpin)
-
-        self.colorbarWidthSpin = qtw.QSpinBox(tab)
-        self.colorbarWidthSpin.setObjectName("colorbarWidthPreferenceSpin")
-        self.colorbarWidthSpin.setAccessibleName("Colour scale width")
-        self.colorbarWidthSpin.setRange(1, 500)
-        self.colorbarWidthSpin.setSuffix(" px")
-        self.colorbarWidthSpin.setToolTip(
-            "Width of heatmap colour scale bars"
-            )
-        self._add_row(form, "Colour scale &width:", self.colorbarWidthSpin)
+        self._add_section(form, "Axes and colour scales")
 
         self.axisTickWidthSpin = qtw.QDoubleSpinBox(tab)
         self.axisTickWidthSpin.setObjectName("axisTickWidthPreferenceSpin")
@@ -314,76 +388,73 @@ class PreferencesDialog(qtw.QDialog):
             )
         self._add_row(form, "&Target labels per axis:", self.axisMajorTickCountSpin)
 
-        self.previewSizeSpin = qtw.QSpinBox(tab)
-        self.previewSizeSpin.setObjectName("previewSizePreferenceSpin")
-        self.previewSizeSpin.setToolTip("Set the size of measurement thumbnails in the run list and Preview tab.")
-        self.previewSizeSpin.setAccessibleName("Preview size")
-        self.previewSizeSpin.setRange(50, 1000)
-        self.previewSizeSpin.setSingleStep(50)
-        self.previewSizeSpin.setSuffix(" px")
-        self._add_row(form, "&Preview size:", self.previewSizeSpin)
-
-        self.plotTileRowsSpin = qtw.QSpinBox(tab)
-        self.plotTileRowsSpin.setObjectName("plotTileRowsPreferenceSpin")
-        self.plotTileRowsSpin.setAccessibleName("Plot window tile rows")
-        self.plotTileRowsSpin.setRange(1, 10)
-        self.plotTileRowsSpin.setToolTip(
-            "Rows in the screen grid used to size and place newly opened plots"
+        self.colorbarWidthSpin = qtw.QSpinBox(tab)
+        self.colorbarWidthSpin.setObjectName("colorbarWidthPreferenceSpin")
+        self.colorbarWidthSpin.setAccessibleName("Colour scale width")
+        self.colorbarWidthSpin.setRange(1, 500)
+        self.colorbarWidthSpin.setSuffix(" px")
+        self.colorbarWidthSpin.setToolTip(
+            "Width of heatmap colour scale bars"
             )
-        self._add_row(form, "Plot window tile &rows:", self.plotTileRowsSpin)
-
-        self.plotTileColumnsSpin = qtw.QSpinBox(tab)
-        self.plotTileColumnsSpin.setObjectName("plotTileColumnsPreferenceSpin")
-        self.plotTileColumnsSpin.setAccessibleName("Plot window tile columns")
-        self.plotTileColumnsSpin.setRange(1, 10)
-        self.plotTileColumnsSpin.setToolTip(
-            "Columns in the screen grid; plots fill left to right, then top "
-            "to bottom, wrapping after the last cell. Existing plots stay in place."
-            )
-        self._add_row(form, "Plot window tile &columns:", self.plotTileColumnsSpin)
-
-        self.refreshRateSpin = qtw.QDoubleSpinBox(tab)
-        self.refreshRateSpin.setObjectName("refreshRatePreferenceSpin")
-        self.refreshRateSpin.setToolTip("Default interval between automatic refreshes, in seconds. Zero disables automatic refresh.")
-        self.refreshRateSpin.setAccessibleName("Default refresh interval")
-        self.refreshRateSpin.setRange(0.0, 10_000.0)
-        self.refreshRateSpin.setSingleStep(0.1)
-        self.refreshRateSpin.setDecimals(1)
-        self.refreshRateSpin.setSuffix(" s")
-        self._add_row(form, "&Default refresh interval:", self.refreshRateSpin)
+        self._add_row(form, "Colour scale &width:", self.colorbarWidthSpin)
 
         return tab
 
-    def _interaction_tab(self):
+    def _plotting_tab(self):
         tab = qtw.QWidget(self)
         form = qtw.QFormLayout(tab)
         form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setContentsMargins(8, 8, 8, 8)
         form.setSpacing(8)
 
+        self._add_section(form, "Navigation and readout")
+
         self.mouseModeCombo = qtw.QComboBox(tab)
         self.mouseModeCombo.setObjectName("mouseModePreferenceCombo")
         self.mouseModeCombo.setToolTip("Choose whether dragging in a plot pans the view or draws a zoom rectangle.")
-        self.mouseModeCombo.setAccessibleName("Mouse mode")
+        self.mouseModeCombo.setAccessibleName("Plot drag action")
         for label, value in MOUSE_MODE_OPTIONS:
             self.mouseModeCombo.addItem(label, value)
-        self._add_row(form, "&Mouse mode:", self.mouseModeCombo)
+        self._add_row(form, "Plot &drag action:", self.mouseModeCombo)
 
-        self.copyPlotImageResolutionCombo = qtw.QComboBox(tab)
-        self.copyPlotImageResolutionCombo.setObjectName(
-            "copyPlotImageResolutionPreferenceCombo"
+        self.cursorSignificantFiguresSpin = qtw.QSpinBox(tab)
+        self.cursorSignificantFiguresSpin.setObjectName("cursorSignificantFiguresPreferenceSpin")
+        self.cursorSignificantFiguresSpin.setAccessibleName("Cursor precision (significant figures)")
+        self.cursorSignificantFiguresSpin.setRange(1, 17)
+        self.cursorSignificantFiguresSpin.setToolTip(
+            "Significant figures for the x, y, and z cursor coordinates, including snapped values"
             )
-        self.copyPlotImageResolutionCombo.setToolTip("Choose the resolution of plot images copied to the clipboard.")
-        self.copyPlotImageResolutionCombo.setAccessibleName(
-            "Copy plot image resolution"
+        self._add_row(form, "Cursor &precision (significant figures):", self.cursorSignificantFiguresSpin)
+
+        self._add_section(form, "Complex data")
+
+        for attribute, label, options in (
+            ("complex1dCombo", "1D complex plots:", COMPLEX_1D_OPTIONS),
+            ("complexNdCombo", "Higher-dimensional complex plots:", COMPLEX_COMPONENT_OPTIONS),
+        ):
+            combo = qtw.QComboBox(tab)
+            combo.setObjectName(attribute + "Preference")
+            combo.setAccessibleName(label.rstrip(":"))
+            combo.setToolTip(
+                "Choose how complex measurements are plotted. The cursor readout "
+                "retains the original complex value and setpoints."
             )
-        for label, value in COPY_PLOT_IMAGE_RESOLUTION_OPTIONS:
-            self.copyPlotImageResolutionCombo.addItem(label, value)
-        self._add_row(
-            form,
-            "&Copy plot image:",
-            self.copyPlotImageResolutionCombo,
-            )
+            for text, value in options:
+                combo.addItem(text, value)
+            setattr(self, attribute, combo)
+            self._add_row(form, label, combo)
+
+        self._add_section(form, "Adding data")
+
+        self.confirmIncompatibleAxesCheck = qtw.QCheckBox(
+            "Warn before adding data with incompatible axes", tab,
+        )
+        self.confirmIncompatibleAxesCheck.setObjectName("confirmIncompatibleAxesPreferenceCheck")
+        self.confirmIncompatibleAxesCheck.setToolTip("Warn when added data has coordinate names or units that differ from the current plot.")
+        self.confirmIncompatibleAxesCheck.setAccessibleName(
+            "Warn before adding data with incompatible axes"
+        )
+        form.addRow(self.confirmIncompatibleAxesCheck)
 
         return tab
 
@@ -393,6 +464,53 @@ class PreferencesDialog(qtw.QDialog):
         form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setContentsMargins(8, 8, 8, 8)
         form.setSpacing(8)
+
+        self._add_section(form, "Opening databases")
+
+        path_widget = qtw.QWidget(tab)
+        path_layout = qtw.QHBoxLayout(path_widget)
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(6)
+
+        self.defaultLoadPathEdit = qtw.QLineEdit(tab)
+        self.defaultLoadPathEdit.setObjectName("defaultLoadPathPreferenceEdit")
+        self.defaultLoadPathEdit.setToolTip("Folder initially offered when loading a database. Leave blank to use the normal file-dialog location.")
+        self.defaultLoadPathEdit.setAccessibleName("Default database folder")
+        self.defaultLoadPathEdit.setPlaceholderText("No default folder")
+        path_layout.addWidget(self.defaultLoadPathEdit, 1)
+
+        self.defaultLoadPathButton = qtw.QToolButton(tab)
+        self.defaultLoadPathButton.setObjectName("defaultLoadPathPreferenceButton")
+        style = self.style()
+        if style is not None:
+            self.defaultLoadPathButton.setIcon(
+                style.standardIcon(qtw.QStyle.StandardPixmap.SP_DirOpenIcon)
+                )
+        self.defaultLoadPathButton.setToolTip("Choose default database folder")
+        self.defaultLoadPathButton.setAccessibleName(
+            "Choose default database folder"
+            )
+        self.defaultLoadPathButton.clicked.connect(self.choose_default_load_path)
+        path_layout.addWidget(self.defaultLoadPathButton)
+
+        self._add_row(
+            form,
+            "Default database &folder:",
+            path_widget,
+            self.defaultLoadPathEdit,
+            )
+
+        self.cloudSyncTimeoutSpin = qtw.QDoubleSpinBox(tab)
+        self.cloudSyncTimeoutSpin.setObjectName("cloudSyncPreferenceSpin")
+        self.cloudSyncTimeoutSpin.setToolTip("Maximum time to wait for a cloud-stored file to become available locally.")
+        self.cloudSyncTimeoutSpin.setAccessibleName("Cloud file wait timeout")
+        self.cloudSyncTimeoutSpin.setRange(1.0, 3600.0)
+        self.cloudSyncTimeoutSpin.setSingleStep(10.0)
+        self.cloudSyncTimeoutSpin.setDecimals(1)
+        self.cloudSyncTimeoutSpin.setSuffix(" s")
+        self._add_row(form, "Cloud file &wait timeout:", self.cloudSyncTimeoutSpin)
+
+        self._add_section(form, "Export and clipboard")
 
         self.csvFilenameFormatCombo = qtw.QComboBox(tab)
         self.csvFilenameFormatCombo.setObjectName("csvFilenameFormatPreferenceCombo")
@@ -404,78 +522,25 @@ class PreferencesDialog(qtw.QDialog):
         )
         self._add_row(form, "CSV &filename format:", self.csvFilenameFormatCombo)
 
-        path_widget = qtw.QWidget(tab)
-        path_layout = qtw.QHBoxLayout(path_widget)
-        path_layout.setContentsMargins(0, 0, 0, 0)
-        path_layout.setSpacing(6)
-
-        self.defaultLoadPathEdit = qtw.QLineEdit(tab)
-        self.defaultLoadPathEdit.setObjectName("defaultLoadPathPreferenceEdit")
-        self.defaultLoadPathEdit.setToolTip("Folder initially offered when loading a database. Leave blank to use the normal file-dialog location.")
-        self.defaultLoadPathEdit.setAccessibleName("Default load location")
-        self.defaultLoadPathEdit.setPlaceholderText("No default folder")
-        path_layout.addWidget(self.defaultLoadPathEdit, 1)
-
-        self.defaultLoadPathButton = qtw.QToolButton(tab)
-        self.defaultLoadPathButton.setObjectName("defaultLoadPathPreferenceButton")
-        style = self.style()
-        if style is not None:
-            self.defaultLoadPathButton.setIcon(
-                style.standardIcon(qtw.QStyle.StandardPixmap.SP_DirOpenIcon)
-                )
-        self.defaultLoadPathButton.setToolTip("Choose default load location")
-        self.defaultLoadPathButton.setAccessibleName(
-            "Choose default load location"
+        self.copyPlotImageResolutionCombo = qtw.QComboBox(tab)
+        self.copyPlotImageResolutionCombo.setObjectName(
+            "copyPlotImageResolutionPreferenceCombo"
             )
-        self.defaultLoadPathButton.clicked.connect(self.choose_default_load_path)
-        path_layout.addWidget(self.defaultLoadPathButton)
-
+        self.copyPlotImageResolutionCombo.setToolTip("Choose the resolution of plot images copied to the clipboard.")
+        self.copyPlotImageResolutionCombo.setAccessibleName(
+            "Copied plot image quality"
+            )
+        for label, value in COPY_PLOT_IMAGE_RESOLUTION_OPTIONS:
+            self.copyPlotImageResolutionCombo.addItem(label, value)
         self._add_row(
             form,
-            "&Default load location:",
-            path_widget,
-            self.defaultLoadPathEdit,
+            "Copied plot image &quality:",
+            self.copyPlotImageResolutionCombo,
             )
 
         return tab
 
-    def _confirmations_tab(self):
-        tab = qtw.QWidget(self)
-        layout = qtw.QVBoxLayout(tab)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-
-        self.confirmCloseAllCheck = qtw.QCheckBox(
-            "Confirm before closing all plot windows",
-            tab,
-            )
-        self.confirmCloseAllCheck.setObjectName("confirmCloseAllPreferenceCheck")
-        self.confirmCloseAllCheck.setToolTip("Ask for confirmation before closing all plot windows.")
-        self.confirmCloseAllCheck.setAccessibleName(
-            "Confirm before closing all plot windows"
-            )
-        layout.addWidget(self.confirmCloseAllCheck)
-
-        self.confirmQuitCheck = qtw.QCheckBox("Confirm before quit", tab)
-        self.confirmQuitCheck.setObjectName("confirmQuitPreferenceCheck")
-        self.confirmQuitCheck.setToolTip("Ask for confirmation before quitting qPlot.")
-        self.confirmQuitCheck.setAccessibleName("Confirm before quit")
-        layout.addWidget(self.confirmQuitCheck)
-
-        self.confirmIncompatibleAxesCheck = qtw.QCheckBox(
-            "Warn before adding data with incompatible axes", tab,
-        )
-        self.confirmIncompatibleAxesCheck.setObjectName("confirmIncompatibleAxesPreferenceCheck")
-        self.confirmIncompatibleAxesCheck.setToolTip("Warn when added data has coordinate names or units that differ from the current plot.")
-        self.confirmIncompatibleAxesCheck.setAccessibleName(
-            "Warn before adding data with incompatible axes"
-        )
-        layout.addWidget(self.confirmIncompatibleAxesCheck)
-
-        layout.addStretch(1)
-        return tab
-
-    def _runtime_tab(self):
+    def _performance_tab(self):
         tab = qtw.QWidget(self)
         form = qtw.QFormLayout(tab)
         form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
@@ -518,64 +583,33 @@ class PreferencesDialog(qtw.QDialog):
         self.maxHeatmapGridCellsSpin.setAccessibleName(
             "Maximum heatmap display grid cells"
             )
-        self.maxHeatmapGridCellsSpin.setRange(1, 2_000_000_000)
+        self.maxHeatmapGridCellsSpin.setRange(1, MAX_AGGREGATED_HEATMAP_CELLS)
         self.maxHeatmapGridCellsSpin.setSingleStep(10_000)
         self.maxHeatmapGridCellsSpin.setSuffix(" cells")
         if hasattr(self.maxHeatmapGridCellsSpin, "setGroupSeparatorShown"):
             self.maxHeatmapGridCellsSpin.setGroupSeparatorShown(True)
         self.maxHeatmapGridCellsSpin.setToolTip(
-            "Maximum cells in a downsampled heatmap display grid."
+            "Maximum total cells in an aggregated heatmap display grid. Rectangular grids share this budget across both axes."
             )
         self._add_row(
             form,
-            "Heatmap display grid &cells:",
+            "Maximum heatmap grid &cells:",
             self.maxHeatmapGridCellsSpin,
-            )
-
-        self.maxHeatmapGridSideSpin = qtw.QSpinBox(tab)
-        self.maxHeatmapGridSideSpin.setObjectName(
-            "maxHeatmapGridSidePreferenceSpin"
-            )
-        self.maxHeatmapGridSideSpin.setAccessibleName(
-            "Maximum heatmap display grid bins per axis"
-            )
-        self.maxHeatmapGridSideSpin.setRange(1, 2_000_000_000)
-        self.maxHeatmapGridSideSpin.setSingleStep(100)
-        self.maxHeatmapGridSideSpin.setSuffix(" bins")
-        if hasattr(self.maxHeatmapGridSideSpin, "setGroupSeparatorShown"):
-            self.maxHeatmapGridSideSpin.setGroupSeparatorShown(True)
-        self.maxHeatmapGridSideSpin.setToolTip(
-            "Maximum bins on either axis of a downsampled heatmap display grid."
-            )
-        self._add_row(
-            form,
-            "Heatmap display grid &side:",
-            self.maxHeatmapGridSideSpin,
             )
 
         self.delGracePeriodSpin = qtw.QDoubleSpinBox(tab)
         self.delGracePeriodSpin.setObjectName("deleteGracePreferenceSpin")
         self.delGracePeriodSpin.setToolTip("Time to retain unused datasets in memory before releasing them. Reopening them during this period can be quicker.")
-        self.delGracePeriodSpin.setAccessibleName("Dataset release grace period")
+        self.delGracePeriodSpin.setAccessibleName("Unused dataset retention time")
         self.delGracePeriodSpin.setRange(0.0, 300.0)
         self.delGracePeriodSpin.setSingleStep(1.0)
         self.delGracePeriodSpin.setDecimals(1)
         self.delGracePeriodSpin.setSuffix(" s")
         self._add_row(
             form,
-            "Dataset release &grace period:",
+            "Unused dataset &retention time:",
             self.delGracePeriodSpin,
             )
-
-        self.cloudSyncTimeoutSpin = qtw.QDoubleSpinBox(tab)
-        self.cloudSyncTimeoutSpin.setObjectName("cloudSyncPreferenceSpin")
-        self.cloudSyncTimeoutSpin.setToolTip("Maximum time to wait for a cloud-stored file to become available locally.")
-        self.cloudSyncTimeoutSpin.setAccessibleName("Cloud sync timeout")
-        self.cloudSyncTimeoutSpin.setRange(1.0, 3600.0)
-        self.cloudSyncTimeoutSpin.setSingleStep(10.0)
-        self.cloudSyncTimeoutSpin.setDecimals(1)
-        self.cloudSyncTimeoutSpin.setSuffix(" s")
-        self._add_row(form, "&Cloud sync timeout:", self.cloudSyncTimeoutSpin)
 
         return tab
 
@@ -602,6 +636,16 @@ class PreferencesDialog(qtw.QDialog):
         layout.addWidget(hint)
         layout.addStretch(1)
         return tab
+
+    @staticmethod
+    def _add_section(form, title):
+        heading = qtw.QLabel(title)
+        font = heading.font()
+        font.setBold(True)
+        heading.setFont(font)
+        if form.rowCount():
+            heading.setContentsMargins(0, 8, 0, 0)
+        form.addRow(heading)
 
     def _add_row(self, form, label_text, widget, buddy=None):
         label = qtw.QLabel(label_text, self)
