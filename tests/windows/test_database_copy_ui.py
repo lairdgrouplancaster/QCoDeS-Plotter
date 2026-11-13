@@ -30,7 +30,7 @@ def test_menu_exports_standalone_database(export_window, tmp_path, monkeypatch):
     source, target = prepare(window, tmp_path, monkeypatch)
     before = source.read_bytes()
     action = window.findChild(QtGui.QAction, "exportDatabaseCopyAction")
-    assert action.text() == "Export Database Copy…"
+    assert action.text() == "Export All Runs as Database…"
     action.trigger()
     manager = window._export_task_manager
     wait_for(lambda: not manager.tasks)

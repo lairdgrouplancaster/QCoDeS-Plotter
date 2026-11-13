@@ -314,11 +314,28 @@ class custom_viewbox(pg.ViewBox):
         self._shift_pan_axis_constraint = True
         self._shift_pan_axis = None
         self._main_moved_axis = None
+        self._space_pan = False
         self.setAcceptHoverEvents(True)
 
 
     def set_marquee_owner(self, owner):
         self._marquee_owner = owner
+        widget = getattr(owner, "widget", None)
+        if widget is not None:
+            widget.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+            widget.installEventFilter(self)
+
+    def eventFilter(self, source, event):
+        if event.type() in (QtCore.QEvent.Type.KeyPress, QtCore.QEvent.Type.KeyRelease):
+            if event.key() == QtCore.Qt.Key.Key_Space and not event.isAutoRepeat():
+                self._space_pan = event.type() == QtCore.QEvent.Type.KeyPress
+                self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor if self._space_pan
+                               else QtCore.Qt.CursorShape.CrossCursor)
+                return True
+        if event.type() == QtCore.QEvent.Type.FocusOut:
+            self._space_pan = False
+            self.unsetCursor()
+        return super().eventFilter(source, event)
 
     def set_auto_range_handler(self, handler: Callable[[], None] | None) -> None:
         """Let a line-plot owner validate full-view requests before mutation."""
@@ -337,7 +354,6 @@ class custom_viewbox(pg.ViewBox):
 
         if (
                 not self._shift_pan_axis_constraint
-                or self.state["mouseMode"] != self.PanMode
                 or ev.button() not in {
                     QtCore.Qt.MouseButton.LeftButton,
                     QtCore.Qt.MouseButton.MiddleButton,
@@ -368,7 +384,9 @@ class custom_viewbox(pg.ViewBox):
 
         if ev.isStart():
             mode = owner.marquee_drag_mode_at(ev.buttonDownScenePos())
-            if mode is None and not ev.modifiers() & QtCore.Qt.KeyboardModifier.AltModifier:
+            if mode is None and owner.marquee_contains_scene_pos(ev.buttonDownScenePos()):
+                mode = "move"
+            if self._space_pan:
                 return False
 
             owner.begin_marquee_drag(
@@ -393,6 +411,9 @@ class custom_viewbox(pg.ViewBox):
 
 
     def _update_marquee_cursor(self, scene_pos, modifiers=QtCore.Qt.KeyboardModifier.NoModifier):
+        if self._space_pan:
+            self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+            return
         owner = self._marquee_owner
         if owner is None:
             self.unsetCursor()
@@ -400,7 +421,7 @@ class custom_viewbox(pg.ViewBox):
 
         cursor_shape = owner.marquee_cursor_shape_at(scene_pos, modifiers)
         if cursor_shape is None:
-            self.unsetCursor()
+            self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
         else:
             self.setCursor(cursor_shape)
     
@@ -459,6 +480,9 @@ class custom_viewbox(pg.ViewBox):
 
 
     def mouseDragEvent(self, ev, axis=None):
+        if axis is None and ev.button() == QtCore.Qt.MouseButton.RightButton:
+            ev.accept()
+            return
         if axis is None and self._handle_marquee_mouse_drag(ev):
             return
 
@@ -466,7 +490,12 @@ class custom_viewbox(pg.ViewBox):
         if axis is None:
             constrained_axis = self._shift_pan_axis_for_event(ev)
 
-        super().mouseDragEvent(ev, axis=constrained_axis)
+        previous_mode = self.state["mouseMode"]
+        self.state["mouseMode"] = self.PanMode
+        try:
+            super().mouseDragEvent(ev, axis=constrained_axis)
+        finally:
+            self.state["mouseMode"] = previous_mode
 
         if axis is None:
             self._main_moved_axis = constrained_axis

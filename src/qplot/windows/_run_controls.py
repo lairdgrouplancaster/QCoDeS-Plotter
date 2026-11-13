@@ -2,6 +2,7 @@ import os
 
 from PyQt6 import (
     QtCore,
+    QtGui,
 )
 from PyQt6 import (
     QtWidgets as qtw,
@@ -260,6 +261,11 @@ class RunControlsMixin:
         plot_selected_all = create_action("run.plot_selected_all", self)
         plot_selected_all.triggered.connect(self.open_selected_run_all)
         self.addAction(plot_selected_all)
+        table_enter = QtGui.QAction("Plot Selected Run", self.RunList)
+        table_enter.setShortcuts([QtGui.QKeySequence("Return"), QtGui.QKeySequence("Enter")])
+        table_enter.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        table_enter.triggered.connect(self.open_selected_run_all)
+        self.RunList.addAction(table_enter)
 
         self.open_param_actions = []
         for itr in range(9):

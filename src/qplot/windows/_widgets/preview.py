@@ -1443,10 +1443,13 @@ class PreviewImageLabel(qtw.QLabel):
 
     def keyPressEvent(self, event):
         key = event.key()
+        if key == QtCore.Qt.Key.Key_Space and self.parameter:
+            self.select_preview(modifiers=QtCore.Qt.KeyboardModifier.ControlModifier)
+            event.accept()
+            return
         if self.plot_supported and self.parameter and key in (
                 QtCore.Qt.Key.Key_Return,
                 QtCore.Qt.Key.Key_Enter,
-                QtCore.Qt.Key.Key_Space,
                 ):
             self.select_preview()
             self.plotRequested.emit(self.parameter)
@@ -1520,7 +1523,7 @@ class PreviewImageLabel(qtw.QLabel):
         )
         menu.addAction(export_action)
 
-        stats_action = QtGui.QAction("Generate &stats...", menu)
+        stats_action = QtGui.QAction("Generate &Statistics…", menu)
         stats_action.triggered.connect(
             lambda: self.statsRequested.emit(self.parameter) if is_current() else None,
         )

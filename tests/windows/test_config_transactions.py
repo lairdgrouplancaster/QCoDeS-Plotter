@@ -337,62 +337,6 @@ class TransactionalGuiTestCase(unittest.TestCase):
         finally:
             window.deleteLater()
 
-    def test_mouse_mode_rolls_back_menu_and_viewbox_then_retries(self):
-        class MouseHarness(qtw.QMainWindow):
-            change_mouse_mode = plotWidget.change_mouse_mode
-            apply_mouse_mode_preference = plotWidget.apply_mouse_mode_preference
-            _configured_mouse_mode = plotWidget._configured_mouse_mode
-            _connect_mouse_mode_menu_to_preferences = (
-                plotWidget._connect_mouse_mode_menu_to_preferences
-                )
-
-            def __init__(self, config_object):
-                super().__init__()
-                self.config = config_object
-                self.vb = pg.ViewBox()
-                self.vbMenu = self.vb.menu
-                self.mouseModeAction = next(
-                    action for action in self.vb.menu.actions()
-                    if action.text() == "Mouse Mode"
-                    )
-                self.errors = []
-
-            def show_error(self, *args):
-                self.errors.append(args)
-
-        window = MouseHarness(self.config)
-        window.apply_mouse_mode_preference()
-        window._connect_mouse_mode_menu_to_preferences()
-        pan_action, rect_action = window.vbMenu.mouseModes
-        triggers = []
-        rect_action.triggered.connect(lambda: triggers.append("rect"))
-
-        try:
-            with self.failing_save(self.config):
-                rect_action.trigger()
-
-            self.assertEqual(triggers, ["rect"])
-            self.assertTrue(pan_action.isChecked())
-            self.assertFalse(rect_action.isChecked())
-            self.assertEqual(
-                window.vb.getState(copy=False)["mouseMode"],
-                pg.ViewBox.PanMode,
-                )
-            self.assertEqual(self.config.get("user_preference.mouse_mode"), "pan")
-            self.assertEqual(self.disk_value("user_preference.mouse_mode"), "pan")
-            self.assertEqual(len(window.errors), 1)
-
-            rect_action.trigger()
-            self.assertTrue(rect_action.isChecked())
-            self.assertEqual(
-                window.vb.getState(copy=False)["mouseMode"],
-                pg.ViewBox.RectMode,
-                )
-            self.assertEqual(self.disk_value("user_preference.mouse_mode"), "rect")
-        finally:
-            window.vb.deleteLater()
-            window.deleteLater()
-
     def test_color_map_filter_and_selection_roll_back_then_retry(self):
         class FilterHarness(qtw.QMainWindow):
             _set_colorbar_filter_setting = (

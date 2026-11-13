@@ -14,7 +14,6 @@ from qplot.windows._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
     COPY_PLOT_IMAGE_RESOLUTION_SVG,
-    MOUSE_MODE_KEY,
     PreferencesDialog,
 )
 from qplot.windows._window_controls import (
@@ -39,7 +38,6 @@ class FakeConfig:
             "GUI.preview_size": 200,
             "user_preference.plot_tile_rows": 2,
             "user_preference.plot_tile_columns": 2,
-            MOUSE_MODE_KEY: "pan",
             COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
             "user_preference.csv_filename_format": "current",
             "file.default_load_path": "",
@@ -133,7 +131,6 @@ class PreferencesDialogTestCase(unittest.TestCase):
             AXIS_TICK_WIDTH_KEY: 2.5,
             AXIS_MAJOR_TICK_COUNT_KEY: 4,
             "GUI.preview_size": 300,
-            MOUSE_MODE_KEY: "rect",
             COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
             "file.default_load_path": "C:/qcodes",
             "user_preference.default_refresh_rate": 2.5,
@@ -154,7 +151,6 @@ class PreferencesDialogTestCase(unittest.TestCase):
             self.assertEqual(dialog.axisTickWidthSpin.value(), 2.5)
             self.assertEqual(dialog.axisMajorTickCountSpin.value(), 4)
             self.assertEqual(dialog.previewSizeSpin.value(), 300)
-            self.assertEqual(dialog.mouseModeCombo.currentData(), "rect")
             self.assertEqual(
                 dialog.copyPlotImageResolutionCombo.currentData(),
                 COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
@@ -190,9 +186,6 @@ class PreferencesDialogTestCase(unittest.TestCase):
             dialog.colorbarWidthSpin.setValue(24)
             dialog.axisMajorTickCountSpin.setValue(5)
             dialog.previewSizeSpin.setValue(500)
-            dialog.mouseModeCombo.setCurrentIndex(
-                dialog.mouseModeCombo.findData("rect")
-                )
             dialog.copyPlotImageResolutionCombo.setCurrentIndex(
                 dialog.copyPlotImageResolutionCombo.findData(
                     COPY_PLOT_IMAGE_RESOLUTION_300_DPI
@@ -215,7 +208,6 @@ class PreferencesDialogTestCase(unittest.TestCase):
                 (COLORBAR_WIDTH_KEY, 24),
                 (AXIS_MAJOR_TICK_COUNT_KEY, 5),
                 ("GUI.preview_size", 500),
-                (MOUSE_MODE_KEY, "rect"),
                 (
                     COPY_PLOT_IMAGE_RESOLUTION_KEY,
                     COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
@@ -252,7 +244,6 @@ class PreferencesDialogTestCase(unittest.TestCase):
             "user_preference.theme": "dark",
             COLORBAR_WIDTH_KEY: 24,
             "GUI.preview_size": 500,
-            MOUSE_MODE_KEY: "rect",
             COPY_PLOT_IMAGE_RESOLUTION_KEY: COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
             "file.default_load_path": "C:/measurements",
             "user_preference.default_refresh_rate": 3.5,
@@ -276,7 +267,6 @@ class PreferencesDialogTestCase(unittest.TestCase):
             self.assertEqual(dialog.themeCombo.currentData(), "light")
             self.assertEqual(dialog.colorbarWidthSpin.value(), 15)
             self.assertEqual(dialog.previewSizeSpin.value(), 200)
-            self.assertEqual(dialog.mouseModeCombo.currentData(), "pan")
             self.assertEqual(
                 dialog.copyPlotImageResolutionCombo.currentData(),
                 COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
@@ -342,9 +332,6 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
             dialog.axisTickWidthSpin.setValue(2.5)
             dialog.axisMajorTickCountSpin.setValue(5)
             dialog.previewSizeSpin.setValue(300)
-            dialog.mouseModeCombo.setCurrentIndex(
-                dialog.mouseModeCombo.findData("rect")
-                )
             dialog.copyPlotImageResolutionCombo.setCurrentIndex(
                 dialog.copyPlotImageResolutionCombo.findData(
                     COPY_PLOT_IMAGE_RESOLUTION_300_DPI
@@ -368,7 +355,6 @@ class PreferencesConfigFileTestCase(unittest.TestCase):
             self.assertEqual(reloaded.get(AXIS_TICK_WIDTH_KEY), 2.5)
             self.assertEqual(reloaded.get(AXIS_MAJOR_TICK_COUNT_KEY), 5)
             self.assertEqual(reloaded.get("GUI.preview_size"), 300)
-            self.assertEqual(reloaded.get(MOUSE_MODE_KEY), "rect")
             self.assertEqual(
                 reloaded.get(COPY_PLOT_IMAGE_RESOLUTION_KEY),
                 COPY_PLOT_IMAGE_RESOLUTION_300_DPI,

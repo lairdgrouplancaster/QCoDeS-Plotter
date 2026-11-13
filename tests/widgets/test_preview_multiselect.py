@@ -49,6 +49,21 @@ def _context(label, monkeypatch, callback):
     qtw.QApplication.sendEvent(label, event)
 
 
+def test_space_toggles_preview_selection_without_plotting(table):
+    label = active_preview_labels(table)[0]
+    opened = []
+    label.plotRequested.connect(opened.append)
+    _click(label)
+    assert label._selected
+    QtTest.QTest.keyClick(label, QtCore.Qt.Key.Key_Space)
+    assert not label._selected
+    QtTest.QTest.keyClick(label, QtCore.Qt.Key.Key_Space)
+    assert label._selected
+    assert opened == []
+    QtTest.QTest.keyClick(label, QtCore.Qt.Key.Key_Return)
+    assert opened == [label.parameter]
+
+
 @pytest.mark.parametrize("modifier", [QtCore.Qt.KeyboardModifier.ControlModifier,
                                      QtCore.Qt.KeyboardModifier.MetaModifier])
 def test_toggle_multiple_thumbnails_does_not_toggle_table_rows(table, modifier):
@@ -187,7 +202,7 @@ def test_right_click_unselected_thumbnail_uses_single_action(table, monkeypatch)
     _click(labels[1], QtCore.Qt.KeyboardModifier.ControlModifier)
     captured = []
     _context(labels[4], monkeypatch, lambda menu, *_: captured.extend(action.text() for action in menu.actions()))
-    assert captured == ["&Plot", "Export This &Measurement as CSV…", "Generate &stats..."]
+    assert captured == ["&Plot", "Export This &Measurement as CSV…", "Generate &Statistics…"]
     assert selected_preview_targets(table) == (preview_key(labels[4]),)
 
 

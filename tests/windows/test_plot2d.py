@@ -1693,6 +1693,9 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             self.accepted = True
 
     class SweepLineDragEvent:
+        def isStart(self):
+            return False
+
         def __init__(
                 self,
                 *,
@@ -2064,6 +2067,52 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             self.assertNotIn("Plot Horizontal Cut", action_texts)
             self.assertNotIn("Plot Vertical Cut", action_texts)
         finally:
+            host.deleteLater()
+            widget.deleteLater()
+
+    def test_context_menu_cut_retains_pixel_after_popup_clears_hover(self):
+        class Host(plot2d):
+            def __init__(self):
+                qtw.QMainWindow.__init__(self)
+
+            @property
+            def axis_options(self):
+                return {"x": "gate", "y": "field"}
+
+            def _init_colorbar_scale_controls(self):
+                pass
+
+            def _heatmap_geometry(self):
+                return None
+
+        widget = pg.GraphicsLayoutWidget()
+        host = Host()
+        host.widget = widget
+        host.plot = widget.addPlot()
+        host.vb = host.plot.vb
+        host.oper_dock = qtw.QDockWidget()
+        host._dataset_key = DatasetKey("database.db", "guid")
+        host.param = SimpleNamespace(name="signal")
+        opened = []
+        host.open_subplot.connect(lambda *args: opened.append(args))
+        try:
+            host.initContextMenu()
+            for label, expected in (("Horizontal Cut", 3.0), ("Vertical Cut", 2.0)):
+                host.z_index = [2, 3]
+                host.vbMenu.popup(QtCore.QPoint(20, 20))
+                host.hide_hover_pixel_outline()
+                self.assertIsNone(host.z_index)
+                # Qt hides a menu before emitting the chosen action's signal.
+                host.vbMenu.hide()
+                next(a for a in host.vbMenu.actions() if a.text() == label).trigger()
+                self.assertEqual(opened[-1][2][3], expected)
+                qtw.QApplication.processEvents()
+                self.assertNotIn("_context_cut_index", host.__dict__)
+            host.z_index = [7, 8]
+            host.openSweep("h")
+            self.assertEqual(opened[-1][2][3], 8.0)
+        finally:
+            host.close()
             host.deleteLater()
             widget.deleteLater()
 

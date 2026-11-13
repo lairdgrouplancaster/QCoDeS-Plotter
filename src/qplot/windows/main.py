@@ -323,13 +323,6 @@ class MainWindow(
         self.recentDatabaseMenu = cast(qtw.QMenu, fileMenu.addMenu("Load &Recent Database"))
         self.refresh_recent_database_menu()
 
-        open_folder_action = create_action(
-            "database.open_folder",
-            self,
-            )
-        open_folder_action.triggered.connect(self.open_database_location)
-        fileMenu.addAction(open_folder_action)
-
         self.closeDatabaseAction = create_action("database.close", self)
         self.closeDatabaseAction.triggered.connect(self.close_current_database)
         fileMenu.addAction(self.closeDatabaseAction)
@@ -338,6 +331,10 @@ class MainWindow(
         refreshAction = create_action("window.refresh", self)
         refreshAction.triggered.connect(self.refresh_all)
         fileMenu.addAction(refreshAction)
+
+        open_folder_action = create_action("database.open_folder", self)
+        open_folder_action.triggered.connect(self.open_database_location)
+        fileMenu.addAction(open_folder_action)
 
         fileMenu.addSeparator()
 
@@ -363,7 +360,7 @@ class MainWindow(
         fileMenu.addAction(exports_progress)
         fileMenu.addSeparator()
 
-        test_data_menu = cast(qtw.QMenu, fileMenu.addMenu("Generate &Test Data"))
+        test_data_menu = cast(qtw.QMenu, fileMenu.addMenu("Generate &Test Data from Template"))
         bundled_csv_action = create_action("testdata.open_bundled_folder", self)
         bundled_csv_action.triggered.connect(self.open_bundled_test_database_csv_folder)
         test_data_menu.addAction(bundled_csv_action)
@@ -411,7 +408,7 @@ class MainWindow(
         add_standard_window_controls(self)
         
         # Second dropdown menu
-        prefMenu = cast(qtw.QMenu, menu.addMenu("&Options"))
+        prefMenu = cast(qtw.QMenu, menu.addMenu("&Settings"))
 
         prefMenu.addAction(
             create_preferences_action(self, self.show_preferences_dialog)
@@ -819,7 +816,6 @@ class MainWindow(
             apply_colorbar_width = getattr(win, "apply_colorbar_width_preference", None)
             if callable(apply_colorbar_width):
                 apply_colorbar_width()
-        self._sync_mouse_mode_settings()
         complex_changed = self.infoBox.preview.set_complex_preferences((
             self.config.get("user_preference.complex_1d"),
             self.config.get("user_preference.complex_nd"),
@@ -879,12 +875,6 @@ class MainWindow(
             self.threadPool.setMaxThreadCount(
                 self.config.get("runtime_settings.max_threads")
                 )
-
-
-    def _sync_mouse_mode_settings(self):
-        for win in getattr(self, "windows", []):
-            if hasattr(win, "apply_mouse_mode_preference"):
-                win.apply_mouse_mode_preference()
 
 
     def _save_preview_size(self, preview_size):

@@ -1390,11 +1390,11 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 }
             option_texts = [
                 action.text().replace("&", "")
-                for action in menus["Options"].actions()
+                for action in menus["Settings"].actions()
                 if not action.isSeparator()
                 ]
             preferences_action = next(
-                action for action in menus["Options"].actions()
+                action for action in menus["Settings"].actions()
                 if action.text().replace("&", "") == "Preferences..."
                 )
 
@@ -1403,7 +1403,10 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 preferences_action.menuRole(),
                 QtGui.QAction.MenuRole.PreferencesRole,
                 )
-            self.assertIn("Mouse Mode", option_texts)
+            self.assertIn(
+                "Axis Scaling…",
+                [action.text().replace("&", "") for action in menus["View"].actions()],
+                )
             self.assertNotIn("Confirm Before Closing All Plot Windows", option_texts)
             self.assertNotIn("Confirm Before Quit", option_texts)
         finally:
@@ -1607,9 +1610,6 @@ class RunListParentLookupTestCase(unittest.TestCase):
             register_shortcut = plotWidget.register_shortcut
             _remove_scene_export_context_menu = plotWidget._remove_scene_export_context_menu
             _context_menu_action = plotWidget._context_menu_action
-            _connect_mouse_mode_menu_to_preferences = (
-                plotWidget._connect_mouse_mode_menu_to_preferences
-                )
 
             def _init_axis_scale_dialogs(self):
                 pass
@@ -1880,9 +1880,6 @@ class RunListParentLookupTestCase(unittest.TestCase):
             _add_plot_area_resize_menu = plotWidget._add_plot_area_resize_menu
             _remove_scene_export_context_menu = plotWidget._remove_scene_export_context_menu
             _context_menu_action = plotWidget._context_menu_action
-            _connect_mouse_mode_menu_to_preferences = (
-                plotWidget._connect_mouse_mode_menu_to_preferences
-                )
 
             def _init_axis_scale_dialogs(self):
                 pass
@@ -2058,7 +2055,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 action.menu()
                 for action in window_menu.actions()
                 if action.menu() is not None
-                and action.text().replace("&", "") == "Resize"
+                and action.text().replace("&", "") == "Resize Plot Canvas"
                 )
             resize_actions = {
                 action.text().replace("&", ""): action
@@ -3124,37 +3121,6 @@ class RunListParentLookupTestCase(unittest.TestCase):
         finally:
             widget.deleteLater()
 
-    def test_mouse_mode_preference_updates_viewbox_mode(self):
-        class Config:
-            def __init__(self):
-                self.values = {"user_preference.mouse_mode": "pan"}
-                self.updates = []
-
-            def get(self, key):
-                return self.values[key]
-
-            def update(self, key, value):
-                self.values[key] = value
-                self.updates.append((key, value))
-
-        window = plotWidget.__new__(plotWidget)
-        window.config = Config()
-        window.vb = pg.ViewBox()
-
-        try:
-            self.assertTrue(window.change_mouse_mode("rect"))
-
-            self.assertEqual(
-                window.config.updates,
-                [("user_preference.mouse_mode", "rect")],
-                )
-            self.assertEqual(
-                window.vb.getState(copy=False)["mouseMode"],
-                pg.ViewBox.RectMode,
-                )
-        finally:
-            window.vb.deleteLater()
-
     def test_axis_scale_controls_move_from_context_menu_to_dialogs(self):
         self._check_axis_scale_dialog_controls()
 
@@ -3181,9 +3147,6 @@ class RunListParentLookupTestCase(unittest.TestCase):
             _refresh_axis_scale_visible_auto = plotWidget._refresh_axis_scale_visible_auto
             force_all_axes_autoscale = plotWidget.force_all_axes_autoscale
             _menu_control_widget = plotWidget._menu_control_widget
-            _connect_mouse_mode_menu_to_preferences = (
-                plotWidget._connect_mouse_mode_menu_to_preferences
-                )
             _install_axis_scale_double_click_handlers = (
                 plotWidget._install_axis_scale_double_click_handlers
                 )

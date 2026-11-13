@@ -33,7 +33,6 @@ class _Config:
             "user_preference.axis_tick_width": 2.0,
             "user_preference.axis_major_tick_count": 3,
             "GUI.preview_size": 200,
-            "user_preference.mouse_mode": "pan",
             "user_preference.copy_plot_image_resolution": "screen",
             "user_preference.csv_filename_format": "current",
             "file.default_load_path": "",

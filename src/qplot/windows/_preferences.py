@@ -40,12 +40,6 @@ THEME_OPTIONS = (
     )
 
 
-MOUSE_MODE_KEY = "user_preference.mouse_mode"
-MOUSE_MODE_OPTIONS = (
-    ("Rectangle zoom (1 button)", "rect"),
-    ("Pan (3 button)", "pan"),
-)
-
 COPY_PLOT_IMAGE_RESOLUTION_KEY = "user_preference.copy_plot_image_resolution"
 COPY_PLOT_IMAGE_RESOLUTION_SCREEN = "screen"
 COPY_PLOT_IMAGE_RESOLUTION_300_DPI = "dpi_300"
@@ -75,7 +69,6 @@ _PREFERENCE_CONTROLS = (
     ("GUI.preview_size", "previewSizeSpin"),
     (PLOT_TILE_ROWS_KEY, "plotTileRowsSpin"),
     (PLOT_TILE_COLUMNS_KEY, "plotTileColumnsSpin"),
-    (MOUSE_MODE_KEY, "mouseModeCombo"),
     (COPY_PLOT_IMAGE_RESOLUTION_KEY, "copyPlotImageResolutionCombo"),
     (CSV_FILENAME_FORMAT_KEY, "csvFilenameFormatCombo"),
     ("file.default_load_path", "defaultLoadPathEdit"),
@@ -408,14 +401,6 @@ class PreferencesDialog(qtw.QDialog):
         form.setSpacing(8)
 
         self._add_section(form, "Navigation and readout")
-
-        self.mouseModeCombo = qtw.QComboBox(tab)
-        self.mouseModeCombo.setObjectName("mouseModePreferenceCombo")
-        self.mouseModeCombo.setToolTip("Choose whether dragging in a plot pans the view or draws a zoom rectangle.")
-        self.mouseModeCombo.setAccessibleName("Plot drag action")
-        for label, value in MOUSE_MODE_OPTIONS:
-            self.mouseModeCombo.addItem(label, value)
-        self._add_row(form, "Plot &drag action:", self.mouseModeCombo)
 
         self.cursorSignificantFiguresSpin = qtw.QSpinBox(tab)
         self.cursorSignificantFiguresSpin.setObjectName("cursorSignificantFiguresPreferenceSpin")

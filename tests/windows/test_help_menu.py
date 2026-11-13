@@ -31,11 +31,11 @@ class HelpMenuTestCase(unittest.TestCase):
                 )
             self.assertEqual(
                 actions["keyboardShortcutsHelpAction"].text(),
-                "&Keyboard Shortcuts",
+                "&Keyboard and Mouse Controls",
                 )
             self.assertEqual(
                 actions["copyDiagnosticLogPathAction"].text(),
-                "Copy &Diagnostic Log Path",
+                "Copy Path to &Diagnostic Log",
                 )
             self.assertIn("Show Diagnostic Log", actions["showDiagnosticLogAction"].text())
             self.assertEqual(actions["aboutQplotAction"].text(), "&About qPlot")
@@ -212,11 +212,19 @@ class HelpMenuTestCase(unittest.TestCase):
             self.assertIn("Main and All Plot Windows", text)
             self.assertIn("Main Window — Run Details Focused", text)
             self.assertIn("Main Window — Measurement Preview Focused", text)
-            self.assertIn("All Plot Windows (1D, 2D, and Cuts)", text)
+            self.assertIn("All Plot Windows", text)
             self.assertIn(command_spec("plot.snap_to_trace").status_tip, text)
             self.assertIn("2D Heatmap Windows", text)
             self.assertIn("Escape", text)
-            self.assertIn("Return / Enter / Space", text)
+            self.assertIn("Return / Enter", text)
+            from PyQt6 import QtGui
+
+            qtw.QApplication.processEvents()
+            for frame in browser.document().rootFrame().childFrames():
+                if isinstance(frame, QtGui.QTextTable):
+                    for row in range(frame.rows()):
+                        block = frame.cellAt(row, 0).firstCursorPosition().block()
+                        self.assertEqual(block.layout().lineCount(), 1, block.text())
             self.assertIn(dialog, window._help_dialogs)
         finally:
             if dialog is not None:

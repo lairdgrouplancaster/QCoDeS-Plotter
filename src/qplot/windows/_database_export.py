@@ -26,7 +26,7 @@ def export_database(window, *, selected=False):
     if selected and not run_ids:
         window.show_status("Select runs in the table before exporting.", 5000)
         return
-    title = f"Export {len(run_ids)} Selected Runs as Database" if selected else "Export Database Copy"
+    title = f"Export {len(run_ids)} Selected Runs as Database" if selected else "Export All Runs as Database"
     generation = window._database_load_generation
     live = getattr(window, "_database_access_mode", None) == TRUSTED_LIVE_MODE
     try:

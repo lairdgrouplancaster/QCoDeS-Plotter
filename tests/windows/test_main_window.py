@@ -1744,12 +1744,12 @@ class OptionsMenuTestCase(unittest.TestCase):
             }
             option_texts = [
                 action.text().replace("&", "")
-                for action in menus["Options"].actions()
+                for action in menus["Settings"].actions()
                 if not action.isSeparator()
             ]
             preferences_action = next(
                 action
-                for action in menus["Options"].actions()
+                for action in menus["Settings"].actions()
                 if action.text().replace("&", "") == "Preferences..."
             )
 
@@ -1780,7 +1780,7 @@ class OptionsMenuTestCase(unittest.TestCase):
             test_data_menu = next(
                 action.menu()
                 for action in file_menu.actions()
-                if action.text().replace("&", "") == "Generate Test Data"
+                if action.text().replace("&", "") == "Generate Test Data from Template"
             )
             actions = {
                 action.objectName(): action.text().replace("&", "")

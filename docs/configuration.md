@@ -140,7 +140,6 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.confirm_close` | boolean | `true` | `true` or `false` | Ask before closing the main window. |
 | `user_preference.confirm_close_all` | boolean | `true` | `true` or `false` | Ask before closing all plot windows. |
 | `user_preference.auto_plot` | boolean | `false` | `true` or `false` | Automatically open newly detected runs. |
-| `user_preference.mouse_mode` | string | `"pan"` | `pan` or `rect` | Default plot mouse interaction mode. |
 | `user_preference.copy_plot_image_resolution` | string | `"screen"` | `screen`, `dpi_300`, or `svg` | Format/resolution used by plot-window Copy Plot Image. |
 | `user_preference.default_refresh_rate` | number | `1` | `0 <= value <= 10000` | Shared interval for the run table and all live plots, in seconds; zero disables automatic refresh everywhere. |
 | `runtime_settings.max_threads` | integer | `4` | `1 <= value <= 999` | Maximum worker threads for background loading. |
