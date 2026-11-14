@@ -3529,6 +3529,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
         window.plot = plot_item
         window.line = main_line
         window.lines = {"main": main_line, "secondary": secondary_line}
+        window.config = None
         main_style = window._initial_trace_style()
         secondary_style = window._initial_trace_style(order=1)
         secondary_style.x_axis = "Top"

@@ -26,6 +26,15 @@ from qplot.windows._widgets import QDock_context, picker_1d
 from qplot.windows.plot1d import plot1d
 
 
+class _TraceDefaultsConfig:
+    def get(self, key):
+        return {
+            "user_preference.trace_colour": TRACE_COLOR_PALETTE[0],
+            "user_preference.trace_line_width": 2.0,
+            "user_preference.trace_line_style": "Solid",
+        }[key]
+
+
 class SnapToTraceTestCase(unittest.TestCase):
     def setUp(self):
         # These focused axis/style tests use partial window hosts without the
@@ -1195,6 +1204,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
     def test_register_main_line_defers_until_line_exists(self):
         window = plot1d.__new__(plot1d)
+        window.config = None
         window.label = "main"
         window.line = None
         window.lines = {}
@@ -1208,7 +1218,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         class Theme:
             colors = [QtGui.QColor("#008000")]
 
-        class Config:
+        class Config(_TraceDefaultsConfig):
             theme = Theme()
 
         class Line:
@@ -1251,6 +1261,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
     def test_main_line_color_change_before_line_exists_is_stored(self):
         window = plot1d.__new__(plot1d)
+        window.config = None
         window.label = "main"
         window.line = None
 
@@ -1307,6 +1318,7 @@ class SnapToTraceTestCase(unittest.TestCase):
                 pass
 
         window = plot1d.__new__(plot1d)
+        window.config = None
         window.plot = Plot()
         window.label = "main"
         window.line = Line()
@@ -1670,7 +1682,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         class Theme:
             colors = [QtGui.QColor("#008000")]
 
-        class Config:
+        class Config(_TraceDefaultsConfig):
             theme = Theme()
 
         class BaseWindow(qtw.QMainWindow):
@@ -1705,7 +1717,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         class Theme:
             colors = [QtGui.QColor("#ff0000")]
 
-        class Config:
+        class Config(_TraceDefaultsConfig):
             theme = Theme()
 
         class BaseWindow(qtw.QMainWindow):
@@ -2291,7 +2303,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         class Theme:
             colors = [QtGui.QColor("#008000")]
 
-        class Config:
+        class Config(_TraceDefaultsConfig):
             theme = Theme()
 
         class BaseWindow(qtw.QMainWindow):
@@ -2796,6 +2808,7 @@ class SnapToTraceTestCase(unittest.TestCase):
     def test_register_main_line_replaces_initial_empty_trace(self):
         line = object()
         window = plot1d.__new__(plot1d)
+        window.config = None
         window.label = "main"
         window.line = line
         window.lines = {"main": None}
@@ -2812,7 +2825,7 @@ class SnapToTraceTestCase(unittest.TestCase):
                 QtGui.QColor("#ff0000"),
                 ]
 
-        class Config:
+        class Config(_TraceDefaultsConfig):
             theme = Theme()
 
         class Dataset:
