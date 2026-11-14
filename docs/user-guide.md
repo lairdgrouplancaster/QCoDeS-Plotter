@@ -925,7 +925,17 @@ later refreshes do not change the queued export. No plot CSV mode reads fresh
 database data. Use the main-window CSV action for raw measurements.
 
 Plot windows can export plot images and data through `File -> Export Plot...` or
-`Ctrl+E`, using pyqtgraph's export dialog. Use `File -> Save Plot as PDF...` or
+`Ctrl+E`. Choose **Image (PNG, TIFF, JPEG…)**, **SVG**, or **CSV data** in **Format**.
+Images and SVG default to the complete plot, including colour scales and source
+annotations. **Choose part…** reveals individual plots and data areas. Image
+dimensions start at the displayed size of the selected area; editing width or
+height preserves its aspect ratio. Background colour supports transparency, and
+image **More options** contains brightness inversion. CSV shows data options
+instead of image controls; the scope description has a tooltip with full details.
+Choosing **Tab** suggests a TSV file, while the final CSV/TSV file type determines
+the delimiter. **Save as…** leaves the dialog open for further exports.
+
+Use `File -> Save Plot as PDF...` or
 the plot context menu to save a plot-sized PDF of the rendered plot area. Use
 `Edit -> Copy Plot Image`, `Ctrl+C`, or the plot context menu to copy it to the
 clipboard without the surrounding window menus or toolbars. The copy resolution

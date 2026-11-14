@@ -198,6 +198,7 @@ class _PyqtgraphExportHost(qtw.QMainWindow):
 
 
 class _PyqtgraphDialogHost(qtw.QMainWindow):
+    _csv_export_scope = plotWidget._csv_export_scope
     open_export_dialog = plotWidget.open_export_dialog
     _install_safe_pyqtgraph_export_dialog = (
         plotWidget._install_safe_pyqtgraph_export_dialog
@@ -1433,7 +1434,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             )
             self.assertIs(dialog._qplot_owner, host)
             self.assertTrue(dialog.isVisible())
-            self.assertIs(dialog.ui.itemTree.currentItem().gitem, host.plot)
+            self.assertIs(dialog.ui.itemTree.currentItem().gitem, host.widget.scene())
 
             exporter_classes = [
                 dialog.ui.formatList.item(row).expClass
@@ -1468,7 +1469,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
             dialog.ui.formatList.setCurrentRow(0)
             qtw.QApplication.processEvents()
             selected_exporter = dialog.currentExporter
-            dialog.ui.copyBtn.click()
+            self.assertTrue(dialog.ui.copyBtn.isHidden())
+            dialog.copyClicked()
             self.assertEqual(host.copy_calls, [selected_exporter])
             self.assertFalse(dialog.selectBox.isVisible())
             self.assertEqual(host.status_messages, [])
@@ -1827,7 +1829,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             directory = Path(temp_dir)
             host = _PyqtgraphExportHost(directory / "suggested.pdf")
-            exporter = CSVExporter.__new__(CSVExporter)
+            exporter = CSVExporter(None)
             exporter.export = lambda **_kwargs: self.fail(
                 "A cancelled exporter attempted to write"
             )

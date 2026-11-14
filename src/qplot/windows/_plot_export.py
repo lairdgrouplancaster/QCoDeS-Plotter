@@ -45,6 +45,7 @@ from ._export_paths import (
     prepare_export_destination,
     write_export_atomically,
 )
+from ._plot_export_controls import PlotExportControls
 from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
@@ -108,34 +109,77 @@ if (
         def __init__(self, scene: Any, owner: Any):
             self._qplot_owner_ref = weakref.ref(owner)
             super().__init__(scene)
-            for control, tooltip in (
-                (self.ui.itemTree, "Choose the plot item to export."),
-                (self.ui.formatList, "Choose the file or clipboard format for this export."),
-                (self.ui.copyBtn, "Copy the selected plot item to the clipboard using these export settings."),
-                (self.ui.exportBtn, "Choose a destination and save using these export settings."),
-            ):
-                if not control.toolTip():
-                    control.setToolTip(tooltip)
+            while self.ui.gridLayout.count():
+                item = self.ui.gridLayout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.hide()
             self.csv_scope = qtw.QLabel(self)
             self.csv_scope.setObjectName("csvExportScope")
             self.csv_scope.setWordWrap(True)
             self.csv_scope.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-            self.csv_scope.setContentsMargins(8, 8, 8, 8)
             self.csv_scope.hide()
-            for column, button in enumerate((self.ui.copyBtn, self.ui.exportBtn, self.ui.closeBtn)):
-                self.ui.gridLayout.removeWidget(button)
-                self.ui.gridLayout.addWidget(button, 7, column)
-            self.ui.gridLayout.addWidget(self.csv_scope, 6, 0, 1, 3)
+            self.controls = PlotExportControls(self)
+            self.controls_scroll = qtw.QScrollArea(self)
+            self.controls_scroll.setWidgetResizable(True)
+            self.controls_scroll.setFrameShape(qtw.QFrame.Shape.NoFrame)
+            self.controls_scroll.setWidget(self.controls)
+            self.ui.gridLayout.addWidget(self.controls_scroll, 0, 0, 1, 3)
+            self.feedback = qtw.QLabel(self)
+            self.feedback.setWordWrap(True)
+            self.feedback.hide()
+            self.ui.gridLayout.addWidget(self.feedback, 1, 0, 1, 3)
+            actions = qtw.QHBoxLayout()
+            actions.addStretch(1)
+            for button in (self.ui.exportBtn, self.ui.closeBtn):
+                actions.addWidget(button)
+                button.show()
+            self.ui.gridLayout.addLayout(actions, 2, 0, 1, 3)
             self.setWindowTitle("Export plot")
-            self.ui.gridLayout.setSpacing(8)
-            self.ui.itemTree.setMaximumHeight(100)
-            self.ui.formatList.setMaximumHeight(100)
-            self.ui.gridLayout.setRowStretch(5, 1)
-            self.ui.label.setText("Area to export (entire scene includes all plot items):")
+            self.ui.gridLayout.setContentsMargins(16, 16, 16, 12)
+            self.ui.gridLayout.setSpacing(12)
+            self.ui.gridLayout.setRowStretch(0, 1)
             self.ui.exportBtn.setText("Save as…")
-            self.ui.label_3.setText("Export options — image dimensions preserve the aspect ratio")
-            self.resize(560, 540)
+            self.ui.exportBtn.setToolTip("Choose a destination and save using these export settings.")
+            self.setMinimumSize(350, 230)
             owner.destroyed.connect(self._qplot_owner_destroyed)
+
+        def show(self, item: Any = None) -> None:
+            # A visual export starts with the whole scene, including colour
+            # scales and annotations outside the individual PlotItem.
+            self.updateItemList()
+            root = self.ui.itemTree.topLevelItem(0)
+            root.setText(0, "Complete plot")
+            iterator = qtw.QTreeWidgetItemIterator(self.ui.itemTree)
+            while (node := iterator.value()) is not None:
+                if node.text(0) == "ViewBox":
+                    node.setText(0, "Data area")
+                elif node.text(0) == "Plot":
+                    node.setText(0, "Plot with axes")
+                iterator += 1
+            super().show()
+            self.selectBox.setVisible(self.controls.item_tree.isVisible())
+            self.fit_export_controls()
+
+        def fit_export_controls(self) -> None:
+            if not self.isVisible():
+                return
+            width = max(self.ui.exportBtn.sizeHint().width(), self.ui.closeBtn.sizeHint().width())
+            for button in (self.ui.exportBtn, self.ui.closeBtn):
+                button.setFixedWidth(width)
+            screen = self.screen()
+            bounds = screen.availableGeometry() if screen is not None else QtCore.QRect(0, 0, 1024, 768)
+            preferred = self.controls.sizeHint()
+            self.resize(min(max(480, preferred.width() + 40), bounds.width() - 40),
+                        min(preferred.height() + 90, bounds.height() - 80))
+            frame = self.frameGeometry()
+            self.move(max(bounds.left(), min(frame.left(), bounds.right() - frame.width() + 1)),
+                      max(bounds.top(), min(frame.top(), bounds.bottom() - frame.height() + 1)))
+
+        def exportItemChanged(self, item: Any, previous: Any) -> None:
+            super().exportItemChanged(item, previous)
+            self.controls.sync_content()
+            self.selectBox.setVisible(self.controls.item_tree.isVisible())
 
         @property
         def _qplot_owner(self) -> Any | None:
@@ -166,13 +210,17 @@ if (
             scope = getattr(self, "csv_scope", None)
             if scope is not None:
                 scope.hide()
-            if exporter_class not in _SAFE_PYQTGRAPH_FILE_EXPORTERS:
+            owner = self._qplot_owner
+            if owner is None or exporter_class not in _SAFE_PYQTGRAPH_FILE_EXPORTERS:
                 self.currentExporter = None
                 self.ui.paramTree.clear()
                 self.ui.exportBtn.setEnabled(False)
                 self.ui.copyBtn.setEnabled(False)
+                self.controls.set_exporter(None)
                 return
-            super().exportFormatChanged(item, previous)
+            target = owner.plot if exporter_class is CSVExporter else self.ui.itemTree.currentItem().gitem
+            self.currentExporter = exporter_class(item=target)
+            self.ui.paramTree.setParameters(self.currentExporter.parameters())
             exporter_type = type(self.currentExporter)
             if isinstance(self.currentExporter, CSVExporter):
                 # Numeric exports always retain the original precision. The
@@ -220,21 +268,40 @@ if (
             self.ui.copyBtn.setEnabled(
                 exporter_type in _SAFE_PYQTGRAPH_COPY_EXPORTERS
             )
+            self.controls.set_exporter(self.currentExporter)
+            self.feedback.hide()
+            if exporter_type is CSVExporter:
+                self._update_csv_scope()
 
         def _update_csv_scope(self, *_args) -> None:
             scope = getattr(self, "csv_scope", None)
             owner = self._qplot_owner
-            if scope is None or owner is None or type(self.currentExporter) is not CSVExporter:
+            exporter = self.currentExporter
+            if scope is None or owner is None or exporter is None or type(exporter) is not CSVExporter:
                 return
-            scope.setText(owner._csv_export_scope(self.currentExporter))
+            full_scope = owner._csv_export_scope(exporter)
+            scope.setToolTip(full_scope)
+            if getattr(owner, "operation_kind", None) == "plot2d":
+                grid = np.asarray(getattr(owner, "dataGrid", []))
+                shape = f" ({grid.shape[1]:,} × {grid.shape[0]:,} cells)" if grid.ndim == 2 else ""
+                text = (f"Current primary heatmap grid{shape}, including operations and spatial averaging. "
+                        "Other layers are excluded.")
+            elif exporter.params["values"] == CSV_TRANSFORMED_VALUES:
+                text = "All loaded samples, including applied operations and native transforms. Zoom does not limit the exported data."
+            else:
+                text = "All loaded samples, including Operations-panel processing, before native transforms. Zoom does not limit the exported data."
+            scope.setText(text)
             scope.show()
 
         @QtCore.pyqtSlot()
         def exportClicked(self) -> None:
+            self.feedback.hide()
             self.selectBox.hide()
             owner = self._qplot_owner
             if owner is not None:
-                owner._export_pyqtgraph_exporter(self.currentExporter)
+                if owner._export_pyqtgraph_exporter(self.currentExporter):
+                    self.feedback.setText("Export started." if type(self.currentExporter) is CSVExporter else "Saved.")
+                    self.feedback.show()
 
         @QtCore.pyqtSlot()
         def copyClicked(self) -> None:
@@ -885,6 +952,9 @@ class PlotExportMixin(_PlotExportBase):
             return False
 
         suffixes, default_suffix, name_filter, description = specification
+        if type(exporter) is CSVExporter and exporter.params["separator"] == "tab":
+            default_suffix = ".tsv"
+            name_filter = "TSV files (*.tsv);;CSV files (*.csv)"
         suggested_path = path.splitext(self._default_plot_pdf_filename())[0]
         suggested_path = f"{suggested_path}{default_suffix}"
         if type(exporter) is CSVExporter:

@@ -153,7 +153,7 @@ def select_exporter(plot, exporter_type):
     qtw.QApplication.processEvents()
     dialog = plot.widget.scene().exportDialog
     assert dialog.isVisible()
-    assert dialog.ui.itemTree.currentItem().gitem is plot.plot
+    assert dialog.ui.itemTree.currentItem().gitem is plot.widget.scene()
     for row in range(dialog.ui.formatList.count()):
         if dialog.ui.formatList.item(row).expClass is exporter_type:
             dialog.ui.formatList.setCurrentRow(row)
@@ -242,8 +242,9 @@ def test_svg_file_and_dialog_clipboard_preserve_geometry(real_plot, tmp_path, mo
     expected = reference_pixels[y0+3:y1-3, x0+3:x1-3, :3].astype(float)
     assert np.abs(actual - expected).mean() < 12
     assert np.mean(np.max(np.abs(actual - expected), axis=2) > 40) < .08
-    # The dialog Copy button must use the same renderer and options as Export.
-    dialog.ui.copyBtn.click()
+    # The clipboard rendering helper retains the same renderer and options.
+    assert dialog.ui.copyBtn.isHidden()
+    assert plot._copy_pyqtgraph_exporter(exporter)
     mime = qtw.QApplication.clipboard().mimeData()
     clipboard = bytes(mime.data("image/svg+xml"))
     assert clipboard == data
@@ -325,7 +326,8 @@ def test_png_pdf_and_existing_clipboard_svg_regressions(real_plot, tmp_path, mon
     image = QtGui.QImage(str(target))
     assert not image.isNull()
     assert image.width() > 100 and image.height() > 100
-    dialog.ui.copyBtn.click()
+    assert dialog.ui.copyBtn.isHidden()
+    assert plot._copy_pyqtgraph_exporter(dialog.currentExporter)
     assert not qtw.QApplication.clipboard().image().isNull()
     target = tmp_path / "plot.pdf"
     destination_dialogs(monkeypatch, target)

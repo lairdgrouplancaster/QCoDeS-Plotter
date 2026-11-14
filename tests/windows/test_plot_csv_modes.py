@@ -71,10 +71,12 @@ def test_csv_dialog_names_values_and_scope(real_plot):
         assert "columnMode" not in params.names
     else:
         assert mode.value() == CSV_UNDERLYING_VALUES
-        assert "before native FFT" in dialog.csv_scope.text()
+        assert "before native transforms" in dialog.csv_scope.text()
+        assert "before native FFT" in dialog.csv_scope.toolTip()
         mode.setValue(CSV_TRANSFORMED_VALUES)
-        assert "physical coordinates" in dialog.csv_scope.text()
-        assert "rendering downsampling" in dialog.csv_scope.text()
+        assert "including applied operations and native transforms" in dialog.csv_scope.text()
+        assert "physical coordinates" in dialog.csv_scope.toolTip()
+        assert "rendering downsampling" in dialog.csv_scope.toolTip()
 
 
 def test_plot_csv_worker_can_cancel_without_publishing(real_plot, tmp_path, monkeypatch):
