@@ -1457,6 +1457,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
                         dialog.ui.copyBtn.isEnabled(),
                         exporter_class in (ImageExporter, SVGExporter),
                     )
+                    self.assertEqual(dialog.ui.copyBtn.isVisible(),
+                                     exporter_class in (ImageExporter, SVGExporter))
 
             dialog.ui.formatList.setCurrentRow(1)
             qtw.QApplication.processEvents()
@@ -1469,8 +1471,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
             dialog.ui.formatList.setCurrentRow(0)
             qtw.QApplication.processEvents()
             selected_exporter = dialog.currentExporter
-            self.assertTrue(dialog.ui.copyBtn.isHidden())
-            dialog.copyClicked()
+            self.assertTrue(dialog.ui.copyBtn.isVisible())
+            dialog.ui.copyBtn.click()
             self.assertEqual(host.copy_calls, [selected_exporter])
             self.assertFalse(dialog.selectBox.isVisible())
             self.assertEqual(host.status_messages, [])

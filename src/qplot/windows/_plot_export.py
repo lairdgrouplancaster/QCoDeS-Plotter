@@ -131,7 +131,7 @@ if (
             self.ui.gridLayout.addWidget(self.feedback, 1, 0, 1, 3)
             actions = qtw.QHBoxLayout()
             actions.addStretch(1)
-            for button in (self.ui.exportBtn, self.ui.closeBtn):
+            for button in (self.ui.copyBtn, self.ui.exportBtn, self.ui.closeBtn):
                 actions.addWidget(button)
                 button.show()
             self.ui.gridLayout.addLayout(actions, 2, 0, 1, 3)
@@ -139,6 +139,7 @@ if (
             self.ui.gridLayout.setContentsMargins(16, 16, 16, 12)
             self.ui.gridLayout.setSpacing(12)
             self.ui.gridLayout.setRowStretch(0, 1)
+            self.ui.copyBtn.setText("Copy image")
             self.ui.exportBtn.setText("Save as…")
             self.ui.exportBtn.setToolTip("Choose a destination and save using these export settings.")
             self.setMinimumSize(350, 230)
@@ -162,14 +163,17 @@ if (
         def fit_export_controls(self) -> None:
             if not self.isVisible():
                 return
-            width = max(self.ui.exportBtn.sizeHint().width(), self.ui.closeBtn.sizeHint().width())
-            for button in (self.ui.exportBtn, self.ui.closeBtn):
+            buttons = [button for button in (self.ui.copyBtn, self.ui.exportBtn, self.ui.closeBtn)
+                       if not button.isHidden()]
+            width = max(button.sizeHint().width() for button in buttons)
+            for button in buttons:
                 button.setFixedWidth(width)
             screen = self.screen()
             bounds = screen.availableGeometry() if screen is not None else QtCore.QRect(0, 0, 1024, 768)
             preferred = self.controls.sizeHint()
+            feedback_height = self.feedback.sizeHint().height() + 12 if not self.feedback.isHidden() else 0
             self.resize(min(max(480, preferred.width() + 40), bounds.width() - 40),
-                        min(preferred.height() + 90, bounds.height() - 80))
+                        min(preferred.height() + 90 + feedback_height, bounds.height() - 80))
             frame = self.frameGeometry()
             self.move(max(bounds.left(), min(frame.left(), bounds.right() - frame.width() + 1)),
                       max(bounds.top(), min(frame.top(), bounds.bottom() - frame.height() + 1)))
@@ -214,6 +218,7 @@ if (
                 self.ui.paramTree.clear()
                 self.ui.exportBtn.setEnabled(False)
                 self.ui.copyBtn.setEnabled(False)
+                self.ui.copyBtn.hide()
                 self.controls.set_exporter(None)
                 return
             target = owner.plot if exporter_class is CSVExporter else self.scene
@@ -266,8 +271,13 @@ if (
             self.ui.copyBtn.setEnabled(
                 exporter_type in _SAFE_PYQTGRAPH_COPY_EXPORTERS
             )
-            self.controls.set_exporter(self.currentExporter)
+            self.ui.copyBtn.setVisible(exporter_type in _SAFE_PYQTGRAPH_COPY_EXPORTERS)
+            self.ui.copyBtn.setText("Copy SVG" if exporter_type is SVGExporter else "Copy image")
+            self.ui.copyBtn.setToolTip(
+                "Copy the complete plot using the dimensions, background and options selected in this dialog."
+            )
             self.feedback.hide()
+            self.controls.set_exporter(self.currentExporter)
             if exporter_type is CSVExporter:
                 self._update_csv_scope()
 
@@ -300,13 +310,18 @@ if (
                 if owner._export_pyqtgraph_exporter(self.currentExporter):
                     self.feedback.setText("Export started." if type(self.currentExporter) is CSVExporter else "Saved.")
                     self.feedback.show()
+                    self.fit_export_controls()
 
         @QtCore.pyqtSlot()
         def copyClicked(self) -> None:
+            self.feedback.hide()
             self.selectBox.hide()
             owner = self._qplot_owner
             if owner is not None:
-                owner._copy_pyqtgraph_exporter(self.currentExporter)
+                if owner._copy_pyqtgraph_exporter(self.currentExporter):
+                    self.feedback.setText("Copied to clipboard.")
+                    self.feedback.show()
+                    self.fit_export_controls()
 
         @QtCore.pyqtSlot()
         def _qplot_owner_destroyed(self) -> None:

@@ -936,6 +936,8 @@ checkerboard for transparency or the hex code for a custom colour.
 instead of image controls; the scope description has a tooltip with full details.
 Choosing **Tab** suggests a TSV file, while the final CSV/TSV file type determines
 the delimiter. **Save as…** leaves the dialog open for further exports.
+**Copy image** or **Copy SVG** copies the complete plot using the dimensions,
+background and options selected in this dialog. CSV has no clipboard action.
 
 Use `File -> Save Plot as PDF...` or
 the plot context menu to save a plot-sized PDF of the rendered plot area. Use

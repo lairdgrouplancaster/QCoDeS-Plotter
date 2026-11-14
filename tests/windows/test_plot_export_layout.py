@@ -28,7 +28,8 @@ def test_image_fields_export_full_scene_at_chosen_size(real_plot, tmp_path, monk
     controls.fields["invertValue"].setChecked(True)
     assert exporter.params["invertValue"] is True
     assert not dialog.selectBox.isVisible()
-    assert dialog.ui.copyBtn.isHidden()
+    assert dialog.ui.copyBtn.isVisible()
+    assert dialog.ui.copyBtn.text() == "Copy image"
     np.testing.assert_allclose(
         [controls.fields[name].value() for name in ("width", "height")],
         [int(exporter.getTargetRect().width()), int(exporter.getTargetRect().height())],
@@ -51,6 +52,11 @@ def test_image_fields_export_full_scene_at_chosen_size(real_plot, tmp_path, monk
     assert image.hasAlphaChannel()
     assert dialog.isVisible()
     assert dialog.feedback.text() == "Saved."
+    dialog.ui.copyBtn.click()
+    clipboard = qtw.QApplication.clipboard().image()
+    assert clipboard.size() == image.size()
+    assert clipboard.pixelColor(0, 0).alpha() == image.pixelColor(0, 0).alpha()
+    assert dialog.feedback.text() == "Copied to clipboard."
     assert not errors
 
 
@@ -97,12 +103,15 @@ def test_visual_exports_always_use_complete_scene_and_csv_uses_plot_data(real_pl
     assert dialog.ui.itemTree.topLevelItem(0).childCount() == 0
     _format(dialog, CSVExporter)
     assert dialog.currentExporter.item is plot.plot
+    assert dialog.ui.copyBtn.isHidden()
     assert dialog.ui.itemTree.isHidden()
     assert not dialog.selectBox.isVisible()
     assert "width" not in controls.fields
     assert controls.heading.text() == "Data"
     _format(dialog, SVGExporter)
     assert dialog.currentExporter.item is plot.widget.scene()
+    assert dialog.ui.copyBtn.isVisible()
+    assert dialog.ui.copyBtn.text() == "Copy SVG"
     assert controls.fields["scaling stroke"].isVisible()
     controls.fields["scaling stroke"].setChecked(True)
     assert dialog.currentExporter.params["scaling stroke"] is True
