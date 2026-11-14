@@ -928,7 +928,11 @@ working, and reopen it from `File -> View Export Progress…`. A failed or cance
 export leaves its destination unchanged; files already completed remain saved.
 Successful exports show **Export complete** with a tick. When all exports have
 finished, **Hide** becomes **Done**; for a single successful export, the completion
-message also shows the output path, which you can select and copy.
+message also shows the output path, which you can select and copy. Select a
+completed export and use **Open file** to open it in its default application,
+or **Open folder** to open its destination folder. For a failed export, select
+the row and choose **Details…**, or double-click the row, to view and copy
+the error details.
 Switching or closing the database cancels pending database copies and raw exports. Closing a plot
 cancels its pending plot exports.
 
