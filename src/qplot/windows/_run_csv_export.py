@@ -186,7 +186,14 @@ class BatchCsvDialog(qtw.QDialog):
         self.parameters.addItem("All measurements in each run", None)
         for name in sorted(common_parameters):
             self.parameters.addItem(name, (name,))
-        form.addRow("&Data to export:", self.parameters)
+        has_choices = self.parameters.count() > 1
+        if has_choices:
+            form.addRow("&Data to export:", self.parameters)
+        else:
+            self.parameters.hide()
+            all_measurements = qtw.QLabel(self.parameters.currentText(), self)
+            all_measurements.setToolTip("No measurement name is shared by all selected runs.")
+            form.addRow("Data to export:", all_measurements)
         layout.addLayout(form)
         note = qtw.QLabel("Exports run in the background. Completed files are kept if you cancel.")
         note.setWordWrap(True)
@@ -202,7 +209,10 @@ class BatchCsvDialog(qtw.QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
         self.resize(470, self.sizeHint().height())
-        self.parameters.setFocus()
+        if has_choices:
+            self.parameters.setFocus()
+        else:
+            choose_folder.setFocus()
 
 
 def export_selected_runs(window):

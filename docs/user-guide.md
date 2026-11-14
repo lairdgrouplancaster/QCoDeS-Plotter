@@ -885,8 +885,10 @@ To export several runs, use Shift-click or Ctrl-click (Cmd-click on macOS) to
 select rows, then use the selected rows' context menu or
 `File -> Export Selected Runs as CSV…`. Choose all measurements or a named
 measurement shared by the selected runs under **Data to export**, then choose
-an output folder. The review shows the number of selected runs and their run
-numbers in a single-line field that you can select and copy. qPlot writes one
+an output folder. If there are no shared measurement names, **Data to export**
+shows **All measurements in each run** as plain text. The review shows the
+number of selected runs and their run numbers in a single-line field that you
+can select and copy. qPlot writes one
 file per run and asks before replacing an existing file. Each run
 captures the committed data available when its export starts; a batch is not
 a common acquisition instant across all runs. Later live appends are excluded
