@@ -36,7 +36,9 @@ def test_image_fields_export_full_scene_at_chosen_size(real_plot, tmp_path, monk
     controls.fields["width"].setValue(640)
     ratio = exporter.getSourceRect().height() / exporter.getSourceRect().width()
     assert controls.fields["height"].value() == int(640 * ratio)
-    controls.fields["background"].setColor(QtGui.QColor(12, 24, 36, 0))
+    background = controls.fields["background"]
+    background.setCurrentIndex(background.findData("transparent"))
+    background.activated.emit(background.currentIndex())
     controls.fields["antialias"].setChecked(False)
     assert exporter.params["antialias"] is False
     target = tmp_path / "complete.png"
@@ -49,6 +51,40 @@ def test_image_fields_export_full_scene_at_chosen_size(real_plot, tmp_path, monk
     assert image.hasAlphaChannel()
     assert dialog.isVisible()
     assert dialog.feedback.text() == "Saved."
+    assert not errors
+
+
+def test_background_presets_and_custom_picker_cancel(real_plot):
+    plot, _database, errors, _dimensions = real_plot
+    plot.open_export_dialog()
+    dialog = plot.widget.scene().exportDialog
+    for kind in (ImageExporter, SVGExporter):
+        _format(dialog, kind)
+        background = dialog.controls.fields["background"]
+        for name, expected in (("white", QtGui.QColor("white")),
+                               ("transparent", QtGui.QColor("transparent"))):
+            index = background.findData(name)
+            background.setCurrentIndex(index)
+            background.activated.emit(index)
+            assert dialog.currentExporter.params["background"] == expected
+        background.activated.emit(background.findData("choose"))
+        picker = background.colour_dialog
+        assert picker.isVisible()
+        picker.setCurrentColor(QtGui.QColor(12, 34, 56, 128))
+        picker.reject()
+        assert dialog.currentExporter.params["background"].alpha() == 0
+        assert background.accessibleDescription() == "Transparent"
+        background.activated.emit(background.findData("choose"))
+        chosen = QtGui.QColor(12, 34, 56, 128)
+        picker.setCurrentColor(chosen)
+        picker.accept()
+        assert dialog.currentExporter.params["background"] == chosen
+        assert background.accessibleDescription() == chosen.name(QtGui.QColor.NameFormat.HexArgb)
+        assert not background.itemIcon(background.currentIndex()).isNull()
+        background.activated.emit(background.findData("choose"))
+        picker.setCurrentColor(QtGui.QColor("red"))
+        picker.reject()
+        assert dialog.currentExporter.params["background"] == chosen
     assert not errors
 
 

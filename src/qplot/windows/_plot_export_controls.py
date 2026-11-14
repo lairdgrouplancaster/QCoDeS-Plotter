@@ -4,8 +4,103 @@ from typing import Any
 
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
-from pyqtgraph import ColorButton
 from pyqtgraph.exporters import CSVExporter, ImageExporter, SVGExporter
+
+
+class _ExportBackgroundCombo(qtw.QComboBox):
+    colourChanged = QtCore.pyqtSignal(QtGui.QColor)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._colour = QtGui.QColor("white")
+        self.setAccessibleName("Export background colour")
+        self.setIconSize(QtCore.QSize(38, 16))
+        self.addItem(self._swatch(QtGui.QColor("white")), "White", "white")
+        self.addItem(self._swatch(QtGui.QColor("transparent")), "Transparent", "transparent")
+        self.addItem("Choose colour…", "choose")
+        self.colour_dialog = qtw.QColorDialog(self)
+        self.colour_dialog.setWindowTitle("Choose export background colour")
+        self.colour_dialog.setOption(qtw.QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+        self.colour_dialog.setOption(qtw.QColorDialog.ColorDialogOption.ShowAlphaChannel, True)
+        # Qt exposes the alpha editor through its label's buddy, rather
+        # than an object name. Match Qt's own translated label.
+        alpha_label = QtCore.QCoreApplication.translate("QColorDialog", "A&lpha channel:")
+        for label in self.colour_dialog.findChildren(qtw.QLabel):
+            if label.text() == alpha_label:
+                tip = ("Background opacity: 0 is fully transparent; 255 is fully opaque. "
+                       "PNG and SVG retain transparency; JPEG does not.")
+                label.setToolTip(tip)
+                editor = label.buddy()
+                if editor is not None:
+                    editor.setToolTip(tip)
+                break
+        self.activated.connect(self._activate)
+        self.colour_dialog.colorSelected.connect(self._accept_colour)
+        self.set_colour(self._colour)
+
+    @staticmethod
+    def _swatch(colour):
+        pixmap = QtGui.QPixmap(38, 16)
+        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+        painter = QtGui.QPainter(pixmap)
+        area = pixmap.rect().adjusted(1, 1, -1, -1)
+        painter.fillRect(area, QtGui.QColor("white"))
+        if colour.alpha() < 255:
+            for y in range(area.top(), area.bottom() + 1, 4):
+                for x in range(area.left(), area.right() + 1, 4):
+                    if ((x - area.left()) // 4 + (y - area.top()) // 4) % 2:
+                        painter.fillRect(QtCore.QRect(x, y, 4, 4).intersected(area), QtGui.QColor("#bbbbbb"))
+        painter.fillRect(area, colour)
+        painter.setPen(QtGui.QColor("#777777"))
+        painter.drawRect(area)
+        painter.end()
+        return QtGui.QIcon(pixmap)
+
+    def colour(self):
+        return QtGui.QColor(self._colour)
+
+    def set_colour(self, colour):
+        self._colour = QtGui.QColor(colour)
+        index = 1 if self._colour.alpha() == 0 else 0 if self._colour == QtGui.QColor("white") else 2
+        with QtCore.QSignalBlocker(self):
+            self.setCurrentIndex(index)
+            if index == 2:
+                self.setItemIcon(2, self._swatch(self._colour))
+        description = self._description()
+        self.setAccessibleDescription(description)
+        self.setToolTip(f"Export background: {description}. Choose White, Transparent or a custom colour.")
+        self.update()
+
+    def _description(self):
+        if self._colour.alpha() == 0:
+            return "Transparent"
+        if self._colour == QtGui.QColor("white"):
+            return "White"
+        mode = QtGui.QColor.NameFormat.HexArgb if self._colour.alpha() < 255 else QtGui.QColor.NameFormat.HexRgb
+        return self._colour.name(mode)
+
+    def _activate(self, index):
+        choice = self.itemData(index)
+        if choice == "choose":
+            # Restore the displayed selection before opening the picker. Its
+            # edits are committed only on acceptance, so Cancel changes nothing.
+            self.set_colour(self._colour)
+            self.colour_dialog.setCurrentColor(self._colour)
+            self.colour_dialog.open()
+        else:
+            self._accept_colour(QtGui.QColor("white" if choice == "white" else "transparent"))
+
+    def _accept_colour(self, colour):
+        self.set_colour(colour)
+        self.colourChanged.emit(self.colour())
+
+    def paintEvent(self, event):
+        option = qtw.QStyleOptionComboBox()
+        self.initStyleOption(option)
+        option.currentText = self._description()
+        painter = qtw.QStylePainter(self)
+        painter.drawComplexControl(qtw.QStyle.ComplexControl.CC_ComboBox, option)
+        painter.drawControl(qtw.QStyle.ControlElement.CE_ComboBoxLabel, option)
 
 
 class _AspectRatioLink(qtw.QWidget):
@@ -123,26 +218,8 @@ class PlotExportControls(qtw.QWidget):
                 self.fields[name] = spin
                 row.addWidget(spin, 1)
             form.addRow("Width", sizes)
-            colour = ColorButton(self.settings, padding=4)
-            colour.setFixedWidth(100)
-            colour.setMinimumHeight(24)
-            colour.setAccessibleName("Export background colour")
-            colour.setToolTip("Choose the background colour and transparency.")
-            colour.colorDialog.setParent(colour, QtCore.Qt.WindowType.Dialog)
-            # Qt exposes the alpha editor through its label's buddy, rather
-            # than an object name. Match Qt's own translated label.
-            alpha_label = QtCore.QCoreApplication.translate("QColorDialog", "A&lpha channel:")
-            for label in colour.colorDialog.findChildren(qtw.QLabel):
-                if label.text() == alpha_label:
-                    tip = ("Background opacity: 0 is fully transparent; 255 is fully opaque. "
-                           "PNG and SVG retain transparency; JPEG does not.")
-                    label.setToolTip(tip)
-                    editor = label.buddy()
-                    if editor is not None:
-                        editor.setToolTip(tip)
-                    break
-            colour.sigColorChanging.connect(lambda button: self._write("background", button.color()))
-            colour.sigColorChanged.connect(lambda button: self._write("background", button.color()))
+            colour = _ExportBackgroundCombo(self.settings)
+            colour.colourChanged.connect(lambda value: self._write("background", value))
             self.fields["background"] = colour
             form.addRow("Background", colour)
             if type(exporter) is ImageExporter:
@@ -192,9 +269,9 @@ class PlotExportControls(qtw.QWidget):
         try:
             for name, widget in self.fields.items():
                 value = self.exporter.params[name]
-                if isinstance(widget, ColorButton):
-                    if widget.color() != QtGui.QColor(value):
-                        widget.setColor(value)
+                if isinstance(widget, _ExportBackgroundCombo):
+                    if widget.colour() != QtGui.QColor(value):
+                        widget.set_colour(value)
                 elif isinstance(widget, qtw.QComboBox):
                     widget.setCurrentIndex(widget.findData(value))
                 elif isinstance(widget, qtw.QCheckBox):

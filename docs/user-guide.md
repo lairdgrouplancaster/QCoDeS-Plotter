@@ -928,7 +928,10 @@ Plot windows can export plot images and data through `File -> Export Plot...` or
 `Ctrl+E`. Choose **Image (PNG, TIFF, JPEG…)**, **SVG**, or **CSV data** in **Format**.
 Images and SVG export the complete plot, including colour scales and source
 annotations. Image dimensions start at the displayed plot size; editing width or
-height preserves its aspect ratio. Background colour supports transparency, and
+height preserves its aspect ratio. **Background** offers **White**, **Transparent**
+and **Choose colour…**. Custom colours retain alpha support, and cancelling the
+colour picker keeps the previous background. The selected swatch shows a
+checkerboard for transparency or the hex code for a custom colour.
 **Invert brightness** is shown beside **Smooth edges**. CSV shows data options
 instead of image controls; the scope description has a tooltip with full details.
 Choosing **Tab** suggests a TSV file, while the final CSV/TSV file type determines
