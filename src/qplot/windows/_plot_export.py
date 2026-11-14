@@ -170,10 +170,32 @@ if (
                 button.setFixedWidth(width)
             screen = self.screen()
             bounds = screen.availableGeometry() if screen is not None else QtCore.QRect(0, 0, 1024, 768)
+            self.controls.ensurePolished()
+            self.controls.body_layout.activate()
             preferred = self.controls.sizeHint()
-            feedback_height = self.feedback.sizeHint().height() + 12 if not self.feedback.isHidden() else 0
-            self.resize(min(max(480, preferred.width() + 40), bounds.width() - 40),
-                        min(preferred.height() + 90 + feedback_height, bounds.height() - 80))
+            margins = self.ui.gridLayout.contentsMargins()
+            target_width = min(max(480, preferred.width() + margins.left() + margins.right()), bounds.width() - 40)
+            # Resolve the real viewport width, including theme padding and
+            # borders, before measuring wrapped labels at that width.
+            self.resize(target_width, self.height())
+            self.ui.gridLayout.activate()
+            viewport = self.controls_scroll.viewport()
+            horizontal = self.controls_scroll.horizontalScrollBar()
+            assert viewport is not None and horizontal is not None
+            content_width = viewport.width()
+            content_height = self.controls.heightForWidth(content_width)
+            if content_height < 0:
+                content_height = preferred.height()
+            action_height = max(button.sizeHint().height() for button in buttons)
+            spacing = self.ui.gridLayout.verticalSpacing()
+            feedback_height = (self.feedback.heightForWidth(content_width) + spacing
+                               if not self.feedback.isHidden() else 0)
+            # Qt can add scrollbar chrome after this layout pass. Reserve its
+            # native height so that it cannot squeeze out the bottom controls.
+            scroll_chrome = max(self.controls_scroll.height() - viewport.height(), horizontal.sizeHint().height())
+            desired_height = (content_height + scroll_chrome + margins.top() + margins.bottom()
+                              + action_height + spacing + feedback_height + 12)
+            self.resize(target_width, min(desired_height, bounds.height() - 80))
             frame = self.frameGeometry()
             self.move(max(bounds.left(), min(frame.left(), bounds.right() - frame.width() + 1)),
                       max(bounds.top(), min(frame.top(), bounds.bottom() - frame.height() + 1)))

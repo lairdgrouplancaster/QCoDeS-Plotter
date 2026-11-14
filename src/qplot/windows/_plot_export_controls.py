@@ -236,6 +236,11 @@ class PlotExportControls(qtw.QWidget):
             parameter.sigValueChanged.connect(self._sync_values)
             self._parameters.append(parameter)
         self._sync_values()
+        # New settings widgets otherwise remain hidden until the next event
+        # delivery, so the dialog's first size hint can omit their contents.
+        self.settings.show()
+        self.settings.ensurePolished()
+        self.body_layout.invalidate()
         self.dialog.fit_export_controls()
 
     def _combo(self, form, label, name, choices=None):

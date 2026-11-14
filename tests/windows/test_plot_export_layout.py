@@ -1,7 +1,10 @@
 """Format-specific export controls drive real image and CSV publication."""
 
+from types import SimpleNamespace
+
 import numpy as np
-from PyQt6 import QtGui
+import pytest
+from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter, ImageExporter, SVGExporter
 
@@ -14,6 +17,43 @@ def _format(dialog, kind):
     combo.setCurrentIndex(combo.findData(kind))
     qtw.QApplication.processEvents()
     assert type(dialog.currentExporter) is kind
+
+
+@pytest.mark.parametrize("font_size", [9, 14])
+def test_default_height_shows_all_settings_when_switching_formats(real_plot, font_size):
+    plot, _database, errors, _dimensions = real_plot
+    plot.open_export_dialog()
+    dialog = plot.widget.scene().exportDialog
+    dialog.setStyleSheet(f"QWidget {{ font-size: {font_size}pt; }}")
+    for kind in (CSVExporter, SVGExporter, ImageExporter, CSVExporter):
+        _format(dialog, kind)
+        assert dialog.controls_scroll.verticalScrollBar().maximum() == 0, (
+            kind.__name__, dialog.size(), dialog.controls.sizeHint(),
+            dialog.controls_scroll.viewport().size(),
+            dialog.controls.heightForWidth(dialog.controls_scroll.viewport().width()),
+        )
+        if kind is not CSVExporter:
+            dialog.ui.copyBtn.click()
+            qtw.QApplication.processEvents()
+            assert dialog.controls_scroll.verticalScrollBar().maximum() == 0
+    assert not errors
+
+
+def test_default_height_keeps_actions_accessible_on_small_screens(real_plot, monkeypatch):
+    plot, _database, errors, _dimensions = real_plot
+    plot.open_export_dialog()
+    dialog = plot.widget.scene().exportDialog
+    dialog.setStyleSheet("QWidget { font-size: 14pt; }")
+    _format(dialog, CSVExporter)
+    bounds = QtCore.QRect(40, 60, 520, 360)
+    monkeypatch.setattr(dialog, "screen", lambda: SimpleNamespace(availableGeometry=lambda: bounds))
+    dialog.fit_export_controls()
+    qtw.QApplication.processEvents()
+    assert bounds.contains(dialog.frameGeometry())
+    assert dialog.controls_scroll.verticalScrollBar().maximum() > 0
+    for button in (dialog.ui.exportBtn, dialog.ui.closeBtn):
+        assert dialog.rect().contains(QtCore.QRect(button.mapTo(dialog, QtCore.QPoint()), button.size()))
+    assert not errors
 
 
 def test_image_fields_export_full_scene_at_chosen_size(real_plot, tmp_path, monkeypatch):
