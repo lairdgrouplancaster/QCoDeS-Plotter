@@ -75,7 +75,7 @@ def test_empty_appearance_selection_is_safe_and_survives_refresh(dialog_plot):
     assert len(dialog._selected_entries()) == 1
     kind = "heatmap" if plot.operation_kind == "plot2d" else "trace"
     name = dialog.table.item(0, dialog._COL_MEASUREMENT).text()
-    assert dialog.selection_summary.text() == f"{name} — {kind}"
+    assert dialog.selection_summary.text() == f"<b>{name}</b> — {kind}"
 
 
 @pytest.mark.parametrize("centre_span", [False, True])

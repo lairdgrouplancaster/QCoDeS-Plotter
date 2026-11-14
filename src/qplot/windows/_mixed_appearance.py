@@ -1,5 +1,6 @@
 """One appearance list with controls for the selected renderer type."""
 
+from html import escape
 from typing import TYPE_CHECKING, Any
 
 from PyQt6 import QtCore, QtGui, sip
@@ -190,10 +191,12 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
             measurement_name = (self.owner._heatmap_measurement_name if kind == "heatmap"
                                 else self.owner._trace_measurement_name)(key, registry[key])
             summary = f"{measurement_name} — {kind}"
+            formatted_summary = f"<b>{escape(measurement_name)}</b> — {kind}"
         else:
             summary = f"{count} {kind}s selected"
+            formatted_summary = f"<b>{summary}</b>"
         self.selection_summary.setText(
-            summary
+            formatted_summary
             + (f" (of {len(selected)} datasets)" if count != len(selected) else "")
             + (" · Mixed values" if feedback else "")
         )

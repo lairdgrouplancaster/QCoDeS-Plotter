@@ -33,7 +33,7 @@ def test_mixed_feedback_and_revert_preserve_individual_styles(trace_editor, qapp
     dialog.grab().save(str(tmp_path / "appearance.png"))
     keys = _prepare_traces(host, dialog, lines, "line_width", multiple=True)
     assert "Mixed" in dialog.selection_summary.text()
-    assert dialog.selection_summary.text().startswith("2 traces selected")
+    assert dialog.selection_summary.text() == "<b>2 traces selected</b> · Mixed values"
     assert "Line width" in dialog.selection_summary.toolTip()
     assert dialog.line_width.lineEdit().text() == "Mixed"
     assert dialog.line_width.lineEdit().placeholderText() == "Mixed"
