@@ -6,6 +6,7 @@ import numpy.typing as npt
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from ._commands import create_action
 from ._plot_host import PlotHost
 from ._subplots.subplot2d import sweeper
 
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
         rotate: bool | None
         sweep_lines: dict[int, Any]
         sweep_moved: Any
+        widget: Any
 
         def change_axis(self, key: str) -> None: ...
 
@@ -48,6 +50,49 @@ _SWEEP_ID_COUNTER = count()
 
 class Plot2DSweepMixin(_Plot2DSweepBase):
     """Sweep and cut interactions for 2D heatmap plot windows."""
+
+    def _init_cut_keyboard_shortcuts(self) -> None:
+        for command, backwards in (
+            ("heatmap.next_cut", False), ("heatmap.previous_cut", True),
+        ):
+            action = create_action(command, self.widget)
+            action.triggered.connect(
+                lambda _, backwards=backwards: self.cycle_selected_cut(backwards)
+            )
+            self.widget.addAction(action)
+        for key, text in (
+            (QtCore.Qt.Key.Key_Left, "Move selected cut left"),
+            (QtCore.Qt.Key.Key_Right, "Move selected cut right"),
+            (QtCore.Qt.Key.Key_Up, "Move selected cut up"),
+            (QtCore.Qt.Key.Key_Down, "Move selected cut down"),
+        ):
+            action = QtGui.QAction(text, self.widget)
+            action.setShortcut(QtGui.QKeySequence(key))
+            action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            action.triggered.connect(
+                lambda _, key=key: self._move_keyboard_selected_cut(key)
+            )
+            self.widget.addAction(action)
+
+    def cycle_selected_cut(self, backwards: bool = False) -> None:
+        """Select visible cursors in creation order, wrapping at either end."""
+        ids = sorted(
+            sweep_id for sweep_id, line in self.sweep_lines.items()
+            if line.isVisible() and getattr(line, "sweep_index", None) is not None
+        )
+        if not ids:
+            return
+        selected = getattr(self, "_keyboard_selected_sweep_id", None)
+        if selected in ids:
+            index = (ids.index(selected) + (-1 if backwards else 1)) % len(ids)
+        else:
+            index = -1 if backwards else 0
+        self.activate_sweep_line(self.sweep_lines[ids[index]])
+
+    def _move_keyboard_selected_cut(self, key: QtCore.Qt.Key) -> None:
+        if (getattr(self, "_keyboard_selected_sweep_id", None)
+                == self.active_sweep_line_id and self.active_sweep_line_id is not None):
+            self.move_sweep_with_arrow_key(key)
 
     @staticmethod
     def _reserve_sweep_id() -> int:
@@ -524,6 +569,42 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
         button = getattr(event, "button", lambda: None)()
         double_clicked = getattr(event, "double", lambda: False)()
         return button == QtCore.Qt.MouseButton.LeftButton and double_clicked
+
+
+    def handle_sweep_line_double_click(self, event: Any) -> bool:
+        """Give a cut cursor priority over the heatmap's native Qt handler."""
+        scene_position = getattr(event, "scenePos", lambda: None)()
+        if scene_position is None:
+            return False
+        line = self._probe_at_scene_position(list(self.sweep_lines.values()), scene_position)
+        if line is None:
+            return False
+        event.accept()
+        self.request_sweep_line_removal(line, event)
+        return True
+
+
+    def _probe_at_scene_position(self, probes: list[Any], scene_position: QtCore.QPointF) -> Any | None:
+        """Find the nearest visible probe within five extra viewport pixels."""
+        viewport_transform = self.widget.viewportTransform()
+        position = viewport_transform.map(scene_position)
+        shapes = [
+            (probe, probe.deviceTransform(viewport_transform).map(probe.shape()))
+            for probe in reversed(probes)
+            if probe.isVisible()
+        ]
+        for probe, shape in shapes:
+            if shape.contains(position):
+                return probe
+        stroker = QtGui.QPainterPathStroker()
+        # Expand in one-pixel steps so nearby probes win over more distant ones.
+        # Equal-distance hits retain the existing most-recently-created priority.
+        for margin in range(1, 6):
+            stroker.setWidth(2. * margin)
+            for probe, shape in shapes:
+                if stroker.createStroke(shape).contains(position):
+                    return probe
+        return None
 
 
     def request_sweep_line_removal(self, line: Any, event: Any = None) -> None:

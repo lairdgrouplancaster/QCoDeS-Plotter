@@ -1,11 +1,13 @@
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import numpy as np
 import pyqtgraph as pg
 import pytest
 from PyQt6 import QtCore, QtGui, QtTest, QtWidgets
 
 from qplot.windows._commands import _PlotKeyFocusFilter, create_action
+from qplot.windows._plot2d_layers import Plot2DLayerMixin
 from qplot.windows._plot2d_sweeps import Plot2DSweepMixin
 from qplot.windows._plot_marquee import PlotMarqueeMixin
 from qplot.windows._subplots.subplot1d import custom_viewbox
@@ -37,9 +39,11 @@ class Drag:
         pass
 
 
-def test_new_cut_is_selected_highlighted_and_moves_by_arrow(qapplication):
+@pytest.fixture
+def cut_host(qapplication):
     class Host(QtWidgets.QMainWindow, Plot2DSweepMixin):
         sweep_moved = QtCore.pyqtSignal(int, float)
+        close_sweeps_requested = QtCore.pyqtSignal(object, object)
         axis_options = {"x": "gate", "y": "field"}
 
         def _heatmap_geometry(self):
@@ -60,19 +64,173 @@ def test_new_cut_is_selected_highlighted_and_moves_by_arrow(qapplication):
     host.plot = host.widget.addPlot()
     host.sweep_lines = {}
     host.active_sweep_line_id = None
+    host._init_cut_keyboard_shortcuts()
     try:
-        host.update_sweep_line(1, "gate", "field", 2.0, pg.mkPen("r"))
-        assert host.active_sweep_line_id == host._keyboard_selected_sweep_id == 1
-        assert host.sweep_lines[1].pen.widthF() == 3.0
-        host.move_sweep_with_arrow_key(QtCore.Qt.Key.Key_Up)
-        assert host.sweep_lines[1].sweep_index == 3
-        host.update_sweep_line(2, "gate", "field", 1.0, pg.mkPen("b"))
-        assert host.active_sweep_line_id == host._keyboard_selected_sweep_id == 2
-        assert host.sweep_lines[1].pen.widthF() == 1.0
-        assert host.sweep_lines[2].pen.widthF() == 3.0
+        yield host
     finally:
         host.close()
         host.deleteLater()
+
+
+def test_new_cut_is_selected_highlighted_and_moves_by_arrow(cut_host):
+    host = cut_host
+    host.update_sweep_line(1, "gate", "field", 2.0, pg.mkPen("r"))
+    assert host.active_sweep_line_id == host._keyboard_selected_sweep_id == 1
+    assert host.sweep_lines[1].pen.widthF() == 3.0
+    host.move_sweep_with_arrow_key(QtCore.Qt.Key.Key_Up)
+    assert host.sweep_lines[1].sweep_index == 3
+    host.update_sweep_line(2, "gate", "field", 1.0, pg.mkPen("b"))
+    assert host.active_sweep_line_id == host._keyboard_selected_sweep_id == 2
+    assert host.sweep_lines[1].pen.widthF() == 1.0
+    assert host.sweep_lines[2].pen.widthF() == 3.0
+
+
+def test_cut_keyboard_cycle_wraps_moves_only_selection_and_keeps_tab_navigation(cut_host, qapplication):
+    host = cut_host
+    dock = QtWidgets.QDockWidget(host)
+    editor = QtWidgets.QLineEdit()
+    dock.setWidget(editor)
+    host.addDockWidget(QtCore.Qt.DockWidgetArea.LeftDockWidgetArea, dock)
+    host.show()
+    host.activateWindow()
+    qapplication.processEvents()
+    host.widget.setFocus()
+    control = QtCore.Qt.KeyboardModifier.ControlModifier
+    backwards = control | QtCore.Qt.KeyboardModifier.ShiftModifier
+
+    def press(key, modifiers=QtCore.Qt.KeyboardModifier.NoModifier):
+        QtTest.QTest.keyClick(qapplication.focusWidget(), key, modifiers)
+
+    # Empty canvases accept the shortcut without selecting a nonexistent cut.
+    press(QtCore.Qt.Key.Key_Tab, control)
+    assert host.active_sweep_line_id is None
+    for sweep_id, sweep, fixed in ((1, "gate", "field"), (2, "gate", "field"), (3, "field", "gate")):
+        host.update_sweep_line(sweep_id, sweep, fixed, 1., pg.mkPen("r"))
+    assert host.active_sweep_line_id == 3
+    press(QtCore.Qt.Key.Key_Tab, control)
+    assert host.active_sweep_line_id == 1
+    assert host.sweep_lines[1].pen.widthF() == 3.
+    assert host.sweep_lines[3].pen.widthF() == 1.
+    press(QtCore.Qt.Key.Key_Up)
+    assert [host.sweep_lines[i].sweep_index for i in (1, 2, 3)] == [2, 1, 1]
+    press(QtCore.Qt.Key.Key_Tab, backwards)
+    assert host.active_sweep_line_id == 3
+    press(QtCore.Qt.Key.Key_Right)
+    assert host.sweep_lines[3].sweep_index == 2
+    assert host.widget.hasFocus()
+
+    # Neither ordinary Tab direction changes the selected probe.
+    press(QtCore.Qt.Key.Key_Tab)
+    assert not host.widget.hasFocus()
+    assert host.active_sweep_line_id == 3
+    editor.setFocus()
+    press(QtCore.Qt.Key.Key_Tab, control)
+    assert host.active_sweep_line_id == 3
+    host.widget.setFocus()
+    press(QtCore.Qt.Key.Key_Backtab, QtCore.Qt.KeyboardModifier.ShiftModifier)
+    assert not host.widget.hasFocus()
+    assert host.active_sweep_line_id == 3
+
+    # A removed selection and hidden cursors do not break cycling.
+    host.widget.setFocus()
+    host.remove_sweep(3)
+    host.sweep_lines[1].hide()
+    press(QtCore.Qt.Key.Key_Tab, backwards)
+    assert host.active_sweep_line_id == 2
+    press(QtCore.Qt.Key.Key_Tab, control)
+    assert host.active_sweep_line_id == 2
+
+
+@pytest.mark.parametrize("vertical", [False, True])
+@pytest.mark.parametrize("all_cuts", [False, True])
+@pytest.mark.parametrize("mesh", [False, True])
+@pytest.mark.parametrize("pixel_offset", [0, -5, 5, 12])
+@pytest.mark.parametrize("zoomed_out", [False, True])
+def test_native_probe_double_click_removes_cut_before_heatmap_appearance(
+    cut_host, qapplication, vertical, all_cuts, mesh, pixel_offset, zoomed_out,
+):
+    host = cut_host
+    values = np.arange(25.).reshape(5, 5)
+    image = pg.PColorMeshItem(values) if mesh else pg.ImageItem(values)
+    host.plot.addItem(image)
+    host._heatmap_render_items = lambda layer: (image,)
+    host.open_heatmap_appearance_dialog = Mock()
+    Plot2DLayerMixin._install_heatmap_double_click_handlers(host, host, "signal")
+    sweep, fixed = ("field", "gate") if vertical else ("gate", "field")
+    host.update_sweep_line(1, sweep, fixed, 1., pg.mkPen("r"))
+    host.update_sweep_line(2, sweep, fixed, 3., pg.mkPen("b"))
+    removed = []
+
+    def close_cuts(source, ids):
+        assert source is host
+        removed.append(ids)
+        for sweep_id in ids:
+            host.remove_sweep(sweep_id)
+
+    host.close_sweeps_requested.connect(close_cuts)
+    host.resize(640, 480)
+    host.show()
+    view_range = (-5., 10.) if zoomed_out else (0., 5.)
+    host.plot.setRange(xRange=view_range, yRange=view_range, padding=0.)
+    qapplication.processEvents()
+    QtTest.QTest.qWait(30)  # Settle tick-label widths before mapping mouse positions.
+    viewport = host.widget.viewport()
+
+    def double_click(x, y, modifiers=QtCore.Qt.KeyboardModifier.NoModifier, offset=0):
+        position = host.widget.mapFromScene(host.plot.vb.mapViewToScene(QtCore.QPointF(x, y)))
+        position += QtCore.QPoint(offset, 0) if vertical else QtCore.QPoint(0, offset)
+        QtTest.QTest.mouseMove(viewport, position)
+        QtTest.QTest.mouseClick(viewport, QtCore.Qt.MouseButton.LeftButton, modifiers, position)
+        QtTest.QTest.mouseDClick(viewport, QtCore.Qt.MouseButton.LeftButton, modifiers, position)
+        QtTest.QTest.mouseRelease(viewport, QtCore.Qt.MouseButton.LeftButton, modifiers, position)
+        qapplication.processEvents()
+
+    modifiers = (QtCore.Qt.KeyboardModifier.ShiftModifier if all_cuts
+                 else QtCore.Qt.KeyboardModifier.NoModifier)
+    x, y = (1., 2.5) if vertical else (2.5, 1.)
+    scene_position = host.widget.mapToScene(host.widget.mapFromScene(
+        host.plot.vb.mapViewToScene(QtCore.QPointF(x, y))))
+    assert host.sweep_lines[1].contains(host.sweep_lines[1].mapFromScene(scene_position))
+    double_click(x, y, modifiers, offset=pixel_offset)
+    if abs(pixel_offset) <= 5:
+        host.open_heatmap_appearance_dialog.assert_not_called()
+        assert removed == [(1, 2) if all_cuts else (1,)]
+        assert set(host.sweep_lines) == (set() if all_cuts else {2})
+    else:
+        host.open_heatmap_appearance_dialog.assert_called_once_with("signal")
+        assert removed == []
+        assert set(host.sweep_lines) == {1, 2}
+        host.open_heatmap_appearance_dialog.reset_mock()
+
+    # Double-clicking the heatmap away from probes still opens its appearance.
+    double_click(4., 4.)
+    host.open_heatmap_appearance_dialog.assert_called_once_with("signal")
+
+
+def test_probe_hit_area_favours_nearest_probe_and_ignores_hidden_probes(cut_host, qapplication):
+    host = cut_host
+    host.update_sweep_line(1, "gate", "field", 1., pg.mkPen("r"))
+    host.update_sweep_line(2, "gate", "field", 2., pg.mkPen("b"))
+    host.show()
+    host.plot.setRange(xRange=(0., 5.), yRange=(0., 5.), padding=0.)
+    qapplication.processEvents()
+    QtTest.QTest.qWait(30)
+    first, second = host.sweep_lines.values()
+    # Put the newer probe six screen pixels from the first. A click just outside
+    # the first's shape must favour it over the newer probe's expanded hit area.
+    transform = host.widget.viewportTransform()
+    centre = transform.map(host.plot.vb.mapViewToScene(QtCore.QPointF(2., 1.)))
+    nearby = centre + QtCore.QPointF(0., -6.)
+    scene_inverse, invertible = transform.inverted()
+    assert invertible
+    second.setValue(host.plot.vb.mapSceneToView(scene_inverse.map(nearby)).y())
+    near_first = scene_inverse.map(centre + QtCore.QPointF(0., -2.))
+    assert host._probe_at_scene_position([first, second], near_first) is first
+    assert host._probe_at_scene_position([first, second], scene_inverse.map(nearby)) is second
+    first.hide()
+    assert host._probe_at_scene_position([first, second], near_first) is second
+    second.hide()
+    assert host._probe_at_scene_position([first, second], near_first) is None
 
 
 @pytest.mark.parametrize("first,second,expected", [

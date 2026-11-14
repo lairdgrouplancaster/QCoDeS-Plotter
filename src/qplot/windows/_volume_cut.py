@@ -81,6 +81,17 @@ class CutLoader(loader):
                 self._emit_finished(False)
 
 
+class _CutTargetItem(pg.TargetItem):
+    sigClicked = QtCore.pyqtSignal(object, object)
+
+    def mouseClickEvent(self, event):
+        if event.button() == QtCore.Qt.MouseButton.LeftButton:
+            self.sigClicked.emit(self, event)
+            event.accept()
+        else:
+            super().mouseClickEvent(event)
+
+
 class VolumeCut(plot1d):
     _extra_publication_fields = ("_displayed_cut_metadata", "_displayed_description")
 
@@ -156,9 +167,10 @@ class VolumeCut(plot1d):
         self.coverage_action.setVisible(self.selection.kind == "mean")
         self._registration.register(self)
         self.source._cuts.append(self)
-        self.source._active_volume_cut = self
         self.source.plane_changed.connect(self._plane_changed)
         self._create_marker()
+        if self.marker is not None:
+            self.source.activate_volume_cut(self)
 
     def _create_marker(self):
         s = self.selection
@@ -169,11 +181,12 @@ class VolumeCut(plot1d):
                                           label=str(self.cut_id + 1))
             self.marker.sigPositionChangeFinished.connect(self._marker_moved)
         elif s.kind == "d":
-            self.marker = pg.TargetItem(pos=(s.x_value, s.y_value), movable=True,
+            self.marker = _CutTargetItem(pos=(s.x_value, s.y_value), movable=True,
                                         pen=pg.mkPen(self.cut_color), label=str(self.cut_id + 1))
             self.marker.sigPositionChangeFinished.connect(self._marker_moved)
         if self.marker is not None:
             self.source._add_plot_overlay(self.marker)
+            self.marker.sigClicked.connect(lambda *_: self.source.activate_volume_cut(self))
         if s.kind in ("d", "mean"):
             self.depth_marker = pg.InfiniteLine(pos=s.depth_value or 0, movable=True,
                                                pen=pg.mkPen(self.cut_color, style=QtCore.Qt.PenStyle.DashLine))
@@ -200,7 +213,7 @@ class VolumeCut(plot1d):
     def _marker_moved(self):
         if self.marker is None:
             return
-        self.source._active_volume_cut = self
+        self.source.activate_volume_cut(self)
         s = self.selection
         if s.kind == "d":
             positions = {s.x: self.marker.pos().x(), s.y: self.marker.pos().y()}

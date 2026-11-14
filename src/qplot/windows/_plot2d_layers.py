@@ -1248,6 +1248,9 @@ class Plot2DLayerMixin(PlotHost):
             ):
                 button = getattr(event, "button", lambda: None)()
                 if button == QtCore.Qt.MouseButton.LeftButton:
+                    remove_cut = getattr(self, "handle_sweep_line_double_click", None)
+                    if callable(remove_cut) and remove_cut(event):
+                        return
                     heatmap_key = getattr(
                         target,
                         "_qplot_heatmap_key",

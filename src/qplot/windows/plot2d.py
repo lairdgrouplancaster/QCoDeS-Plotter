@@ -329,22 +329,7 @@ class plot2d(
 
         self._init_colorbar_scale_controls()
 
-        for key, text in (
-                (QtCore.Qt.Key.Key_Left, "Move selected cut left"),
-                (QtCore.Qt.Key.Key_Right, "Move selected cut right"),
-                (QtCore.Qt.Key.Key_Up, "Move selected cut up"),
-                (QtCore.Qt.Key.Key_Down, "Move selected cut down"),
-                ):
-            action = QtGui.QAction(text, self)
-            action.setShortcut(QtGui.QKeySequence(key))
-            action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
-            action.triggered.connect(
-                lambda _, key=key: self.move_sweep_with_arrow_key(key)
-                if getattr(self, "_keyboard_selected_sweep_id", None)
-                == self.active_sweep_line_id and self.active_sweep_line_id is not None
-                else None
-                )
-            self.widget.addAction(action)
+        self._init_cut_keyboard_shortcuts()
         
         
     def initLabels(self) -> None:

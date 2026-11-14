@@ -708,8 +708,18 @@ Colour-scale controls:
 * Right-click the heatmap and select `Horizontal Cut` or
   `Vertical Cut`.
 * A cut window opens, with a cursor shown on the heatmap.
+* Close the cut window to remove its probe. In heatmaps and 3D slices, double-click a probe
+  line to close its cut, or Shift+double-click a probe line to close all cuts on
+  that heatmap. Double-clicking elsewhere on the heatmap opens plot appearance.
+  Probe removal allows five extra screen pixels around the cursor, independent
+  of zoom, and favours the nearest probe when hit areas overlap.
 * Move the cut position with the cut window slider or by dragging the cursor on
   the heatmap.
+* With the heatmap canvas focused, press `Ctrl+Tab` or `Ctrl+Shift+Tab` to select
+  the next or previous visible cut in creation order, wrapping at either end.
+  The selected cursor is highlighted; use the arrow keys to move it by one cell.
+  This also works for horizontal, vertical and depth probes in 3D slices.
+  Ordinary `Tab` and `Shift+Tab` continue to move between controls.
 * Hold Shift while dragging a cut cursor to move all cuts with the same
   orientation together.
 * Switch the cut and fixed parameters with the `x axis` and `fixed parameter`
@@ -1007,6 +1017,7 @@ Heatmap shortcuts:
 | `C` | Autoscale the colour range |
 | `H` | Open a horizontal cut |
 | `V` | Open a vertical cut |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Select the next / previous visible cut on the canvas, in creation order |
 | Arrow keys | Move the selected cut cursor by one cell; new cuts are selected automatically |
 
 Dynamic context-menu entries are numbered or underlined. Once a menu is open,
