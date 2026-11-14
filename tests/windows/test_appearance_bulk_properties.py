@@ -33,6 +33,7 @@ def test_mixed_feedback_and_revert_preserve_individual_styles(trace_editor, qapp
     dialog.grab().save(str(tmp_path / "appearance.png"))
     keys = _prepare_traces(host, dialog, lines, "line_width", multiple=True)
     assert "Mixed" in dialog.selection_summary.text()
+    assert dialog.selection_summary.text().startswith("2 traces selected")
     assert "Line width" in dialog.selection_summary.toolTip()
     assert dialog.line_width.lineEdit().text() == "Mixed"
     assert dialog.line_width.lineEdit().placeholderText() == "Mixed"
@@ -40,9 +41,18 @@ def test_mixed_feedback_and_revert_preserve_individual_styles(trace_editor, qapp
     assert all(host._trace_styles[key].line_width == 5.5 for key in keys)
     host._trace_styles[keys[1]].visible = False
     dialog.refresh_rows()
+    hidden_row = next(row for row in range(dialog.table.rowCount())
+                      if dialog._row_entry(row) == ("trace", keys[1]))
+    hidden_name = dialog.table.item(hidden_row, dialog._COL_MEASUREMENT)
+    assert hidden_name.font().strikeOut()
+    assert "Hidden" in hidden_name.toolTip()
+    assert hidden_name.flags() & QtCore.Qt.ItemFlag.ItemIsEnabled
+    assert hidden_name.flags() & QtCore.Qt.ItemFlag.ItemIsSelectable
     assert dialog.visible.checkState() == QtCore.Qt.CheckState.PartiallyChecked
     dialog.visible.click()
     assert all(host._trace_styles[key].visible for key in keys)
+    assert all(not dialog.table.item(row, dialog._COL_MEASUREMENT).font().strikeOut()
+               for row in range(dialog.table.rowCount()))
     dialog.reject()
     qapplication.processEvents()
     assert {key: asdict(style) for key, style in host._trace_styles.items()} == initial

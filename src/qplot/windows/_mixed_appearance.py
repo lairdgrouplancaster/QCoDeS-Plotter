@@ -66,13 +66,18 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         self.setWindowTitle("Plot appearance")
         self.table.setObjectName("plotAppearanceTable")
         self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["ID", "Preview", "Measurement", ""])
+        self.table.setHorizontalHeaderLabels(["Run", "Preview", "Measurement", ""])
         self.table.setItemDelegateForColumn(
             self._COL_WARNING,
             CenteredPreviewDelegate(self.table, icon_size=QtCore.QSize(18, 18)),
         )
         header = self.table.horizontalHeader()
         if header is not None:
+            header.setStretchLastSection(False)
+            for column in (self._COL_ID, self._COL_PREVIEW):
+                header.setSectionResizeMode(column, qtw.QHeaderView.ResizeMode.ResizeToContents)
+            header.setSectionResizeMode(self._COL_MEASUREMENT, qtw.QHeaderView.ResizeMode.Stretch)
+            header.setSectionResizeMode(self._COL_WARNING, qtw.QHeaderView.ResizeMode.Fixed)
             header.resizeSection(self._COL_WARNING, 28)
         self.table.setToolTip("Data at the top is drawn on top. Drag rows to change the drawing order.")
         self.setStyleSheet(self.styleSheet().replace("traceAppearanceTable", "plotAppearanceTable"))
@@ -133,7 +138,6 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         controls.swap_axes.hide()
         controls.swap_axes = self.swap_axes
         layout.addWidget(self.swap_axes)
-        self.layout().insertWidget(self.layout().count() - 1, self.whole_plot_group)
 
     def _sync_whole_plot_controls(self):
         group = self.__dict__.get("whole_plot_group")
@@ -180,13 +184,22 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         kind = entry[0] if entry else "trace"
         count = sum(selected_kind == kind for selected_kind, _key in selected)
         feedback = getattr(controls, "selection_feedback", "") if kind == "heatmap" else self.selection_feedback
+        if count == 1 and entry is not None:
+            _kind, key = entry
+            registry = self.owner.heatmaps if kind == "heatmap" else self.owner.lines
+            measurement_name = (self.owner._heatmap_measurement_name if kind == "heatmap"
+                                else self.owner._trace_measurement_name)(key, registry[key])
+            summary = f"{measurement_name} — {kind}"
+        else:
+            summary = f"{count} {kind}s selected"
         self.selection_summary.setText(
-            f"Editing {count} selected {kind}{'s' if count != 1 else ''}"
+            summary
             + (f" (of {len(selected)} datasets)" if count != len(selected) else "")
             + (" · Mixed values" if feedback else "")
         )
         self.selection_summary.setToolTip(
-            (feedback + "\n" if feedback else "")
+            summary + "\n"
+            + (feedback + "\n" if feedback else "")
             + ("Other selected dataset types are unaffected." if count != len(selected) else "")
         )
         self.remove_item_button.setEnabled(self._can_remove_items(selected))
@@ -204,6 +217,10 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
+        buttons = self.appearance_buttons.buttons()
+        button_width = max(button.sizeHint().width() for button in buttons)
+        for button in buttons:
+            button.setFixedWidth(button_width)
         if not self._session_active and not self._session_finishing:
             self._session_root = self.owner
             self._action_token = {"cancelled": False}
@@ -361,12 +378,16 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
                     renderer = self.owner.lines[key]
                     label = self.owner._trace_display_label(key, renderer)
                     measurement = self.owner._trace_measurement_name(key, renderer)
-                    icon = self._trace_icon(self.owner._ensure_trace_styles()[key])
+                    trace_style = self.owner._ensure_trace_styles()[key]
+                    visible = trace_style.visible
+                    icon = self._trace_icon(trace_style)
                 else:
                     renderer = self.owner.heatmaps[key]
                     label = self.owner._heatmap_display_label(key, renderer)
                     measurement = self.owner._heatmap_measurement_name(key, renderer)
+                    visible = self.owner._heatmap_is_visible(renderer)
                     icon = QtGui.QIcon(self.heatmap_controls._heatmap_pixmap(renderer))
+                visibility_tip = "\nHidden" if not visible else ""
                 dataset_id = label.split()[0].replace("ID:", "") if label.startswith("ID:") else str(row + 1)
                 for column, value in ((self._COL_ID, dataset_id), (self._COL_MEASUREMENT, measurement)):
                     item = qtw.QTableWidgetItem(value)
@@ -375,7 +396,13 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
                         QtCore.Qt.AlignmentFlag.AlignRight if column == self._COL_ID
                         else QtCore.Qt.AlignmentFlag.AlignLeft
                     ))
-                    item.setToolTip(label if column == self._COL_ID else f"{measurement} ({kind})")
+                    item.setToolTip((label if column == self._COL_ID else f"{measurement} ({kind})")
+                                    + visibility_tip)
+                    if column == self._COL_MEASUREMENT and not visible:
+                        font = item.font()
+                        font.setStrikeOut(True)
+                        item.setFont(font)
+                        item.setData(QtCore.Qt.ItemDataRole.AccessibleDescriptionRole, "Hidden")
                     self.table.setItem(row, column, item)
                 id_item = self.table.item(row, self._COL_ID)
                 assert id_item is not None
@@ -385,7 +412,8 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
                 preview.setIcon(icon)
                 preview.setFlags(preview.flags() & ~QtCore.Qt.ItemFlag.ItemIsEditable
                                  & ~QtCore.Qt.ItemFlag.ItemIsDragEnabled)
-                preview.setToolTip("Trace preview" if kind == "trace" else "Heatmap preview")
+                preview.setToolTip(("Trace preview" if kind == "trace" else "Heatmap preview")
+                                   + visibility_tip)
                 self.table.setItem(row, self._COL_PREVIEW, preview)
                 self.table.setRowHeight(row, 28)
                 if (kind, key) in selected:
@@ -462,7 +490,7 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         blocked = self.add_item_combo.blockSignals(True)
         try:
             self.add_item_combo.clear()
-            self.add_item_combo.addItem("Select a measurement to add…", None)
+            self.add_item_combo.addItem("Choose measurement to add…", None)
             for kind, key in self._preview_removed:
                 registry = self.owner.lines if kind == "trace" else self.owner.heatmaps
                 label = (self.owner._trace_display_label if kind == "trace" else self.owner._heatmap_display_label)(key, registry[key])

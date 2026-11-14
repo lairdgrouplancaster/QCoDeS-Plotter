@@ -8,11 +8,20 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from ._appearance_feedback import mixed_values
+from ._drawing_controls import (
+    ColourSwatchCombo,
+    DrawingSizeSpinBox,
+    IconPreviewCombo,
+    drawing_controls_row,
+)
 from ._plot_appearance import (
     CenteredPreviewDelegate,
     ReorderAppearanceTable,
+    _OpacitySpinBox,
     configure_appearance_table,
+    configure_opacity_spinbox,
     reordered_rows,
+    visibility_opacity_row,
 )
 from ._plot_host import PlotHost
 from ._plot_refresh import plot_refresh_required
@@ -1364,33 +1373,6 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.setStyleSheet(
             self.styleSheet()
             + """
-            QDoubleSpinBox#traceAppearanceSpin {
-                padding-right: 18px;
-            }
-            QDoubleSpinBox#traceAppearanceSpin::up-button {
-                subcontrol-origin: border;
-                subcontrol-position: top right;
-                width: 15px;
-                height: 10px;
-                border-left: 1px solid palette(mid);
-                border-bottom: 1px solid palette(mid);
-                border-top-right-radius: 4px;
-                background: transparent;
-            }
-            QDoubleSpinBox#traceAppearanceSpin::down-button {
-                subcontrol-origin: border;
-                subcontrol-position: bottom right;
-                width: 15px;
-                height: 10px;
-                border-left: 1px solid palette(mid);
-                border-bottom-right-radius: 4px;
-                background: transparent;
-            }
-            QDoubleSpinBox#traceAppearanceSpin::up-arrow,
-            QDoubleSpinBox#traceAppearanceSpin::down-arrow {
-                width: 7px;
-                height: 7px;
-            }
             QTableWidget#traceAppearanceTable {
                 border: 1px solid palette(mid);
                 background-color: palette(base);
@@ -1465,23 +1447,23 @@ class _TraceAppearanceDialog(qtw.QDialog):
 
         self.line_enable = qtw.QCheckBox("Line")
         self.line_enable.setToolTip("Draw connecting lines for the selected traces.")
-        self.line_color = qtw.QComboBox(); self._add_color_items(self.line_color, TRACE_COLOR_PALETTE)
-        self.line_color.setToolTip("Choose the line colour for the selected traces, or select a custom colour.")
-        self.line_width = qtw.QDoubleSpinBox(); self.line_width.setRange(0.5, 15); self.line_width.setValue(2); self.line_width.setDecimals(1); self.line_width.setSingleStep(0.5)
+        self.line_color = ColourSwatchCombo("Line colour"); self._add_color_items(self.line_color, TRACE_COLOR_PALETTE)
+        self.line_width = DrawingSizeSpinBox(); self.line_width.setRange(0.5, 15); self.line_width.setValue(2); self.line_width.setDecimals(1); self.line_width.setSingleStep(0.5)
         self.line_width.setToolTip("Set the line width of the selected traces in pixels.")
-        self.line_style = qtw.QComboBox(); self._add_line_style_items(self.line_style)
-        self.line_style.setToolTip("Choose a solid, dashed or dotted line for the selected traces.")
-        self.marker_enable = qtw.QCheckBox("Data-point markers")
+        self.line_style = IconPreviewCombo("Line style"); self._add_line_style_items(self.line_style)
+        self.marker_enable = qtw.QCheckBox("Markers")
         self.marker_enable.setToolTip("Draw a marker at each data point in the selected traces.")
-        self.marker_color = qtw.QComboBox(); self._add_color_items(self.marker_color, TRACE_COLOR_PALETTE)
-        self.marker_color.setToolTip("Choose the marker colour for the selected traces.")
-        self.marker_symbol = qtw.QComboBox(); self._add_marker_symbol_items(self.marker_symbol)
-        self.marker_symbol.setToolTip("Choose the marker shape for the selected traces.")
-        self.marker_size = qtw.QDoubleSpinBox(); self.marker_size.setRange(1, 30); self.marker_size.setValue(10); self.marker_size.setDecimals(1); self.marker_size.setSingleStep(1)
+        self.marker_color = ColourSwatchCombo("Marker colour"); self._add_color_items(self.marker_color, TRACE_COLOR_PALETTE)
+        self.marker_symbol = IconPreviewCombo("Marker shape"); self._add_marker_symbol_items(self.marker_symbol)
+        self.marker_size = DrawingSizeSpinBox(); self.marker_size.setRange(1, 30); self.marker_size.setValue(10); self.marker_size.setDecimals(1); self.marker_size.setSingleStep(1)
         self.marker_size.setToolTip("Set the marker size in pixels.")
+        for control, name in ((self.line_width, "Line width"), (self.line_style, "Line style"),
+                              (self.marker_size, "Marker size"), (self.marker_symbol, "Marker shape")):
+            control.setAccessibleName(name)
         for toggle in (self.line_enable, self.marker_enable):
             toggle.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed)
-        self.opacity = qtw.QSpinBox(); self.opacity.setRange(0, 100); self.opacity.setValue(100); self.opacity.setSuffix("%")
+        self.opacity = _OpacitySpinBox()
+        configure_opacity_spinbox(self.opacity)
         self.opacity.setObjectName("traceAppearanceOpacity")
         self.opacity.setToolTip("Set opacity for selected traces.")
         self.opacity_slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal)
@@ -1504,32 +1486,15 @@ class _TraceAppearanceDialog(qtw.QDialog):
 
         for combo in (self.x_axis, self.y_axis):
             combo.setMinimumContentsLength(4)
-        color_combo_width = self.line_color.fontMetrics().horizontalAdvance("#ffffff") + 90
-        for combo in (self.line_color, self.marker_color):
-            combo.setIconSize(QtCore.QSize(26, 16))
-            combo.setMinimumWidth(color_combo_width)
-            combo_view = combo.view()
-            if combo_view is not None:
-                combo_view.setMinimumWidth(color_combo_width)
         for spin in (self.line_width, self.marker_size):
             # Applying a style rebuilds the selection controls. Commit typed
             # fractions first so that refresh cannot insert decimals mid-edit.
             spin.setKeyboardTracking(False)
             spin.setObjectName("traceAppearanceSpin")
             spin.setSuffix(" px")
-            spin.setMinimumWidth(spin.sizeHint().width() + 16)
-        self.opacity.setMinimumWidth(self.opacity.sizeHint().width() + 24)
-        style_symbol_width = self.line_style.fontMetrics().horizontalAdvance("Dash Dot") + 64
-        self.line_style.setIconSize(QtCore.QSize(26, 16))
-        self.line_style.setMinimumWidth(style_symbol_width)
-        line_style_view = self.line_style.view()
-        if line_style_view is not None:
-            line_style_view.setMinimumWidth(style_symbol_width)
-        self.marker_symbol.setIconSize(QtCore.QSize(28, 18))
-        self.marker_symbol.setMinimumWidth(self.marker_symbol.sizeHint().width())
-        marker_symbol_view = self.marker_symbol.view()
-        if marker_symbol_view is not None:
-            marker_symbol_view.setMinimumWidth(style_symbol_width)
+            spin.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed)
+        self.line_style.setIconSize(QtCore.QSize(32, 16))
+        self.marker_symbol.setIconSize(QtCore.QSize(24, 18))
         axis_combo_width = 108
         self.x_axis.setFixedWidth(axis_combo_width)
         self.y_axis.setFixedWidth(axis_combo_width)
@@ -1539,25 +1504,14 @@ class _TraceAppearanceDialog(qtw.QDialog):
         display_layout.setContentsMargins(8, 10, 8, 8)
         display_layout.setSpacing(6)
         display_layout.setRowWrapPolicy(qtw.QFormLayout.RowWrapPolicy.WrapLongRows)
-        display_layout.addRow(self.line_enable)
-        display_layout.addRow("Colour", self.line_color)
-        display_layout.addRow("Width", self.line_width)
-        display_layout.addRow("Style", self.line_style)
-        display_layout.addRow(self.marker_enable)
-        display_layout.addRow("Colour", self.marker_color)
-        display_layout.addRow("Size", self.marker_size)
-        display_layout.addRow("Shape", self.marker_symbol)
+        display_layout.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        display_layout.addRow(self.line_enable,
+                              drawing_controls_row(self.line_color, self.line_width, self.line_style))
+        display_layout.addRow(self.marker_enable,
+                              drawing_controls_row(self.marker_color, self.marker_size, self.marker_symbol))
         panel_layout.addWidget(display_group)
 
-        visibility_layout = qtw.QHBoxLayout()
-        visibility_layout.setContentsMargins(0, 0, 0, 0)
-        visibility_layout.setSpacing(6)
-        self.visible.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed)
-        panel_layout.addWidget(self.visible)
-        visibility_layout.addWidget(qtw.QLabel("Opacity"))
-        visibility_layout.addWidget(self.opacity_slider, 1)
-        visibility_layout.addWidget(self.opacity)
-        panel_layout.addLayout(visibility_layout)
+        panel_layout.insertWidget(0, visibility_opacity_row(self.visible, self.opacity_slider, self.opacity))
 
         trace_settings = qtw.QGroupBox("Trace axes", panel)
         trace_grid = qtw.QGridLayout(trace_settings)
@@ -1731,6 +1685,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
     def _add_color_items(self, combo: qtw.QComboBox, colors: Sequence[str]) -> None:
         for color in colors:
             combo.addItem(self._color_icon(color), color, color)
+            combo.setItemData(combo.count() - 1, color, QtCore.Qt.ItemDataRole.ToolTipRole)
         combo.addItem("Custom", self._CUSTOM_COLOR_DATA)
 
     def _add_line_style_items(self, combo: qtw.QComboBox) -> None:
@@ -1811,7 +1766,8 @@ class _TraceAppearanceDialog(qtw.QDialog):
         try:
             normalized_value = (
                 QtGui.QColor(value).name()
-                if isinstance(value, str) and value.startswith("#")
+                if isinstance(value, str) and (value.startswith("#")
+                   or isinstance(combo, ColourSwatchCombo) and QtGui.QColor(value).isValid())
                 else value
                 )
             for index in range(combo.count()):
@@ -1828,15 +1784,18 @@ class _TraceAppearanceDialog(qtw.QDialog):
                 combo.insertItem(
                     insert_index,
                     self._color_icon(normalized_value),
-                    "",
+                    normalized_value,
                     normalized_value,
                     )
                 combo.setCurrentIndex(insert_index)
+                combo.setItemData(insert_index, normalized_value, QtCore.Qt.ItemDataRole.ToolTipRole)
                 return
 
             combo.setCurrentText(value)
         finally:
             combo.blockSignals(previous_blocked)
+            if isinstance(combo, IconPreviewCombo):
+                combo.refresh_tooltip()
 
     def _custom_color_index(self, combo: qtw.QComboBox) -> int:
         for index in range(combo.count()):
@@ -1880,7 +1839,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
             size: QtCore.QSize | None = None,
             ) -> QtGui.QPixmap:
         if size is None:
-            size = QtCore.QSize(64, 22)
+            size = QtCore.QSize(48, 22)
         pixmap = QtGui.QPixmap(size)
         pixmap.fill(QtCore.Qt.GlobalColor.transparent)
         painter = QtGui.QPainter(pixmap)
@@ -2235,6 +2194,8 @@ class _TraceAppearanceDialog(qtw.QDialog):
         ]
         mixed = mixed_values((name, control, [getattr(self.owner._trace_styles[key], attr) for key in labels])
                              for name, control, attr in bindings)
+        for combo in (self.line_color, self.marker_color, self.line_style, self.marker_symbol):
+            combo.refresh_tooltip()
         self.selection_feedback = "Mixed values: " + ", ".join(mixed) + "." if mixed else ""
         self.selection_summary.setText(
             f"Editing {len(labels)} selected trace{'s' if len(labels) != 1 else ''}"

@@ -442,6 +442,14 @@ def test_one_appearance_dialog_switches_controls_and_keeps_edits(mixed_plot, mon
     controls.y_axis.setCurrentText("Right")
     assert target._heatmap_opacity(heatmap) == 0.37
     assert not target._heatmap_is_visible(heatmap)
+    hidden_row = next(row for row in range(dialog.table.rowCount())
+                      if dialog._row_entry(row) == ("heatmap", heatmap_key))
+    hidden_name = dialog.table.item(hidden_row, dialog._COL_MEASUREMENT)
+    assert hidden_name.font().strikeOut()
+    assert "Hidden" in hidden_name.toolTip()
+    assert "Hidden" in dialog.table.item(hidden_row, dialog._COL_PREVIEW).toolTip()
+    assert hidden_name.flags() & QtCore.Qt.ItemFlag.ItemIsEnabled
+    assert hidden_name.flags() & QtCore.Qt.ItemFlag.ItemIsSelectable
     assert target._heatmap_axis_sides(heatmap) == ("Top", "Right")
     assert target._trace_styles[line_key].line_width == 4.5
     target.open_trace_appearance_dialog(line_key)
@@ -466,6 +474,9 @@ def test_one_appearance_dialog_switches_controls_and_keeps_edits(mixed_plot, mon
     dialog.refresh_rows()
     assert dialog.controls_stack.currentWidget() is controls
     assert controls.opacity.value() == 37
+    controls.visible.setChecked(True)
+    assert not dialog.table.item(hidden_row, dialog._COL_MEASUREMENT).font().strikeOut()
+    assert "Hidden" not in dialog.table.item(hidden_row, dialog._COL_MEASUREMENT).toolTip()
     dialog.accept()
     assert not dialog.isVisible()
 

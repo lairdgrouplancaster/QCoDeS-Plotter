@@ -564,8 +564,13 @@ Common plot controls:
   Resize the split between the dataset list and the selected-dataset controls;
   narrow windows stack these panes vertically, and the controls scroll when
   needed. **Whole plot** contains the shared colour-map and axis-swap controls,
-  available independently of dataset selection. **Data-point markers** provides
-  one control for marker colour, size and shape, including circular dots.
+  available independently of dataset selection. **Drawing** has compact **Line**
+  and **Markers** rows for colour, width or size, and style or shape. Colour
+  selectors show swatches; their tooltips and dropdowns give the hex codes.
+  Visibility and opacity appear first, followed by Drawing and Trace axes.
+  Line-style and marker-shape selectors show previews, with names in their
+  tooltips and dropdowns. The dialog opens with equal columns and a compact
+  height; resize it or move the divider to give either pane more room.
   Choose `OK` to keep the changes, or `Cancel` to undo the session and close.
   `Esc` and the window's close button also cancel. Cancellation undoes dataset
   additions and removals, and restores styles, axis assignments, drawing order, the colour map
@@ -574,6 +579,8 @@ Common plot controls:
   selected datasets of the type being edited; the colour scale and axis swap apply
   to the plot. Clearing the selection disables dataset-specific controls until
   you select a dataset again; refreshing does not select a dataset for you.
+  Hidden datasets remain in the list with a struck-through name and a dimmed
+  preview. Select the dataset and tick **Visible** to show it again.
   For heatmaps, click the colour-map name and gradient in **Whole plot** to
   open **Choose colour map**. This dialog shares the full Colour Scale dialog's
   searchable preview list, without the scaling controls. Selecting a map previews

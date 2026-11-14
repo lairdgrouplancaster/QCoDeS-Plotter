@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6 import QtCore, sip
+from PyQt6 import QtCore, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._dataset_handle import DatasetKey, TraceKey
@@ -162,6 +162,13 @@ def test_heatmap_appearance_applies_visibility_opacity_order_and_axis_swap(no_ca
 
         assert overlay.opacity == 0.37
         assert not overlay.visible
+
+        QtTest.QTest.keyClick(dialog.opacity, QtCore.Qt.Key.Key_Up)
+        assert dialog.opacity_slider.value() == 38
+        assert overlay.opacity == 0.38
+        QtTest.QTest.keyClick(dialog.opacity, QtCore.Qt.Key.Key_Down)
+        assert dialog.opacity_slider.value() == 37
+        assert overlay.opacity == 0.37
 
         dialog.x_axis.setCurrentText("Top")
         dialog.y_axis.setCurrentText("Right")

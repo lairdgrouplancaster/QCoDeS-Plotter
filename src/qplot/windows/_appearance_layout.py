@@ -57,14 +57,21 @@ def build_appearance_panes(dialog):
     layout = qtw.QVBoxLayout(dialog.selected_group)
     layout.setContentsMargins(8, 12, 8, 8)
     dialog.layout().removeWidget(dialog.selection_summary)
+    dialog.selection_summary.setSizePolicy(qtw.QSizePolicy.Policy.Ignored, qtw.QSizePolicy.Policy.Preferred)
     layout.addWidget(dialog.selection_summary)
     dialog.controls_scroll = AppearanceControlsScroll(dialog.controls_stack)
     layout.addWidget(dialog.controls_scroll)
+    properties = qtw.QWidget()
+    properties_layout = qtw.QVBoxLayout(properties)
+    properties_layout.setContentsMargins(0, 0, 0, 0)
+    properties_layout.setSpacing(8)
+    properties_layout.addWidget(dialog.selected_group, 1)
+    properties_layout.addWidget(dialog.whole_plot_group)
     dialog.appearance_splitter = qtw.QSplitter(QtCore.Qt.Orientation.Horizontal)
     dialog.appearance_splitter.setObjectName("plotAppearanceSplitter")
     dialog.appearance_splitter.setChildrenCollapsible(False)
     dialog.appearance_splitter.addWidget(datasets)
-    dialog.appearance_splitter.addWidget(dialog.selected_group)
+    dialog.appearance_splitter.addWidget(properties)
     dialog.appearance_body.addWidget(dialog.appearance_splitter)
 
 
@@ -79,7 +86,8 @@ def resize_appearance_panes(dialog, width=None):
     if splitter.orientation() != orientation:
         splitter.setOrientation(orientation)
         extent = splitter.height() if orientation == QtCore.Qt.Orientation.Vertical else splitter.width()
-        splitter.setSizes([max(100, extent // 3), max(100, extent * 2 // 3)])
+        splitter.setSizes([extent // 2, extent // 2] if orientation == QtCore.Qt.Orientation.Horizontal
+                          else [max(100, extent // 3), max(100, extent * 2 // 3)])
 
 
 def available_appearance_geometry(dialog):
@@ -95,8 +103,11 @@ def fit_appearance_dialog(dialog):
     resize_appearance_panes(dialog, width)
     dialog.layout().activate()
     dialog.resize(width,
-                  min(640, available.height() - max(0, frame.height())))
+                  min(480, available.height() - max(0, frame.height())))
     dialog.layout().activate()
+    splitter = dialog.appearance_splitter
+    if splitter.orientation() == QtCore.Qt.Orientation.Horizontal:
+        splitter.setSizes([splitter.width() // 2, splitter.width() // 2])
     position = dialog.frameGeometry()
     position.moveCenter(available.center())
     dialog.move(position.topLeft())

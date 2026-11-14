@@ -18,6 +18,9 @@ def test_appearance_fits_screen_and_keeps_actions_accessible(
     mixed_plot, monkeypatch, qapplication, screen_size, font_size,
 ):
     _main, target, _runs = mixed_plot
+    long_name = "measurement_with_a_name_that_is_longer_than_the_available_column"
+    for method in ("_trace_measurement_name", "_heatmap_measurement_name"):
+        monkeypatch.setattr(target, method, lambda *_args: long_name)
     target.setStyleSheet(target.styleSheet() + f"QWidget {{ font-size: {font_size}pt; }}")
     screen = QtCore.QRect(30, 40, *screen_size)
     monkeypatch.setattr(_appearance_layout, "available_appearance_geometry", lambda _dialog: screen)
@@ -25,6 +28,10 @@ def test_appearance_fits_screen_and_keeps_actions_accessible(
     dialog = target._plot_appearance_dialog
     qapplication.processEvents()
     assert screen.contains(dialog.frameGeometry()), (screen, dialog.frameGeometry(), dialog.minimumSizeHint())
+    assert dialog.table.horizontalScrollBar().maximum() == 0
+    measurement = dialog.table.item(0, dialog._COL_MEASUREMENT)
+    assert long_name in measurement.toolTip()
+    assert len({button.width() for button in dialog.appearance_buttons.buttons()}) == 1
     for button in dialog.appearance_buttons.buttons():
         rect = QtCore.QRect(button.mapTo(dialog, QtCore.QPoint()), button.size())
         assert dialog.rect().contains(rect)
@@ -36,6 +43,20 @@ def test_appearance_fits_screen_and_keeps_actions_accessible(
         assert dialog.appearance_splitter.orientation() == QtCore.Qt.Orientation.Horizontal
     assert not dialog.controls_scroll.horizontalScrollBar().isVisible()
     assert dialog.controls_stack.width() <= dialog.controls_scroll.viewport().width()
+    assert dialog.table.horizontalScrollBar().maximum() == 0
+    selected = QtCore.QRect(dialog.selected_group.mapTo(dialog, QtCore.QPoint()), dialog.selected_group.size())
+    whole = QtCore.QRect(dialog.whole_plot_group.mapTo(dialog, QtCore.QPoint()), dialog.whole_plot_group.size())
+    datasets = dialog.appearance_splitter.widget(0)
+    dataset_rect = QtCore.QRect(datasets.mapTo(dialog, QtCore.QPoint()), datasets.size())
+    assert selected.left() == whole.left()
+    assert selected.right() == whole.right()
+    assert selected.bottom() < whole.top()
+    assert dialog.rect().contains(whole)
+    if dialog.appearance_splitter.orientation() == QtCore.Qt.Orientation.Horizontal:
+        assert dataset_rect.bottom() == whole.bottom()
+        assert dataset_rect.right() < selected.left()
+    else:
+        assert dataset_rect.bottom() < selected.top()
     dialog.reject()
 
 

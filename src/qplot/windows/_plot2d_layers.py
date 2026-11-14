@@ -31,8 +31,11 @@ from ._display_precision import (
 )
 from ._plot_appearance import (
     ReorderAppearanceTable,
+    _OpacitySpinBox,
     configure_appearance_table,
+    configure_opacity_spinbox,
     reordered_rows,
+    visibility_opacity_row,
 )
 from ._plot_drop_axes import DroppedAxisMapping, displayed_axis_parameter
 from ._plot_host import PlotHost
@@ -1686,45 +1689,6 @@ class _HeatmapTableWidget(ReorderAppearanceTable):
         super().__init__(dialog, mime_type=self._REORDER_MIME_TYPE)
 
 
-class _OpacitySpinBox(qtw.QSpinBox):
-    """Reserve only enough editor space for the maximum percentage."""
-
-    def sizeHint(self):
-        size = super().sizeHint()
-        option = qtw.QStyleOptionSpinBox()
-        self.initStyleOption(option)
-        option.rect = QtCore.QRect(QtCore.QPoint(), size)
-        edit_rect = self.style().subControlRect(
-            qtw.QStyle.ComplexControl.CC_SpinBox,
-            option, qtw.QStyle.SubControl.SC_SpinBoxEditField, self,
-        )
-        editor = self.lineEdit()
-        frame = qtw.QStyleOptionFrame()
-        frame.initFrom(editor)
-        frame.state |= qtw.QStyle.StateFlag.State_Sunken
-        if editor.hasFrame():
-            frame.lineWidth = editor.style().pixelMetric(
-                qtw.QStyle.PixelMetric.PM_DefaultFrameWidth, frame, editor
-            )
-        frame.rect = QtCore.QRect(QtCore.QPoint(), edit_rect.size())
-        contents = editor.style().subElementRect(
-            qtw.QStyle.SubElement.SE_LineEditContents, frame, editor
-        )
-        text_width = editor.fontMetrics().horizontalAdvance(
-            self.textFromValue(self.maximum()) + self.suffix()
-        )
-        margins = editor.textMargins()
-        # QLineEdit adds two pixels on each side of its text.
-        size.setWidth(
-            size.width() - contents.width() + text_width
-            + margins.left() + margins.right() + 4
-        )
-        return size
-
-    def minimumSizeHint(self):
-        return self.sizeHint()
-
-
 class _HeatmapAppearanceControls(qtw.QWidget):
     """Edit heatmap layers using the same interaction model as traces."""
 
@@ -1829,26 +1793,13 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         self.opacity = _OpacitySpinBox()
         self.opacity.setToolTip("Set the opacity of the selected heatmaps: 0% is transparent and 100% is opaque.")
         self.opacity.setObjectName("heatmapAppearanceOpacity")
-        self.opacity.setRange(0, 100)
-        self.opacity.setValue(100)
-        self.opacity.setSuffix("%")
-        self.opacity.setSizePolicy(
-            qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed
-        )
+        configure_opacity_spinbox(self.opacity)
         self.opacity_slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.opacity_slider.setToolTip("Set the opacity of the selected heatmaps: 0% is transparent and 100% is opaque.")
         self.opacity_slider.setObjectName("heatmapAppearanceOpacitySlider")
         self.opacity_slider.setRange(0, 100)
         self.opacity_slider.setValue(100)
-        visibility_layout = qtw.QHBoxLayout()
-        visibility_layout.setContentsMargins(0, 0, 0, 0)
-        visibility_layout.setSpacing(6)
-        self.visible.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed)
-        panel_layout.addWidget(self.visible)
-        visibility_layout.addWidget(qtw.QLabel("Opacity"))
-        visibility_layout.addWidget(self.opacity_slider, 1)
-        visibility_layout.addWidget(self.opacity)
-        panel_layout.addLayout(visibility_layout)
+        panel_layout.addWidget(visibility_opacity_row(self.visible, self.opacity_slider, self.opacity))
 
         self.x_axis = qtw.QComboBox()
         self.x_axis.addItems(["Bottom", "Top"])
@@ -2070,7 +2021,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
     def _heatmap_pixmap(self, layer: Any) -> QtGui.QPixmap:
         """Render a small data-shaped image rather than a line glyph."""
 
-        size = QtCore.QSize(64, 22)
+        size = QtCore.QSize(48, 22)
         source = (
             self.owner.__dict__.get("dataGrid")
             if layer is self.owner

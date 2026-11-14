@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows import _axis_ticks as ticks_module
@@ -2236,7 +2236,12 @@ class SnapToTraceTestCase(unittest.TestCase):
 
             self.assertEqual(host._trace_styles[host.label].line_color, "#123456")
             self.assertEqual(dialog.line_color.currentData(), "#123456")
+            self.assertEqual(dialog.line_color.currentText(), "#123456")
+            self.assertIn("#123456", dialog.line_color.toolTip())
             self.assertEqual(host.lines[host.label].pen.color().name(), "#123456")
+            dialog._set_combo_value(dialog.line_color, "green")
+            self.assertEqual(dialog.line_color.currentText(), "#008000")
+            self.assertIn("#008000", dialog.line_color.toolTip())
         finally:
             if dialog is not None:
                 dialog.deleteLater()
@@ -2266,6 +2271,12 @@ class SnapToTraceTestCase(unittest.TestCase):
             effect = host.line.graphicsEffect()
             self.assertIsInstance(effect, qtw.QGraphicsOpacityEffect)
             self.assertEqual(effect.opacity(), 0.37)
+
+            QtTest.QTest.keyClick(dialog.opacity, QtCore.Qt.Key.Key_Up)
+            self.assertEqual(dialog.opacity_slider.value(), 38)
+            self.assertEqual(host._trace_styles[host.label].opacity, 0.38)
+            QtTest.QTest.keyClick(dialog.opacity, QtCore.Qt.Key.Key_Down)
+            self.assertEqual(dialog.opacity_slider.value(), 37)
 
             dialog.opacity.setValue(100)
 

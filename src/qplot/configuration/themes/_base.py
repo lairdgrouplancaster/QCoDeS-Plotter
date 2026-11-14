@@ -217,9 +217,11 @@ _STYLESHEET_TEMPLATE = Template(
         background-color: $field_alt_bg;
         color: $muted_text;
     }
+    QSpinBox#traceAppearanceOpacity,
     QSpinBox#heatmapAppearanceOpacity {
-        padding: 0 16px 0 4px;
+        padding: 0 4px;
     }
+    QSpinBox#traceAppearanceOpacity QLineEdit,
     QSpinBox#heatmapAppearanceOpacity QLineEdit {
         padding: 0;
     }
