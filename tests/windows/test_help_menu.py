@@ -56,6 +56,7 @@ class HelpMenuTestCase(unittest.TestCase):
             qtw.QApplication.processEvents()
             with patch("qplot.windows._help.version_info", return_value={
                 "version": "2.0.0", "commit": "a" * 40,
+                "commit_date": "2026-11-14T12:42:15+02:00",
                 "released": False, "dirty": True, "pull_request": "123",
             }):
                 menu = add_help_menu(window)
@@ -66,6 +67,7 @@ class HelpMenuTestCase(unittest.TestCase):
             self.assertIn("Version: 2.0.0", text)
             self.assertIn("Unreleased development build (local changes)", text)
             self.assertIn("a" * 40, text)
+            self.assertIn("Committed: 14 November 2026, 10:42:15 UTC", text)
             self.assertIn("Pull request: #123", text)
             dialog.close()
         finally:
@@ -115,7 +117,25 @@ class HelpMenuTestCase(unittest.TestCase):
             self.assertIn("Version: 2.0.0", text)
             self.assertNotIn("Unreleased", text)
             self.assertNotIn("Commit:", text)
+            self.assertNotIn("Committed:", text)
             dialog.close()
+        finally:
+            window.deleteLater()
+
+    def test_about_omits_unavailable_or_invalid_commit_date(self):
+        from unittest.mock import patch
+
+        window = qtw.QMainWindow()
+        try:
+            for date in (None, "invalid", "2026-11-14T10:42:15", ""):
+                with self.subTest(date=date), patch("qplot.windows._help.version_info", return_value={
+                    "version": "2.0.0", "commit": "a" * 40, "commit_date": date,
+                }):
+                    dialog = show_about(window)
+                text = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser").toPlainText()
+                self.assertIn("Commit: " + "a" * 40, text)
+                self.assertNotIn("Committed:", text)
+                dialog.close()
         finally:
             window.deleteLater()
 
