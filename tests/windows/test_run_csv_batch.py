@@ -19,6 +19,33 @@ from tests.windows.test_typed_run_keyboard_launch import (
 typed_run_window = _typed_run_window
 
 
+def test_batch_review_keeps_large_run_selections_compact_and_complete(qapplication):
+    dialogs = []
+    try:
+        for count in (2, 10_000):
+            dialog = batch.BatchCsvDialog(
+                None, [(None, run_id) for run_id in range(1, count + 1)],
+                {"signal", "measurement_" + "long_name_" * 12},
+            )
+            dialogs.append(dialog)
+            dialog.show()
+            qapplication.processEvents()
+        small, large = dialogs
+        assert large.height() == small.height()
+        assert large.width() == small.width()
+        assert large.runs.text() == ", ".join(str(run_id) for run_id in range(1, 10_001))
+        assert large.runs.isReadOnly()
+        assert large.runs.cursorPosition() == 0
+        assert large.parameters.currentData() is None
+        index = large.parameters.findText("signal")
+        large.parameters.setCurrentIndex(index)
+        assert large.parameters.currentData() == ("signal",)
+    finally:
+        for dialog in dialogs:
+            dialog.close()
+            dialog.deleteLater()
+
+
 def _select_runs(window, runs):
     window.RunList.clearSelection()
     window.RunList.setCurrentItem(window.RunList._item_for_guid(runs[0][1]))

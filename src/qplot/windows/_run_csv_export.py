@@ -147,27 +147,48 @@ class BatchCsvDialog(qtw.QDialog):
     def __init__(self, parent, requests, common_parameters):
         super().__init__(parent)
         self.setWindowTitle("Export selected runs as CSV")
-        self.resize(470, 260)
         layout = qtw.QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+        count = len(requests)
+        summary = qtw.QLabel(f"{count:,} {'run' if count == 1 else 'runs'} selected", self)
+        summary_font = summary.font()
+        summary_font.setBold(True)
+        summary.setFont(summary_font)
+        layout.addWidget(summary)
         label = qtw.QLabel(
-            f"Export {len(requests)} selected runs, one CSV per run.\n"
-            "Values are raw measurements, without plot operations.\n"
-            "Each run captures the committed data available when its export starts."
+            "One CSV per run, using raw measurement values.", self,
         )
         label.setWordWrap(True)
+        label.setToolTip(
+            "Plot operations are excluded. Each run captures the committed data "
+            "available when its export starts."
+        )
         layout.addWidget(label)
-        runs = qtw.QLabel("Runs: " + ", ".join(str(run_id) for _key, run_id in requests))
-        runs.setWordWrap(True)
-        layout.addWidget(runs)
         form = qtw.QFormLayout()
-        self.parameters = qtw.QComboBox()
-        self.parameters.setToolTip("Export every measurement in each selected run, or choose one measurement shared by all selected runs.")
+        form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.runs = qtw.QLineEdit(", ".join(str(run_id) for _key, run_id in requests), self)
+        self.runs.setReadOnly(True)
+        self.runs.setCursorPosition(0)
+        self.runs.setAccessibleName("Selected run numbers")
+        self.runs.setToolTip("Selected run numbers. Select text to copy; use Home and End to navigate the list.")
+        form.addRow("&Runs:", self.runs)
+        self.parameters = qtw.QComboBox(self)
+        self.parameters.setAccessibleName("Data to export")
+        self.parameters.setToolTip(
+            "Choose one option: all measurements in each run, or the same "
+            "measurement from every selected run."
+        )
+        self.parameters.setSizeAdjustPolicy(
+            qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon,
+        )
+        self.parameters.setMinimumContentsLength(20)
         self.parameters.addItem("All measurements in each run", None)
         for name in sorted(common_parameters):
             self.parameters.addItem(name, (name,))
-        form.addRow("Measurements:", self.parameters)
+        form.addRow("&Data to export:", self.parameters)
         layout.addLayout(form)
-        note = qtw.QLabel("Exports run in the background. Cancelling keeps any files already completed.")
+        note = qtw.QLabel("Exports run in the background. Completed files are kept if you cancel.")
         note.setWordWrap(True)
         layout.addWidget(note)
         buttons = qtw.QDialogButtonBox(
@@ -180,6 +201,8 @@ class BatchCsvDialog(qtw.QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        self.resize(470, self.sizeHint().height())
+        self.parameters.setFocus()
 
 
 def export_selected_runs(window):
