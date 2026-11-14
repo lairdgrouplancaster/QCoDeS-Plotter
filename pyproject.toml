@@ -206,6 +206,7 @@ files = [
     "src/qplot/windows/_dataset_handle.py",
     "src/qplot/windows/_dataset_registry.py",
     "src/qplot/windows/_error_dialog.py",
+    "src/qplot/windows/_small_dialogs.py",
     "src/qplot/windows/_dragdrop.py",
     "src/qplot/windows/_help.py",
     "src/qplot/windows/_desktop_integration.py",

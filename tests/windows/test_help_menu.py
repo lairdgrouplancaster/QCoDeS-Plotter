@@ -24,14 +24,14 @@ class HelpMenuTestCase(unittest.TestCase):
                 }
 
             self.assertEqual(menu.title(), "&Help")
-            self.assertEqual(actions["quickStartHelpAction"].text(), "&Quick Start")
+            self.assertEqual(actions["quickStartHelpAction"].text(), "&Quick start")
             self.assertEqual(
                 actions["quickStartHelpAction"].shortcut().toString(),
                 "F1",
                 )
             self.assertEqual(
                 actions["keyboardShortcutsHelpAction"].text(),
-                "&Keyboard and Mouse Controls",
+                "&Keyboard and mouse controls",
                 )
             self.assertEqual(
                 actions["copyDiagnosticLogPathAction"].text(),
@@ -184,7 +184,7 @@ class HelpMenuTestCase(unittest.TestCase):
                     else:
                         window.show_status.assert_not_called()
                         window.show_error.assert_called_once_with(
-                            "Show Diagnostic Log Failed",
+                            "Show diagnostic log failed",
                             "Could not open the diagnostic log location in the file manager.",
                             path,
                         )

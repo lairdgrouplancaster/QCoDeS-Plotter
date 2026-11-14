@@ -88,7 +88,7 @@ def _platform_shortcuts(
 COMMANDS: dict[str, CommandSpec] = {
     "help.quick_start": CommandSpec(
         "help.quick_start",
-        "&Quick Start",
+        "&Quick start",
         "Show the basic qPlot workflow",
         "F1",
         object_name="quickStartHelpAction",
@@ -629,7 +629,7 @@ def shortcut_help_html(shortcut_column_width: int = 280) -> str:
 
     """
     parts = [
-        "<h2>Keyboard and Mouse Controls</h2>",
+        "<h2>Keyboard and mouse controls</h2>",
     ]
     for section in SHORTCUT_HELP_SECTIONS:
         rows: list[tuple[str, str]] = []

@@ -13,6 +13,12 @@ from qplot.tools.sample_statistics import (
 )
 
 from ._plot_host import PlotHost
+from ._small_dialogs import (
+    close_default,
+    dialog_layout,
+    equal_button_widths,
+    resize_dialog,
+)
 from ._widgets import CopyableTableWidget
 
 _MarqueeHandle = Literal["nw", "n", "ne", "e", "se", "s", "sw", "w"]
@@ -375,13 +381,13 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         return True
 
     def _new_marquee_stats_dialog(self, stats_text: str) -> qtw.QDialog:
-        return new_statistics_dialog(self, stats_text, "Marquee stats")
+        return new_statistics_dialog(self, stats_text, "Marquee statistics")
 
     @staticmethod
     def _new_marquee_stats_table(stats_text: str) -> CopyableTableWidget:
         rows = PlotMarqueeMixin._marquee_stats_table_rows(stats_text)
         stats_table = CopyableTableWidget()
-        stats_table.setObjectName("detailsTable")
+        stats_table.setObjectName("statisticsTable")
         stats_table.setColumnCount(2)
         stats_table.setHorizontalHeaderLabels(["Field", "Value"])
         stats_table.setRowCount(len(rows))
@@ -397,9 +403,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             raise RuntimeError("Marquee stats table headers are not available.")
 
         vertical_header.hide()
-        vertical_header.setMinimumSectionSize(16)
-        vertical_header.setDefaultSectionSize(20)
-        horizontal_header.setFixedHeight(22)
+        vertical_header.setSectionResizeMode(qtw.QHeaderView.ResizeMode.ResizeToContents)
         horizontal_header.setStretchLastSection(True)
         horizontal_header.setSectionResizeMode(
             0,
@@ -415,6 +419,8 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         for row, (field, value) in enumerate(rows):
             field_item = qtw.QTableWidgetItem(field)
             value_item = qtw.QTableWidgetItem(value)
+            field_item.setToolTip(field)
+            value_item.setToolTip(value)
             stats_table.setItem(row, 0, field_item)
             stats_table.setItem(row, 1, value_item)
 
@@ -694,9 +700,10 @@ def new_statistics_dialog(parent, stats_text, title):
     dialog = qtw.QDialog(parent)
     dialog.setWindowTitle(title)
 
-    layout = qtw.QVBoxLayout(dialog)
+    layout = dialog_layout(dialog)
     stats_table = PlotMarqueeMixin._new_marquee_stats_table(stats_text)
-    layout.addWidget(stats_table)
+    stats_table.setAccessibleName(title)
+    layout.addWidget(stats_table, 1)
 
     buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
     copy_button = buttons.addButton("Copy", qtw.QDialogButtonBox.ButtonRole.ActionRole)
@@ -711,5 +718,10 @@ def new_statistics_dialog(parent, stats_text, title):
     copy_button.clicked.connect(copy_stats)
     buttons.rejected.connect(dialog.close)
     layout.addWidget(buttons)
+    close = buttons.button(qtw.QDialogButtonBox.StandardButton.Close)
+    assert close is not None
+    equal_button_widths(copy_button, close)
+    close_default(buttons)
+    resize_dialog(dialog, 560, 380)
 
     return dialog

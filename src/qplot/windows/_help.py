@@ -16,12 +16,18 @@ from ._commands import (
     create_action,
     shortcut_help_html,
 )
+from ._small_dialogs import (
+    close_default,
+    dialog_layout,
+    equal_button_widths,
+    resize_dialog,
+)
 
 _OPEN_HELP_DIALOGS: list[qtw.QDialog] = []
 
 
 QUICK_START_HTML = """
-<h2>Quick Start</h2>
+<h2>Quick start</h2>
 <ol>
   <li><b>Load a database.</b> Drop a QCoDeS .db file onto the database field,
       or use <b>File -&gt; Load Database...</b>.</li>
@@ -65,7 +71,7 @@ def add_help_menu(
     quick_start_action.triggered.connect(lambda: show_quick_start(window))
     help_menu.addAction(quick_start_action)
 
-    shortcuts_action = QtGui.QAction("&Keyboard and Mouse Controls", window)
+    shortcuts_action = QtGui.QAction("&Keyboard and mouse controls", window)
     shortcuts_action.setObjectName("keyboardShortcutsHelpAction")
     shortcuts_action.setStatusTip("Show all qPlot keyboard shortcuts and where they work")
     shortcuts_action.triggered.connect(lambda: show_keyboard_shortcuts(window))
@@ -91,14 +97,14 @@ def add_help_menu(
     help_menu.addAction(show_log_action)
 
     help_menu.addSeparator()
-    update_action = QtGui.QAction("Check for &Updates…", window)
+    update_action = QtGui.QAction("Check for &updates…", window)
     update_action.setObjectName("checkForUpdatesAction")
     update_action.setStatusTip("Check PyPI for a newer qPlot release")
     update_action.triggered.connect(lambda: check_for_updates(window))
     help_menu.addAction(update_action)
 
     if include_desktop_integration:
-        desktop_action = QtGui.QAction("Set Up or Remove Desktop Integration…", window)
+        desktop_action = QtGui.QAction("Desktop integration…", window)
         desktop_action.setObjectName("desktopIntegrationAction")
         desktop_action.triggered.connect(lambda: show_desktop_integration(window))
         settings_menu = next(
@@ -185,7 +191,7 @@ def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     dialog.setProperty("qplotUpdatePrefixHtml", html + "<hr>")
     buttons = dialog.findChild(qtw.QDialogButtonBox)
     if buttons is not None:
-        check_button = qtw.QPushButton("Check for Updates", buttons)
+        check_button = qtw.QPushButton("Check for updates", buttons)
         buttons.addButton(check_button, qtw.QDialogButtonBox.ButtonRole.ActionRole)
         check_button.setObjectName("aboutCheckForUpdatesButton")
         check_button.setToolTip("Check PyPI for a newer qPlot release.")
@@ -205,6 +211,11 @@ def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
             update_checker().show_in_about(dialog, settings)
 
         check_button.clicked.connect(check_about_updates)
+        desktop = dialog.findChild(qtw.QPushButton, "desktopIntegrationButton")
+        if desktop is not None:
+            equal_button_widths(check_button, desktop)
+        close_default(buttons)
+        resize_dialog(dialog, 580, 320)
     return dialog
 
 
@@ -215,7 +226,7 @@ def show_quick_start(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     """
     return _show_help_dialog(
         parent,
-        "qPlot Quick Start",
+        "qPlot quick start",
         QUICK_START_HTML,
         "qplotQuickStartDialog",
         )
@@ -237,7 +248,7 @@ def show_keyboard_shortcuts(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     column_width = max(metrics.horizontalAdvance(label) for label in labels) + 24
     return _show_help_dialog(
         parent,
-        "qPlot Keyboard and Mouse Controls",
+        "qPlot keyboard and mouse controls",
         shortcut_help_html(column_width),
         "qplotKeyboardShortcutsDialog",
         size=(max(800, column_width + 460), 600),
@@ -271,7 +282,7 @@ def show_diagnostic_log(parent: Any | None = None) -> bool:
             parent.show_status(f"Showing diagnostic log: {path}", 5000)
     elif parent is not None and hasattr(parent, "show_error"):
         parent.show_error(
-            "Show Diagnostic Log Failed",
+            "Show diagnostic log failed",
             "Could not open the diagnostic log location in the file manager.",
             path,
         )
@@ -291,12 +302,12 @@ def _show_help_dialog(
     dialog.setObjectName(object_name)
     dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
     dialog.setWindowTitle(title)
-    dialog.resize(*size)
-
-    layout = qtw.QVBoxLayout(dialog)
+    layout = dialog_layout(dialog)
     browser = qtw.QTextBrowser()
     browser.setObjectName("qplotHelpBrowser")
     browser.setOpenExternalLinks(True)
+    browser.setAccessibleName(title)
+    browser.setTabChangesFocus(True)
     if icon is not None:
         cast(QtGui.QTextDocument, browser.document()).addResource(
             QtGui.QTextDocument.ResourceType.ImageResource,
@@ -304,8 +315,8 @@ def _show_help_dialog(
             icon.pixmap(QtCore.QSize(64, 64), dialog.devicePixelRatioF()),
         )
     browser.setHtml(html)
-    browser.setMinimumSize(min(520, size[0] - 40), min(360, size[1] - 100))
-    layout.addWidget(browser)
+    browser.setMinimumSize(280, 140)
+    layout.addWidget(browser, 1)
 
     buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
     if object_name == "qplotAboutDialog":
@@ -315,6 +326,8 @@ def _show_help_dialog(
         desktop_button.clicked.connect(lambda: show_desktop_integration(dialog))
     buttons.rejected.connect(dialog.close)
     layout.addWidget(buttons)
+    close_default(buttons)
+    resize_dialog(dialog, *size)
 
     _remember_help_dialog(parent, dialog)
     dialog.show()

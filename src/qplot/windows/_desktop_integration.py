@@ -8,6 +8,13 @@ from PyQt6 import QtWidgets as qtw
 from qplot._icons import application_icon
 from qplot.desktop import default_destination
 
+from ._small_dialogs import (
+    close_default,
+    dialog_layout,
+    equal_button_widths,
+    resize_dialog,
+)
+
 
 class DesktopIntegrationDialog(qtw.QDialog):
     def __init__(self, parent: qtw.QWidget | None = None):
@@ -15,11 +22,10 @@ class DesktopIntegrationDialog(qtw.QDialog):
         self.setWindowTitle("Desktop integration")
         self.setObjectName("desktopIntegrationDialog")
         self.setWindowModality(QtCore.Qt.WindowModality.ApplicationModal)
-        self.resize(580, 380)
         self._pending: list[list[str]] = []
         self._busy = False
         self._operation = ""
-        layout = qtw.QVBoxLayout(self)
+        layout = dialog_layout(self)
         icon = application_icon()
         self.setWindowIcon(icon)
         heading = qtw.QHBoxLayout()
@@ -42,16 +48,18 @@ class DesktopIntegrationDialog(qtw.QDialog):
         )
         description.setWordWrap(True)
         layout.addWidget(description)
-        layout.addWidget(qtw.QLabel("Launcher location:"))
+        destination_label = qtw.QLabel("&Launcher location:")
+        layout.addWidget(destination_label)
         self.destination = qtw.QLineEdit()
         self.destination.setToolTip("Location where the qPlot launcher will be installed or updated.")
         self.destination.setAccessibleName("Launcher location")
+        destination_label.setBuddy(self.destination)
         layout.addWidget(self.destination)
-        self.shortcut = qtw.QCheckBox("Add a desktop shortcut")
+        self.shortcut = qtw.QCheckBox("Add a desktop &shortcut")
         self.shortcut.setToolTip("Create a desktop shortcut to the installed qPlot launcher.")
         self.shortcut.setChecked(True)
         layout.addWidget(self.shortcut)
-        self.associations = qtw.QCheckBox("Register file associations and database icons")
+        self.associations = qtw.QCheckBox("Register &file associations and database icons")
         self.associations.setToolTip("Offer qPlot in Open With and register database icons without changing your default opener.")
         self.associations.setChecked(True)
         layout.addWidget(self.associations)
@@ -64,8 +72,9 @@ class DesktopIntegrationDialog(qtw.QDialog):
         self.output = qtw.QPlainTextEdit()
         self.output.setToolTip("Progress and results of the desktop integration operation. Select text to copy it.")
         self.output.setReadOnly(True)
+        self.output.setTabChangesFocus(True)
         self.output.setAccessibleName("Desktop integration progress")
-        layout.addWidget(self.output)
+        layout.addWidget(self.output, 1)
         buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
         self.install_button = qtw.QPushButton("Install/update integration")
         self.install_button.setToolTip("Install or replace the qPlot launcher at the chosen location with the selected integration options.")
@@ -79,6 +88,8 @@ class DesktopIntegrationDialog(qtw.QDialog):
         self.install_button.clicked.connect(lambda: self._start("setup"))
         self.remove_button.clicked.connect(lambda: self._start("remove"))
         layout.addWidget(buttons)
+        equal_button_widths(self.install_button, self.remove_button)
+        close_default(buttons)
         self.process = QtCore.QProcess(self)
         self.process.setProcessChannelMode(QtCore.QProcess.ProcessChannelMode.MergedChannels)
         environment = QtCore.QProcessEnvironment.systemEnvironment()
@@ -92,10 +103,13 @@ class DesktopIntegrationDialog(qtw.QDialog):
         self.process.errorOccurred.connect(self._error)
         try:
             self.destination.setText(str(default_destination()))
+            self.destination.setCursorPosition(0)
         except ValueError as error:
             self.output.setPlainText(str(error))
             self.install_button.setEnabled(False)
             self.remove_button.setEnabled(False)
+
+        resize_dialog(self, 680, 480)
 
     def _start(self, action: str) -> None:
         if self._busy:
