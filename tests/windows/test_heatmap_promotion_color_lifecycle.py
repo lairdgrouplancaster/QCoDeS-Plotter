@@ -111,6 +111,7 @@ def _promote_with_pending_primary(main, target, monkeypatch):
     dialog.select_trace(next(key for key, line in target.lines.items() if line is target.line))
     previous = set(main.windows)
     dialog.remove_item_button.click()
+    dialog.accept()  # Removal is committed when the appearance session is accepted.
     promoted = next(window for window in main.windows if window not in previous)
     assert promoted.operation_kind == "plot2d"
     assert promoted.param.name == "signal_primary"

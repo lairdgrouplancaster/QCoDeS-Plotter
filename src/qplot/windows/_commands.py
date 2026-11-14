@@ -111,7 +111,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "window.refresh",
         "&Refresh",
         "Refresh the current window",
-        "R",
+        ["F5", "R"],
         help_section="Main and All Plot Windows",
     ),
     "window.close": CommandSpec(
@@ -207,9 +207,16 @@ COMMANDS: dict[str, CommandSpec] = {
         "Export raw measurements from selected runs, one CSV per run",
         object_name="exportSelectedRunsCsvAction",
     ),
+    "database.export_selected": CommandSpec(
+        "database.export_selected",
+        "Export Selected Runs as Database…",
+        "Create a standalone QCoDeS database containing all measurements and metadata "
+        "from the selected runs",
+        object_name="exportSelectedRunsDatabaseAction",
+    ),
     "database.export_copy": CommandSpec(
         "database.export_copy",
-        "Export Database Copy…",
+        "Export All Runs as Database…",
         "Create a standalone QCoDeS database containing committed data, including "
         "data in the WAL. The original is unchanged.",
         object_name="exportDatabaseCopyAction",
@@ -246,7 +253,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "window.main_front_back": CommandSpec(
         "window.main_front_back",
-        "Main Window &Front/Back",
+        "Move Main Window to &Front/Back",
         "Bring the main window to front, or behind the graph windows",
         "Ctrl+Shift+M",
         help_section="Main and All Plot Windows",
@@ -284,7 +291,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Autoscale",
         "Return all plot axes to autoscale mode",
         "Ctrl+0",
-        help_section="All Plot Windows (1D, 2D, and Cuts)",
+        help_section="All Plot Windows",
     ),
     "plot.copy_image": CommandSpec(
         "plot.copy_image",
@@ -292,7 +299,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Copy the plot image using the selected copy format or resolution",
         _standard_shortcuts(QKeySequence.StandardKey.Copy, ["Ctrl+C"]),
         object_name="copyPlotImageAction",
-        help_section="All Plot Windows (1D, 2D, and Cuts)",
+        help_section="All Plot Windows",
         help_shortcut="Ctrl+C / Cmd+C",
     ),
     "plot.copy_coordinates": CommandSpec(
@@ -301,7 +308,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Copy the current cursor indices and coordinates as text",
         "Ctrl+Shift+C",
         object_name="copyCoordinatesAction",
-        help_section="All Plot Windows (1D, 2D, and Cuts)",
+        help_section="All Plot Windows",
         help_shortcut="Ctrl+Shift+C / Cmd+Shift+C",
     ),
     "plot.print": CommandSpec(
@@ -310,7 +317,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Print the visible plot area",
         _standard_shortcuts(QKeySequence.StandardKey.Print, ["Ctrl+P"]),
         object_name="printPlotAction",
-        help_section="All Plot Windows (1D, 2D, and Cuts)",
+        help_section="All Plot Windows",
         help_shortcut="Ctrl+P / Cmd+P",
     ),
     "plot.export": CommandSpec(
@@ -319,7 +326,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Open the plot export dialog",
         "Ctrl+E",
         object_name="exportPlotAction",
-        help_section="All Plot Windows (1D, 2D, and Cuts)",
+        help_section="All Plot Windows",
         help_text="Export the plot",
     ),
     "plot.toggle_operations": CommandSpec(
@@ -332,7 +339,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Coordinates",
         "Show or hide the coordinates toolbar",
         "Ctrl+Alt+C",
-        help_section="All Plot Windows (1D, 2D, and Cuts)",
+        help_section="All Plot Windows",
     ),
     "toolbar.axis_control": CommandSpec(
         "toolbar.axis_control",
@@ -346,14 +353,14 @@ COMMANDS: dict[str, CommandSpec] = {
         "Data operations",
         "Show or hide the data operations panel",
         "Ctrl+Alt+O",
-        help_section="All Plot Windows (1D, 2D, and Cuts)",
+        help_section="All Plot Windows",
     ),
     "plot.snap_to_trace": CommandSpec(
         "plot.snap_to_trace",
         "Snap to &Trace",
         "Toggle snapping the coordinate readout to the nearest line-trace point (including overlays)",
         "S",
-        help_section="All Plot Windows (1D, 2D, and Cuts)",
+        help_section="All Plot Windows",
     ),
     "heatmap.autoscale_color": CommandSpec(
         "heatmap.autoscale_color",
@@ -400,7 +407,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "plot.clear_selection",
         "Clear Rectangular Selection",
         "Clear the rectangular plot selection, if present",
-        help_section="All Plot Windows (1D, 2D, and Cuts)",
+        help_section="All Plot Windows",
         help_shortcut="Escape",
     ),
     "preview.open": CommandSpec(
@@ -408,7 +415,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Open Preview",
         "Open the focused measurement preview as a plot",
         help_section="Main Window — Measurement Preview Focused",
-        help_shortcut="Return / Enter / Space",
+        help_shortcut="Return / Enter",
     ),
     "preview.context": CommandSpec(
         "preview.context",
@@ -420,7 +427,7 @@ COMMANDS: dict[str, CommandSpec] = {
     "heatmap.move_cut": CommandSpec(
         "heatmap.move_cut",
         "Move Selected Cut",
-        "Move the selected cut cursor by one pixel (a cut must be open)",
+        "Move the selected cut cursor by one cell (a cut must be open)",
         help_section="2D Heatmap Windows",
         help_shortcut="Arrow keys",
     ),
@@ -431,7 +438,7 @@ SHORTCUT_HELP_SECTIONS = (
     "Main Window",
     "Main Window — Run Details Focused",
     "Main Window — Measurement Preview Focused",
-    "All Plot Windows (1D, 2D, and Cuts)",
+    "All Plot Windows",
     "Cut Windows",
     "2D Heatmap Windows",
     "3D Slice Windows",
@@ -499,6 +506,23 @@ def create_action(
     return action
 
 
+class _PlotKeyFocusFilter(QtCore.QObject):
+    """Keep plot keys out of editors and other controls."""
+
+    def eventFilter(self, source, event):
+        if event.type() == QtCore.QEvent.Type.Shortcut:
+            key = event.key().toString()
+            if len(key) == 1:
+                owner = source.parent()
+                if isinstance(owner, qtw.QWidget):
+                    owner = owner.window()
+                target = getattr(owner, "widget", None) or getattr(owner, "RunList", None)
+                focus = qtw.QApplication.focusWidget()
+                if target is not None and focus is not target and (focus is None or not target.isAncestorOf(focus)):
+                    return True
+        return False
+
+
 def configure_action(
         action: QtGui.QAction,
         command: str | CommandSpec,
@@ -520,6 +544,10 @@ def configure_action(
     shortcuts = spec.resolved_shortcuts()
     if shortcuts:
         action.setShortcuts(shortcuts)
+        if not hasattr(action, "_qplot_key_focus_filter"):
+            focus_filter = _PlotKeyFocusFilter(action)
+            action.installEventFilter(focus_filter)
+            action.__dict__["_qplot_key_focus_filter"] = focus_filter
 
     action.setShortcutContext(spec.shortcut_context)
     if hasattr(action, "setShortcutVisibleInContextMenu"):
@@ -556,24 +584,36 @@ def shortcut_display_text(shortcuts: Iterable[QKeySequence]) -> str:
     )
 
 
-def shortcut_help_html() -> str:
+MOUSE_AND_SELECTION_HELP = {
+    "Main Window": (
+        ("Enter in run table", "Plot all measurements in the selected run"),
+    ),
+    "Main Window — Measurement Preview Focused": (
+        ("Space", "Toggle selection of the focused preview"),
+    ),
+    "All Plot Windows": (
+        ("Left-drag", "Select a rectangular region"),
+        ("Middle-drag or Space+left-drag", "Pan the plot\nHold Shift to constrain movement to one axis"),
+        ("Mouse wheel", "Zoom the plot"),
+        ("Drag inside a selection", "Move the selection\nHold Shift to constrain movement to one axis"),
+        ("Drag selection handles", "Resize the selection\nHold Alt to resize symmetrically about the centre"),
+        ("Right-click", "Open actions for the plot or selection"),
+        ("Double-click an axis", "Open axis scaling controls; also available from View"),
+    ),
+    "2D Heatmap Windows": (
+        ("Double-click colour bar", "Open colour scaling controls; also available from View"),
+        ("Click a cut cursor", "Select a cut for arrow-key movement; new cuts are selected automatically"),
+    ),
+}
+
+
+def shortcut_help_html(shortcut_column_width: int = 280) -> str:
     """
     Builds the keyboard shortcut help HTML from registered command metadata.
 
     """
     parts = [
-        "<h2>Keyboard Shortcuts</h2>",
-        (
-            "<p>Use these shortcuts in the active window shown by each heading. "
-            + "Cut windows are the 1D plots opened from a 2D heatmap. "
-            + "Shortcuts for focused widgets require keyboard focus in that widget.</p>"
-        ),
-        (
-            "<p>Keys use the current platform's notation. On macOS, Qt displays "
-            + "the Command key as ⌘ and the Control key as ⌃. "
-            + "Text fields and other controls may handle typing, copying, or arrow "
-            + "keys themselves. Quit also works while a dialog is open.</p>"
-        ),
+        "<h2>Keyboard and Mouse Controls</h2>",
     ]
     for section in SHORTCUT_HELP_SECTIONS:
         rows: list[tuple[str, str]] = []
@@ -583,27 +623,27 @@ def shortcut_help_html() -> str:
             row = spec.help_row()
             if row is not None:
                 rows.append(row)
+        rows.extend(MOUSE_AND_SELECTION_HELP.get(section, ()))
         if not rows:
             continue
 
         parts.append(f"<h3>{escape(section)}</h3>")
         parts.append('<table width="100%" cellspacing="4" cellpadding="3">')
         for shortcut, description in rows:
+            description_html = escape(description).replace("\n", "<br>")
             parts.append(
                 "  <tr>"
-                f'<td width="30%" valign="top"><b>{escape(shortcut)}</b></td>'
-                f'<td width="70%" valign="top">{escape(description)}</td>'
+                f'<td width="{shortcut_column_width}" valign="top" style="white-space: nowrap">'
+                f'<b>{escape(shortcut)}</b></td>'
+                f'<td valign="top">{description_html}</td>'
                 "</tr>"
             )
         parts.append("</table>")
-
-    parts.append(
-        "<p><b>Context menus:</b> Shift+F10 opens the run-list context menu "
-        "in the main window or the plot context menu in a plot window. "
-        "With a menu open, press an entry's underlined letter or number "
-        "to activate it. Standard Qt controls also support their usual "
-        "text editing and keyboard navigation keys.</p>"
-    )
+        if section == "Context Menus":
+            parts.append(
+                "<p>With a menu open, press an entry's underlined letter or number "
+                "to activate it.</p>"
+            )
     return "\n".join(parts)
 
 

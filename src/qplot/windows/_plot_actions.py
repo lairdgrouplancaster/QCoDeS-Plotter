@@ -70,8 +70,14 @@ def _trusted_plot_action(method):
         if getattr(target_window, "_closed", False):
             return False
         target = arguments.get("source_identity", arguments.get("guid"))
+        appearance_token = getattr(target_window, "_appearance_action_token", None)
+
+        def resume():
+            if appearance_token is None or not appearance_token["cancelled"]:
+                invoke(self, *args, **kwargs)
+
         if self._defer_trusted_plot_action(
-            target, lambda: invoke(self, *args, **kwargs),
+            target, resume,
             target_window=target_window,
         ):
             return None
@@ -1094,10 +1100,6 @@ class PlotActionsMixin:
                 self,
                 operation="exporting run data",
                 ):
-            return
-        selected_ids = getattr(self.RunList, "selected_run_ids", lambda: [])()
-        if len(selected_ids) > 1:
-            self.export_selected_runs_csv()
             return
         request = self._run_csv_export_request()
         if request is None:

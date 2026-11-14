@@ -9,7 +9,12 @@ from qplot._icons import application_icon
 from qplot._metadata import version_info
 from qplot.diagnostics import default_log_file
 
-from ._commands import create_action, shortcut_help_html
+from ._commands import (
+    COMMANDS,
+    MOUSE_AND_SELECTION_HELP,
+    create_action,
+    shortcut_help_html,
+)
 
 _OPEN_HELP_DIALOGS: list[qtw.QDialog] = []
 
@@ -23,8 +28,8 @@ QUICK_START_HTML = """
       parameters, preview images, and metadata.</li>
   <li><b>Open a plot.</b> Double-click a preview, right-click a run, or enter
       a run ID and measurement number at the top of the main window.</li>
-  <li><b>Inspect the plot.</b> Use the mouse wheel to zoom, left-drag to pan,
-  and Shift-drag to constrain panning to one axis,
+  <li><b>Inspect the plot.</b> Use the mouse wheel to zoom, left-drag to select a region,
+  and middle-drag or Space+left-drag to pan. Hold Shift to constrain panning to one axis,
       right-click for plot actions, and double-click axes for scale controls.</li>
   <li><b>Export or print data and plots.</b> Use the CSV button or preview
       context menu for measurement data. In plot windows, use
@@ -37,11 +42,13 @@ QUICK_START_HTML = """
 <p>Plot windows may appear before their data has finished loading. Check the
 status bar at the bottom of the window before assuming a load has failed.</p>
 <p>Set the refresh interval to <b>0.0 s</b> for manual refresh only. Press
-<b>R</b> to refresh the active window.</p>
+<b>F5</b> to refresh the active window, or <b>R</b> when the plot has focus.</p>
 """
 
 
-def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
+def add_help_menu(
+    window: qtw.QMainWindow, *, include_desktop_integration: bool = False,
+) -> qtw.QMenu:
     """
     Adds qPlot's shared Help menu to a main or plot window.
 
@@ -57,7 +64,7 @@ def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
     quick_start_action.triggered.connect(lambda: show_quick_start(window))
     help_menu.addAction(quick_start_action)
 
-    shortcuts_action = QtGui.QAction("&Keyboard Shortcuts", window)
+    shortcuts_action = QtGui.QAction("&Keyboard and Mouse Controls", window)
     shortcuts_action.setObjectName("keyboardShortcutsHelpAction")
     shortcuts_action.setStatusTip("Show all qPlot keyboard shortcuts and where they work")
     shortcuts_action.triggered.connect(lambda: show_keyboard_shortcuts(window))
@@ -65,7 +72,7 @@ def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
 
     help_menu.addSeparator()
 
-    copy_log_path_action = QtGui.QAction("Copy &Diagnostic Log Path", window)
+    copy_log_path_action = QtGui.QAction("Copy Path to &Diagnostic Log", window)
     copy_log_path_action.setObjectName("copyDiagnosticLogPathAction")
     copy_log_path_action.setStatusTip("Copy the qPlot diagnostic log file path")
     copy_log_path_action.triggered.connect(lambda: copy_diagnostic_log_path(window))
@@ -89,10 +96,19 @@ def add_help_menu(window: qtw.QMainWindow) -> qtw.QMenu:
     update_action.triggered.connect(lambda: check_for_updates(window))
     help_menu.addAction(update_action)
 
-    desktop_action = QtGui.QAction("Desktop integration…", window)
-    desktop_action.setObjectName("desktopIntegrationAction")
-    desktop_action.triggered.connect(lambda: show_desktop_integration(window))
-    help_menu.addAction(desktop_action)
+    if include_desktop_integration:
+        desktop_action = QtGui.QAction("Set Up or Remove Desktop Integration…", window)
+        desktop_action.setObjectName("desktopIntegrationAction")
+        desktop_action.triggered.connect(lambda: show_desktop_integration(window))
+        settings_menu = next(
+            (action.menu() for action in menu_bar.actions()
+             if action.text().replace("&", "") == "Settings"),
+            None,
+        )
+        if settings_menu is None:
+            settings_menu = qtw.QMenu("&Settings", menu_bar)
+            menu_bar.addMenu(settings_menu)
+        settings_menu.addAction(desktop_action)
 
     about_action = QtGui.QAction("&About qPlot", window)
     about_action.setObjectName("aboutQplotAction")
@@ -146,16 +162,42 @@ def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
         rows.append(f"<p><b>Commit:</b> {escape(str(info['commit']))}</p>")
     if info.get("pull_request"):
         rows.append(f"<p><b>Pull request:</b> #{escape(str(info['pull_request']))}</p>")
-    return _show_help_dialog(
-        parent, "About qPlot",
+    html = (
         heading
         + "".join(rows)
         + '<p><a href="https://github.com/lairdgrouplancaster/QCoDeS-Plotter">'
-        "Project on GitHub</a></p>",
+        "Project on GitHub</a></p>"
+    )
+    dialog = _show_help_dialog(
+        parent, "About qPlot", html,
         "qplotAboutDialog",
         size=(580, 320),
         icon=application_icon(),
     )
+    dialog.setProperty("qplotUpdatePrefixHtml", html + "<hr>")
+    buttons = dialog.findChild(qtw.QDialogButtonBox)
+    if buttons is not None:
+        check_button = qtw.QPushButton("Check for Updates", buttons)
+        buttons.addButton(check_button, qtw.QDialogButtonBox.ButtonRole.ActionRole)
+        check_button.setObjectName("aboutCheckForUpdatesButton")
+        check_button.setToolTip("Check PyPI for a newer qPlot release.")
+
+        def check_about_updates():
+            from ._updates import update_checker
+
+            owner = parent
+            while owner is not None and not hasattr(owner, "config"):
+                owner = owner.parentWidget()
+            if owner is not None:
+                settings = cast(Any, owner).config
+            else:
+                from qplot.configuration.config import config
+
+                settings = config()
+            update_checker().show_in_about(dialog, settings)
+
+        check_button.clicked.connect(check_about_updates)
+    return dialog
 
 
 def show_quick_start(parent: qtw.QWidget | None = None) -> qtw.QDialog:
@@ -176,11 +218,21 @@ def show_keyboard_shortcuts(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     Opens the keyboard-shortcuts help dialog.
 
     """
+    font = QtGui.QFont(parent.font() if parent is not None else qtw.QApplication.font())
+    font.setBold(True)
+    metrics = QtGui.QFontMetrics(font)
+    labels = [row[0]
+        for command in COMMANDS.values()
+        if (row := command.help_row()) is not None
+    ]
+    labels.extend(label for rows in MOUSE_AND_SELECTION_HELP.values() for label, _ in rows)
+    column_width = max(metrics.horizontalAdvance(label) for label in labels) + 24
     return _show_help_dialog(
         parent,
-        "qPlot Keyboard Shortcuts",
-        shortcut_help_html(),
+        "qPlot Keyboard and Mouse Controls",
+        shortcut_help_html(column_width),
         "qplotKeyboardShortcutsDialog",
+        size=(max(800, column_width + 460), 600),
         )
 
 

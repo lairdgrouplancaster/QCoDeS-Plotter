@@ -21,7 +21,7 @@
                     },
                     "minItems": 2,
                     "maxItems": 2,
-                    "default": [780, 700]
+                    "default": [900, 700]
                 },
                 "preview_size": {
                     "type": "integer",
@@ -162,6 +162,24 @@
                     "type": "string",
                     "default": "viridis"
                 },
+                "trace_colour": {
+                    "type": "string",
+                    "minLength": 7,
+                    "maxLength": 7,
+                    "pattern": "^#[0-9a-fA-F]{6}$",
+                    "default": "#1f77b4"
+                },
+                "trace_line_width": {
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 15,
+                    "default": 2
+                },
+                "trace_line_style": {
+                    "type": "string",
+                    "enum": ["Solid", "Dash", "Dot", "Dash Dot"],
+                    "default": "Solid"
+                },
                 "colorbar_width": {
                     "type": "integer",
                     "minimum": 1,
@@ -180,70 +198,6 @@
                     "maximum": 10,
                     "default": 3
                 },
-                "bar_colour_include_cet": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_matplotlib": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_local": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_custom": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_cet_linear": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_cet_divergent": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_cet_cyclic": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_cet_rainbow": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_cet_isoluminant": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_cet_other": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_matplotlib_perceptual": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_matplotlib_sequential": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_matplotlib_divergent": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_matplotlib_cyclic": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_matplotlib_qualitative": {
-                    "type": "boolean",
-                    "default": true
-                },
-                "bar_colour_include_matplotlib_other": {
-                    "type": "boolean",
-                    "default": true
-                },
                 "bar_colour_excluded": {
                     "type": "array",
                     "items": { "type": "string" },
@@ -256,7 +210,7 @@
                 },
                 "confirm_close": {
                     "type": "boolean",
-                    "default": true
+                    "default": false
                 },
                 "confirm_close_all": {
                     "type": "boolean",
@@ -265,11 +219,6 @@
                 "confirm_incompatible_axes": {
                     "type": "boolean",
                     "default": true
-                },
-                "mouse_mode": {
-                    "type": "string",
-                    "enum": ["pan", "rect"],
-                    "default": "pan"
                 },
                 "copy_plot_image_resolution": {
                     "type": "string",
@@ -297,31 +246,17 @@
                 "plot_tile_rows",
                 "plot_tile_columns",
                 "bar_colour",
+                "trace_colour",
+                "trace_line_width",
+                "trace_line_style",
                 "colorbar_width",
                 "axis_tick_width",
                 "axis_major_tick_count",
-                "bar_colour_include_cet",
-                "bar_colour_include_matplotlib",
-                "bar_colour_include_local",
-                "bar_colour_include_custom",
-                "bar_colour_include_cet_linear",
-                "bar_colour_include_cet_divergent",
-                "bar_colour_include_cet_cyclic",
-                "bar_colour_include_cet_rainbow",
-                "bar_colour_include_cet_isoluminant",
-                "bar_colour_include_cet_other",
-                "bar_colour_include_matplotlib_perceptual",
-                "bar_colour_include_matplotlib_sequential",
-                "bar_colour_include_matplotlib_divergent",
-                "bar_colour_include_matplotlib_cyclic",
-                "bar_colour_include_matplotlib_qualitative",
-                "bar_colour_include_matplotlib_other",
                 "bar_colour_excluded",
                 "bar_colour_excluded_prefixes",
                 "confirm_close",
                 "confirm_close_all",
                 "confirm_incompatible_axes",
-                "mouse_mode",
                 "copy_plot_image_resolution",
                 "csv_filename_format",
                 "auto_plot",
@@ -373,6 +308,8 @@
                     "default": 250000
                 },
                 "max_heatmap_grid_side": {
+                    "deprecated": true,
+                    "description": "Legacy setting retained for compatibility; the application now derives axis limits from max_heatmap_grid_cells.",
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 2000000000,

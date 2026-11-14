@@ -13,7 +13,7 @@ from qplot.updates import (
     MAX_RESPONSE_BYTES,
 )
 from qplot.windows import _updates
-from qplot.windows._help import add_help_menu
+from qplot.windows._help import add_help_menu, show_about
 from qplot.windows._preferences import PreferencesDialog
 from qplot.windows._updates import UpdateChecker, configure_launch_check
 
@@ -122,6 +122,60 @@ def test_help_command_shares_one_request_and_provides_upgrade_instructions(updat
     assert "--only-binary=:all:" in qtw.QApplication.clipboard().text()
     assert not checker._timer.isActive()
     assert checker._reply is None
+
+
+@pytest.mark.parametrize("response,status,expected", [
+    (body("2.0"), 200, "update is available"),
+    (body("1.0"), 200, "No newer release"),
+    (b"", 503, "Could not contact PyPI"),
+])
+def test_about_checks_inline_without_losing_version_details(updates, monkeypatch, response, status, expected):
+    checker, cfg, window = updates
+    monkeypatch.setattr("qplot.windows._help.version_info", lambda: {
+        "version": "1.0", "commit": "abc123", "released": False,
+    })
+    dialog = show_about(window)
+    assert not checker._manager.requests
+    button = dialog.findChild(qtw.QPushButton, "aboutCheckForUpdatesButton")
+    button.click()
+    assert "Version: 1.0" in text(dialog)
+    assert "Checking for updates" in text(dialog)
+    button.click()
+    assert len(checker._manager.requests) == 1
+    assert not window.findChildren(qtw.QDialog, "qplotUpdatesDialog")
+    checker._manager.replies[-1].deliver(response, status=status)
+    assert expected in text(dialog)
+    assert "Version: 1.0" in text(dialog)
+    assert "Commit: abc123" in text(dialog)
+    assert cfg.get(LAST_CHECK_KEY) > 0
+    button.click()
+    assert "Checking for updates" in text(dialog)
+    assert expected not in text(dialog)
+    assert len(checker._manager.requests) == 2
+
+
+def test_about_and_help_share_request_and_survive_about_closing(updates):
+    checker, cfg, window = updates
+    about = show_about(window)
+    about.findChild(qtw.QPushButton, "aboutCheckForUpdatesButton").click()
+    manual = checker.show_manual(window)
+    assert len(checker._manager.requests) == 1
+    sip.delete(about)
+    checker._manager.replies[-1].deliver(body())
+    assert "update is available" in text(manual)
+    assert checker._reply is None
+
+
+def test_about_without_parent_can_check_updates(updates):
+    checker, _cfg, _window = updates
+    about = show_about()
+    try:
+        about.findChild(qtw.QPushButton, "aboutCheckForUpdatesButton").click()
+        assert len(checker._manager.requests) == 1
+        checker._manager.replies[-1].deliver(body())
+        assert "update is available" in text(about)
+    finally:
+        sip.delete(about)
 
 
 def test_automatic_checks_are_daily_by_default_and_manual_checks_override_throttle(updates, monkeypatch):

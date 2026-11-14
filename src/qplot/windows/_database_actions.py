@@ -4,6 +4,7 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass
+from datetime import datetime
 from importlib import resources
 from pathlib import Path
 from time import monotonic, perf_counter
@@ -1867,16 +1868,18 @@ class DatabaseActionsMixin:
 
         update_auto_plot(self, updated_runs)
         self._sync_empty_state()
+        checked_at = datetime.now().astimezone().strftime("%H:%M:%S")
+        status_prefix = f"Last checked {checked_at} · "
         if not new_runs:
             if self.RunList.topLevelItemCount() == 0:
-                self.show_status(self._empty_database_refresh_status(), 3000)
+                self.show_status(status_prefix + self._empty_database_refresh_status(), 3000)
             else:
-                self.show_status("No new runs found.", 3000)
+                self.show_status(status_prefix + "No new runs", 3000)
             return
 
         count = len(new_runs)
         noun = "run" if count == 1 else "runs"
-        self.show_status(f"Found {count} new {noun}.", 5000)
+        self.show_status(status_prefix + f"Found {count} new {noun}", 5000)
 
         if self.autoPlotBox.isChecked():
             enqueue_auto_plot(self, [run["guid"] for run in new_runs.values()])

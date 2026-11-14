@@ -29,6 +29,10 @@ def plan(**overrides):
 def test_adaptive_summary_matches_small_batches_and_bounds_dense_replies(tmp_path, monkeypatch, dense_tail):
     from qplot.datahandling.trusted_live_service import _BrokerQueryExecutor
 
+    # Exercise saturation with the original boundary independently of the
+    # production coordinate-retention budget.
+    monkeypatch.setattr(trusted_heatmap, 'MAX_AXIS_VALUES', 131_072)
+
     path = tmp_path / 'summary-boundary.db'
     _, guid, table = make_run(path)
     length = 700_003 if dense_tail else 400_003
@@ -66,10 +70,11 @@ def test_adaptive_summary_matches_small_batches_and_bounds_dense_replies(tmp_pat
             service.close()
         assert all(sum(sizes) <= 2 * 65_536 + 3 for _, sizes in summaries)
         if batch == 262_144:
-            assert [interval for interval, _ in summaries] == [
+            assert [interval for interval, _ in summaries[:3]] == [
                 (0, 65_536), (65_536, 131_072), (131_072, 196_608),
-            ] + ([(196_608, 458_752), (458_752, length)] if dense_tail else [(196_608, length)])
-            assert summaries[3][1] == [1, 1, 131_073 if dense_tail else 2]
+            ]
+            assert summaries[3][0] == (196_608, 327_680)
+            assert summaries[3][1] == [1, 1, 131_072 if dense_tail else 2]
             if dense_tail:
                 assert summaries[-1][1] == [1, 1]  # Bounds/counts continue after both axes saturate.
         else:
@@ -81,6 +86,32 @@ def test_adaptive_summary_matches_small_batches_and_bounds_dense_replies(tmp_pat
     assert actual.bounds == reference.bounds
     assert actual.cardinality_exact == reference.cardinality_exact == (False, not dense_tail)
     assert actual.unique_counts == reference.unique_counts
+    assert protected_state(path) == before
+
+
+@pytest.mark.parametrize("width,height", [(2000, 2), (140000, 1)])
+def test_narrow_numeric_grid_retains_more_than_800_coordinates(tmp_path, width, height):
+    path = tmp_path / 'narrow.db'
+    _, guid, table = make_run(path)
+    with sqlite3.connect(path) as writer:
+        writer.execute(f'DELETE FROM "{table}"')
+        writer.executemany(f'INSERT INTO "{table}" (id,x,y,z) VALUES (?,?,?,?)',
+                           ((height*x+y+1, x, y, x+10*y)
+                            for x in range(width) for y in range(height)))
+    writer.close()
+    before = protected_state(path)
+    service = TrustedLiveReadService(path)
+    try:
+        dataset = service.submit_plot_dataset(guid).wait()
+        result = service.submit_plot_prefix(
+            dataset, heatmap_plan=plan(x='x', y='y', max_cells=250000, max_side=250000),
+        ).wait()
+        assert result.grid.shape == (height, width)
+        assert result.cardinality_exact == (True, True)
+        np.testing.assert_array_equal(result.axes[0], np.arange(width))
+        np.testing.assert_array_equal(result.grid, np.arange(width)[None, :] + 10*np.arange(height)[:, None])
+    finally:
+        service.close()
     assert protected_state(path) == before
 
 
@@ -241,7 +272,7 @@ def test_large_summary_yield_allows_writer_checkpoint_append_and_cancel(tmp_path
         request = service.submit_plot_prefix(dataset, heatmap_plan=settings)
         assert reached.wait(10)
         assert request.progress.phase == "Scanning coordinates"
-        assert (request.progress.completed, request.progress.total) == (20, 48)
+        assert (request.progress.completed, request.progress.total) == (12, 48)
         assert writer.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()[0] == 0
         writer.executemany(f'INSERT INTO "{table}" (id,x,y,z) VALUES (?,?,0,7)',
                            [(i + 1, i) for i in range(48, 52)])

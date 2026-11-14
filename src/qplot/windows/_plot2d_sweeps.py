@@ -73,7 +73,7 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
 
         """
         # Quit out if not on heatmap
-        z_index = self.__dict__.get("z_index")
+        z_index = self.__dict__.get("_context_cut_index", self.__dict__.get("z_index"))
         if not isinstance(z_index, list):
             return
         
@@ -169,6 +169,7 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
             return
 
         at_value = self.sweep_pixel_centre(axis, fixed_index)
+        is_new = sweep_id not in self.sweep_lines
     
         if self.sweep_lines.get(sweep_id, None) is not None:
             line = self.sweep_lines[sweep_id]
@@ -219,6 +220,8 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
         
         line.sweep_fixed_param = fixed_param
         self.set_sweep_line_index(line, fixed_index, emit=False)
+        if is_new:
+            self.activate_sweep_line(line)
     
     
     @QtCore.pyqtSlot(int)
@@ -384,6 +387,8 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
             return
 
         def mouse_drag_event(event: Any) -> Any:
+            if event.isStart() and event.button() == QtCore.Qt.MouseButton.LeftButton:
+                self.activate_sweep_line(line)
             if self._sweep_line_drag_cursor_event_applies(line, event):
                 self.set_sweep_line_drag_cursor(line)
 
@@ -499,6 +504,14 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
                 event.accept()
             return
 
+        self._keyboard_selected_sweep_id = line.sweep_id
+        for candidate in self.sweep_lines.values():
+            pen = QtGui.QPen(candidate.pen)
+            pen.setWidthF(3.0 if candidate is line else 1.0)
+            candidate.setPen(pen)
+        widget = self.__dict__.get("widget")
+        if widget is not None:
+            widget.setFocus()
         self.set_sweep_line_hover_cursor(line)
         if event is not None:
             event.accept()
@@ -628,7 +641,7 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
         if active_line in matching_lines:
             return active_line
 
-        return max(matching_lines, key=lambda line: line.sweep_id)
+        return None
 
 
     def sweep_group_drag_requested(self) -> bool:

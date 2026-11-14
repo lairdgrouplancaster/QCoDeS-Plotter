@@ -27,14 +27,49 @@ typed_run_window = _typed_run_window
 mixed_plot = _mixed_plot
 
 
+def test_mixed_feedback_and_revert_preserve_individual_styles(trace_editor, qapplication, tmp_path):
+    host, dialog, lines = trace_editor
+    initial = {key: asdict(style) for key, style in host._trace_styles.items()}
+    dialog.grab().save(str(tmp_path / "appearance.png"))
+    keys = _prepare_traces(host, dialog, lines, "line_width", multiple=True)
+    assert "Mixed" in dialog.selection_summary.text()
+    assert dialog.selection_summary.text() == "<b>2 traces selected</b> · Mixed values"
+    assert "Line width" in dialog.selection_summary.toolTip()
+    assert dialog.line_width.lineEdit().text() == "Mixed"
+    assert dialog.line_width.lineEdit().placeholderText() == "Mixed"
+    dialog.line_width.setValue(5.5)
+    assert all(host._trace_styles[key].line_width == 5.5 for key in keys)
+    host._trace_styles[keys[1]].visible = False
+    dialog.refresh_rows()
+    hidden_row = next(row for row in range(dialog.table.rowCount())
+                      if dialog._row_entry(row) == ("trace", keys[1]))
+    hidden_name = dialog.table.item(hidden_row, dialog._COL_MEASUREMENT)
+    assert hidden_name.font().strikeOut()
+    assert "Hidden" in hidden_name.toolTip()
+    assert hidden_name.flags() & QtCore.Qt.ItemFlag.ItemIsEnabled
+    assert hidden_name.flags() & QtCore.Qt.ItemFlag.ItemIsSelectable
+    assert dialog.visible.checkState() == QtCore.Qt.CheckState.PartiallyChecked
+    dialog.visible.click()
+    assert all(host._trace_styles[key].visible for key in keys)
+    assert all(not dialog.table.item(row, dialog._COL_MEASUREMENT).font().strikeOut()
+               for row in range(dialog.table.rowCount()))
+    dialog.reject()
+    qapplication.processEvents()
+    assert {key: asdict(style) for key, style in host._trace_styles.items()} == initial
+    host.open_export_dialog()
+    exporter = host.widget.scene().exportDialog
+    qapplication.processEvents()
+    exporter.grab().save(str(tmp_path / "export.png"))
+    assert exporter.currentExporter.parameters().opts["title"] == "Export options"
+    assert exporter.currentExporter.parameters().child("width").opts["title"] == "Width (px)"
+    exporter.close()
+
+
 _TRACE_EDITS = [
     ("line_enable", "line_enabled", False),
     ("line_color", "line_color", "#2ca02c"),
     ("line_width", "line_width", 4.5),
     ("line_style", "line_style", "Dot"),
-    ("dots_enable", "dots_enabled", True),
-    ("dots_color", "dots_color", "#2ca02c"),
-    ("dots_size", "dots_size", 9.5),
     ("marker_enable", "markers_enabled", True),
     ("marker_color", "markers_color", "#2ca02c"),
     ("marker_symbol", "markers_symbol", "s"),
@@ -52,8 +87,6 @@ def _prepare_traces(host, dialog, lines, field, multiple):
     first.line_color, second.line_color = "#1f77b4", "#ff7f0e"
     first.line_width, second.line_width = 2., 7.5
     first.line_style, second.line_style = "Solid", "Dash"
-    first.dots_color, second.dots_color = "#1f77b4", "#d62728"
-    first.dots_size, second.dots_size = 6., 8.5
     first.markers_color, second.markers_color = "#1f77b4", "#d62728"
     first.markers_size, second.markers_size = 10., 12.5
     first.markers_symbol, second.markers_symbol = "o", "+"
@@ -62,14 +95,7 @@ def _prepare_traces(host, dialog, lines, field, multiple):
     first.opacity, second.opacity = 1., .37
     first.visible = second.visible = True
     for style in (first, second):
-        style.dots_enabled = field.startswith("dots_") and field != "dots_enable"
         style.markers_enabled = field.startswith("marker_") and field != "marker_enable"
-    # Enabling one renderer intentionally disables the other, but preserves its
-    # independent color, symbol and size for later reuse.
-    if field == "dots_enable":
-        second.markers_enabled = True
-    if field == "marker_enable":
-        second.dots_enabled = True
     for key, line in zip(keys, lines, strict=True):
         host._apply_trace_style(label=key, line=line)
     dialog.refresh_rows()
@@ -83,6 +109,13 @@ def _prepare_traces(host, dialog, lines, field, multiple):
 
 
 def _edit_widget(widget, value):
+    ancestor = widget.parentWidget()
+    while ancestor is not None:
+        if isinstance(ancestor, qtw.QScrollArea):
+            ancestor.ensureWidgetVisible(widget)
+            qtw.QApplication.processEvents()
+            break
+        ancestor = ancestor.parentWidget()
     if isinstance(widget, qtw.QCheckBox):
         assert widget.isChecked() != value
         QtTest.QTest.mouseClick(widget, QtCore.Qt.MouseButton.LeftButton)
@@ -115,10 +148,6 @@ def test_trace_edit_preserves_unedited_properties(
         expected = dict(original)
         if multiple or index == 1:
             expected[property_name] = value
-            if property_name == "dots_enabled" and value:
-                expected["markers_enabled"] = False
-            elif property_name == "markers_enabled" and value:
-                expected["dots_enabled"] = False
         style = host._trace_styles[key]
         assert asdict(style) == expected
         assert coordinate_viewbox(lines[index].getViewBox()) is host._trace_axis_viewbox(style)

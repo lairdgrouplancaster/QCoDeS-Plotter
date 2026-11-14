@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from math import isclose, isfinite, log10
@@ -7,13 +7,14 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 import numpy.typing as npt
 import pyqtgraph as pg
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.graphicsItems.ViewBox import axisCtrlTemplate_generic
 
 from ._plot_data_viewbox import coordinate_viewbox
 from ._plot_host import PlotHost
-from ._range_entry import RangeEntry
+from ._range_entry import AutoLimitsButton as _AutoLimitsButton
+from ._range_entry import RangeEntry, layout_range_fields
 
 _AxisName = Literal["x", "y", "x2", "y2"]
 
@@ -226,40 +227,6 @@ class _PowerScaledAxisItem(pg.AxisItem):
         text = f"{self.labelText} {units}"
         style = ";".join([f"{k}: {self.labelStyle[k]}" for k in self.labelStyle])
         return f"<span style='{style}'>{text}</span>"
-
-
-class _AutoLimitsButton(qtw.QToolButton):
-    """Refresh its prospective-limit tooltip immediately before display."""
-
-    def __init__(self, refresh_tooltip: Callable[[], None], parent: qtw.QWidget):
-        super().__init__(parent)
-        self._refresh_tooltip = refresh_tooltip
-
-    def event(self, event: QtCore.QEvent) -> bool:
-        if event.type() == QtCore.QEvent.Type.ToolTip:
-            self._refresh_tooltip()
-        return super().event(event)
-
-    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
-        super().paintEvent(event)
-        painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        group = (
-            QtGui.QPalette.ColorGroup.Active if self.isEnabled()
-            else QtGui.QPalette.ColorGroup.Disabled
-        )
-        painter.setPen(QtGui.QPen(
-            self.palette().color(group, QtGui.QPalette.ColorRole.ButtonText), 1.4,
-        ))
-        painter.translate(self.rect().center())
-        # Outward arrows between limits indicate fitting the data range.
-        for x1, y1, x2, y2 in (
-            (-8, -5, -8, 5), (8, -5, 8, 5), (-5, 0, 5, 0),
-            (-5, 0, -2, -3), (-5, 0, -2, 3),
-            (5, 0, 2, -3), (5, 0, 2, 3),
-        ):
-            painter.drawLine(QtCore.QLineF(x1, y1, x2, y2))
-        painter.end()
 
 
 class PlotAxisScalingMixin(_PlotAxisScalingBase):
@@ -703,19 +670,10 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             separator.setStyleSheet("color: palette(mid);")
             separator.setFixedHeight(13)
 
-        ui.gridLayout.addWidget(
-            ui.rangeEntry, 0, 1, 1, 2,
-            QtCore.Qt.AlignmentFlag.AlignHCenter | QtCore.Qt.AlignmentFlag.AlignTop,
+        layout_range_fields(
+            ui.gridLayout, ui.rangeEntry, ui.manualRadio, ui.minText, ui.maxText,
+            ui.minimumLabel, ui.maximumLabel, ui.copyAutoLimitsButton,
         )
-        ui.gridLayout.setRowMinimumHeight(0, ui.rangeEntry.sizeHint().height() + 10)
-        ui.gridLayout.addWidget(ui.minimumLabel, 1, 1)
-        ui.gridLayout.addWidget(ui.maximumLabel, 1, 2)
-        ui.gridLayout.addWidget(ui.manualRadio, 2, 0)
-        ui.gridLayout.addWidget(ui.minText, 2, 1)
-        ui.gridLayout.addWidget(ui.maxText, 2, 2)
-        ui.gridLayout.addWidget(ui.copyAutoLimitsButton, 2, 3)
-        ui.rangeEntry.summary.setContentsMargins(0, 0, 0, 6)
-        ui.gridLayout.addWidget(ui.rangeEntry.summary, 3, 1, 1, 3)
         ui.gridLayout.addWidget(
             ui.autoRadio, 4, 0, 2, 1, QtCore.Qt.AlignmentFlag.AlignVCenter,
         )
@@ -1108,6 +1066,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             return
         # Auto limits already use ViewBox coordinates. Do not pass them through
         # editable text or a log -> physical -> log conversion before applying.
+        self._axis_scale_controls[axis].rangeEntry.clear_error()
         self._apply_axis_scale_manual_limits(axis, limits)
         self._sync_axis_scale_controls(axis)
 
@@ -1132,11 +1091,12 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         # Retain exact view coordinates and Auto mode for unchanged fields,
         # including duplicate editingFinished after a rejected edit.
         if ui.rangeEntry.unchanged():
+            ui.rangeEntry.restore()
             return
         try:
             values = ui.rangeEntry.limits_from_fields()
         except ValueError:
-            ui.rangeEntry.restore()
+            ui.rangeEntry.show_error(ui.rangeEntry.validation_message())
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status(
@@ -1148,7 +1108,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             return
 
         if self._axis_scale_log_mode(axis) and any(value <= 0 for value in values):
-            ui.rangeEntry.restore()
+            ui.rangeEntry.show_error("Log-scale limits must be greater than zero.")
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status(
@@ -1159,11 +1119,12 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
 
         view_values = [float(value) for value in self.data_to_view(axis, values)]
         if not _manual_axis_view_limits_are_usable(viewbox, axis_number, view_values):
-            ui.rangeEntry.restore()
+            ui.rangeEntry.show_error("These limits exceed the supported plot range.")
             show_status = getattr(self, "show_status", None)
             if callable(show_status):
                 show_status("These axis limits exceed the supported plot range.", 5000)
             return
+        ui.rangeEntry.clear_error()
         self._apply_axis_scale_manual_limits(axis, view_values)
 
     def _apply_axis_scale_manual_limits(
@@ -1293,6 +1254,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                 self._apply_axis_scale_filtered_auto(axis)
 
     def _axis_scale_auto_clicked(self, axis: _AxisName) -> None:
+        self._axis_scale_controls[axis].rangeEntry.restore()
         ui = self._axis_scale_controls[axis]
         if self._axis_scale_uses_filtered_auto(axis):
             self._apply_axis_scale_filtered_auto(axis)
@@ -1482,6 +1444,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         layout.setSpacing(10)
         tabs = qtw.QTabWidget(dialog)
         tabs.setObjectName("axisScaleTabs")
+        tabs.setDocumentMode(True)
         tabs.tabBar().setExpanding(True)
         tabs.tabBar().setUsesScrollButtons(False)
         tabs.setStyleSheet(

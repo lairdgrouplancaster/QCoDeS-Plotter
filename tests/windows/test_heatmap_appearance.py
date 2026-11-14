@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6 import QtCore, sip
+from PyQt6 import QtCore, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._dataset_handle import DatasetKey, TraceKey
@@ -67,7 +67,7 @@ class _Host(Plot2DLayerMixin, qtw.QMainWindow):
         self.axis_dropdown["y"].setCurrentText("gate")
         self._axis_selection = self.axis_options
         self.refreshes = []
-        self.color_scale_opens = 0
+        self._colour_map = "viridis"
         self._init_heatmap_layers()
 
     @property
@@ -84,10 +84,14 @@ class _Host(Plot2DLayerMixin, qtw.QMainWindow):
         self.refreshes.append(force)
 
     def _current_colorbar_colormap_name(self):
-        return "viridis"
+        return self._colour_map
 
-    def open_colorbar_scale_dialog(self):
-        self.color_scale_opens += 1
+    def _available_colorbar_colormaps(self):
+        return ("viridis", "plasma", "magma")
+
+    def setColorbarColorMap(self, name):
+        self._colour_map = name
+        return True
 
 
 def _retire_appearance_widgets(host, dialog):
@@ -124,16 +128,21 @@ def test_heatmap_appearance_matches_trace_dialog_structure_with_image_preview(no
         assert dialog.table.rowCount() == 2
         assert not dialog.table.item(0, dialog._COL_PREVIEW).icon().isNull()
         assert not dialog.table.item(1, dialog._COL_PREVIEW).icon().isNull()
-        assert dialog.color_scale_name.text() == "Viridis"
-        assert dialog.color_scale_preview.pixmap() is not None
-        assert dialog.color_scale_preview.pixmap().width() == 190
+        assert dialog.color_scale_button.text() == "Viridis"
+        assert "Choose colour map" in dialog.color_scale_button.accessibleName()
         assert dialog.x_axis.currentText() == "Bottom"
         assert dialog.y_axis.currentText() == "Left"
         assert dialog.x_axis.isEnabled()
         assert dialog.y_axis.isEnabled()
 
         dialog.color_scale_button.click()
-        assert host.color_scale_opens == 1
+        chooser = dialog.colour_map_dialog
+        assert chooser.isVisible()
+        assert chooser.windowTitle() == "Choose colour map"
+        chooser.picker.table.selectRow(chooser.picker.row_for_name("plasma"))
+        assert host._current_colorbar_colormap_name() == "plasma"
+        chooser.accept()
+        assert dialog.color_scale_button.text() == "Plasma"
     finally:
         _retire_appearance_widgets(host, dialog)
 
@@ -153,6 +162,13 @@ def test_heatmap_appearance_applies_visibility_opacity_order_and_axis_swap(no_ca
 
         assert overlay.opacity == 0.37
         assert not overlay.visible
+
+        QtTest.QTest.keyClick(dialog.opacity, QtCore.Qt.Key.Key_Up)
+        assert dialog.opacity_slider.value() == 38
+        assert overlay.opacity == 0.38
+        QtTest.QTest.keyClick(dialog.opacity, QtCore.Qt.Key.Key_Down)
+        assert dialog.opacity_slider.value() == 37
+        assert overlay.opacity == 0.37
 
         dialog.x_axis.setCurrentText("Top")
         dialog.y_axis.setCurrentText("Right")

@@ -2,6 +2,7 @@ import os
 
 from PyQt6 import (
     QtCore,
+    QtGui,
 )
 from PyQt6 import (
     QtWidgets as qtw,
@@ -81,7 +82,12 @@ class RunControlsMixin:
         # event loop disappear.
         self.monitor.timeout.connect(self._automatic_refresh_timeout)
 
-        self.autoPlotBox = qtw.QCheckBox()
+        self.refreshStateLabel = qtw.QLabel()
+        self.refreshStateLabel.setObjectName("automaticRefreshStatus")
+        self.refreshStateLabel.setAccessibleName("Automatic refresh status")
+        RunControlsMixin._update_refresh_state_label(self)
+
+        self.autoPlotBox = qtw.QCheckBox("Auto-plot")
         self.autoPlotBox.setChecked(self.config.get(AUTO_PLOT_KEY))
         self.autoPlotBox.setToolTip(
             "Open newly detected runs and the newest running run when enabled"
@@ -113,7 +119,7 @@ class RunControlsMixin:
         sublayout.setContentsMargins(8, 0, 8, 2)
         sublayout.setSpacing(6)
 
-        sublayout.addWidget(qtw.QLabel("ID:"))
+        sublayout.addWidget(qtw.QLabel("Run:"))
 
         self.selected_run_id = None
 
@@ -122,7 +128,7 @@ class RunControlsMixin:
         self.run_idBox.setFixedWidth(58)
         self.run_idBox.setValidator(QIntValidator())
         self.run_idBox.setPlaceholderText("ID")
-        self.run_idBox.setToolTip("Run ID to plot")
+        self.run_idBox.setToolTip("Run ID to plot or export as CSV")
         self.run_idBox.textEdited.connect(self.update_run_id)
         self.run_idBox.editingFinished.connect(self.sync_run_id_selection)
         self.run_idBox.returnPressed.connect(self._open_entered_run)
@@ -135,10 +141,11 @@ class RunControlsMixin:
         self.measurementBox.setFixedWidth(46)
         self.measurementBox.setText("*")
         self.measurementBox.setToolTip(
-            "Enter a measurement number (starting at 1), or * to plot every measurement in the run."
+            "Enter a measurement number (starting at 1), or * for every measurement in the run, to plot or export as CSV."
         )
         self.measurementBox.returnPressed.connect(self._open_entered_run)
         sublayout.addWidget(self.measurementBox)
+        sublayout.addSpacing(6)  # Together with layout spacing, a 12 px action gap.
 
         self.plotRunButton = qtw.QToolButton()
         self.plotRunButton.setObjectName("plotIconButton")
@@ -162,13 +169,21 @@ class RunControlsMixin:
         self.exportCsvButton.setIcon(
             self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogSaveButton)
             )
-        self.exportCsvButton.setText("CSV…")
+        self.exportCsvButton.setText("Export CSV…")
         self.exportCsvButton.setToolButtonStyle(
             QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
             )
-        self.exportCsvButton.setToolTip(
-            "Export raw measurement values as CSV (multiple selected runs: batch export)"
-            )
+        def update_export_scope():
+            run = self.run_idBox.text().strip()
+            measurement = self.measurementBox.text().strip()
+            scope = "all measurements" if measurement == "*" else f"measurement {measurement}"
+            description = f"Export {scope} from run {run} as CSV (raw values)."
+            self.exportCsvButton.setToolTip(description)
+            self.exportCsvButton.setAccessibleDescription(description)
+            self.exportCsvButton.setEnabled(bool(run and measurement))
+        self.run_idBox.textChanged.connect(update_export_scope)
+        self.measurementBox.textChanged.connect(update_export_scope)
+        update_export_scope()
         self.exportCsvButton.setAccessibleName("Export raw measurement values to CSV")
         self.exportCsvButton.setFixedHeight(26)
         self.exportCsvButton.clicked.connect(self.exportRunCsv)
@@ -176,7 +191,6 @@ class RunControlsMixin:
 
         sublayout.addStretch()
 
-        sublayout.addWidget(qtw.QLabel("Auto-plot"))
         sublayout.addWidget(self.autoPlotBox)
 
         sublayout.addSpacing(12)
@@ -252,6 +266,11 @@ class RunControlsMixin:
         plot_selected_all = create_action("run.plot_selected_all", self)
         plot_selected_all.triggered.connect(self.open_selected_run_all)
         self.addAction(plot_selected_all)
+        table_enter = QtGui.QAction("Plot Selected Run", self.RunList)
+        table_enter.setShortcuts([QtGui.QKeySequence("Return"), QtGui.QKeySequence("Enter")])
+        table_enter.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        table_enter.triggered.connect(self.open_selected_run_all)
+        self.RunList.addAction(table_enter)
 
         self.open_param_actions = []
         for itr in range(9):
@@ -568,6 +587,26 @@ class RunControlsMixin:
         stop = getattr(monitor, "stop", None)
         if callable(stop):
             stop()
+        RunControlsMixin._update_refresh_state_label(self)
+
+    def _update_refresh_state_label(self):
+        label = getattr(self, "refreshStateLabel", None)
+        if label is None:
+            return
+        if self.monitor.isActive():
+            state = "on"
+            explanation = "The run list is checked automatically at the selected interval."
+        elif RunControlsMixin._current_refresh_interval(self) <= 0:
+            state = "off"
+            explanation = "Automatic refresh is disabled. Use Refresh to check manually."
+        else:
+            state = "paused"
+            explanation = (
+                "Automatic refresh is configured but is waiting for an available, "
+                "loaded database."
+            )
+        label.setText(f"Auto-refresh: {state}")
+        label.setToolTip(explanation)
 
     def _update_automatic_refresh_timer(self, interval=None):
         """Start or pause automatic refresh according to authoritative state."""
@@ -594,6 +633,7 @@ class RunControlsMixin:
         if not callable(start):
             return False
         start(max(1, round(interval * 1000)))
+        RunControlsMixin._update_refresh_state_label(self)
         return True
 
     @QtCore.pyqtSlot()

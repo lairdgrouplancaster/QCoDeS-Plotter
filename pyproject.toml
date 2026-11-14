@@ -202,6 +202,7 @@ files = [
     "src/qplot/windows/_snapshot_session.py",
     "src/qplot/windows/main.py",
     "src/qplot/windows/_colorbar.py",
+    "src/qplot/windows/_colour_map_picker.py",
     "src/qplot/windows/_dataset_handle.py",
     "src/qplot/windows/_dataset_registry.py",
     "src/qplot/windows/_error_dialog.py",

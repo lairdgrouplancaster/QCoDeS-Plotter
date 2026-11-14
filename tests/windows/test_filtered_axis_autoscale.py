@@ -257,6 +257,7 @@ def test_visible_auto_follows_qt_navigation(loaded_plot, gesture):
         overlays._drag_in_view(
             window, QtCore.QPointF(30, 40), QtCore.QPointF(25, 40),
             QtCore.Qt.KeyboardModifier.ShiftModifier,
+            button=QtCore.Qt.MouseButton.MiddleButton,
         )
     else:
         # Scrolling over the bottom axis zooms only X, retaining Y Auto.

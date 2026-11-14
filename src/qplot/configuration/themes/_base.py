@@ -91,8 +91,6 @@ _STYLESHEET_TEMPLATE = Template(
     }
     QMenuBar::item {
         color: $text;
-        spacing: 3px;
-        padding: 4px 4px;
         background-color: $window_bg;
     }
     QMenuBar::item:selected {
@@ -143,67 +141,45 @@ _STYLESHEET_TEMPLATE = Template(
         /* Qt uses the largest padding edge as the toolbar frame width. */
         padding: 2px;
     }
-    QPushButton {
-        min-height: 20px;
+    QPushButton,
+    QToolButton {
         border: 1px solid $border_strong;
         border-radius: 5px;
-        padding: 1px 10px;
         color: $text;
         background-color: $button_bg;
+    }
+    QPushButton {
+        min-height: 20px;
+        padding: 1px 10px;
+    }
+    QToolButton {
+        padding: 1px;
     }
     QPushButton::default {
         border-bottom: 1px solid $accent;
     }
-    QPushButton:hover {
+    QPushButton:hover,
+    QToolButton:hover {
         border: 1px solid $accent;
         color: $text_strong;
         background-color: $button_hover_bg;
     }
-    QPushButton:pressed {
+    QPushButton:pressed,
+    QToolButton:pressed {
         color: $text_strong;
         background-color: $button_pressed_bg;
     }
-    QPushButton:disabled {
+    QPushButton:checked,
+    QToolButton:checked {
+        border: 1px solid $accent;
+        color: $selection_text;
+        background-color: $selection_bg;
+    }
+    QPushButton:disabled,
+    QToolButton:disabled {
         border: 1px solid $border;
         color: $disabled_text;
         background-color: $panel_bg;
-    }
-    QToolButton {
-        border: 1px solid transparent;
-        border-bottom: 1px solid $accent;
-        color: $text;
-        padding: 2px;
-        background-color: $panel_bg;
-    }
-    QToolButton:hover {
-        border: 1px solid transparent;
-        border-bottom: 2px solid $accent_hover;
-        color: $text_strong;
-        padding-bottom: 1px;
-        background-color: $panel_bg;
-    }
-    QToolButton#databaseIconButton,
-    QToolButton#plotIconButton,
-    QToolButton#exportIconButton,
-    QToolButton#closeAllPlotsButton {
-        border: 1px solid $border_strong;
-        border-radius: 5px;
-        padding: 1px;
-        background-color: $button_bg;
-    }
-    QToolButton#databaseIconButton:hover,
-    QToolButton#plotIconButton:hover,
-    QToolButton#exportIconButton:hover {
-        border: 1px solid $accent;
-        background-color: $button_hover_bg;
-    }
-    QToolButton#databaseIconButton:pressed,
-    QToolButton#plotIconButton:pressed,
-    QToolButton#exportIconButton:pressed {
-        background-color: $button_pressed_bg;
-    }
-    QToolButton#closeAllPlotsButton {
-        margin-right: 8px;
     }
     QToolButton#closeAllPlotsButton:hover {
         border: 1px solid $danger;
@@ -241,9 +217,11 @@ _STYLESHEET_TEMPLATE = Template(
         background-color: $field_alt_bg;
         color: $muted_text;
     }
+    QSpinBox#traceAppearanceOpacity,
     QSpinBox#heatmapAppearanceOpacity {
-        padding: 0 16px 0 4px;
+        padding: 0 4px;
     }
+    QSpinBox#traceAppearanceOpacity QLineEdit,
     QSpinBox#heatmapAppearanceOpacity QLineEdit {
         padding: 0;
     }
@@ -588,13 +566,19 @@ class PlotTheme:
                     style_axis(axis)
 
         plot_item.vb.gridPen = pg.mkPen(color=cls.plot_grid)
-        cls.set_line_colours(plot_item)
+        styles = plot_win.__dict__.get("_trace_styles", {})
+        managed_lines = [line for key, line in plot_win.__dict__.get("lines", {}).items() if key in styles]
+        cls.set_line_colours(plot_item, preserve=managed_lines)
         update_annotation = getattr(plot_win, "_update_plot_annotation", None)
         if callable(update_annotation):
             update_annotation()
 
     @classmethod
-    def set_line_colours(cls, plot_item):
+    def set_line_colours(cls, plot_item, *, preserve=()):
+        """Colour unmanaged plot items without overwriting appearance styles."""
+        protected = {id(item) for item in preserve}
         for index, line in enumerate(plot_item.listDataItems()):
+            if id(line) in protected:
+                continue
             color = cls.colors[index % len(cls.colors)]
             line.setPen(pg.mkPen(color=color))

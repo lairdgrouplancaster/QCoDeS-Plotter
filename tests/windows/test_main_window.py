@@ -1744,12 +1744,12 @@ class OptionsMenuTestCase(unittest.TestCase):
             }
             option_texts = [
                 action.text().replace("&", "")
-                for action in menus["Options"].actions()
+                for action in menus["Settings"].actions()
                 if not action.isSeparator()
             ]
             preferences_action = next(
                 action
-                for action in menus["Options"].actions()
+                for action in menus["Settings"].actions()
                 if action.text().replace("&", "") == "Preferences..."
             )
 
@@ -1780,7 +1780,7 @@ class OptionsMenuTestCase(unittest.TestCase):
             test_data_menu = next(
                 action.menu()
                 for action in file_menu.actions()
-                if action.text().replace("&", "") == "Generate Test Data"
+                if action.text().replace("&", "") == "Generate Test Data from Template"
             )
             actions = {
                 action.objectName(): action.text().replace("&", "")
@@ -3858,7 +3858,9 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
         def show_error(self, title, message, details=None):
             raise AssertionError((title, message, details))
 
-    def test_refresh_empty_database_reports_waiting_state(self):
+    @patch.object(database_actions, "datetime")
+    def test_refresh_empty_database_reports_waiting_state(self, clock):
+        clock.now.return_value.astimezone.return_value.strftime.return_value = "12:23:40"
         harness = self.Harness()
         harness.refreshMain()
         harness.database_refresh_finished(
@@ -3875,7 +3877,7 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
             harness.status_messages,
             [
                 ("Checking for new runs...", 0),
-                ("No measurements found yet; still waiting for new runs.", 3000),
+                ("Last checked 12:23:40 · No measurements found yet; still waiting for new runs.", 3000),
             ],
         )
 
@@ -4023,7 +4025,9 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
         def show_error(self, title, message, details=None):
             raise AssertionError((title, message, details))
 
-    def test_refresh_requeues_previews_for_updated_watched_runs(self):
+    @patch.object(database_actions, "datetime")
+    def test_refresh_requeues_previews_for_updated_watched_runs(self, clock):
+        clock.now.return_value.astimezone.return_value.strftime.return_value = "12:23:40"
         updated_runs = {
             4: {
                 "guid": "guid-4",
@@ -4044,7 +4048,7 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
         self.assertEqual(harness.infoBox.preview.added_runs, [updated_runs])
         self.assertEqual(
             harness.status_messages[-1],
-            ("No new runs found.", 3000),
+            ("Last checked 12:23:40 · No new runs", 3000),
         )
 
 
@@ -4382,13 +4386,13 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
             harness.plotted_guids,
             ["guid-11", "guid-12", "guid-13"],
         )
-        self.assertEqual(
-            harness.status_messages,
-            [
-                ("Checking for new runs...", 0),
-                ("Found 3 new runs.", 5000),
-            ],
+        self.assertEqual(len(harness.status_messages), 2)
+        self.assertEqual(harness.status_messages[0], ("Checking for new runs...", 0))
+        self.assertRegex(
+            harness.status_messages[1][0],
+            r"^Last checked \d{2}:\d{2}:\d{2} · Found 3 new runs$",
         )
+        self.assertEqual(harness.status_messages[1][1], 5000)
 
     def test_refresh_does_not_auto_plot_new_runs_when_disabled(self):
         new_runs = {
@@ -4405,10 +4409,11 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
         )
 
         self.assertEqual(harness.plotted_guids, [])
-        self.assertEqual(
-            harness.status_messages[-1],
-            ("Found 1 new run.", 5000),
+        self.assertRegex(
+            harness.status_messages[-1][0],
+            r"^Last checked \d{2}:\d{2}:\d{2} · Found 1 new run$",
         )
+        self.assertEqual(harness.status_messages[-1][1], 5000)
 
     @patch.object(database_actions, "enqueue_auto_plot")
     def test_trusted_refresh_queues_new_runs(self, enqueue):

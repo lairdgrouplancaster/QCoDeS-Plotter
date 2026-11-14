@@ -16,7 +16,7 @@ from ._plot_host import PlotHost
 from ._widgets import CopyableTableWidget
 
 _MarqueeHandle = Literal["nw", "n", "ne", "e", "se", "s", "sw", "w"]
-_MarqueeDragMode = Literal["new", "nw", "n", "ne", "e", "se", "s", "sw", "w"]
+_MarqueeDragMode = Literal["new", "move", "nw", "n", "ne", "e", "se", "s", "sw", "w"]
 _MarqueeAction = Callable[[], bool]
 
 
@@ -25,6 +25,7 @@ class _MarqueeDragState(TypedDict):
     handle_offset: QtCore.QPointF
     mode: _MarqueeDragMode
     rect: QtCore.QRectF | None
+    move_axis: Literal["x", "y"] | None
 
 
 if TYPE_CHECKING:
@@ -164,7 +165,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             mode = "new"
 
         handle_offset = QtCore.QPointF()
-        if mode != "new" and self.marquee is not None:
+        if mode != "new" and mode != "move" and self.marquee is not None:
             handle_point = self._marquee_handle_points_for_rect(self.marquee)[mode]
             handle_offset = start - handle_point
 
@@ -173,6 +174,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             "handle_offset": QtCore.QPointF(handle_offset),
             "mode": mode,
             "rect": QtCore.QRectF(self.marquee) if self.marquee is not None else None,
+            "move_axis": None,
             }
 
         if mode == "new":
@@ -196,6 +198,21 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
 
         if state["mode"] == "new" or state["rect"] is None:
             rect = QtCore.QRectF(state["anchor"], point)
+        elif state["mode"] == "move":
+            rect = QtCore.QRectF(state["rect"])
+            delta = point - state["anchor"]
+            if modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier:
+                if state.get("move_axis") is None and not delta.isNull():
+                    viewbox = self._marquee_viewbox()
+                    screen_delta = viewbox.mapViewToScene(point) - viewbox.mapViewToScene(state["anchor"])
+                    state["move_axis"] = "x" if abs(screen_delta.x()) >= abs(screen_delta.y()) else "y"
+                if state.get("move_axis") == "x":
+                    delta.setY(0)
+                elif state.get("move_axis") == "y":
+                    delta.setX(0)
+            else:
+                state["move_axis"] = None
+            rect.translate(delta)
         else:
             rect = QtCore.QRectF(state["rect"])
             offset = state.get("handle_offset", QtCore.QPointF())
@@ -610,6 +627,8 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
                 ),
             ) -> QtCore.Qt.CursorShape | None:
         mode = self.current_marquee_drag_mode()
+        if mode == "move":
+            return QtCore.Qt.CursorShape.SizeAllCursor
         if mode == "new":
             return QtCore.Qt.CursorShape.CrossCursor
         if mode is not None:
@@ -618,6 +637,8 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         handle = self.marquee_drag_mode_at(scene_pos)
         if handle is not None:
             return self._marquee_cursor_shape_for_handle(handle)
+        if self.marquee_contains_scene_pos(scene_pos):
+            return QtCore.Qt.CursorShape.SizeAllCursor
         if modifiers & QtCore.Qt.KeyboardModifier.AltModifier:
             return QtCore.Qt.CursorShape.CrossCursor
 

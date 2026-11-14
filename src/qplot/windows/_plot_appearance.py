@@ -9,6 +9,83 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 
+def compact_spinbox_size_hint(spin, size):
+    """Fit the maximum value and suffix, including the styled editor margins."""
+    option = qtw.QStyleOptionSpinBox()
+    spin.initStyleOption(option)
+    option.rect = QtCore.QRect(QtCore.QPoint(), size)
+    edit_rect = spin.style().subControlRect(
+        qtw.QStyle.ComplexControl.CC_SpinBox,
+        option, qtw.QStyle.SubControl.SC_SpinBoxEditField, spin,
+    )
+    editor = spin.lineEdit()
+    frame = qtw.QStyleOptionFrame()
+    frame.initFrom(editor)
+    frame.state |= qtw.QStyle.StateFlag.State_Sunken
+    if editor.hasFrame():
+        frame.lineWidth = editor.style().pixelMetric(
+            qtw.QStyle.PixelMetric.PM_DefaultFrameWidth, frame, editor
+        )
+    frame.rect = QtCore.QRect(QtCore.QPoint(), edit_rect.size())
+    contents = editor.style().subElementRect(
+        qtw.QStyle.SubElement.SE_LineEditContents, frame, editor
+    )
+    text_width = editor.fontMetrics().horizontalAdvance(spin.textFromValue(spin.maximum()) + spin.suffix())
+    margins = editor.textMargins()
+    # QLineEdit adds two pixels on each side of its text.
+    size.setWidth(size.width() - contents.width() + text_width + margins.left() + margins.right() + 4)
+    return size
+
+
+class _OpacitySpinBox(qtw.QSpinBox):
+    """Reserve only enough editor space for the maximum percentage."""
+
+    def sizeHint(self):
+        return compact_spinbox_size_hint(self, super().sizeHint())
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
+
+
+def configure_opacity_spinbox(spin: qtw.QSpinBox) -> None:
+    """Keep percentage editing and keyboard steps without visible buttons."""
+    spin.setRange(0, 100)
+    spin.setValue(100)
+    spin.setSuffix("%")
+    spin.setSingleStep(1)
+    spin.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed)
+    # NoButtons clips the edit field with Qt's stylesheet style on Windows.
+    # Zero-sized button subcontrols preserve the editor and keyboard stepping.
+    spin.setStyleSheet(
+        "QSpinBox::up-button, QSpinBox::down-button { width: 0px; height: 0px; border: none; }"
+    )
+
+
+def visibility_opacity_row(visible, slider, spin):
+    """Keep visibility and opacity together, wrapping before a cramped slider."""
+    row = qtw.QWidget()
+    layout = qtw.QFormLayout(row)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+    layout.setHorizontalSpacing(14)
+    layout.setRowWrapPolicy(qtw.QFormLayout.RowWrapPolicy.WrapLongRows)
+    layout.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    layout.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+    visible.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Preferred)
+    controls = qtw.QWidget()
+    controls_layout = qtw.QHBoxLayout(controls)
+    controls_layout.setContentsMargins(0, 0, 0, 0)
+    controls_layout.setSpacing(6)
+    label = qtw.QLabel("Opacity")
+    label.setBuddy(spin)
+    controls_layout.addWidget(label, 0, QtCore.Qt.AlignmentFlag.AlignVCenter)
+    slider.setMinimumWidth(80)
+    controls_layout.addWidget(slider, 1)
+    controls_layout.addWidget(spin)
+    layout.addRow(visible, controls)
+    return row
+
+
 def reordered_rows[Item](
     items: Sequence[Item], source_rows: Sequence[int], destination_row: int,
 ) -> list[Item]:
@@ -272,7 +349,7 @@ def configure_appearance_table(
     table.setShowGrid(False)
     table.setWordWrap(False)
     table.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
-    table.setIconSize(QtCore.QSize(64, 22))
+    table.setIconSize(QtCore.QSize(48, 22))
     table.setHorizontalScrollBarPolicy(
         QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
     )

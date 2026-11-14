@@ -1340,7 +1340,8 @@ class PreviewImageLabel(qtw.QLabel):
         self.setAccessibleDescription(
             "Ctrl/Cmd-click to select several thumbnails; Shift-click selects a range. "
             "Drag a highlighted thumbnail to add the selection to a plot. "
-            "Press Enter or Space to plot. Press Menu or Shift+F10 for plot and export actions."
+            "Press Enter to plot; Space toggles selection. "
+            "Press Menu or Shift+F10 for plot, export and statistics actions."
             if self.plot_supported else
             "Ctrl/Cmd-click to select several thumbnails; Shift-click selects a range. "
             "Press Menu or Shift+F10 for CSV export and statistics. Plotting is unavailable."
@@ -1443,10 +1444,13 @@ class PreviewImageLabel(qtw.QLabel):
 
     def keyPressEvent(self, event):
         key = event.key()
+        if key == QtCore.Qt.Key.Key_Space and self.parameter:
+            self.select_preview(modifiers=QtCore.Qt.KeyboardModifier.ControlModifier)
+            event.accept()
+            return
         if self.plot_supported and self.parameter and key in (
                 QtCore.Qt.Key.Key_Return,
                 QtCore.Qt.Key.Key_Enter,
-                QtCore.Qt.Key.Key_Space,
                 ):
             self.select_preview()
             self.plotRequested.emit(self.parameter)
@@ -1499,7 +1503,7 @@ class PreviewImageLabel(qtw.QLabel):
 
         batch_signal = getattr(scope, "batchExportRequested", None)
         if len(targets) > 1 and batch_signal is not None:
-            export_action = QtGui.QAction("Export Selected Thumbnails as CSV…", menu)
+            export_action = QtGui.QAction("Export Selected Measurements as CSV…", menu)
             menu.addAction(export_action)
             export_action.triggered.connect(
                 lambda: batch_signal.emit(targets) if is_current() else None,
@@ -1514,13 +1518,13 @@ class PreviewImageLabel(qtw.QLabel):
         )
         menu.addAction(plot_action)
 
-        export_action = QtGui.QAction("&Export CSV...", menu)
+        export_action = QtGui.QAction("Export This &Measurement as CSV…", menu)
         export_action.triggered.connect(
             lambda: self.exportRequested.emit(self.parameter) if is_current() else None,
         )
         menu.addAction(export_action)
 
-        stats_action = QtGui.QAction("Generate &stats...", menu)
+        stats_action = QtGui.QAction("Generate &Statistics…", menu)
         stats_action.triggered.connect(
             lambda: self.statsRequested.emit(self.parameter) if is_current() else None,
         )

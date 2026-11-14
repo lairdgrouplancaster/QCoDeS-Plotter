@@ -60,7 +60,8 @@ def test_trace_hover_identifies_assigned_axes_and_preserves_style(
     window = loaded_plot
     style = window._trace_styles[window.label]
     style.line_enabled = not scatter
-    style.dots_enabled = scatter
+    style.markers_enabled = scatter
+    style.markers_size = 6.0
     style.opacity = 0.45
     owner = _assign_trace_axes(window, window.label, *axes)
     owner.setRange(xRange=[-1, 65], yRange=[0, 85], padding=0)
@@ -145,7 +146,8 @@ def test_empty_plot_interior_clears_trace_and_axes_until_data_is_inspected(
     window = loaded_plot
     style = window._trace_styles[window.label]
     style.line_enabled = not scatter
-    style.dots_enabled = scatter
+    style.markers_enabled = scatter
+    style.markers_size = 6.0
     window._apply_trace_style(window.label, window.line)
     window.resize(1000, 700)
     owner = window.line.getViewBox()

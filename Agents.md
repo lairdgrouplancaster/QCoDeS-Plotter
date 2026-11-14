@@ -148,3 +148,16 @@ write to existing measurement databases or their protected sidecars. Keep
 `.github/workflows/release.yml` and publishing behaviour unchanged unless the
 user explicitly approves changes. Do not push, merge, tag, publish or change
 remote settings without explicit approval.
+
+## Questions are discussion only
+
+If the user's latest prompt, after removing trailing whitespace, ends
+with `?`, treat that turn as a request for explanation, analysis or opinion.
+
+Do not modify files, run commands that change state, or perform actions
+that change external systems. Read-only inspection is allowed.
+Provide recommendations or proposed changes in the response only.
+
+This rule takes precedence over general instructions to act autonomously
+or interpret questions as requests to perform work. Earlier authorisation
+does not override this restriction for the current turn.

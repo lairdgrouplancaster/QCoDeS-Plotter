@@ -53,7 +53,7 @@ def test_selected_runs_export_separate_csvs_with_selected_parameters(
     folder.mkdir()
     _accept_batch(monkeypatch, folder, parameter=parameter)
 
-    window.exportRunCsv()
+    window.export_selected_runs_csv()
     manager = window._export_task_manager
     wait_for(lambda: not manager.tasks)
     assert len(manager.history) == len(runs)
@@ -210,3 +210,14 @@ def test_retired_batch_context_menu_rejects_queued_action(
     state = _run_menu(window, runs[1][1], retire)
     assert not state["visible_after_retirement"]
     assert not requested
+
+
+def test_csv_button_uses_controls_with_multiple_selected_runs(typed_run_window, monkeypatch):
+    window, runs = typed_run_window
+    _select_runs(window, runs)
+    captured = []
+    monkeypatch.setattr(window, "_run_csv_export_request", lambda: ("key", 2, runs[0][0]))
+    monkeypatch.setattr(window, "_export_measurement_csv", lambda *args, **kwargs: captured.append((args, kwargs)))
+    monkeypatch.setattr(window, "export_selected_runs_csv", lambda: pytest.fail("Button switched to table selection"))
+    window.exportRunCsv()
+    assert captured == [(("key", 2), {"run_id": runs[0][0]})]

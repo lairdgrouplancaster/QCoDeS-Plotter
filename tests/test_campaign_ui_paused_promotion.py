@@ -29,6 +29,7 @@ def _promote_from_appearance(main, target):
     assert dialog.remove_item_button.isEnabled()
     previous = set(main.windows)
     dialog.remove_item_button.click()
+    dialog.accept()  # Removal is committed when the appearance session is accepted.
     replacement = next(win for win in main.windows if win not in previous)
     _wait_for(lambda: not replacement.worker.running
               and not getattr(replacement, "_refresh_pending", False))

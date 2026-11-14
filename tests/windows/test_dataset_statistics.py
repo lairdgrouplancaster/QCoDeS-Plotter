@@ -43,7 +43,7 @@ def test_thumbnail_action_and_shared_dialog(monkeypatch):
     label.statsRequested.connect(requested.append)
 
     def choose_stats(menu, _position):
-        action = next(a for a in menu.actions() if 'stats' in a.text())
+        action = next(a for a in menu.actions() if 'statistics' in a.text().lower())
         action.trigger()
 
     monkeypatch.setattr(qtw.QMenu, 'exec', choose_stats)

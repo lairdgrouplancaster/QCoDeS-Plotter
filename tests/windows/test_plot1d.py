@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows import _axis_ticks as ticks_module
@@ -24,6 +24,15 @@ from qplot.windows._subplots import custom_viewbox
 from qplot.windows._subplots.subplot1d import _subplot_axis_order, subplot1d
 from qplot.windows._widgets import QDock_context, picker_1d
 from qplot.windows.plot1d import plot1d
+
+
+class _TraceDefaultsConfig:
+    def get(self, key):
+        return {
+            "user_preference.trace_colour": TRACE_COLOR_PALETTE[0],
+            "user_preference.trace_line_width": 2.0,
+            "user_preference.trace_line_style": "Solid",
+        }[key]
 
 
 class SnapToTraceTestCase(unittest.TestCase):
@@ -1195,6 +1204,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
     def test_register_main_line_defers_until_line_exists(self):
         window = plot1d.__new__(plot1d)
+        window.config = None
         window.label = "main"
         window.line = None
         window.lines = {}
@@ -1208,7 +1218,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         class Theme:
             colors = [QtGui.QColor("#008000")]
 
-        class Config:
+        class Config(_TraceDefaultsConfig):
             theme = Theme()
 
         class Line:
@@ -1251,6 +1261,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
     def test_main_line_color_change_before_line_exists_is_stored(self):
         window = plot1d.__new__(plot1d)
+        window.config = None
         window.label = "main"
         window.line = None
 
@@ -1307,6 +1318,7 @@ class SnapToTraceTestCase(unittest.TestCase):
                 pass
 
         window = plot1d.__new__(plot1d)
+        window.config = None
         window.plot = Plot()
         window.label = "main"
         window.line = Line()
@@ -1670,7 +1682,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         class Theme:
             colors = [QtGui.QColor("#008000")]
 
-        class Config:
+        class Config(_TraceDefaultsConfig):
             theme = Theme()
 
         class BaseWindow(qtw.QMainWindow):
@@ -1705,7 +1717,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         class Theme:
             colors = [QtGui.QColor("#ff0000")]
 
-        class Config:
+        class Config(_TraceDefaultsConfig):
             theme = Theme()
 
         class BaseWindow(qtw.QMainWindow):
@@ -1867,7 +1879,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             host.line = pg.PlotDataItem()
             host.lines = {host.label: host.line}
             host._trace_styles = {
-                host.label: host._TraceStyle(line_color="#d62728", dots_enabled=True)
+                host.label: host._TraceStyle(line_color="#d62728", markers_enabled=True, markers_size=6.0)
                 }
 
             dialog = _TraceAppearanceDialog(host)
@@ -1902,7 +1914,7 @@ class SnapToTraceTestCase(unittest.TestCase):
                 "Traces",
                 [group.title() for group in dialog.findChildren(qtw.QGroupBox)],
             )
-            self.assertFalse(
+            self.assertTrue(
                 any(
                     label.text().startswith("Editing ")
                     for label in dialog.findChildren(qtw.QLabel)
@@ -1953,14 +1965,11 @@ class SnapToTraceTestCase(unittest.TestCase):
             dialog.x_axis.setCurrentText("Top")
             self.assertEqual(host._trace_styles[host.label].x_axis, "Top")
 
-            dialog.dots_enable.setChecked(True)
             dialog.marker_enable.setChecked(True)
-            self.assertFalse(dialog.dots_enable.isChecked())
             self.assertTrue(dialog.marker_enable.isChecked())
-
-            dialog.dots_enable.setChecked(True)
-            self.assertTrue(dialog.dots_enable.isChecked())
-            self.assertFalse(dialog.marker_enable.isChecked())
+            self.assertTrue(host._trace_styles[host.label].markers_enabled)
+            dialog.marker_enable.setChecked(False)
+            self.assertFalse(host._trace_styles[host.label].markers_enabled)
         finally:
             if dialog is not None:
                 dialog.deleteLater()
@@ -2088,7 +2097,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
             self.assertEqual(host.removed, [(host.source.label, secondary_key)])
             self.assertEqual(dialog.table.rowCount(), 1)
-            self.assertEqual(dialog._selected_labels(), [host.label])
+            self.assertEqual(dialog._selected_labels(), [])
             self.assertFalse(dialog.remove_trace_button.isEnabled())
             self.assertGreaterEqual(
                 dialog.add_trace_combo.findData(secondary_key),
@@ -2239,7 +2248,12 @@ class SnapToTraceTestCase(unittest.TestCase):
 
             self.assertEqual(host._trace_styles[host.label].line_color, "#123456")
             self.assertEqual(dialog.line_color.currentData(), "#123456")
+            self.assertEqual(dialog.line_color.currentText(), "#123456")
+            self.assertIn("#123456", dialog.line_color.toolTip())
             self.assertEqual(host.lines[host.label].pen.color().name(), "#123456")
+            dialog._set_combo_value(dialog.line_color, "green")
+            self.assertEqual(dialog.line_color.currentText(), "#008000")
+            self.assertIn("#008000", dialog.line_color.toolTip())
         finally:
             if dialog is not None:
                 dialog.deleteLater()
@@ -2270,6 +2284,12 @@ class SnapToTraceTestCase(unittest.TestCase):
             self.assertIsInstance(effect, qtw.QGraphicsOpacityEffect)
             self.assertEqual(effect.opacity(), 0.37)
 
+            QtTest.QTest.keyClick(dialog.opacity, QtCore.Qt.Key.Key_Up)
+            self.assertEqual(dialog.opacity_slider.value(), 38)
+            self.assertEqual(host._trace_styles[host.label].opacity, 0.38)
+            QtTest.QTest.keyClick(dialog.opacity, QtCore.Qt.Key.Key_Down)
+            self.assertEqual(dialog.opacity_slider.value(), 37)
+
             dialog.opacity.setValue(100)
 
             self.assertEqual(dialog.opacity_slider.value(), 100)
@@ -2283,7 +2303,7 @@ class SnapToTraceTestCase(unittest.TestCase):
         class Theme:
             colors = [QtGui.QColor("#008000")]
 
-        class Config:
+        class Config(_TraceDefaultsConfig):
             theme = Theme()
 
         class BaseWindow(qtw.QMainWindow):
@@ -2788,6 +2808,7 @@ class SnapToTraceTestCase(unittest.TestCase):
     def test_register_main_line_replaces_initial_empty_trace(self):
         line = object()
         window = plot1d.__new__(plot1d)
+        window.config = None
         window.label = "main"
         window.line = line
         window.lines = {"main": None}
@@ -2804,7 +2825,7 @@ class SnapToTraceTestCase(unittest.TestCase):
                 QtGui.QColor("#ff0000"),
                 ]
 
-        class Config:
+        class Config(_TraceDefaultsConfig):
             theme = Theme()
 
         class Dataset:

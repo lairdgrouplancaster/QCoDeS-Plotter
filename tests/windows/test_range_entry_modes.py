@@ -53,6 +53,68 @@ def click(button):
     QtTest.QTest.mouseClick(button, QtCore.Qt.MouseButton.LeftButton)
 
 
+def test_colour_scaling_uses_the_axis_range_layout(heatmap, axis_window, qapplication):
+    heatmap.open_colorbar_scale_dialog()
+    qapplication.processEvents()
+    axis = axis_window._axis_scale_controls["x"]
+    assert type(heatmap.colorbar_copy_auto_limits_button) is type(axis.copyAutoLimitsButton)
+    for entry, manual, first, second, auto, fit in (
+        (heatmap.colorbar_range_entry, heatmap.colorbar_manual_radio,
+         heatmap.colorbar_min_text, heatmap.colorbar_max_text,
+         heatmap.colorbar_auto_radio, heatmap.colorbar_copy_auto_limits_button),
+        (axis.rangeEntry, axis.manualRadio, axis.minText, axis.maxText,
+         axis.autoRadio, axis.copyAutoLimitsButton),
+    ):
+        assert entry.geometry().bottom() < entry._labels[0].geometry().top()
+        assert entry._labels[0].geometry().bottom() < first.geometry().top()
+        assert manual.geometry().right() < first.geometry().left()
+        assert first.geometry().right() < second.geometry().left()
+        assert second.geometry().right() < fit.geometry().left()
+        assert abs(entry.geometry().center().x() - (first.geometry().left() + second.geometry().right()) / 2) <= 2
+        assert entry.summary.geometry().top() > first.geometry().bottom()
+        assert auto.geometry().top() > entry.summary.geometry().bottom()
+        assert auto.geometry().left() == manual.geometry().left()
+    table = heatmap.colorbar_colormap_table
+    assert table.horizontalHeaderItem(0).text() == "Name"
+    assert table.minimumHeight() < 220
+    assert table.height() < 300
+    assert heatmap.symmetric_color.text() == "Symmetric about zero"
+
+
+def test_compact_colour_limits_reveal_and_accept_exact_values(heatmap, qapplication):
+    limits = (-1.64340716715477, 1.64343277133006)
+    assert heatmap.setColorbarManualRange(*limits)
+    first, second = heatmap.colorbar_min_text, heatmap.colorbar_max_text
+    heatmap.colorbar_search.setFocus()
+    qapplication.processEvents()
+    assert (first.presentation_text(), second.presentation_text()) == ("-1.64341", "1.64343")
+    assert (float(first.text()), float(second.text())) == limits
+    first.setFocus()
+    qapplication.processEvents()
+    assert first.presentation_text() == repr(limits[0])
+    QtTest.QTest.keyClick(first, QtCore.Qt.Key.Key_Return)
+    assert tuple(heatmap.bar.levels()) == limits
+    first.setText("-2")
+    QtTest.QTest.keyClick(first, QtCore.Qt.Key.Key_Return)
+    assert tuple(heatmap.bar.levels()) == (-2.0, limits[1])
+
+
+@pytest.mark.parametrize("limits", [
+    (1.2345678901234567, 1.2345678901234569),
+    (1e-120, 2e-120),
+    (1e250, 2e250),
+])
+def test_compact_colour_limits_stay_distinct_without_rounding_data(heatmap, qapplication, limits):
+    assert heatmap.setColorbarManualRange(*limits)
+    heatmap.colorbar_search.setFocus()
+    qapplication.processEvents()
+    first, second = heatmap.colorbar_min_text, heatmap.colorbar_max_text
+    assert first.presentation_text() != second.presentation_text()
+    heatmap.colorbar_manual_radio.click()
+    assert heatmap._colorbar_manual_levels == limits
+    assert tuple(heatmap.bar.levels()) == limits
+
+
 def accept(first, second, values):
     first.setFocus()
     first.setText(str(values[0]))
@@ -72,7 +134,7 @@ def test_typing_axis_limit_freezes_auto_and_preserves_first_keystroke(
         click(ui.rangeEntry.center_span_button)
     original = deepcopy(window.vb.getState()["targetRange"])
     automatic_style = ui.minText.styleSheet()
-    assert "palette(mid)" in automatic_style
+    assert "palette(mid)" not in automatic_style
     assert ui.minText.isEnabled() and not ui.minText.isReadOnly()
     ui.minText.setFocus()
     QtTest.QTest.keyClick(ui.minText, QtCore.Qt.Key.Key_Return)
@@ -81,7 +143,7 @@ def test_typing_axis_limit_freezes_auto_and_preserves_first_keystroke(
     QtTest.QTest.keyClicks(ui.minText, "-")
     assert ui.minText.text() == "-"
     assert ui.manualRadio.isChecked()
-    assert ui.minText.styleSheet() != automatic_style
+    assert ui.minText.styleSheet() == automatic_style
     assert window.vb.getState()["targetRange"] == original
     assert window.vb.autoRangeEnabled()[window._axis_scale_axis_number(axis)] is False
     QtTest.QTest.keyClicks(ui.minText, "1.5")
@@ -99,7 +161,7 @@ def test_typing_color_limit_freezes_auto_and_preserves_first_keystroke(heatmap, 
     field = heatmap.colorbar_min_text
     original = tuple(heatmap.bar.levels())
     automatic_style = field.styleSheet()
-    assert "palette(mid)" in automatic_style
+    assert "palette(mid)" not in automatic_style
     assert field.isEnabled() and not field.isReadOnly()
     field.setFocus()
     QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
@@ -108,7 +170,7 @@ def test_typing_color_limit_freezes_auto_and_preserves_first_keystroke(heatmap, 
     QtTest.QTest.keyClicks(field, "-")
     assert field.text() == "-"
     assert heatmap.colorbar_manual_radio.isChecked()
-    assert field.styleSheet() != automatic_style
+    assert field.styleSheet() == automatic_style
     assert heatmap._colorbar_manual_levels == original
     assert tuple(heatmap.bar.levels()) == original
     QtTest.QTest.keyClicks(field, "1.5")
@@ -234,7 +296,7 @@ def test_invalid_axis_center_span_preserves_auto_and_fields(axis_window, values)
     ui = window._axis_scale_controls["x"]
     click(ui.rangeEntry.center_span_button)
     original = deepcopy(window.vb.getState())
-    texts = ui.minText.text(), ui.maxText.text()
+    texts = tuple(map(str, values))
     accept(ui.minText, ui.maxText, values)
     assert window.vb.getState()["targetRange"] == original["targetRange"]
     assert window.vb.getState()["autoRange"] == original["autoRange"]
@@ -314,8 +376,9 @@ def test_invalid_color_center_span_preserves_auto(heatmap, values):
     assert heatmap._colorbar_manual_levels is None
     assert tuple(heatmap.bar.levels()) == (0, 3)
     assert heatmap.relevel_refresh.isChecked()
-    assert float(heatmap.colorbar_min_text.text()) == 1.5
-    assert float(heatmap.colorbar_max_text.text()) == 3
+    assert heatmap.colorbar_min_text.text() == str(values[0])
+    assert heatmap.colorbar_max_text.text() == str(values[1])
+    assert entry._error
     assert heatmap.statuses
 
 

@@ -9,7 +9,11 @@ from fractions import Fraction
 
 import numpy as np
 
-from qplot.tools.heatmap_geometry import bounded_grid_shape, spatial_axis_bins
+from qplot.tools.heatmap_geometry import (
+    MAX_AGGREGATED_HEATMAP_CELLS,
+    bounded_grid_shape,
+    spatial_axis_bins,
+)
 from qplot.tools.operation_registry import OperationExecutionError
 
 from .trusted_live import (
@@ -28,8 +32,8 @@ LARGE_SUMMARY_ROWS = 262_144
 # amortise helper/transaction overhead while retaining the reply split limit.
 AGGREGATE_ROWS = 262_144
 MAX_GROUPS = 32_768
-MAX_AXIS_VALUES = 131_072
-MAX_NUMERIC_HEATMAP_CELLS = 2_000_000
+MAX_AXIS_VALUES = 262_144
+MAX_NUMERIC_HEATMAP_CELLS = MAX_AGGREGATED_HEATMAP_CELLS
 
 
 class PlotOperationLimitError(TrustedLiveQueryError, OperationExecutionError):
@@ -89,6 +93,10 @@ def numeric_heatmap(executor, dataset, plan, watermark, completed):
         executor.check_cancelled()
         active_axes = [axis for axis in range(2) if unique[axis] is not None]
         summary_rows = LARGE_SUMMARY_ROWS if len(active_axes) < 2 else SUMMARY_ROWS
+        if active_axes:
+            # A larger retained coordinate set must not grow a single helper
+            # reply beyond the previous two-axis summary payload bound.
+            summary_rows = min(summary_rows, 2 * SUMMARY_ROWS)
         stop = min(start + summary_rows, watermark)
         interval = 'id>? AND id<=?'
         where = f'{interval} AND {valid}'

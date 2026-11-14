@@ -109,6 +109,15 @@ def add_standard_window_controls(window):
 
     main_front_back_action = create_action("window.main_front_back", window)
     main_front_back_action.triggered.connect(lambda: toggle_main_window_front_back(window))
+    def update_front_back_label():
+        main = main_window_for(window)
+        main_front_back_action.setText(
+            "Send Main Window Behind Plot Windows"
+            if main is not None and main.isActiveWindow()
+            else "Bring Main Window to Front"
+        )
+    window_menu.aboutToShow.connect(update_front_back_label)
+    update_front_back_label()
     window_menu.addAction(main_front_back_action)
 
     window_menu.addSeparator()
@@ -167,7 +176,8 @@ def populate_available_window_actions(window, window_menu):
     if main_window is None:
         return
 
-    plot_windows = tuple(getattr(main_window, "windows", ()) or ())
+    plot_windows = tuple(plot for plot in (getattr(main_window, "windows", ()) or ())
+                         if not getattr(plot, "_appearance_preview_hidden", False))
     labels = [_plot_window_menu_label(plot_window) for plot_window in plot_windows]
     label_counts = Counter(labels)
     label_indexes = Counter()

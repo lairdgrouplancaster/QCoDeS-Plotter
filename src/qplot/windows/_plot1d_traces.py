@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -6,11 +7,27 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.configuration.trace import TRACE_COLOUR_KEY, TRACE_STYLE_KEY, TRACE_WIDTH_KEY
+
+from ._appearance_feedback import mixed_values
+from ._drawing_controls import (
+    LINE_STYLES,
+    TRACE_COLOR_PALETTE,
+    ColourSwatchCombo,
+    DrawingSizeSpinBox,
+    IconPreviewCombo,
+    colour_swatch_icon,
+    drawing_controls_row,
+    line_style_icon,
+)
 from ._plot_appearance import (
     CenteredPreviewDelegate,
     ReorderAppearanceTable,
+    _OpacitySpinBox,
     configure_appearance_table,
+    configure_opacity_spinbox,
     reordered_rows,
+    visibility_opacity_row,
 )
 from ._plot_host import PlotHost
 from ._plot_refresh import plot_refresh_required
@@ -18,22 +35,6 @@ from ._plot_transform_labels import native_axis_quantities
 from ._refresh_interval import refresh_interval_value
 from ._subplots import subplot1d
 from ._widgets import picker_1d
-
-TRACE_COLOR_PALETTE = (
-    "#1f77b4",
-    "#ff7f0e",
-    "#2ca02c",
-    "#d62728",
-    "#9467bd",
-    "#8c564b",
-    "#e377c2",
-    "#7f7f7f",
-    "#bcbd22",
-    "#17becf",
-    "#000000",
-    "#ffffff",
-    )
-
 
 if TYPE_CHECKING:
     class _Plot1DTraceBase(PlotHost, qtw.QMainWindow):
@@ -84,9 +85,6 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         line_color: str = "#1f77b4"
         line_width: float = 2.0
         line_style: str = "Solid"
-        dots_enabled: bool = False
-        dots_color: str = "#1f77b4"
-        dots_size: float = 6.0
         markers_enabled: bool = False
         markers_color: str = "#1f77b4"
         markers_symbol: str = "o"
@@ -117,8 +115,11 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
 
     def _initial_trace_style(self, order: int = 0) -> _TraceStyle:
         style = self._TraceStyle(order=order)
-        style.line_color = TRACE_COLOR_PALETTE[0]
-        style.dots_color = style.line_color
+        cfg = getattr(self, "config", None)
+        if cfg is not None:
+            style.line_color = cfg.get(TRACE_COLOUR_KEY)
+            style.line_width = cfg.get(TRACE_WIDTH_KEY)
+            style.line_style = cfg.get(TRACE_STYLE_KEY)
         style.markers_color = style.line_color
         return style
 
@@ -700,9 +701,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             )
         
         # Adjust apperance
-        cols = self.config.theme.colors
-        col_ind = self.box_count % len(cols)
-        new_option.color_box.setColor(cols[col_ind])
+        new_option.color_box.setColor(QtGui.QColor(self._initial_trace_style().line_color))
         self.box_count += 1
         
         # Add box to tracking array and then to last possition in ScrollWidget
@@ -912,7 +911,6 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         
         styles = self._ensure_trace_styles()
         style = styles.setdefault(trace_key, self._initial_trace_style(order=len(styles)))
-        style.line_color = selected_box.color_box.color().name()
         style.y_axis = "Right" if selected_box.axis_side.currentText().lower() == "right" else "Left"
         if self.plot_axes_swapped():
             self._transpose_trace_axis_style(style)
@@ -1263,8 +1261,6 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
     def _apply_trace_style(self, label: Any, line: Any) -> None:
         styles = self._ensure_trace_styles()
         style = styles.setdefault(label, self._initial_trace_style(order=len(styles)))
-        if style.dots_enabled and style.markers_enabled:
-            style.dots_enabled = False
         self._sync_trace_control(label)
         if line is None:
             return
@@ -1283,12 +1279,12 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         else:
             pen = None
         line.setPen(pen)
-        line.setSymbolPen(pg.mkPen(style.markers_color if style.markers_enabled else style.dots_color))
+        line.setSymbolPen(pg.mkPen(style.markers_color))
         line.setSymbolBrush(
-            pg.mkBrush(style.markers_color if style.markers_enabled else style.dots_color)
+            pg.mkBrush(style.markers_color)
         )
-        line.setSymbolSize(style.markers_size if style.markers_enabled else style.dots_size)
-        line.setSymbol(style.markers_symbol if style.markers_enabled else ("o" if style.dots_enabled else None))
+        line.setSymbolSize(style.markers_size)
+        line.setSymbol(style.markers_symbol if style.markers_enabled else None)
         style.opacity = min(max(float(style.opacity), 0.0), 1.0)
         set_opacity = getattr(line, "setOpacity", None)
         set_graphics_effect = getattr(line, "setGraphicsEffect", None)
@@ -1350,12 +1346,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
     _COL_PREVIEW = 1
     _COL_MEASUREMENT = 2
     _CUSTOM_COLOR_DATA = "__custom_color__"
-    _LINE_STYLES = (
-        ("Solid", QtCore.Qt.PenStyle.SolidLine),
-        ("Dash", QtCore.Qt.PenStyle.DashLine),
-        ("Dot", QtCore.Qt.PenStyle.DotLine),
-        ("Dash Dot", QtCore.Qt.PenStyle.DashDotLine),
-        )
+    _LINE_STYLES = LINE_STYLES
     _MARKER_SYMBOLS = ("o", "s", "t", "d", "+", "x")
 
     def __init__(self, owner: Plot1DTraceMixin):
@@ -1368,33 +1359,6 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.setStyleSheet(
             self.styleSheet()
             + """
-            QDoubleSpinBox#traceAppearanceSpin {
-                padding-right: 18px;
-            }
-            QDoubleSpinBox#traceAppearanceSpin::up-button {
-                subcontrol-origin: border;
-                subcontrol-position: top right;
-                width: 15px;
-                height: 10px;
-                border-left: 1px solid palette(mid);
-                border-bottom: 1px solid palette(mid);
-                border-top-right-radius: 4px;
-                background: transparent;
-            }
-            QDoubleSpinBox#traceAppearanceSpin::down-button {
-                subcontrol-origin: border;
-                subcontrol-position: bottom right;
-                width: 15px;
-                height: 10px;
-                border-left: 1px solid palette(mid);
-                border-bottom-right-radius: 4px;
-                background: transparent;
-            }
-            QDoubleSpinBox#traceAppearanceSpin::up-arrow,
-            QDoubleSpinBox#traceAppearanceSpin::down-arrow {
-                width: 7px;
-                height: 7px;
-            }
             QTableWidget#traceAppearanceTable {
                 border: 1px solid palette(mid);
                 background-color: palette(base);
@@ -1469,27 +1433,23 @@ class _TraceAppearanceDialog(qtw.QDialog):
 
         self.line_enable = qtw.QCheckBox("Line")
         self.line_enable.setToolTip("Draw connecting lines for the selected traces.")
-        self.line_color = qtw.QComboBox(); self._add_color_items(self.line_color, TRACE_COLOR_PALETTE)
-        self.line_color.setToolTip("Choose the line colour for the selected traces, or select a custom colour.")
-        self.line_width = qtw.QDoubleSpinBox(); self.line_width.setRange(0.5, 15); self.line_width.setValue(2); self.line_width.setDecimals(1); self.line_width.setSingleStep(0.5)
+        self.line_color = ColourSwatchCombo("Line colour"); self._add_color_items(self.line_color, TRACE_COLOR_PALETTE)
+        self.line_width = DrawingSizeSpinBox(); self.line_width.setRange(0.5, 15); self.line_width.setValue(2); self.line_width.setDecimals(1); self.line_width.setSingleStep(0.5)
         self.line_width.setToolTip("Set the line width of the selected traces in pixels.")
-        self.line_style = qtw.QComboBox(); self._add_line_style_items(self.line_style)
-        self.line_style.setToolTip("Choose a solid, dashed or dotted line for the selected traces.")
-        self.dots_enable = qtw.QCheckBox("Dots")
-        self.dots_enable.setToolTip("Draw a dot at every data point in the selected traces.")
-        self.dots_color = qtw.QComboBox(); self._add_color_items(self.dots_color, TRACE_COLOR_PALETTE)
-        self.dots_color.setToolTip("Choose the colour of data-point dots for the selected traces.")
-        self.dots_size = qtw.QDoubleSpinBox(); self.dots_size.setRange(1, 20); self.dots_size.setDecimals(1); self.dots_size.setSingleStep(1)
-        self.dots_size.setToolTip("Set the size of data-point dots in pixels.")
+        self.line_style = IconPreviewCombo("Line style"); self._add_line_style_items(self.line_style)
         self.marker_enable = qtw.QCheckBox("Markers")
-        self.marker_enable.setToolTip("Show identifying markers on the selected traces.")
-        self.marker_color = qtw.QComboBox(); self._add_color_items(self.marker_color, TRACE_COLOR_PALETTE)
-        self.marker_color.setToolTip("Choose the marker colour for the selected traces.")
-        self.marker_symbol = qtw.QComboBox(); self._add_marker_symbol_items(self.marker_symbol)
-        self.marker_symbol.setToolTip("Choose the marker shape for the selected traces.")
-        self.marker_size = qtw.QDoubleSpinBox(); self.marker_size.setRange(1, 30); self.marker_size.setValue(10); self.marker_size.setDecimals(1); self.marker_size.setSingleStep(1)
+        self.marker_enable.setToolTip("Draw a marker at each data point in the selected traces.")
+        self.marker_color = ColourSwatchCombo("Marker colour"); self._add_color_items(self.marker_color, TRACE_COLOR_PALETTE)
+        self.marker_symbol = IconPreviewCombo("Marker shape"); self._add_marker_symbol_items(self.marker_symbol)
+        self.marker_size = DrawingSizeSpinBox(); self.marker_size.setRange(1, 30); self.marker_size.setValue(10); self.marker_size.setDecimals(1); self.marker_size.setSingleStep(1)
         self.marker_size.setToolTip("Set the marker size in pixels.")
-        self.opacity = qtw.QSpinBox(); self.opacity.setRange(0, 100); self.opacity.setValue(100); self.opacity.setSuffix("%")
+        for control, name in ((self.line_width, "Line width"), (self.line_style, "Line style"),
+                              (self.marker_size, "Marker size"), (self.marker_symbol, "Marker shape")):
+            control.setAccessibleName(name)
+        for toggle in (self.line_enable, self.marker_enable):
+            toggle.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed)
+        self.opacity = _OpacitySpinBox()
+        configure_opacity_spinbox(self.opacity)
         self.opacity.setObjectName("traceAppearanceOpacity")
         self.opacity.setToolTip("Set opacity for selected traces.")
         self.opacity_slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal)
@@ -1512,73 +1472,32 @@ class _TraceAppearanceDialog(qtw.QDialog):
 
         for combo in (self.x_axis, self.y_axis):
             combo.setMinimumContentsLength(4)
-        color_combo_width = 86
-        for combo in (self.line_color, self.dots_color, self.marker_color):
-            combo.setIconSize(QtCore.QSize(42, 16))
-            combo.setFixedWidth(color_combo_width)
-            combo_view = combo.view()
-            if combo_view is not None:
-                combo_view.setMinimumWidth(color_combo_width)
-        for spin in (self.line_width, self.dots_size, self.marker_size):
+        for spin in (self.line_width, self.marker_size):
             # Applying a style rebuilds the selection controls. Commit typed
             # fractions first so that refresh cannot insert decimals mid-edit.
             spin.setKeyboardTracking(False)
             spin.setObjectName("traceAppearanceSpin")
-            spin.setFixedWidth(76)
-        self.opacity.setFixedWidth(68)
-        style_symbol_width = 86
-        self.line_style.setIconSize(QtCore.QSize(58, 16))
-        self.line_style.setFixedWidth(style_symbol_width)
-        line_style_view = self.line_style.view()
-        if line_style_view is not None:
-            line_style_view.setMinimumWidth(style_symbol_width)
-        self.marker_symbol.setIconSize(QtCore.QSize(28, 18))
-        self.marker_symbol.setFixedWidth(style_symbol_width)
-        marker_symbol_view = self.marker_symbol.view()
-        if marker_symbol_view is not None:
-            marker_symbol_view.setMinimumWidth(style_symbol_width)
+            spin.setSuffix(" px")
+            spin.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed)
+        self.line_style.setIconSize(QtCore.QSize(32, 16))
+        self.marker_symbol.setIconSize(QtCore.QSize(24, 18))
         axis_combo_width = 108
         self.x_axis.setFixedWidth(axis_combo_width)
         self.y_axis.setFixedWidth(axis_combo_width)
 
-        display_group = qtw.QGroupBox(panel)
-        display_layout = qtw.QGridLayout(display_group)
+        display_group = qtw.QGroupBox("Drawing", panel)
+        display_layout = qtw.QFormLayout(display_group)
         display_layout.setContentsMargins(8, 10, 8, 8)
-        display_layout.setHorizontalSpacing(6)
-        display_layout.setVerticalSpacing(4)
-        self._add_display_row(
-            display_layout,
-            0,
-            self.line_enable,
-            self.line_color,
-            [("Width", self.line_width), ("", self.line_style)],
-            )
-        self._add_display_row(
-            display_layout,
-            1,
-            self.dots_enable,
-            self.dots_color,
-            [("Size", self.dots_size)],
-            )
-        self._add_display_row(
-            display_layout,
-            2,
-            self.marker_enable,
-            self.marker_color,
-            [("Size", self.marker_size), ("", self.marker_symbol)],
-            )
-        display_layout.setColumnStretch(5, 1)
+        display_layout.setSpacing(6)
+        display_layout.setRowWrapPolicy(qtw.QFormLayout.RowWrapPolicy.WrapLongRows)
+        display_layout.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        display_layout.addRow(self.line_enable,
+                              drawing_controls_row(self.line_color, self.line_width, self.line_style))
+        display_layout.addRow(self.marker_enable,
+                              drawing_controls_row(self.marker_color, self.marker_size, self.marker_symbol))
         panel_layout.addWidget(display_group)
 
-        visibility_layout = qtw.QHBoxLayout()
-        visibility_layout.setContentsMargins(0, 0, 0, 0)
-        visibility_layout.setSpacing(6)
-        visibility_layout.addWidget(self.visible)
-        visibility_layout.addSpacing(16)
-        visibility_layout.addWidget(qtw.QLabel("Opacity"))
-        visibility_layout.addWidget(self.opacity_slider, 1)
-        visibility_layout.addWidget(self.opacity)
-        panel_layout.addLayout(visibility_layout)
+        panel_layout.insertWidget(0, visibility_opacity_row(self.visible, self.opacity_slider, self.opacity))
 
         trace_settings = qtw.QGroupBox("Trace axes", panel)
         trace_grid = qtw.QGridLayout(trace_settings)
@@ -1593,6 +1512,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         panel_layout.addWidget(trace_settings)
 
         plot_axes = qtw.QGroupBox("Plot axes", panel)
+        self.plot_axes_group = plot_axes
         plot_axes_layout = qtw.QVBoxLayout(plot_axes)
         plot_axes_layout.setContentsMargins(8, 10, 8, 8)
         plot_axes_layout.addWidget(self.swap_axes)
@@ -1603,15 +1523,21 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.trace_controls_panel = panel
 
         buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close, self)
+        self.appearance_buttons = buttons
         buttons.rejected.connect(self.close)
+        self.revert_button = buttons.addButton("Revert appearance", qtw.QDialogButtonBox.ButtonRole.ActionRole)
+        self.revert_button.setAutoDefault(False)
+        self.revert_button.setToolTip("Restore appearance when this editor opened. Added and removed datasets are kept.")
+        self.revert_button.clicked.connect(self.revert_appearance)
         main.addWidget(buttons)
+        self.selection_summary = qtw.QLabel(self)
+        self.selection_summary.setWordWrap(True)
+        main.insertWidget(0, self.selection_summary)
 
         self._line_controls = [self.line_color, self.line_width, self.line_style]
-        self._dots_controls = [self.dots_color, self.dots_size]
         self._marker_controls = [self.marker_color, self.marker_symbol, self.marker_size]
         self._selection_controls = [
             self.line_enable,
-            self.dots_enable,
             self.marker_enable,
             self.x_axis,
             self.y_axis,
@@ -1619,11 +1545,8 @@ class _TraceAppearanceDialog(qtw.QDialog):
             self.opacity_slider,
             self.opacity,
             *self._line_controls,
-            *self._dots_controls,
             *self._marker_controls,
             ]
-        self.dots_enable.toggled.connect(self._dots_enabled_changed)
-        self.marker_enable.toggled.connect(self._markers_enabled_changed)
         self.opacity_slider.valueChanged.connect(self.opacity.setValue)
         self.opacity.valueChanged.connect(self.opacity_slider.setValue)
         self.add_trace_combo.currentIndexChanged.connect(
@@ -1633,20 +1556,17 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.remove_trace_button.clicked.connect(self._remove_selected_traces)
         self.swap_axes.toggled.connect(self._swap_axes_toggled)
         for property_name, signal in [
-            ("line_enabled", self.line_enable.toggled),
+            ("line_enabled", self.line_enable.checkStateChanged),
             ("line_color", self.line_color.currentIndexChanged),
             ("line_width", self.line_width.valueChanged),
             ("line_style", self.line_style.currentIndexChanged),
-            ("dots_enabled", self.dots_enable.toggled),
-            ("dots_color", self.dots_color.currentIndexChanged),
-            ("dots_size", self.dots_size.valueChanged),
-            ("markers_enabled", self.marker_enable.toggled),
+            ("markers_enabled", self.marker_enable.checkStateChanged),
             ("markers_color", self.marker_color.currentIndexChanged),
             ("markers_symbol", self.marker_symbol.currentIndexChanged),
             ("markers_size", self.marker_size.valueChanged),
             ("x_axis", self.x_axis.currentTextChanged),
             ("y_axis", self.y_axis.currentTextChanged),
-            ("visible", self.visible.toggled),
+            ("visible", self.visible.checkStateChanged),
             ("opacity", self.opacity.valueChanged),
         ]:
             signal.connect(
@@ -1748,60 +1668,20 @@ class _TraceAppearanceDialog(qtw.QDialog):
             self.owner.remove_line(label, trace_key)
         self.refresh_rows()
 
-    def _dots_enabled_changed(self, enabled: bool) -> None:
-        if not enabled:
-            return
-
-        was_building = self._building
-        self._building = True
-        try:
-            self.marker_enable.setChecked(False)
-        finally:
-            self._building = was_building
-
-    def _markers_enabled_changed(self, enabled: bool) -> None:
-        if not enabled:
-            return
-
-        was_building = self._building
-        self._building = True
-        try:
-            self.dots_enable.setChecked(False)
-        finally:
-            self._building = was_building
-
-    def _add_display_row(
-            self,
-            layout: qtw.QGridLayout,
-            row: int,
-            toggle: qtw.QCheckBox,
-            color_combo: qtw.QComboBox,
-            controls: list[tuple[str, qtw.QWidget]],
-            ) -> None:
-        layout.addWidget(toggle, row, 0)
-        layout.addWidget(color_combo, row, 1)
-        column = 2
-        for label, widget in controls:
-            if label:
-                layout.addWidget(qtw.QLabel(label), row, column)
-                layout.addWidget(widget, row, column + 1)
-                column += 2
-            else:
-                layout.addWidget(widget, row, column)
-                column += 1
-
     def _add_color_items(self, combo: qtw.QComboBox, colors: Sequence[str]) -> None:
         for color in colors:
-            combo.addItem(self._color_icon(color), "", color)
+            combo.addItem(self._color_icon(color), color, color)
+            combo.setItemData(combo.count() - 1, color, QtCore.Qt.ItemDataRole.ToolTipRole)
         combo.addItem("Custom", self._CUSTOM_COLOR_DATA)
 
     def _add_line_style_items(self, combo: qtw.QComboBox) -> None:
         for name, _pen_style in self._LINE_STYLES:
-            combo.addItem(self._line_style_icon(name), "", name)
+            combo.addItem(self._line_style_icon(name), name, name)
 
     def _add_marker_symbol_items(self, combo: qtw.QComboBox) -> None:
+        names = {"o": "Circle", "s": "Square", "t": "Triangle", "d": "Diamond", "+": "Plus", "x": "Cross"}
         for symbol in self._MARKER_SYMBOLS:
-            combo.addItem(self._marker_symbol_icon(symbol), "", symbol)
+            combo.addItem(self._marker_symbol_icon(symbol), names[symbol], symbol)
 
     def refresh_theme(self) -> None:
         for index, (name, _pen_style) in enumerate(self._LINE_STYLES):
@@ -1814,28 +1694,10 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.refresh_rows()
 
     def _color_icon(self, color: str) -> QtGui.QIcon:
-        pixmap = QtGui.QPixmap(38, 16)
-        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
-        painter = QtGui.QPainter(pixmap)
-        painter.setPen(QtGui.QPen(QtGui.QColor("#444444")))
-        painter.setBrush(QtGui.QBrush(QtGui.QColor(color)))
-        painter.drawRoundedRect(1, 1, 36, 14, 2, 2)
-        painter.end()
-        return QtGui.QIcon(pixmap)
+        return colour_swatch_icon(color)
 
     def _line_style_icon(self, style: str) -> QtGui.QIcon:
-        pixmap = QtGui.QPixmap(54, 16)
-        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
-        painter = QtGui.QPainter(pixmap)
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        pen = QtGui.QPen(self.palette().color(QtGui.QPalette.ColorRole.Text))
-        pen.setWidthF(2.0)
-        pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
-        pen.setStyle(self._line_pen_style(style))
-        painter.setPen(pen)
-        painter.drawLine(4, pixmap.height() // 2, pixmap.width() - 4, pixmap.height() // 2)
-        painter.end()
-        return QtGui.QIcon(pixmap)
+        return line_style_icon(style, self.palette())
 
     def _marker_symbol_icon(self, symbol: str) -> QtGui.QIcon:
         pixmap = QtGui.QPixmap(24, 18)
@@ -1872,7 +1734,8 @@ class _TraceAppearanceDialog(qtw.QDialog):
         try:
             normalized_value = (
                 QtGui.QColor(value).name()
-                if isinstance(value, str) and value.startswith("#")
+                if isinstance(value, str) and (value.startswith("#")
+                   or isinstance(combo, ColourSwatchCombo) and QtGui.QColor(value).isValid())
                 else value
                 )
             for index in range(combo.count()):
@@ -1889,15 +1752,18 @@ class _TraceAppearanceDialog(qtw.QDialog):
                 combo.insertItem(
                     insert_index,
                     self._color_icon(normalized_value),
-                    "",
+                    normalized_value,
                     normalized_value,
                     )
                 combo.setCurrentIndex(insert_index)
+                combo.setItemData(insert_index, normalized_value, QtCore.Qt.ItemDataRole.ToolTipRole)
                 return
 
             combo.setCurrentText(value)
         finally:
             combo.blockSignals(previous_blocked)
+            if isinstance(combo, IconPreviewCombo):
+                combo.refresh_tooltip()
 
     def _custom_color_index(self, combo: qtw.QComboBox) -> int:
         for index in range(combo.count()):
@@ -1906,11 +1772,11 @@ class _TraceAppearanceDialog(qtw.QDialog):
         return -1
 
     def _selected_style_color(self, combo: qtw.QComboBox) -> str:
-        attr = {
+        attributes: dict[qtw.QComboBox, str] = {
             self.line_color: "line_color",
-            self.dots_color: "dots_color",
             self.marker_color: "markers_color",
-            }.get(combo)
+            }
+        attr = attributes.get(combo)
         labels = self._selected_labels()
         if attr and labels:
             style = self.owner._trace_styles.get(labels[0])
@@ -1919,7 +1785,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         return TRACE_COLOR_PALETTE[0]
 
     def _resolve_custom_color_selection(self) -> bool:
-        for combo in (self.line_color, self.dots_color, self.marker_color):
+        for combo in (self.line_color, self.marker_color):
             if combo.itemData(combo.currentIndex(), QtCore.Qt.ItemDataRole.UserRole) != self._CUSTOM_COLOR_DATA:
                 continue
 
@@ -1942,7 +1808,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
             size: QtCore.QSize | None = None,
             ) -> QtGui.QPixmap:
         if size is None:
-            size = QtCore.QSize(64, 22)
+            size = QtCore.QSize(48, 22)
         pixmap = QtGui.QPixmap(size)
         pixmap.fill(QtCore.Qt.GlobalColor.transparent)
         painter = QtGui.QPainter(pixmap)
@@ -1964,13 +1830,6 @@ class _TraceAppearanceDialog(qtw.QDialog):
             painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
             painter.drawPolyline(QtGui.QPolygonF(points))
 
-        if style.dots_enabled:
-            painter.setPen(QtCore.Qt.PenStyle.NoPen)
-            painter.setBrush(QtGui.QColor(style.dots_color))
-            radius = max(2.0, min(style.dots_size / 2.0, 4.5))
-            for point in points:
-                painter.drawEllipse(point, radius, radius)
-
         if style.markers_enabled:
             pen = QtGui.QPen(QtGui.QColor(style.markers_color))
             pen.setWidthF(1.5)
@@ -1980,7 +1839,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
             for point in points[::2]:
                 self._draw_marker_symbol(painter, point, radius, style.markers_symbol)
 
-        if not (style.line_enabled or style.dots_enabled or style.markers_enabled):
+        if not (style.line_enabled or style.markers_enabled):
             pen = QtGui.QPen(self.palette().color(QtGui.QPalette.ColorRole.Mid))
             pen.setWidthF(1.0)
             pen.setStyle(QtCore.Qt.PenStyle.DashLine)
@@ -2046,6 +1905,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
 
     def refresh_rows(self):
         self.sync_swap_axes_control()
+        select_first = self.table.rowCount() == 0
         selected = set(self._selected_labels())
         self._sync_plot_order_from_rows()
         self.table.blockSignals(True)
@@ -2105,7 +1965,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         finally:
             self.table.blockSignals(False)
 
-        if self.table.rowCount() and not self._selected_labels():
+        if select_first and self.table.rowCount() and not self._selected_labels():
             self.table.selectRow(0)
         else:
             self._sync_controls_from_selection()
@@ -2155,9 +2015,6 @@ class _TraceAppearanceDialog(qtw.QDialog):
         if selection_model is None:
             return []
         rows = sorted({idx.row() for idx in selection_model.selectedRows()})
-        current_row = self.table.currentRow()
-        if not rows and 0 <= current_row < self.table.rowCount():
-            return [current_row]
         return rows
 
     def _selected_labels(self) -> list[Any]:
@@ -2191,23 +2048,129 @@ class _TraceAppearanceDialog(qtw.QDialog):
             return True
         return False
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not event.spontaneous() and not self.__dict__.get("_session_active", False):
+            self._opening_styles = deepcopy(self.owner._trace_styles)
+            self._opening_order = list(self.owner.__dict__.get("_plot_item_order", []))
+            getter = getattr(self.owner, "_current_colorbar_colormap_name", None)
+            self._opening_colour = getter() if callable(getter) else None
+            self._opening_colour_scale = None
+            self._opening_colour_scope = (
+                (self.owner._color_mode, self.owner._last_auto_mode)
+                if "_color_mode" in self.owner.__dict__ else None
+            )
+            if "colorbar_range_entry" in self.owner.__dict__:
+                levels = self.owner._current_colorbar_levels()
+                self._opening_colour_scale = (
+                    deepcopy(self.owner.__dict__.get("_colorbar_manual_levels")),
+                    tuple(levels) if levels is not None else None,
+                    self.owner.__dict__.get("_colorbar_symmetric", False),
+                    self.owner.relevel_refresh.isChecked(),
+                )
+            self._opening_swapped = self.owner.plot_axes_swapped()
+            self._opening_heatmaps = {
+                key: (self.owner._heatmap_is_visible(layer), self.owner._heatmap_opacity(layer),
+                      self.owner._heatmap_axis_sides(layer))
+                for key, layer in self.owner.__dict__.get("heatmaps", {}).items()
+            }
+
+    def revert_appearance(self):
+        if self.owner.plot_axes_swapped() != self._opening_swapped:
+            if not self.owner.set_plot_axes_swapped(self._opening_swapped):
+                return
+        for key, style in self._opening_styles.items():
+            if key in self.owner.lines:
+                self.owner._trace_styles[key] = deepcopy(style)
+                self.owner._apply_trace_style(key, self.owner.lines[key])
+        for key, (visible, opacity, axes) in self._opening_heatmaps.items():
+            layer = self.owner.heatmaps.get(key)
+            if layer is not None:
+                self.owner._set_layer_visibility(layer, visible)
+                self.owner._set_layer_opacity(layer, opacity)
+                self.owner._set_layer_axes(layer, *axes)
+        if self._opening_colour is not None:
+            self.owner.setColorbarColorMap(self._opening_colour)
+        if self._opening_colour_scale is not None:
+            manual, levels, symmetric, refresh = self._opening_colour_scale
+            if self._opening_colour_scope is not None:
+                mode, last_auto_mode = self._opening_colour_scope
+                self.owner._color_mode = mode
+                self.owner._last_auto_mode = last_auto_mode
+                with QtCore.QSignalBlocker(self.owner.color_mode):
+                    self.owner.color_mode.setCurrentIndex(self.owner.color_mode.findData(mode))
+            self.owner._colorbar_symmetric = symmetric
+            for control, checked in ((self.owner.symmetric_color, symmetric),
+                                     (self.owner.relevel_refresh, refresh)):
+                with QtCore.QSignalBlocker(control):
+                    control.setChecked(checked)
+            self.owner.colorbar_range_entry.clear_error()
+            if manual is None:
+                self.owner.setColorbarAuto()
+                if not refresh and levels is not None:
+                    self.owner._set_colorbar_levels(*levels)
+            else:
+                self.owner.setColorbarManualRange(*manual)
+            self.owner._sync_colorbar_scale_controls()
+            if self._opening_colour_scope is not None:
+                self.owner._sync_color_mode_controls()
+                self.owner._start_volume_range()
+        current_order = self.owner.__dict__.get("_plot_item_order")
+        if current_order is not None:
+            order = [entry for entry in self._opening_order if entry in current_order]
+            order.extend(entry for entry in current_order if entry not in order)
+            self.owner._plot_item_order = order
+            for kind, registry in (("trace", self.owner.lines), ("heatmap", self.owner.heatmaps)):
+                items = [(key, registry[key]) for entry_kind, key in order if entry_kind == kind]
+                registry.clear()
+                registry.update(items)
+            self.owner._sync_mixed_axis_labels()
+            self.owner._sync_heatmap_colorbar_items()
+        self.refresh_rows()
+
     def _sync_controls_from_selection(self):
         if self._building:
             return
         labels = self._selected_labels()
         if not labels:
+            self.selection_feedback = ""
+            self.selection_summary.setText("Select a dataset to edit its appearance.")
+            self.selection_summary.setToolTip("")
             self._update_control_enabled_states(False)
             return
         style = self.owner._trace_styles[labels[0]]
         self._building = True
         try:
             self.line_enable.setChecked(style.line_enabled); self._set_combo_value(self.line_color, style.line_color); self.line_width.setValue(style.line_width); self._set_combo_value(self.line_style, style.line_style)
-            self.dots_enable.setChecked(style.dots_enabled); self._set_combo_value(self.dots_color, style.dots_color); self.dots_size.setValue(style.dots_size)
             self.marker_enable.setChecked(style.markers_enabled); self._set_combo_value(self.marker_color, style.markers_color); self._set_combo_value(self.marker_symbol, style.markers_symbol); self.marker_size.setValue(style.markers_size)
             self.x_axis.setCurrentText(style.x_axis); self.y_axis.setCurrentText(style.y_axis); self.visible.setChecked(style.visible); self.opacity.setValue(round(style.opacity * 100))
         finally:
             self._building = False
 
+        bindings = [
+            ("Line", self.line_enable, "line_enabled"),
+            ("Line colour", self.line_color, "line_color"),
+            ("Line width", self.line_width, "line_width"),
+            ("Line style", self.line_style, "line_style"),
+            ("Markers", self.marker_enable, "markers_enabled"),
+            ("Marker colour", self.marker_color, "markers_color"),
+            ("Marker shape", self.marker_symbol, "markers_symbol"),
+            ("Marker size", self.marker_size, "markers_size"),
+            ("Horizontal axis", self.x_axis, "x_axis"),
+            ("Vertical axis", self.y_axis, "y_axis"),
+            ("Visible", self.visible, "visible"),
+            ("Opacity", self.opacity, "opacity"),
+        ]
+        mixed = mixed_values((name, control, [getattr(self.owner._trace_styles[key], attr) for key in labels])
+                             for name, control, attr in bindings)
+        for combo in (self.line_color, self.marker_color, self.line_style, self.marker_symbol):
+            combo.refresh_tooltip()
+        self.selection_feedback = "Mixed values: " + ", ".join(mixed) + "." if mixed else ""
+        self.selection_summary.setText(
+            f"Editing {len(labels)} selected trace{'s' if len(labels) != 1 else ''}"
+            + (" · Mixed values" if mixed else "")
+        )
+        self.selection_summary.setToolTip(self.selection_feedback)
         self._update_control_enabled_states(True)
 
     def _update_control_enabled_states(self, has_selection: bool) -> None:
@@ -2215,8 +2178,6 @@ class _TraceAppearanceDialog(qtw.QDialog):
             widget.setEnabled(has_selection)
         for widget in self._line_controls:
             widget.setEnabled(has_selection and self.line_enable.isChecked())
-        for widget in self._dots_controls:
-            widget.setEnabled(has_selection and self.dots_enable.isChecked())
         for widget in self._marker_controls:
             widget.setEnabled(has_selection and self.marker_enable.isChecked())
         selected_lines = [
@@ -2243,9 +2204,6 @@ class _TraceAppearanceDialog(qtw.QDialog):
             "line_color": self._combo_value(self.line_color),
             "line_width": self.line_width.value(),
             "line_style": self._combo_value(self.line_style),
-            "dots_enabled": self.dots_enable.isChecked(),
-            "dots_color": self._combo_value(self.dots_color),
-            "dots_size": self.dots_size.value(),
             "markers_enabled": self.marker_enable.isChecked(),
             "markers_color": self._combo_value(self.marker_color),
             "markers_symbol": self._combo_value(self.marker_symbol),
@@ -2259,10 +2217,6 @@ class _TraceAppearanceDialog(qtw.QDialog):
             # Mixed selections display one trace's values. Changing one editor
             # must not copy its other styles or axis assignments to every trace.
             changes = {property_name: changes[property_name]}
-            if property_name == "dots_enabled" and changes[property_name]:
-                changes["markers_enabled"] = False
-            elif property_name == "markers_enabled" and changes[property_name]:
-                changes["dots_enabled"] = False
         for label in self._selected_labels():
             style = self.owner._trace_styles.setdefault(
                 label,

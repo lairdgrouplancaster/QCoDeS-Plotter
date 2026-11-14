@@ -182,7 +182,6 @@ def test_unsupported_accepted_limits_leave_range_and_mode_unchanged(
     assert controls.autoRadio.isChecked() == automatic
     before = deepcopy(viewbox.getState())
     before_view = deepcopy(viewbox.viewRange())
-    before_fields = (controls.minText.text(), controls.maxText.text())
     before_custom_auto = set(plot._axis_scale_custom_auto_axes)
     for lower, upper in (
         (-1e308, 1e308), (1e308, 1.1e308), (-1.1e308, -1e308),
@@ -195,7 +194,8 @@ def test_unsupported_accepted_limits_leave_range_and_mode_unchanged(
         assert viewbox.autoRangeEnabled()[axis_number] == before["autoRange"][axis_number]
         assert controls.autoRadio.isChecked() == automatic
         assert controls.manualRadio.isChecked() != automatic
-        assert (controls.minText.text(), controls.maxText.text()) == before_fields
+        assert float(controls.maxText.text()) == upper
+        assert controls.rangeEntry._error
         assert plot._axis_scale_custom_auto_axes == before_custom_auto
         expected_status = "finite numbers" if not lower < upper else "supported plot range"
         assert expected_status in statuses[-1]
@@ -248,14 +248,14 @@ def test_rejected_nonpositive_log_edit_preserves_current_mode(
     qapplication.processEvents()
     assert controls.autoRadio.isChecked() == automatic
     before = deepcopy(viewbox.getState())
-    fields = (controls.minText.text(), controls.maxText.text())
     for lower in (0.0, -1.0):
         _accept_limits(controls, lower, 10.0)
         qapplication.processEvents()
         assert viewbox.getState()["targetRange"] == before["targetRange"]
         assert viewbox.getState()["autoRange"] == before["autoRange"]
         assert controls.autoRadio.isChecked() == automatic
-        assert (controls.minText.text(), controls.maxText.text()) == fields
+        assert float(controls.minText.text()) == lower
+        assert "greater than zero" in controls.rangeEntry.summary.text()
 
 
 @pytest.mark.parametrize("fft_plots", [{"x": np.array([1.0, 2.0, 3.0])}], indirect=True)

@@ -20,8 +20,11 @@ ICON_STEMS = ("qplot", "qplot-database", "sqlite-wal", "sqlite-shm")
 ICO_SIZES = (16, 24, 32, 48, 64, 128, 256)
 
 
-def render(stem: str, size: int, *, small: bool = False) -> Image.Image:
-    source = ASSETS / f"{stem}{'-small' if small else ''}.svg"
+def render(
+    stem: str, size: int, *, small: bool = False, windows_ico: bool = False,
+) -> Image.Image:
+    artwork_stem = "qplot-windows" if windows_ico and stem == "qplot" else stem
+    source = ASSETS / f"{artwork_stem}{'-small' if small else ''}.svg"
     renderer = QtSvg.QSvgRenderer(str(source))
     if not renderer.isValid():
         raise ValueError(f"Invalid icon source: {source}")
@@ -49,7 +52,10 @@ def main() -> None:
         master.save(
             ASSETS / f"{stem}.ico",
             sizes=[(size, size) for size in ICO_SIZES],
-            append_images=[render(stem, size, small=size == 16) for size in ICO_SIZES],
+            append_images=[
+                render(stem, size, small=size == 16, windows_ico=True)
+                for size in ICO_SIZES
+            ],
         )
         master.save(
             ASSETS / f"{stem}.icns",

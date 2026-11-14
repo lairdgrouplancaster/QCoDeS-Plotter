@@ -25,6 +25,9 @@ else:
 
 
 class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _MixedPlotBase):
+    _appearance_action_token: dict[str, bool] | None = None
+    _appearance_preview_hidden: bool = False
+
     def initMenu(self):
         super().initMenu()
         menu_bar = self.menuBar()
@@ -33,7 +36,7 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
                 menu = menu_action.menu()
                 if menu is not None:
                     menu.addSeparator()
-                    action = QtGui.QAction("Appearance…", self)
+                    action = QtGui.QAction("Plot appearance…", self)
                     action.triggered.connect(lambda _checked: self.open_plot_appearance_dialog())
                     menu.addAction(action)
                     self.appearance_action = action

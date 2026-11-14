@@ -23,7 +23,43 @@ def require_source(instance):
         raise RuntimeError("The source database was replaced or is no longer available.")
 
 
-def _backup_child(channel, instance, live, output, deadline):
+def _retain_selected_runs(output, run_ids, progress):
+    """Filter only our private backup, retaining QCoDeS identities and provenance."""
+    with closing(sqlite3.connect(output)) as target:
+        target.set_progress_handler(lambda: (progress(0, 0), 0)[1], 100000)
+        with target:
+            target.execute("CREATE TEMP TABLE selected_runs (run_id INTEGER PRIMARY KEY)")
+            target.executemany("INSERT INTO selected_runs VALUES (?)", ((i,) for i in run_ids))
+            if target.execute(
+                "SELECT COUNT(*) FROM runs JOIN selected_runs USING (run_id)"
+            ).fetchone()[0] != len(run_ids):
+                raise ValueError("Some selected runs are no longer present in the database.")
+            tables = target.execute(
+                "SELECT result_table_name FROM runs WHERE run_id NOT IN selected_runs"
+            ).fetchall()
+            retained = {row[0] for row in target.execute(
+                "SELECT result_table_name FROM runs WHERE run_id IN selected_runs"
+            )}
+            for (name,) in tables:
+                if name in retained or name in {"runs", "experiments", "layouts", "dependencies"}:
+                    raise ValueError("Unexpected shared result table in the database.")
+                if name:
+                    target.execute('DROP TABLE "' + name.replace('"', '""') + '"')
+                progress(0, 0)
+            target.execute("DELETE FROM dependencies WHERE dependent IN "
+                           "(SELECT layout_id FROM layouts WHERE run_id NOT IN selected_runs) "
+                           "OR independent IN "
+                           "(SELECT layout_id FROM layouts WHERE run_id NOT IN selected_runs)")
+            target.execute("DELETE FROM layouts WHERE run_id NOT IN selected_runs")
+            target.execute("DELETE FROM runs WHERE run_id NOT IN selected_runs")
+            target.execute("DELETE FROM experiments WHERE exp_id NOT IN (SELECT exp_id FROM runs)")
+        # Remove discarded measurement pages as well as reducing the file size.
+        target.execute("VACUUM")
+        if target.execute("PRAGMA foreign_key_check").fetchone():
+            raise RuntimeError("The selected-run database has inconsistent references.")
+
+
+def _backup_child(channel, instance, live, output, deadline, run_ids=None):
     """Only this process opens SQLite; the parent owns its temporary folder."""
     # Snapshot-reader and native-VFS scratch files must also be recoverable by
     # the parent after forced child termination.
@@ -74,6 +110,8 @@ def _backup_child(channel, instance, live, output, deadline):
                 target.execute("PRAGMA journal_mode=DELETE").fetchall()
         require_source(instance)
         # Verify that the published file can be read alone, without sidecars.
+        if run_ids is not None:
+            _retain_selected_runs(output, run_ids, progress)
         operation_deadline[0] = time.monotonic() + 60
         channel.send(("validating",))
         with closing(sqlite3.connect(
@@ -99,7 +137,7 @@ def _backup_child(channel, instance, live, output, deadline):
 
 
 def export_database_copy(filename, *, instance, live, cancelled, progress,
-                         timeout=1800):
+                         timeout=1800, run_ids=None):
     """Write a private export stage, never an existing user database.
 
     The caller supplies an owned empty stage and publishes it atomically only
@@ -112,6 +150,10 @@ def export_database_copy(filename, *, instance, live, cancelled, progress,
         if time.monotonic() >= deadline:
             raise TimeoutError("Database export timed out. Pause acquisition and retry.")
 
+    if run_ids is not None:
+        run_ids = tuple(dict.fromkeys(run_ids))
+        if not run_ids or any(type(i) is not int or i < 1 for i in run_ids):
+            raise ValueError("Select at least one valid run to export.")
     deadline = time.monotonic() + timeout
     check()
     require_source(instance)
@@ -120,7 +162,7 @@ def export_database_copy(filename, *, instance, live, cancelled, progress,
         output = os.path.join(folder, "copy.db")
         receive, send = context.Pipe(duplex=False)
         process = context.Process(
-            target=_backup_child, args=(send, instance, live, output, deadline), daemon=True,
+            target=_backup_child, args=(send, instance, live, output, deadline, run_ids), daemon=True,
             name="qplot-database-export",
         )
         started = False

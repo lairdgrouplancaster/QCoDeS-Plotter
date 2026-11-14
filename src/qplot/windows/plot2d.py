@@ -286,6 +286,22 @@ class plot2d(
 
     def initContextMenu(self) -> None:
         super().initContextMenu()
+        # Opening a popup clears the transient hover readout. Keep the cut
+        # target until the chosen action has run, including after menu hide.
+        clear_cut_target = QtCore.QTimer(self)
+        clear_cut_target.setSingleShot(True)
+        clear_cut_target.setInterval(0)
+        clear_cut_target.timeout.connect(
+            lambda: self.__dict__.pop("_context_cut_index", None)
+        )
+
+        def capture_cut_target():
+            clear_cut_target.stop()
+            index = self.__dict__.get("z_index")
+            self.__dict__["_context_cut_index"] = list(index) if isinstance(index, list) else None
+
+        self.vbMenu.aboutToShow.connect(capture_cut_target)
+        self.vbMenu.aboutToHide.connect(clear_cut_target.start)
 
         autoColor = create_action("heatmap.autoscale_color", self)
         self.register_shortcut(autoColor, command_spec("heatmap.autoscale_color"))
@@ -321,11 +337,14 @@ class plot2d(
                 ):
             action = QtGui.QAction(text, self)
             action.setShortcut(QtGui.QKeySequence(key))
-            action.setShortcutContext(QtCore.Qt.ShortcutContext.WindowShortcut)
+            action.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut)
             action.triggered.connect(
                 lambda _, key=key: self.move_sweep_with_arrow_key(key)
+                if getattr(self, "_keyboard_selected_sweep_id", None)
+                == self.active_sweep_line_id and self.active_sweep_line_id is not None
+                else None
                 )
-            self.addAction(action)
+            self.widget.addAction(action)
         
         
     def initLabels(self) -> None:
@@ -502,6 +521,10 @@ class plot2d(
                     clear_display=clear_display,
                     ):
                 return
+
+            # A trace dropped before this first image can already have put
+            # the shared axes into qPlot-managed Auto with empty image bounds.
+            self._refresh_trace_axis_auto_ranges()
 
             # Produce color bar on first run
             if not hasattr(self, "bar"):
@@ -1000,7 +1023,7 @@ class plot2d(
         dialog.accept()
         QtCore.QTimer.singleShot(
             0,
-            lambda: self.show_preferences_dialog(initial_tab="Runtime"),
+            lambda: self.show_preferences_dialog(initial_tab="Performance"),
             )
 
 

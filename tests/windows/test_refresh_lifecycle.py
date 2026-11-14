@@ -21,6 +21,10 @@ class _Config:
             "user_preference.default_refresh_rate": refresh_rate,
             "user_preference.auto_plot": False,
             "user_preference.theme": "light",
+            "user_preference.bar_colour": "viridis",
+            "user_preference.trace_colour": "#1f77b4",
+            "user_preference.trace_line_width": 2.0,
+            "user_preference.trace_line_style": "Solid",
             "user_preference.font_size": 10,
             "user_preference.show_source_annotation": True,
             "user_preference.cursor_significant_figures": 6,
@@ -33,7 +37,6 @@ class _Config:
             "user_preference.axis_tick_width": 2.0,
             "user_preference.axis_major_tick_count": 3,
             "GUI.preview_size": 200,
-            "user_preference.mouse_mode": "pan",
             "user_preference.copy_plot_image_resolution": "screen",
             "user_preference.csv_filename_format": "current",
             "file.default_load_path": "",
@@ -276,6 +279,7 @@ class RefreshTimerLifecycleTestCase(unittest.TestCase):
         self.assertFalse(self.window.monitor.isActive())
 
     def test_load_pause_failure_cancel_and_unload_follow_committed_state(self):
+        self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: paused")
         with TemporaryDirectory() as directory:
             source = Path(directory) / "source.db"
             source.write_bytes(b"source")
@@ -283,19 +287,26 @@ class RefreshTimerLifecycleTestCase(unittest.TestCase):
             self.window._apply_refresh_interval(0.1)
             self.assertTrue(self.window.monitor.isActive())
 
+            self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: on")
+
             # Starting a replacement/load pauses refresh. A failed or
             # cancelled request can resume only while the old instance remains
             # committed; unload cannot.
             self.window._database_load_active = True
             self.window._update_automatic_refresh_timer()
             self.assertFalse(self.window.monitor.isActive())
+            self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: paused")
             self.window._database_load_active = False
             self.window._update_automatic_refresh_timer()
             self.assertTrue(self.window.monitor.isActive())
+            self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: on")
             self.window._loaded_database_instance = None
             self.window._update_automatic_refresh_timer()
 
         self.assertFalse(self.window.monitor.isActive())
+        self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: paused")
+        self.window.spinBox.setValue(0)
+        self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: off")
 
     def test_repeated_setting_changes_do_not_multiply_timeout_callbacks_or_touch_source(self):
         with TemporaryDirectory() as directory:

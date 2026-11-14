@@ -44,7 +44,8 @@ def test_snap_radius_stays_in_screen_pixels_across_zoom_and_axes(
     axes = ("Top", "Right") if secondary else ("Bottom", "Left")
     style = window._trace_styles[key]
     style.line_enabled = not scatter
-    style.dots_enabled = scatter
+    style.markers_enabled = scatter
+    style.markers_size = 6.0
     owner = _assign_trace_axes(window, key, *axes)
     if secondary:
         # The main trace's independent scale puts its samples well away from

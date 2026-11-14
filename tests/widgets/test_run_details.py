@@ -2786,13 +2786,17 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         image = preview.findChild(qtw.QLabel, "previewImage")
         self.assertEqual(image.focusPolicy(), QtCore.Qt.FocusPolicy.StrongFocus)
         self.assertEqual(image.accessibleName(), "Plot preview: signal vs x")
-        self.assertIn("Enter or Space", image.accessibleDescription())
+        self.assertIn("Enter to plot", image.accessibleDescription())
+        self.assertIn("Space toggles selection", image.accessibleDescription())
         self.assertIn("Shift+F10", image.accessibleDescription())
 
-        for key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Space):
-            QtTest.QTest.keyClick(image, key)
-
-        self.assertEqual(requested, ["signal", "signal"])
+        QtTest.QTest.keyClick(image, QtCore.Qt.Key.Key_Return)
+        self.assertEqual(requested, ["signal"])
+        self.assertTrue(image.property(PREVIEW_SELECTED_PROPERTY))
+        QtTest.QTest.keyClick(image, QtCore.Qt.Key.Key_Space)
+        self.assertEqual(requested, ["signal"])
+        self.assertFalse(image.property(PREVIEW_SELECTED_PROPERTY))
+        QtTest.QTest.keyClick(image, QtCore.Qt.Key.Key_Space)
         self.assertTrue(image.property(PREVIEW_SELECTED_PROPERTY))
 
     def test_preview_keyboard_menu_keys_open_plot_export_and_stats_actions(self):
@@ -2842,8 +2846,8 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             captured_action_texts,
             [
-                ["Plot", "Export CSV...", "Generate stats..."],
-                ["Plot", "Export CSV...", "Generate stats..."],
+                ["Plot", "Export This Measurement as CSV…", "Generate Statistics…"],
+                ["Plot", "Export This Measurement as CSV…", "Generate Statistics…"],
             ],
         )
 
@@ -2885,7 +2889,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             export_action = next(
                 action
                 for action in captured_actions
-                if action.text().replace("&", "") == "Export CSV..."
+                if action.text().replace("&", "") == "Export This Measurement as CSV…"
             )
             export_action.trigger()
 

@@ -179,23 +179,23 @@ class RunList(qtw.QTreeWidget):
         "Size",
     )
     column_widths = {
-        "ID": 60,
-        "Measurements": DEFAULT_MEASUREMENTS_COLUMN_WIDTH,
+        "ID": 48,
+        "Measurements": DEFAULT_MEASUREMENTS_COLUMN_WIDTH + 50,
         "Experiment": 120,
         "Sample": 112,
         "Name": 150,
         "Status": 140,
         "Duration": 96,
-        "Size": 62,
+        "Size": 78,
+        "Started": 142,
         "Completed": 142,
         "GUID": 286,
     }
     elastic_column_widths = {
-        "Setpoints": 170,
-        "Started": 142,
+        "Setpoints": 200,
     }
     representative_column_values = {
-        "ID": "9999",
+        "ID": "999",
         "Experiment": "experiment-name",
         "Sample": "sample-name",
         "Name": "run-name",
@@ -203,12 +203,12 @@ class RunList(qtw.QTreeWidget):
         "Started": "2026-05-04 13:05:16",
         "Status": "Interrupted (100.0%)",
         "Duration": "57,116.6 s",
-        "Size": "116 MB",
+        "Size": "unknown",
         "Completed": "2026-05-04 13:05:16",
         "GUID": "00000000-0000-0000-0000-000000000000",
     }
     readable_column_widths = {
-        "ID": 60,
+        "ID": 48,
         "Measurements": DEFAULT_MEASUREMENTS_COLUMN_WIDTH,
         "Experiment": 96,
         "Sample": 88,
@@ -217,12 +217,12 @@ class RunList(qtw.QTreeWidget):
         "Started": 128,
         "Status": 132,
         "Duration": 84,
-        "Size": 54,
+        "Size": 70,
         "Completed": 128,
         "GUID": 220,
     }
     minimum_column_widths = {
-        "ID": 60,
+        "ID": 48,
         "Measurements": 84,
         "Experiment": 80,
         "Sample": 72,
@@ -319,6 +319,7 @@ class RunList(qtw.QTreeWidget):
 
         self.setColumnCount(len(self.cols))
         self.setHeaderLabels(self.cols)
+        self.headerItem().setText(self.column_ids.index("run_id"), "Run")
         header = self.header()
         if header is not None:
             header.setStretchLastSection(False)
@@ -1117,7 +1118,7 @@ class RunList(qtw.QTreeWidget):
         columns_menu = menu.addMenu("Columns")
         visible_ids = set(self.visible_column_ids())
         for column_id in self.column_ids:
-            label = self.column_labels[column_id]
+            label = self.headerItem().text(self.column_ids.index(column_id))
             action = columns_menu.addAction(label)
             action.setCheckable(True)
             action.setChecked(column_id in visible_ids)
@@ -1216,26 +1217,18 @@ class RunList(qtw.QTreeWidget):
         else:
             extra_width = max(0, available_width - preferred_width)
             widths = dict(preferred_widths)
-            if "Setpoints" in widths and "Started" in widths:
-                setpoints_extra = (extra_width * 2) // 3
-                widths["Setpoints"] += setpoints_extra
-                widths["Started"] += extra_width - setpoints_extra
-            else:
-                elastic_name = next(
-                    (
-                        name
-                        for name in (
-                            "Setpoints",
-                            "Name",
-                            "Started",
-                            "Experiment",
-                            "Sample",
-                            "GUID",
-                        )
-                        if name in widths
-                    ),
-                    visible_names[-1],
-                )
+            elastic_name = next(
+                (
+                    name
+                    for name in ("Setpoints", "Name", "Experiment", "Sample", "GUID")
+                    if name in widths
+                ),
+                next(
+                    (name for name in reversed(visible_names) if name != "Started"),
+                    None,
+                ),
+            )
+            if elastic_name is not None:
                 widths[elastic_name] += extra_width
 
         self._resizing_columns = True
@@ -1752,6 +1745,8 @@ class moreInfo(qtw.QTabWidget):
     def __init__(self, *args, preview_size=None):
         super().__init__(*args)
         self.setObjectName("runDetailsTabs")
+        self.setDocumentMode(True)
+        self.tabBar().setExpanding(True)
         self._trusted_full_values = {}
         self._full_value_dialog = None
         self._trusted_detail_identity = None

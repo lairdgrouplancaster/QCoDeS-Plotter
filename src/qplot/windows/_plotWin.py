@@ -23,7 +23,6 @@ from ._commands import (
     toolbar_toggle_command_spec,
 )
 from ._complex_plots import apply_complex_preference, format_complex_cursor
-from ._config_persistence import persist_config_value
 from ._dataset_handle import DatasetKey, TraceKey
 from ._dragdrop import (
     preview_drop_is_compatible,
@@ -52,7 +51,6 @@ from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
     AXIS_MAJOR_TICK_COUNT_KEY,
     CURSOR_SIGNIFICANT_FIGURES_KEY,
-    MOUSE_MODE_KEY,
     PreferencesDialog,
     create_preferences_action,
 )
@@ -295,11 +293,18 @@ class plotWidget(
         self._window_layout.setContentsMargins(0, 0, 0, 0)
         
         self.widget = pg.GraphicsLayoutWidget()
+        self.widget.setToolTip(
+            "Left-drag to select a region. Middle-drag or Space+left-drag to pan. "
+            "Hold Shift while panning to constrain movement to one axis. "
+            "Scroll to zoom; right-click for actions. "
+            "Drag inside a selection to move it; hold Shift to move horizontally or vertically. "
+            "Drag its handles to resize it. "
+            "Press Escape to clear the selection."
+        )
         self._install_preview_drop_target()
         # Overwrite default viewbox to give more flexibility
         self.vb = custom_viewbox() # Mainly for linking secondary axis
         self.vb.setDefaultPadding(0)
-        self.apply_mouse_mode_preference()
         self.plot = NativePlotItem(
             viewBox=self.vb,
             axisItems={
@@ -797,7 +802,6 @@ class plotWidget(
         """
         self.vbMenu = self.vb.menu
         self.mouseModeAction = self._context_menu_action("Mouse Mode")
-        self._connect_mouse_mode_menu_to_preferences()
         self._remove_scene_export_context_menu()
         if getattr(self.plot, "ctrlMenu", None) is not None:
             self.plot.ctrlMenu.setTitle("Options")
@@ -939,7 +943,7 @@ class plotWidget(
         Adds fixed plot-area resize actions to the Window menu.
 
         """
-        resize_menu = qtw.QMenu("&Resize", self)
+        resize_menu = qtw.QMenu("&Resize Plot Canvas", self)
         resize_menu.setObjectName("plotAreaResizeMenu")
 
         for label, object_name, size in _PLOT_AREA_RESIZE_PRESETS:
@@ -1259,17 +1263,6 @@ class plotWidget(
         window_menu = add_standard_window_controls(self)
         self._add_plot_area_resize_menu(window_menu)
 
-        options_menu = menu.addMenu("&Options")
-        options_menu.addAction(
-            create_preferences_action(self, self.show_preferences_dialog)
-            )
-
-        mouse_mode_action = getattr(self, "mouseModeAction", None)
-        if mouse_mode_action is not None:
-            self.vbMenu.removeAction(mouse_mode_action)
-            options_menu.addSeparator()
-            options_menu.addAction(mouse_mode_action)
-        
         main_menu = menu.addMenu("&View")
         
         refreshAction = create_action("window.refresh", self)
@@ -1279,8 +1272,22 @@ class plotWidget(
         main_menu.addAction(refreshAction)
         
         toolbar_menu = self.createPopupMenu()
-        toolbar_menu.setTitle("Panels and toolbars")
+        toolbar_menu.setTitle("Panels and Toolbars")
         main_menu.addMenu(toolbar_menu)
+        axis_scaling = main_menu.addAction("Axis Scaling…")
+        axis_scaling.triggered.connect(lambda: self.open_axis_scale_dialog("x"))
+        self.vbMenu.addAction(axis_scaling)
+        colour_scaling = getattr(self, "colorbar_scale_action", None)
+        if colour_scaling is not None:
+            main_menu.addAction(colour_scaling)
+        mouse_mode_action = getattr(self, "mouseModeAction", None)
+        if mouse_mode_action is not None:
+            self.vbMenu.removeAction(mouse_mode_action)
+
+        settings_menu = menu.addMenu("&Settings")
+        settings_menu.addAction(
+            create_preferences_action(self, self.show_preferences_dialog)
+            )
         add_help_menu(self)
     
 ###############################################################################
@@ -1447,7 +1454,6 @@ class plotWidget(
         """
         self.update_theme(self.config)
         self.apply_axis_major_tick_count_preference()
-        self.apply_mouse_mode_preference()
         apply_complex_preference(self)
         apply_colorbar_width = getattr(self, "apply_colorbar_width_preference", None)
         if callable(apply_colorbar_width):
@@ -1455,10 +1461,6 @@ class plotWidget(
         cursor_pos = self.__dict__.get("_last_cursor_scene_pos")
         if cursor_pos is not None:
             self.mouseMoved(cursor_pos)
-
-
-    def _configured_mouse_mode(self):
-        return self.config.get(MOUSE_MODE_KEY)
 
 
     def apply_axis_major_tick_count_preference(self):
@@ -1487,111 +1489,6 @@ class plotWidget(
             viewport().update()
 
 
-    def apply_mouse_mode_preference(self):
-        """
-        Applies the configured pyqtgraph mouse mode to this plot view.
-
-        """
-        if hasattr(self, "vb"):
-            self.vb.setLeftButtonAction(self._configured_mouse_mode())
-
-
-    def change_mouse_mode(self, mode):
-        """
-        Persists a mouse mode change made from a plot-window menu.
-
-        """
-        if mode not in {"pan", "rect"}:
-            return False
-
-        main_window = main_window_for(self)
-        main_config = getattr(main_window, "config", None)
-        target_config = self.config
-        if main_config is self.config:
-            target_config = main_config
-
-        current_mode = target_config.get(MOUSE_MODE_KEY)
-
-        def rollback():
-            if hasattr(self, "vb"):
-                self.vb.setLeftButtonAction(current_mode)
-
-            mouse_mode_action = self.__dict__.get("mouseModeAction")
-            menu = (
-                mouse_mode_action.menu()
-                if mouse_mode_action is not None
-                else None
-                )
-            if menu is None:
-                return
-            mode_actions = getattr(
-                self.__dict__.get("vbMenu"),
-                "mouseModes",
-                menu.actions(),
-                )
-            blocked_states = [
-                mode_action.blockSignals(True)
-                for mode_action in mode_actions
-                ]
-            try:
-                for mode_action, action_mode in zip(
-                        mode_actions,
-                        ("pan", "rect"),
-                        strict=False,
-                        ):
-                    mode_action.setChecked(action_mode == current_mode)
-            finally:
-                for mode_action, signals_were_blocked in zip(
-                        mode_actions,
-                        blocked_states,
-                        strict=True,
-                        ):
-                    mode_action.blockSignals(signals_were_blocked)
-
-        if current_mode != mode:
-            error_owner = main_window if main_config is target_config else self
-            if not persist_config_value(
-                    error_owner,
-                    target_config,
-                    MOUSE_MODE_KEY,
-                    mode,
-                    "the mouse mode",
-                    rollback,
-                    ):
-                return False
-
-        if (
-                main_window is not None
-                and main_window is not self
-                and main_config is target_config
-                and hasattr(main_window, "apply_current_settings")
-                ):
-            main_window.apply_current_settings()
-        else:
-            self.apply_mouse_mode_preference()
-        return True
-
-
-    def _connect_mouse_mode_menu_to_preferences(self):
-        menu = self.mouseModeAction.menu() if self.mouseModeAction is not None else None
-        if menu is None:
-            return
-
-        mode_actions = getattr(
-            self.__dict__.get("vbMenu"),
-            "mouseModes",
-            menu.actions(),
-            )
-        for action, mode in zip(
-                mode_actions,
-                ("pan", "rect"),
-                strict=False,
-                ):
-            action.triggered.connect(
-                lambda _checked=False, mode=mode: self.change_mouse_mode(mode)
-                )
-
-
     def show_preferences_dialog(self, initial_tab: str | None = None):
         """
         Opens the shared preferences dialog from a plot window.
@@ -1612,7 +1509,7 @@ class plotWidget(
                     if tab_widget.tabText(index) == initial_tab:
                         tab_widget.setCurrentIndex(index)
                         break
-        if initial_tab == "Runtime":
+        if initial_tab == "Performance":
             QtCore.QTimer.singleShot(
                 0,
                 dialog.maxFullHeatmapPointsSpin.setFocus,
@@ -1736,6 +1633,7 @@ class plotWidget(
         Unused but required by slot.
 
         """
+        self._appearance_closing = True
         self._clear_cursor_hover()
         # Qt leaves child windows visible when their parent is merely closed.
         # Hide detached panels and reject editors before releasing the dataset

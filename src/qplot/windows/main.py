@@ -284,6 +284,8 @@ class MainWindow(
         self.status_label.setObjectName("mainStatusMessage")
         self.status_label.setAccessibleName("Main window status")
         status_bar = cast(qtw.QStatusBar, self.statusBar())
+        status_bar.setContentsMargins(8, 0, 8, 0)
+        status_bar.addPermanentWidget(self.refreshStateLabel)
         status_bar.addPermanentWidget(self.status_label, 1)
         startup_elapsed = perf_counter() - startup_start
         self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
@@ -323,13 +325,6 @@ class MainWindow(
         self.recentDatabaseMenu = cast(qtw.QMenu, fileMenu.addMenu("Load &Recent Database"))
         self.refresh_recent_database_menu()
 
-        open_folder_action = create_action(
-            "database.open_folder",
-            self,
-            )
-        open_folder_action.triggered.connect(self.open_database_location)
-        fileMenu.addAction(open_folder_action)
-
         self.closeDatabaseAction = create_action("database.close", self)
         self.closeDatabaseAction.triggered.connect(self.close_current_database)
         fileMenu.addAction(self.closeDatabaseAction)
@@ -339,6 +334,10 @@ class MainWindow(
         refreshAction.triggered.connect(self.refresh_all)
         fileMenu.addAction(refreshAction)
 
+        open_folder_action = create_action("database.open_folder", self)
+        open_folder_action.triggered.connect(self.open_database_location)
+        fileMenu.addAction(open_folder_action)
+
         fileMenu.addSeparator()
 
         export_runs = create_action("run.export_selected", self)
@@ -346,15 +345,24 @@ class MainWindow(
         fileMenu.addAction(export_runs)
         from ._database_export import export_database
 
+        export_selected_database = create_action("database.export_selected", self)
+        export_selected_database.triggered.connect(lambda: export_database(self, selected=True))
+        fileMenu.addAction(export_selected_database)
         export_database_action = create_action("database.export_copy", self)
         export_database_action.triggered.connect(lambda: export_database(self))
         fileMenu.addAction(export_database_action)
+        def update_export_actions():
+            has_selection = bool(self.RunList.selected_run_ids())
+            export_runs.setEnabled(has_selection)
+            export_selected_database.setEnabled(has_selection)
+            export_database_action.setEnabled(getattr(self, "_loaded_database_instance", None) is not None)
+        fileMenu.aboutToShow.connect(update_export_actions)
         exports_progress = create_action("exports.show", self)
         exports_progress.triggered.connect(self.show_csv_exports)
         fileMenu.addAction(exports_progress)
         fileMenu.addSeparator()
 
-        test_data_menu = cast(qtw.QMenu, fileMenu.addMenu("Generate &Test Data"))
+        test_data_menu = cast(qtw.QMenu, fileMenu.addMenu("Generate &Test Data from Template"))
         bundled_csv_action = create_action("testdata.open_bundled_folder", self)
         bundled_csv_action.triggered.connect(self.open_bundled_test_database_csv_folder)
         test_data_menu.addAction(bundled_csv_action)
@@ -402,14 +410,14 @@ class MainWindow(
         add_standard_window_controls(self)
         
         # Second dropdown menu
-        prefMenu = cast(qtw.QMenu, menu.addMenu("&Options"))
+        prefMenu = cast(qtw.QMenu, menu.addMenu("&Settings"))
 
         prefMenu.addAction(
             create_preferences_action(self, self.show_preferences_dialog)
             )
         prefMenu.addSeparator()
         add_restore_defaults_option(self, prefMenu)
-        add_help_menu(self)
+        add_help_menu(self, include_desktop_integration=True)
 
     def initFile(self):
         """
@@ -810,7 +818,6 @@ class MainWindow(
             apply_colorbar_width = getattr(win, "apply_colorbar_width_preference", None)
             if callable(apply_colorbar_width):
                 apply_colorbar_width()
-        self._sync_mouse_mode_settings()
         complex_changed = self.infoBox.preview.set_complex_preferences((
             self.config.get("user_preference.complex_1d"),
             self.config.get("user_preference.complex_nd"),
@@ -870,12 +877,6 @@ class MainWindow(
             self.threadPool.setMaxThreadCount(
                 self.config.get("runtime_settings.max_threads")
                 )
-
-
-    def _sync_mouse_mode_settings(self):
-        for win in getattr(self, "windows", []):
-            if hasattr(win, "apply_mouse_mode_preference"):
-                win.apply_mouse_mode_preference()
 
 
     def _save_preview_size(self, preview_size):

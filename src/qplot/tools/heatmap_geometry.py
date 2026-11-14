@@ -17,25 +17,33 @@ import numpy.typing as npt
 
 _DEFAULT_SINGLETON_SPAN = 1.0
 _DEFAULT_UNIFORM_REL_TOL = 1e-9
+MAX_AGGREGATED_HEATMAP_CELLS = 2_000_000
 
 
-def bounded_grid_shape(x_count, y_count, *, max_cells, max_side):
+def bounded_grid_shape(x_count, y_count, *, max_cells, max_side=None):
+    """Fit the source shape to a cell budget without clipping its aspect ratio.
+
+    A smaller explicit ``max_side`` remains supported for legacy API callers.
+    A side limit at or above the cell budget adds no constraint.
+    """
     max_cells = max(1, int(max_cells))
-    x_bins = max(1, min(int(x_count), max_side))
-    y_bins = max(1, min(int(y_count), max_side))
+    x_bins = max(1, int(x_count))
+    y_bins = max(1, int(y_count))
+    if max_side is not None and max_side < max_cells:
+        x_bins = min(x_bins, max(1, int(max_side)))
+        y_bins = min(y_bins, max(1, int(max_side)))
     if x_bins * y_bins <= max_cells:
         return x_bins, y_bins
-    scale = math.sqrt(max_cells / (x_bins * y_bins))
-    x_bins = max(1, int(x_bins * scale))
-    y_bins = max(1, int(y_bins * scale))
-    while x_bins * y_bins > max_cells:
-        if x_bins >= y_bins and x_bins > 1:
-            x_bins -= 1
-        elif y_bins > 1:
-            y_bins -= 1
-        else:
-            break
-    return x_bins, y_bins
+    # Integer arithmetic avoids rounding over budget or overflowing for large
+    # Cartesian counts. If one dimension would fall below one, spend the
+    # remaining budget on the other rather than wasting it through clamping.
+    scaled_x = math.isqrt(max_cells * x_bins // y_bins)
+    scaled_y = math.isqrt(max_cells * y_bins // x_bins)
+    if scaled_x == 0:
+        return 1, min(y_bins, max_cells)
+    if scaled_y == 0:
+        return min(x_bins, max_cells), 1
+    return scaled_x, scaled_y
 
 
 def spatial_axis_bins(lower, upper, source_count, bin_count):

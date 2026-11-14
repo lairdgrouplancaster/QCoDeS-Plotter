@@ -98,7 +98,7 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | Key | Type | Default | Validation | Purpose |
 | --- | --- | --- | --- | --- |
 | `GUI.plot_frame_fraction` | number | `0.47` | `0 < value < 1` | Fraction of a plot window used for the plot frame. |
-| `GUI.main_frame_size` | integer array | `[780, 700]` | exactly 2 items, each `1 <= value <= 16777215` | Initial main-window width and height. |
+| `GUI.main_frame_size` | integer array | `[900, 700]` | exactly 2 items, each `1 <= value <= 16777215` | Initial main-window width and height. |
 | `GUI.preview_size` | integer | `200` | `50 <= value <= 1000` | Preview thumbnail size in pixels. |
 | `GUI.run_table_column_widths` | integer array | `[]` | empty or exactly 12 items, each `32 <= value <= 16777215` | Saved run-table column widths in display order; an empty array uses responsive widths. |
 | `GUI.run_table_visible_columns` | string array | `["run_id", "measurements", "setpoints", "started", "status", "duration", "size"]` | unique run-table column IDs | Columns shown in the run table, in the table's fixed display order. |
@@ -119,34 +119,20 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.confirm_incompatible_axes` | boolean | `true` | `true` or `false` | Confirm drops with incompatible axis assignments. |
 | `user_preference.theme` | string | `"light"` | `light`, `dark`, or `pyqt` | Active application theme. |
 | `user_preference.bar_colour` | string | `"viridis"` | any string | Default 2D colour map name. |
-| `user_preference.bar_colour_include_cet` | boolean | `true` | `true` or `false` | Show colour maps from `colorcet`. |
-| `user_preference.bar_colour_include_matplotlib` | boolean | `true` | `true` or `false` | Show Matplotlib colour maps. |
-| `user_preference.bar_colour_include_local` | boolean | `true` | `true` or `false` | Show locally defined colour maps. |
-| `user_preference.bar_colour_include_custom` | boolean | `true` | `true` or `false` | Show custom colour maps. |
-| `user_preference.bar_colour_include_cet_linear` | boolean | `true` | `true` or `false` | Show linear `colorcet` maps. |
-| `user_preference.bar_colour_include_cet_divergent` | boolean | `true` | `true` or `false` | Show divergent `colorcet` maps. |
-| `user_preference.bar_colour_include_cet_cyclic` | boolean | `true` | `true` or `false` | Show cyclic `colorcet` maps. |
-| `user_preference.bar_colour_include_cet_rainbow` | boolean | `true` | `true` or `false` | Show rainbow `colorcet` maps. |
-| `user_preference.bar_colour_include_cet_isoluminant` | boolean | `true` | `true` or `false` | Show isoluminant `colorcet` maps. |
-| `user_preference.bar_colour_include_cet_other` | boolean | `true` | `true` or `false` | Show uncategorised `colorcet` maps. |
-| `user_preference.bar_colour_include_matplotlib_perceptual` | boolean | `true` | `true` or `false` | Show perceptual Matplotlib maps. |
-| `user_preference.bar_colour_include_matplotlib_sequential` | boolean | `true` | `true` or `false` | Show sequential Matplotlib maps. |
-| `user_preference.bar_colour_include_matplotlib_divergent` | boolean | `true` | `true` or `false` | Show divergent Matplotlib maps. |
-| `user_preference.bar_colour_include_matplotlib_cyclic` | boolean | `true` | `true` or `false` | Show cyclic Matplotlib maps. |
-| `user_preference.bar_colour_include_matplotlib_qualitative` | boolean | `true` | `true` or `false` | Show qualitative Matplotlib maps. |
-| `user_preference.bar_colour_include_matplotlib_other` | boolean | `true` | `true` or `false` | Show uncategorised Matplotlib maps. |
+| `user_preference.trace_colour` | string | `"#1f77b4"` | `#RRGGBB` hex colour | Initial line colour for new traces. |
+| `user_preference.trace_line_width` | number | `2` | `0.5 <= value <= 15` | Initial line width for new traces, in pixels. |
+| `user_preference.trace_line_style` | string | `"Solid"` | `Solid`, `Dash`, `Dot`, or `Dash Dot` | Initial line style for new traces. |
 | `user_preference.bar_colour_excluded` | string array | `[]` | any strings | Hide colour maps with these exact names. |
 | `user_preference.bar_colour_excluded_prefixes` | string array | `[]` | any strings | Hide colour maps with these prefixes. |
-| `user_preference.confirm_close` | boolean | `true` | `true` or `false` | Ask before closing the main window. |
+| `user_preference.confirm_close` | boolean | `false` | `true` or `false` | Ask before closing the main window. |
 | `user_preference.confirm_close_all` | boolean | `true` | `true` or `false` | Ask before closing all plot windows. |
 | `user_preference.auto_plot` | boolean | `false` | `true` or `false` | Automatically open newly detected runs. |
-| `user_preference.mouse_mode` | string | `"pan"` | `pan` or `rect` | Default plot mouse interaction mode. |
 | `user_preference.copy_plot_image_resolution` | string | `"screen"` | `screen`, `dpi_300`, or `svg` | Format/resolution used by plot-window Copy Plot Image. |
 | `user_preference.default_refresh_rate` | number | `1` | `0 <= value <= 10000` | Shared interval for the run table and all live plots, in seconds; zero disables automatic refresh everywhere. |
 | `runtime_settings.max_threads` | integer | `4` | `1 <= value <= 999` | Maximum worker threads for background loading. |
 | `runtime_settings.max_full_heatmap_points` | integer | `2000000` | `1 <= value <= 2000000000` | Maximum estimated points loaded at full resolution before 2D plot windows use SQL spatial aggregation. |
-| `runtime_settings.max_heatmap_grid_cells` | integer | `250000` | `1 <= value <= 2000000000` | Maximum cells in a downsampled heatmap display grid. |
-| `runtime_settings.max_heatmap_grid_side` | integer | `800` | `1 <= value <= 2000000000` | Maximum bins on either axis of a downsampled heatmap display grid. |
+| `runtime_settings.max_heatmap_grid_cells` | integer | `250000` | `1 <= value <= 2000000000` | Total cell budget for an aggregated heatmap, shared proportionally across its axes. Preferences allows up to 2,000,000; actual aggregated allocations above that internal limit are rejected. |
+| `runtime_settings.max_heatmap_grid_side` | integer | `800` | `1 <= value <= 2000000000` | Deprecated. Accepted for settings-file compatibility but ignored by the application; the total cell budget now determines axis limits. |
 | `runtime_settings.del_grace_period` | number | `10` | `0 <= value <= 300` | Seconds to retain an unused plot dataset connection for quick reopening. |
 | `runtime_settings.cloud_sync_timeout` | number | `120` | `1 <= value <= 3600` | Seconds to wait for cloud storage to hydrate a database before failing. |
 | `updates.check_on_launch` | boolean | `true` | `true` or `false` | Check PyPI in the background after launch, at most once every 24 hours. |

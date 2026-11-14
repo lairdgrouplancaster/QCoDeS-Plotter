@@ -20,11 +20,9 @@ from qplot.tools.heatmap_geometry import (
     canonicalize_heatmap_data,
 )
 
-from ._colorbar import (
-    _colorbar_colormap_for_name,
-    _colorbar_colormap_label,
-    _colorbar_colormap_preview,
-)
+from ._appearance_feedback import mixed_values
+from ._colorbar import _colorbar_colormap_for_name
+from ._colour_map_picker import ColourMapButton, ColourMapDialog
 from ._display_precision import (
     DISPLAY_PRECISION_MESSAGE,
     HEATMAP_DISPLAY_RANGE_MESSAGE,
@@ -33,8 +31,11 @@ from ._display_precision import (
 )
 from ._plot_appearance import (
     ReorderAppearanceTable,
+    _OpacitySpinBox,
     configure_appearance_table,
+    configure_opacity_spinbox,
     reordered_rows,
+    visibility_opacity_row,
 )
 from ._plot_drop_axes import DroppedAxisMapping, displayed_axis_parameter
 from ._plot_host import PlotHost
@@ -1688,45 +1689,6 @@ class _HeatmapTableWidget(ReorderAppearanceTable):
         super().__init__(dialog, mime_type=self._REORDER_MIME_TYPE)
 
 
-class _OpacitySpinBox(qtw.QSpinBox):
-    """Reserve only enough editor space for the maximum percentage."""
-
-    def sizeHint(self):
-        size = super().sizeHint()
-        option = qtw.QStyleOptionSpinBox()
-        self.initStyleOption(option)
-        option.rect = QtCore.QRect(QtCore.QPoint(), size)
-        edit_rect = self.style().subControlRect(
-            qtw.QStyle.ComplexControl.CC_SpinBox,
-            option, qtw.QStyle.SubControl.SC_SpinBoxEditField, self,
-        )
-        editor = self.lineEdit()
-        frame = qtw.QStyleOptionFrame()
-        frame.initFrom(editor)
-        frame.state |= qtw.QStyle.StateFlag.State_Sunken
-        if editor.hasFrame():
-            frame.lineWidth = editor.style().pixelMetric(
-                qtw.QStyle.PixelMetric.PM_DefaultFrameWidth, frame, editor
-            )
-        frame.rect = QtCore.QRect(QtCore.QPoint(), edit_rect.size())
-        contents = editor.style().subElementRect(
-            qtw.QStyle.SubElement.SE_LineEditContents, frame, editor
-        )
-        text_width = editor.fontMetrics().horizontalAdvance(
-            self.textFromValue(self.maximum()) + self.suffix()
-        )
-        margins = editor.textMargins()
-        # QLineEdit adds two pixels on each side of its text.
-        size.setWidth(
-            size.width() - contents.width() + text_width
-            + margins.left() + margins.right() + 4
-        )
-        return size
-
-    def minimumSizeHint(self):
-        return self.sizeHint()
-
-
 class _HeatmapAppearanceControls(qtw.QWidget):
     """Edit heatmap layers using the same interaction model as traces."""
 
@@ -1816,30 +1778,13 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         panel_layout.setSpacing(8)
 
         color_scale_group = qtw.QGroupBox("Colour scale", panel)
-        color_scale_layout = qtw.QGridLayout(color_scale_group)
+        self.color_scale_group = color_scale_group
+        color_scale_layout = qtw.QVBoxLayout(color_scale_group)
         color_scale_layout.setContentsMargins(8, 10, 8, 8)
-        color_scale_layout.setHorizontalSpacing(8)
-        self.color_scale_name = qtw.QLabel()
-        self.color_scale_name.setObjectName("heatmapColorScaleName")
-        color_scale_layout.addWidget(self.color_scale_name, 0, 0)
-        self.color_scale_preview = qtw.QLabel()
-        self.color_scale_preview.setToolTip("Colours used for the selected heatmap, from low to high values.")
-        self.color_scale_preview.setObjectName("heatmapColorScalePreview")
-        self.color_scale_preview.setMinimumWidth(170)
-        self.color_scale_preview.setFixedHeight(18)
-        self.color_scale_preview.setScaledContents(True)
-        color_scale_layout.addWidget(self.color_scale_preview, 1, 0)
-        self.color_scale_button = qtw.QPushButton("Colour scale…")
+        self.color_scale_button = ColourMapButton(color_scale_group)
         self.color_scale_button.setObjectName("heatmapColorScaleButton")
-        self.color_scale_button.setToolTip("Choose the colour map and limits.")
-        color_scale_layout.addWidget(
-            self.color_scale_button,
-            2,
-            0,
-            1,
-            1,
-            QtCore.Qt.AlignmentFlag.AlignLeft,
-        )
+        color_scale_layout.addWidget(self.color_scale_button)
+        self.colour_map_dialog: ColourMapDialog | None = None
         panel_layout.addWidget(color_scale_group)
 
         self.visible = qtw.QCheckBox("Visible")
@@ -1848,26 +1793,13 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         self.opacity = _OpacitySpinBox()
         self.opacity.setToolTip("Set the opacity of the selected heatmaps: 0% is transparent and 100% is opaque.")
         self.opacity.setObjectName("heatmapAppearanceOpacity")
-        self.opacity.setRange(0, 100)
-        self.opacity.setValue(100)
-        self.opacity.setSuffix("%")
-        self.opacity.setSizePolicy(
-            qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed
-        )
+        configure_opacity_spinbox(self.opacity)
         self.opacity_slider = qtw.QSlider(QtCore.Qt.Orientation.Horizontal)
         self.opacity_slider.setToolTip("Set the opacity of the selected heatmaps: 0% is transparent and 100% is opaque.")
         self.opacity_slider.setObjectName("heatmapAppearanceOpacitySlider")
         self.opacity_slider.setRange(0, 100)
         self.opacity_slider.setValue(100)
-        visibility_layout = qtw.QHBoxLayout()
-        visibility_layout.setContentsMargins(0, 0, 0, 0)
-        visibility_layout.setSpacing(6)
-        visibility_layout.addWidget(self.visible)
-        visibility_layout.addSpacing(16)
-        visibility_layout.addWidget(qtw.QLabel("Opacity"))
-        visibility_layout.addWidget(self.opacity_slider, 1)
-        visibility_layout.addWidget(self.opacity)
-        panel_layout.addLayout(visibility_layout)
+        panel_layout.addWidget(visibility_opacity_row(self.visible, self.opacity_slider, self.opacity))
 
         self.x_axis = qtw.QComboBox()
         self.x_axis.addItems(["Bottom", "Top"])
@@ -1890,6 +1822,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         self.swap_axes = qtw.QCheckBox("Swap X/Y")
         self.swap_axes.setToolTip("Exchange the two plotted heatmap axes.")
         plot_axes = qtw.QGroupBox("Plot axes", panel)
+        self.plot_axes_group = plot_axes
         plot_axes_layout = qtw.QVBoxLayout(plot_axes)
         plot_axes_layout.setContentsMargins(8, 10, 8, 8)
         plot_axes_layout.addWidget(self.swap_axes)
@@ -1905,7 +1838,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         self.opacity_slider.valueChanged.connect(self.opacity.setValue)
         self.opacity.valueChanged.connect(self.opacity_slider.setValue)
         self.opacity.valueChanged.connect(lambda _value: self._apply_selection("opacity"))
-        self.visible.toggled.connect(lambda _checked: self._apply_selection("visible"))
+        self.visible.checkStateChanged.connect(lambda _checked: self._apply_selection("visible"))
         self.x_axis.currentTextChanged.connect(lambda _text: self._apply_axis_selection("x"))
         self.y_axis.currentTextChanged.connect(lambda _text: self._apply_axis_selection("y"))
         self.swap_axes.toggled.connect(self._swap_axes_toggled)
@@ -1926,18 +1859,20 @@ class _HeatmapAppearanceControls(qtw.QWidget):
 
         name_getter = getattr(self.owner, "_current_colorbar_colormap_name", None)
         name = str(name_getter()) if callable(name_getter) else "viridis"
-        self.color_scale_name.setText(_colorbar_colormap_label(name))
-        self.color_scale_name.setToolTip(name)
-        self.color_scale_preview.setPixmap(
-            _colorbar_colormap_preview(name, width=190, height=18)
-        )
+        self.color_scale_button.set_colormap(name)
         if refresh_rows:
             self.refresh_rows()
 
     def _open_color_scale(self, _checked: bool = False) -> None:
-        opener = getattr(self.owner, "open_colorbar_scale_dialog", None)
-        if callable(opener):
-            opener()
+        if self.colour_map_dialog is not None and self.colour_map_dialog.isVisible():
+            self.colour_map_dialog.raise_()
+            self.colour_map_dialog.activateWindow()
+            return
+        if self.colour_map_dialog is not None:
+            self.colour_map_dialog.deleteLater()
+        self.colour_map_dialog = ColourMapDialog(self.owner, self)
+        self.colour_map_dialog.finished.connect(lambda _result: self.refresh_color_scale())
+        self.colour_map_dialog.open()
 
     def sync_swap_axes_control(self) -> None:
         can_swap = getattr(self.owner, "can_swap_plot_axes", None)
@@ -2021,6 +1956,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
 
     def refresh_rows(self) -> None:
         self.sync_swap_axes_control()
+        select_first = self.table.rowCount() == 0
         selected = set(self._selected_keys())
         self.table.blockSignals(True)
         self.table.setRowCount(0)
@@ -2076,7 +2012,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
             self.table.blockSignals(False)
 
         self.owner._sync_heatmap_layer_order()
-        if self.table.rowCount() and not self._selected_keys():
+        if select_first and self.table.rowCount() and not self._selected_keys():
             self.table.selectRow(0)
         else:
             self._sync_controls_from_selection()
@@ -2085,7 +2021,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
     def _heatmap_pixmap(self, layer: Any) -> QtGui.QPixmap:
         """Render a small data-shaped image rather than a line glyph."""
 
-        size = QtCore.QSize(64, 22)
+        size = QtCore.QSize(48, 22)
         source = (
             self.owner.__dict__.get("dataGrid")
             if layer is self.owner
@@ -2151,9 +2087,6 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         if model is None:
             return []
         rows = sorted({index.row() for index in model.selectedRows()})
-        current_row = self.table.currentRow()
-        if not rows and 0 <= current_row < self.table.rowCount():
-            return [current_row]
         return rows
 
     def _selected_keys(self) -> list[Any]:
@@ -2208,6 +2141,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
             return
         keys = self._selected_keys()
         if not keys:
+            self.selection_feedback = ""
             self._update_control_enabled_states(False)
             return
         layer = self.owner.heatmaps[keys[0]]
@@ -2222,6 +2156,14 @@ class _HeatmapAppearanceControls(qtw.QWidget):
             self.y_axis.setCurrentText(y_axis)
         finally:
             self._building = False
+        layers = [self.owner.heatmaps[key] for key in keys]
+        mixed = mixed_values([
+            ("Visible", self.visible, [self.owner._heatmap_is_visible(item) for item in layers]),
+            ("Opacity", self.opacity, [self.owner._heatmap_opacity(item) for item in layers]),
+            ("Horizontal axis", self.x_axis, [self.owner._heatmap_axis_sides(item)[0] for item in layers]),
+            ("Vertical axis", self.y_axis, [self.owner._heatmap_axis_sides(item)[1] for item in layers]),
+        ])
+        self.selection_feedback = "Mixed values: " + ", ".join(mixed) + "." if mixed else ""
         self._update_control_enabled_states(True)
 
     def _update_control_enabled_states(self, has_selection: bool) -> None:
