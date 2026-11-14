@@ -986,6 +986,13 @@ display pixels, while 300 dpi renders a higher-resolution clipboard image at the
 same logical plot size, and vector SVG copies editable SVG data for applications
 that accept SVG from the clipboard.
 
+Use `Window -> Resize Plot Canvas -> Custom...` to change the displayed plot
+area in pixels. Width and Height start at the current canvas dimensions.
+**Lock aspect ratio** is selected initially; clear it to edit the dimensions
+independently. Locking it again preserves the newly entered ratio, rounded to
+whole pixels. **Resize** applies the dimensions; **Cancel** or `Esc` discards
+the edits. Toolbars and window borders are excluded from the dimensions.
+
 Use `File -> Print Plot...`, `Ctrl+P`, or `Cmd+P` to open the system print
 dialog. Printing includes only the visible plot area, scales it to the printable
 page without stretching or cropping, and excludes the plot-window controls.

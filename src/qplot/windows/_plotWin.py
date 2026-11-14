@@ -114,6 +114,93 @@ _PLOT_AREA_RESIZE_PRESETS = (
     )
 
 
+class _PlotAreaSizeDialog(qtw.QDialog):
+    """Enter canvas dimensions without resizing the plot until acceptance."""
+
+    def __init__(self, size: QtCore.QSize, parent: qtw.QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Custom plot area size")
+        layout = qtw.QVBoxLayout(self)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
+        dimensions = qtw.QHBoxLayout()
+        dimensions.setSpacing(6)
+        self.width_spin = qtw.QSpinBox(self)
+        self.height_spin = qtw.QSpinBox(self)
+        for name, spin, value in (
+            ("Width", self.width_spin, size.width()),
+            ("Height", self.height_spin, size.height()),
+        ):
+            label = qtw.QLabel(f"&{name}", self)
+            label.setBuddy(spin)
+            dimensions.addWidget(label)
+            spin.setRange(1, 20_000)
+            spin.setSuffix(" px")
+            spin.setValue(max(1, value))
+            spin.setKeyboardTracking(False)
+            spin.setAccessibleName(f"Plot area {name.lower()}")
+            spin.setToolTip(
+                f"{name} of the plot area in pixels, excluding toolbars and window borders."
+            )
+            dimensions.addWidget(spin, 1)
+        layout.addLayout(dimensions)
+        self.lock_ratio = qtw.QCheckBox("Lock aspect ratio", self)
+        self.lock_ratio.setToolTip(
+            "Keep the current width-to-height ratio, rounded to whole pixels. "
+            "Clear this to change width and height independently."
+        )
+        self.lock_ratio.setChecked(True)
+        self._ratio_size = self.plot_area_size()
+        self.lock_ratio.toggled.connect(self._ratio_lock_changed)
+        layout.addWidget(self.lock_ratio)
+        self.width_spin.valueChanged.connect(
+            lambda value: self._dimension_changed(value, width=True),
+        )
+        self.height_spin.valueChanged.connect(
+            lambda value: self._dimension_changed(value, width=False),
+        )
+        self.buttons = qtw.QDialogButtonBox(
+            qtw.QDialogButtonBox.StandardButton.Ok | qtw.QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        resize_button = self.buttons.button(qtw.QDialogButtonBox.StandardButton.Ok)
+        assert resize_button is not None
+        resize_button.setText("Resize")
+        resize_button.setDefault(True)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        button_width = max(button.sizeHint().width() for button in self.buttons.buttons())
+        for button in self.buttons.buttons():
+            button.setMinimumWidth(button_width)
+        layout.addWidget(self.buttons)
+        self.width_spin.setFocus()
+        self.width_spin.selectAll()
+
+    def plot_area_size(self) -> QtCore.QSize:
+        return QtCore.QSize(self.width_spin.value(), self.height_spin.value())
+
+    def _ratio_lock_changed(self, locked: bool) -> None:
+        if locked:
+            self._ratio_size = self.plot_area_size()
+
+    def _dimension_changed(self, value: int, *, width: bool) -> None:
+        if not self.lock_ratio.isChecked():
+            return
+        edited, other = ((self.width_spin, self.height_spin) if width
+                         else (self.height_spin, self.width_spin))
+        factor = (self._ratio_size.height() / self._ratio_size.width() if width
+                  else self._ratio_size.width() / self._ratio_size.height())
+        proposed = round(value * factor)
+        bounded = max(other.minimum(), min(other.maximum(), proposed))
+        # If a linked dimension reaches its bound, bring the edited dimension
+        # back into range too, rather than silently stretching the canvas.
+        if bounded != proposed:
+            value = round(bounded / factor)
+        with QtCore.QSignalBlocker(edited), QtCore.QSignalBlocker(other):
+            edited.setValue(value)
+            other.setValue(bounded)
+
+
 def _plot_area_size_icon(size):
     """
     Builds a small aspect-ratio preview icon for plot-area resize presets.
@@ -993,38 +1080,13 @@ class plotWidget(
         Opens a dialog for resizing the copied plot area to an exact pixel size.
 
         """
-        current_size = self._current_plot_area_size()
-
-        dialog = qtw.QDialog(self)
-        dialog.setWindowTitle("Custom Plot Area Size")
-
-        form = qtw.QFormLayout(dialog)
-        width_spin = qtw.QSpinBox(dialog)
-        width_spin.setToolTip("Width of the plot area in pixels, excluding toolbars and window borders.")
-        width_spin.setRange(1, 20_000)
-        width_spin.setSuffix(" px")
-        width_spin.setValue(max(1, current_size.width()))
-
-        height_spin = qtw.QSpinBox(dialog)
-        height_spin.setToolTip("Height of the plot area in pixels, excluding toolbars and window borders.")
-        height_spin.setRange(1, 20_000)
-        height_spin.setSuffix(" px")
-        height_spin.setValue(max(1, current_size.height()))
-
-        form.addRow("&Width:", width_spin)
-        form.addRow("&Height:", height_spin)
-
-        buttons = qtw.QDialogButtonBox(
-            qtw.QDialogButtonBox.StandardButton.Ok
-            | qtw.QDialogButtonBox.StandardButton.Cancel,
-            dialog,
-            )
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        form.addRow(buttons)
-
-        if dialog.exec() == qtw.QDialog.DialogCode.Accepted:
-            self.resize_plot_area(width_spin.value(), height_spin.value())
+        dialog = _PlotAreaSizeDialog(self._current_plot_area_size(), self)
+        try:
+            if dialog.exec() == qtw.QDialog.DialogCode.Accepted:
+                size = dialog.plot_area_size()
+                self.resize_plot_area(size.width(), size.height())
+        finally:
+            dialog.deleteLater()
 
 
     def _current_plot_area_size(self):
