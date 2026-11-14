@@ -964,27 +964,57 @@ class plot2d(
     def _new_heatmap_downsample_dialog(self) -> qtw.QDialog:
         """Create a titled warning dialog for a downsampled heatmap."""
         dialog = qtw.QDialog(self)
-        dialog.setWindowTitle("Warning: Heatmap downsampled")
+        dialog.setWindowTitle("Heatmap displayed at reduced resolution")
         dialog.setModal(True)
 
         layout = qtw.QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
         content = qtw.QHBoxLayout()
+        content.setSpacing(12)
         icon_label = qtw.QLabel(dialog)
         style = dialog.style()
         assert style is not None
         icon = style.standardIcon(
             qtw.QStyle.StandardPixmap.SP_MessageBoxWarning
             )
-        icon_label.setPixmap(icon.pixmap(64, 64))
+        icon_size = style.pixelMetric(qtw.QStyle.PixelMetric.PM_MessageBoxIconSize)
+        icon_label.setPixmap(icon.pixmap(icon_size, icon_size))
         icon_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
         content.addWidget(icon_label)
 
         message_label = qtw.QLabel(self._heatmap_downsample_dialog_message(), dialog)
+        message_label.setObjectName("heatmapResolutionSummary")
         message_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         message_label.setWordWrap(True)
-        message_label.setMinimumWidth(520)
+        message_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         content.addWidget(message_label, 1)
         layout.addLayout(content)
+
+        details_button = qtw.QToolButton(dialog)
+        details_button.setObjectName("heatmapResolutionDetailsButton")
+        details_button.setText("Details")
+        details_button.setCheckable(True)
+        details_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        details_button.setArrowType(QtCore.Qt.ArrowType.RightArrow)
+        layout.addWidget(details_button, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+        details = qtw.QPlainTextEdit(self._heatmap_downsample_dialog_text(), dialog)
+        details.setObjectName("heatmapResolutionDetails")
+        details.setAccessibleName("Heatmap resolution details")
+        details.setReadOnly(True)
+        details.setFixedHeight(details.fontMetrics().lineSpacing() * 10)
+        details.hide()
+        layout.addWidget(details)
+
+        def toggle_details(expanded: bool) -> None:
+            details.setVisible(expanded)
+            details_button.setArrowType(
+                QtCore.Qt.ArrowType.DownArrow if expanded else QtCore.Qt.ArrowType.RightArrow
+                )
+            layout.activate()
+            dialog.resize(dialog.width(), dialog.sizeHint().height())
+
+        details_button.toggled.connect(toggle_details)
 
         button_box = qtw.QDialogButtonBox(
             qtw.QDialogButtonBox.StandardButton.Ok,
@@ -999,7 +1029,11 @@ class plot2d(
             lambda: self._open_heatmap_limit_preferences(dialog)
             )
         button_box.accepted.connect(dialog.accept)
+        ok_button = button_box.button(qtw.QDialogButtonBox.StandardButton.Ok)
+        assert ok_button is not None
+        ok_button.setDefault(True)
         layout.addWidget(button_box)
+        dialog.resize(520, dialog.sizeHint().height())
         return dialog
 
 
@@ -1016,8 +1050,7 @@ class plot2d(
         if info.get("source_dimensions_limited"):
             return (
                 "Exact source dimensions were not retained during downsampling "
-                "to keep memory use bounded. This does not omit source measurements "
-                "from the plotted averages."
+                "to keep memory use bounded."
             )
         columns, rows = info.get("source_grid_columns"), info.get("source_grid_rows")
         if columns is None or rows is None:
@@ -1029,49 +1062,45 @@ class plot2d(
         )
 
     def _heatmap_downsample_dialog_message(self) -> str:
-        """Return the plain-text details shown below the dialog title."""
+        """Keep the initial explanation short and specific to the available metadata."""
         info = self._heatmap_downsample_info or {}
-        lines = ["This heatmap is displayed from downsampled data.", ""]
-
-        if info.get("grid_binned"):
-            full_limit = self._format_heatmap_count(
-                info.get("full_resolution_point_limit")
+        lines = ["This heatmap is displayed at reduced resolution.", ""]
+        for label, prefix in (("Source", "source_grid_"), ("Displayed", "grid_")):
+            columns, rows = info.get(prefix + "columns"), info.get(prefix + "rows")
+            if columns is not None and rows is not None:
+                dimensions = (
+                    f"{self._format_heatmap_count(columns)} × "
+                    f"{self._format_heatmap_count(rows)} (columns × rows)"
+                    )
+            else:
+                dimensions = "Exact dimensions unavailable"
+            lines.append(f"{label} grid: {dimensions}")
+        lines.append("")
+        if info.get("source_sampled"):
+            lines.append("A subset of source rows was sampled before plotting.")
+            if info.get("grid_binned"):
+                lines.append("Sampled values were averaged into display cells.")
+        elif info.get("source_aggregated"):
+            lines.append(
+                "Source rows were combined using spatial means."
+                if "spatial mean" in str(info.get("source_aggregation_strategy", ""))
+                else "Source rows were aggregated before plotting."
                 )
-            grid_columns = self._format_heatmap_count(info.get("grid_columns"))
-            grid_rows = self._format_heatmap_count(info.get("grid_rows"))
-            grid_cells = self._format_heatmap_count(info.get("grid_cell_count"))
-            lines.extend([
-                self._heatmap_source_grid_description(info),
-                "The full-resolution heatmap limit is "
-                f"{full_limit} points.",
-                f"The plotted grid is {grid_columns} x {grid_rows} = "
-                f"{grid_cells} cells.",
-                "Values falling into the same plotted grid cell were averaged.",
-                "",
-                ])
-
-        lines.extend([
-            (
-                "The full-resolution heatmap limit can be changed using the "
-                + "Preferences dialog."
-            ),
-            "",
-            (
-                "The full-resolution limit controls when qPlot switches to an "
-                + "averaged display grid."
-            ),
-            ])
+        elif info.get("grid_binned"):
+            lines.append("Loaded values were averaged into display cells.")
+        lines.extend(["", "Adjust heatmap limits in Preferences → Performance."])
         return "\n".join(lines)
 
 
     def _heatmap_downsample_dialog_text(self) -> str:
         info = self._heatmap_downsample_info or {}
-        lines = ["This heatmap is displayed from downsampled data."]
+        lines = ["This heatmap is displayed at reduced resolution."]
 
         if (
                 not info.get("source_sampled")
                 and not info.get("source_aggregated")
                 and not info.get("grid_binned")
+                and not info.get("empty_bins_filled")
                 ):
             return "\n".join(lines)
 
@@ -1103,7 +1132,6 @@ class plot2d(
                 f"{full_limit} points.",
                 f"The plotted grid is {grid_columns} x {grid_rows} = "
                 f"{grid_cells} cells.",
-                "Values falling into the same plotted grid cell were averaged.",
                 "",
                 ])
 
@@ -1111,13 +1139,16 @@ class plot2d(
         loaded_count = info.get("loaded_point_count")
         source_count = info.get("source_row_count")
         aggregated_count = info.get("aggregated_source_row_count")
-        if info.get("source_aggregated") and aggregated_count is not None:
+        if (info.get("source_aggregated") and not info.get("source_sampled")
+                and aggregated_count is not None
+                and "spatial mean" in str(info.get("source_aggregation_strategy", ""))):
             lines.append(
-                "All "
+                "Spatial averaging used "
                 f"{self._format_heatmap_count(aggregated_count)} matching "
-                "source rows contributed to "
-                f"{self._format_heatmap_count(loaded_count)} spatial mean cells."
+                "source rows."
                 )
+        elif info.get("source_aggregated"):
+            lines.append("Source rows were aggregated before plotting.")
         elif loaded_count is not None and source_count is not None:
             lines.append(
                 "Loaded "
@@ -1143,28 +1174,33 @@ class plot2d(
                 info.get("source_sample_limit")
                 )
             stride = info.get("source_sample_stride")
+            cap = (
+                f", capped at {sample_limit} rows."
+                if info.get("source_sample_limit") is not None else "."
+                )
             if isinstance(stride, (int, float)) and stride > 1:
                 lines.append(
                     "Database rows were stride-sampled before plotting "
                     "(about every "
-                    f"{self._format_heatmap_ordinal(stride)} matching row), "
-                    "capped at "
-                    f"{sample_limit} rows."
+                    f"{self._format_heatmap_ordinal(stride)} matching row)" + cap
+                    )
+            elif info.get("source_sample_strategy") == "uniform rowid sample":
+                lines.append(
+                    "Database rows were uniformly sampled before plotting" + cap
                     )
             else:
-                lines.append(
-                    "Database rows were uniformly sampled before plotting, capped at "
-                    f"{sample_limit} rows."
-                    )
-        elif not info.get("source_aggregated"):
-            lines.append("All matching source rows were read before display binning.")
+                lines.append("Database rows were sampled before plotting" + cap)
 
         lines.extend(["", "Display grid:"])
         unique_x = self._format_heatmap_count(info.get("unique_x_count"))
         unique_y = self._format_heatmap_count(info.get("unique_y_count"))
         if info.get("grid_binned"):
+            if info.get("source_aggregated"):
+                grid_description = "Aggregated values were displayed on a "
+            else:
+                grid_description = "Loaded values were averaged into a "
             lines.append(
-                "Loaded values were averaged into a "
+                grid_description +
                 f"{grid_columns} x {grid_rows} display grid."
                 )
             if info.get("unique_x_count") is None or info.get("unique_y_count") is None:

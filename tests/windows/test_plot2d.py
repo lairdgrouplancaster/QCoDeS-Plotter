@@ -28,6 +28,115 @@ from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import plot2d
 
 
+@pytest.mark.parametrize("metadata, expected, absent", [
+    ({"grid_binned": True}, "Loaded values were averaged", "All matching"),
+    ({"source_sampled": True}, "A subset of source rows was sampled", "uniformly"),
+    ({"source_sampled": True, "grid_binned": True},
+     "Sampled values were averaged", "All matching"),
+    ({"source_aggregated": True}, "Source rows were aggregated", "spatial means"),
+    ({"source_aggregated": True, "source_aggregation_strategy": "spatial mean",
+      "aggregated_source_row_count": 200, "loaded_point_count": 20},
+     "Source rows were combined using spatial means", "sampled before plotting"),
+    ({"source_sampled": True, "source_aggregated": True,
+      "source_aggregation_strategy": "spatial mean", "aggregated_source_row_count": 200},
+     "A subset of source rows was sampled", "All 200"),
+])
+def test_heatmap_resolution_wording_follows_metadata(metadata, expected, absent):
+    host = plot2d.__new__(plot2d)
+    host._heatmap_downsample_info = metadata
+    summary = host._heatmap_downsample_dialog_message()
+    details = host._heatmap_downsample_dialog_text()
+    assert summary.startswith("This heatmap is displayed at reduced resolution.")
+    assert expected in summary
+    assert absent not in summary + details
+    assert "All matching source rows were read" not in details
+    assert "does not omit source measurements" not in details
+
+
+def test_heatmap_resolution_summary_compares_known_dimensions_and_keeps_details_separate():
+    host = plot2d.__new__(plot2d)
+    host._heatmap_downsample_info = {
+        "source_sampled": True, "source_sample_stride": 3,
+        "source_sample_limit": 100, "grid_binned": True,
+        "source_grid_columns": 2_000, "source_grid_rows": 1_000,
+        "grid_columns": 500, "grid_rows": 400,
+        "full_resolution_point_limit": 1_000_000, "empty_bins_filled": True,
+    }
+    summary = host._heatmap_downsample_dialog_message()
+    assert "Source grid: 2,000 × 1,000 (columns × rows)" in summary
+    assert "Displayed grid: 500 × 400 (columns × rows)" in summary
+    assert "3rd" not in summary
+    assert "interpolation" not in summary
+    assert "about every 3rd matching row" in host._heatmap_downsample_dialog_text()
+    host._heatmap_downsample_info.update({
+        "source_dimensions_limited": True, "source_grid_rows": None,
+        "source_grid_columns": 2_000,
+    })
+    summary = host._heatmap_downsample_dialog_message()
+    assert "Source grid: Exact dimensions unavailable" in summary
+    assert "2,000 ×" not in summary
+    assert "Displayed grid: 500 × 400" in summary
+
+
+def test_heatmap_resolution_details_do_not_treat_loaded_source_rows_as_display_cells():
+    host = plot2d.__new__(plot2d)
+    host._heatmap_downsample_info = {
+        "source_aggregated": True, "source_aggregation_strategy": "spatial mean",
+        "aggregated_source_row_count": 2_000, "loaded_point_count": 2_000,
+        "grid_columns": 10, "grid_rows": 10, "grid_cell_count": 100,
+        "grid_binned": True,
+    }
+    details = host._heatmap_downsample_dialog_text()
+    assert "Spatial averaging used 2,000 matching source rows." in details
+    assert "Aggregated values were displayed on a 10 x 10 display grid." in details
+    assert "2,000 spatial mean cells" not in details
+    host._heatmap_downsample_info.pop("source_aggregation_strategy")
+    details = host._heatmap_downsample_dialog_text()
+    assert "spatial mean" not in details
+    assert "averaged" not in details
+
+
+def test_heatmap_resolution_dialog_details_resize_and_preferences(qapplication):
+    host = plot2d.__new__(plot2d)
+    qtw.QMainWindow.__init__(host)
+    host._heatmap_downsample_info = {"source_sampled": True}
+    calls = []
+    host.show_preferences_dialog = lambda **kwargs: calls.append(kwargs)
+    dialog = host._new_heatmap_downsample_dialog()
+    try:
+        dialog.show()
+        qapplication.processEvents()
+        assert dialog.windowTitle() == "Heatmap displayed at reduced resolution"
+        details = dialog.findChild(qtw.QPlainTextEdit, "heatmapResolutionDetails")
+        toggle = dialog.findChild(qtw.QToolButton, "heatmapResolutionDetailsButton")
+        assert details.isHidden()
+        assert details.isReadOnly()
+        assert details.toPlainText() == host._heatmap_downsample_dialog_text()
+        compact_size = dialog.size()
+        assert compact_size.width() <= 560
+        assert compact_size.height() < 360
+        toggle.click()
+        qapplication.processEvents()
+        assert details.isVisible()
+        assert dialog.height() > compact_size.height()
+        assert dialog.width() == compact_size.width()
+        toggle.click()
+        qapplication.processEvents()
+        assert dialog.size() == compact_size
+        buttons = dialog.findChild(qtw.QDialogButtonBox)
+        assert buttons.button(qtw.QDialogButtonBox.StandardButton.Ok).isDefault()
+        preferences = dialog.findChild(qtw.QPushButton, "openHeatmapLimitPreferencesButton")
+        preferences.click()
+        assert dialog.result() == qtw.QDialog.DialogCode.Accepted
+        assert not dialog.isVisible()
+        assert calls == []
+        qapplication.processEvents()
+        assert calls == [{"initial_tab": "Performance"}]
+    finally:
+        dialog.deleteLater()
+        host.deleteLater()
+
+
 @pytest.mark.parametrize("swapped", [False, True])
 @pytest.mark.parametrize("signal_label", ["Signal", ""])
 def test_heatmap_coordinate_context_includes_measurement_and_both_setpoints(swapped, signal_label):
@@ -2967,7 +3076,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             self.assertEqual(opened, [True])
 
             text = host._heatmap_downsample_dialog_text()
-            self.assertIn("downsampled data", text)
+            self.assertIn("displayed at reduced resolution", text)
             self.assertIn("X: 10 to 20", text)
             self.assertIn("2,000 x 1,000 = 2,000,000 cells", text)
             self.assertIn("full-resolution heatmap limit is 1,000,000", text)
@@ -3031,7 +3140,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         finally:
             host.deleteLater()
 
-    def test_spatially_aggregated_heatmap_explains_that_all_rows_contributed(self):
+    def test_spatially_aggregated_heatmap_explains_source_row_contributions(self):
         class Worker:
             heatmap_downsample_info = {
                 "source_row_count": 2_000_000,
@@ -3073,10 +3182,10 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
             text = host._heatmap_downsample_dialog_text()
             self.assertIn(
-                "All 2,000,000 matching source rows contributed",
+                "Spatial averaging used 2,000,000 matching source rows.",
                 text,
                 )
-            self.assertIn("200,000 spatial mean cells", text)
+            self.assertIn("Aggregated values were displayed on a 500 x 400 display grid.", text)
             self.assertNotIn("sampled before plotting", text)
             Worker.heatmap_downsample_info.update({
                 "source_dimensions_limited": True,
@@ -3085,10 +3194,12 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 "unique_y_count": None,
             })
             host._update_heatmap_downsample_state(Worker())
-            for details in (host._heatmap_downsample_dialog_text(), host._heatmap_downsample_dialog_message()):
-                self.assertIn("not retained during downsampling", details)
-                self.assertIn("keep memory use bounded", details)
-                self.assertNotIn("unknown", details)
+            details = host._heatmap_downsample_dialog_text()
+            self.assertIn("not retained during downsampling", details)
+            self.assertIn("keep memory use bounded", details)
+            summary = host._heatmap_downsample_dialog_message()
+            self.assertIn("Source grid: Exact dimensions unavailable", summary)
+            self.assertNotIn("unknown", summary)
         finally:
             host.deleteLater()
 

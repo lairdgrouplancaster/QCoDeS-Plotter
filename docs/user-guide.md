@@ -651,6 +651,13 @@ When multiple traces use different Y axes:
 
 ### Heatmaps
 
+When a heatmap is displayed at reduced resolution, its warning button opens a
+compact summary showing the source and displayed grid dimensions (columns ×
+rows), where known. The summary distinguishes spatial averaging, aggregation
+and sampling. Expand **Details** for source-row counts, sampling and
+interpolation information; unavailable dimensions are not inferred. **Open
+Preferences…** opens **Performance**, where the heatmap limits can be adjusted.
+
 `Preferences -> Performance -> Maximum heatmap grid cells` sets the total
 cell budget for aggregated heatmaps (250,000 by default). A grid that fits is
 kept at its available resolution; larger grids reduce both dimensions

@@ -21,6 +21,10 @@ class DialogOwner(PlotWindowFeedbackMixin, qtw.QMainWindow):
     show_heatmap_downsample_dialog = plot2d.show_heatmap_downsample_dialog
     _new_heatmap_downsample_dialog = plot2d._new_heatmap_downsample_dialog
     _heatmap_downsample_dialog_message = plot2d._heatmap_downsample_dialog_message
+    _heatmap_downsample_dialog_text = plot2d._heatmap_downsample_dialog_text
+    _format_heatmap_count = staticmethod(plot2d._format_heatmap_count)
+    _format_heatmap_axis_range = staticmethod(plot2d._format_heatmap_axis_range)
+    _open_heatmap_limit_preferences = plot2d._open_heatmap_limit_preferences
 
     def __init__(self, config):
         super().__init__()
