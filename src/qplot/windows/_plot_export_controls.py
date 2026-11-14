@@ -146,8 +146,12 @@ class PlotExportControls(qtw.QWidget):
             self.fields["background"] = colour
             form.addRow("Background", colour)
             if type(exporter) is ImageExporter:
-                self._check(form, "Smooth edges", "antialias")
-                self._check(form, "Invert brightness", "invertValue")
+                options = qtw.QHBoxLayout()
+                options.setSpacing(18)
+                options.addWidget(self._checkbox("Smooth edges", "antialias"))
+                options.addWidget(self._checkbox("Invert brightness", "invertValue"))
+                options.addStretch(1)
+                form.addRow(options)
             else:
                 self._check(form, "Scale line widths with image", "scaling stroke")
         for name in self.fields:
@@ -171,10 +175,13 @@ class PlotExportControls(qtw.QWidget):
         form.addRow(label, combo)
 
     def _check(self, form, label, name):
+        form.addRow(self._checkbox(label, name))
+
+    def _checkbox(self, label, name):
         check = qtw.QCheckBox(label)
         check.toggled.connect(lambda checked: self._write(name, checked))
         self.fields[name] = check
-        form.addRow(check)
+        return check
 
     def _write(self, name, value):
         if not self._syncing:

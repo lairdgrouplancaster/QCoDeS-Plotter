@@ -929,7 +929,7 @@ Plot windows can export plot images and data through `File -> Export Plot...` or
 Images and SVG export the complete plot, including colour scales and source
 annotations. Image dimensions start at the displayed plot size; editing width or
 height preserves its aspect ratio. Background colour supports transparency, and
-**Invert brightness** is shown beneath **Smooth edges**. CSV shows data options
+**Invert brightness** is shown beside **Smooth edges**. CSV shows data options
 instead of image controls; the scope description has a tooltip with full details.
 Choosing **Tab** suggests a TSV file, while the final CSV/TSV file type determines
 the delimiter. **Save as…** leaves the dialog open for further exports.
