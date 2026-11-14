@@ -119,6 +119,9 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.confirm_incompatible_axes` | boolean | `true` | `true` or `false` | Confirm drops with incompatible axis assignments. |
 | `user_preference.theme` | string | `"light"` | `light`, `dark`, or `pyqt` | Active application theme. |
 | `user_preference.bar_colour` | string | `"viridis"` | any string | Default 2D colour map name. |
+| `user_preference.trace_colour` | string | `"#1f77b4"` | `#RRGGBB` hex colour | Initial line colour for new traces. |
+| `user_preference.trace_line_width` | number | `2` | `0.5 <= value <= 15` | Initial line width for new traces, in pixels. |
+| `user_preference.trace_line_style` | string | `"Solid"` | `Solid`, `Dash`, `Dot`, or `Dash Dot` | Initial line style for new traces. |
 | `user_preference.bar_colour_excluded` | string array | `[]` | any strings | Hide colour maps with these exact names. |
 | `user_preference.bar_colour_excluded_prefixes` | string array | `[]` | any strings | Hide colour maps with these prefixes. |
 | `user_preference.confirm_close` | boolean | `false` | `true` or `false` | Ask before closing the main window. |

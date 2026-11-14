@@ -86,12 +86,12 @@ def test_default_colour_map_is_a_staged_preference(precise_config):
     cfg = precise_config
     original = cfg.get("user_preference.bar_colour")
     dialog = PreferencesDialog(cfg)
-    dialog.defaultColourMapCombo.setCurrentIndex(dialog.defaultColourMapCombo.findData("plasma"))
+    dialog.defaultColourMapButton.setValue("plasma")
     assert cfg.get("user_preference.bar_colour") == original
     dialog.reject()
     assert cfg.get("user_preference.bar_colour") == original
     dialog = PreferencesDialog(cfg)
-    dialog.defaultColourMapCombo.setCurrentIndex(dialog.defaultColourMapCombo.findData("plasma"))
+    dialog.defaultColourMapButton.setValue("plasma")
     dialog.buttonBox.button(qtw.QDialogButtonBox.StandardButton.Ok).click()
     assert cfg.get("user_preference.bar_colour") == "plasma"
 
@@ -122,8 +122,8 @@ def test_default_colour_preference_keeps_existing_plot_map(mixed_plot):
     original = target._current_colorbar_colormap_name()
     preferences = PreferencesDialog(target.config)
     preferences.preferencesApplied.connect(main.apply_current_settings)
-    preferences.defaultColourMapCombo.setCurrentIndex(preferences.defaultColourMapCombo.findData("plasma"))
-    assert not preferences.defaultColourMapPreview.pixmap().isNull()
+    preferences.defaultColourMapButton.setValue("plasma")
+    assert preferences.defaultColourMapButton.text() == "Plasma"
     assert preferences.apply_preferences()
     assert target._current_colorbar_colormap_name() == original
     main.openPlot(runs["other_heatmap"].guid)

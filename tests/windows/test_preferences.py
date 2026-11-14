@@ -28,6 +28,9 @@ class FakeConfig:
         self.defaults = {
             "user_preference.theme": "light",
             "user_preference.bar_colour": "viridis",
+            "user_preference.trace_colour": "#1f77b4",
+            "user_preference.trace_line_width": 2.0,
+            "user_preference.trace_line_style": "Solid",
             "user_preference.font_size": 10,
             "user_preference.show_source_annotation": True,
             "user_preference.cursor_significant_figures": 6,

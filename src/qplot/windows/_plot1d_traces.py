@@ -7,12 +7,18 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+from qplot.configuration.trace import TRACE_COLOUR_KEY, TRACE_STYLE_KEY, TRACE_WIDTH_KEY
+
 from ._appearance_feedback import mixed_values
 from ._drawing_controls import (
+    LINE_STYLES,
+    TRACE_COLOR_PALETTE,
     ColourSwatchCombo,
     DrawingSizeSpinBox,
     IconPreviewCombo,
+    colour_swatch_icon,
     drawing_controls_row,
+    line_style_icon,
 )
 from ._plot_appearance import (
     CenteredPreviewDelegate,
@@ -29,22 +35,6 @@ from ._plot_transform_labels import native_axis_quantities
 from ._refresh_interval import refresh_interval_value
 from ._subplots import subplot1d
 from ._widgets import picker_1d
-
-TRACE_COLOR_PALETTE = (
-    "#1f77b4",
-    "#ff7f0e",
-    "#2ca02c",
-    "#d62728",
-    "#9467bd",
-    "#8c564b",
-    "#e377c2",
-    "#7f7f7f",
-    "#bcbd22",
-    "#17becf",
-    "#000000",
-    "#ffffff",
-    )
-
 
 if TYPE_CHECKING:
     class _Plot1DTraceBase(PlotHost, qtw.QMainWindow):
@@ -125,7 +115,11 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
 
     def _initial_trace_style(self, order: int = 0) -> _TraceStyle:
         style = self._TraceStyle(order=order)
-        style.line_color = TRACE_COLOR_PALETTE[0]
+        cfg = getattr(self, "config", None)
+        if cfg is not None:
+            style.line_color = cfg.get(TRACE_COLOUR_KEY)
+            style.line_width = cfg.get(TRACE_WIDTH_KEY)
+            style.line_style = cfg.get(TRACE_STYLE_KEY)
         style.markers_color = style.line_color
         return style
 
@@ -707,9 +701,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             )
         
         # Adjust apperance
-        cols = self.config.theme.colors
-        col_ind = self.box_count % len(cols)
-        new_option.color_box.setColor(cols[col_ind])
+        new_option.color_box.setColor(QtGui.QColor(self._initial_trace_style().line_color))
         self.box_count += 1
         
         # Add box to tracking array and then to last possition in ScrollWidget
@@ -919,7 +911,6 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         
         styles = self._ensure_trace_styles()
         style = styles.setdefault(trace_key, self._initial_trace_style(order=len(styles)))
-        style.line_color = selected_box.color_box.color().name()
         style.y_axis = "Right" if selected_box.axis_side.currentText().lower() == "right" else "Left"
         if self.plot_axes_swapped():
             self._transpose_trace_axis_style(style)
@@ -1355,12 +1346,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
     _COL_PREVIEW = 1
     _COL_MEASUREMENT = 2
     _CUSTOM_COLOR_DATA = "__custom_color__"
-    _LINE_STYLES = (
-        ("Solid", QtCore.Qt.PenStyle.SolidLine),
-        ("Dash", QtCore.Qt.PenStyle.DashLine),
-        ("Dot", QtCore.Qt.PenStyle.DotLine),
-        ("Dash Dot", QtCore.Qt.PenStyle.DashDotLine),
-        )
+    _LINE_STYLES = LINE_STYLES
     _MARKER_SYMBOLS = ("o", "s", "t", "d", "+", "x")
 
     def __init__(self, owner: Plot1DTraceMixin):
@@ -1708,28 +1694,10 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.refresh_rows()
 
     def _color_icon(self, color: str) -> QtGui.QIcon:
-        pixmap = QtGui.QPixmap(38, 16)
-        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
-        painter = QtGui.QPainter(pixmap)
-        painter.setPen(QtGui.QPen(QtGui.QColor("#444444")))
-        painter.setBrush(QtGui.QBrush(QtGui.QColor(color)))
-        painter.drawRoundedRect(1, 1, 36, 14, 2, 2)
-        painter.end()
-        return QtGui.QIcon(pixmap)
+        return colour_swatch_icon(color)
 
     def _line_style_icon(self, style: str) -> QtGui.QIcon:
-        pixmap = QtGui.QPixmap(54, 16)
-        pixmap.fill(QtCore.Qt.GlobalColor.transparent)
-        painter = QtGui.QPainter(pixmap)
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        pen = QtGui.QPen(self.palette().color(QtGui.QPalette.ColorRole.Text))
-        pen.setWidthF(2.0)
-        pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
-        pen.setStyle(self._line_pen_style(style))
-        painter.setPen(pen)
-        painter.drawLine(4, pixmap.height() // 2, pixmap.width() - 4, pixmap.height() // 2)
-        painter.end()
-        return QtGui.QIcon(pixmap)
+        return line_style_icon(style, self.palette())
 
     def _marker_symbol_icon(self, symbol: str) -> QtGui.QIcon:
         pixmap = QtGui.QPixmap(24, 18)

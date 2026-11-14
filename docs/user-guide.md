@@ -603,6 +603,10 @@ Common plot controls:
   precision. Display rounding never changes the actual limits. **Symmetric
   about zero** remains available in both Auto and Manual modes; only
   **Autoscale on refresh** is disabled in Manual mode.
+* **Preferences → Appearance → Default trace** sets the initial colour, line width
+  and line style in one row, using the same swatch and style previews as Plot
+  Appearance. Choose a preset colour or **Custom**. These defaults apply to new
+  plots and to traces added to existing plots; existing traces keep their styles.
 * Colour-map selection affects the current plot. Set **Preferences → Appearance
   → Default colour map for new plots** to choose the default. Existing plots keep
   their own colour maps. Preferences are saved with

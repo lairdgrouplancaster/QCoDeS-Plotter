@@ -12,6 +12,7 @@ from PyQt6 import (
 )
 
 from qplot.configuration.fonts import FONT_SIZE_KEY
+from qplot.configuration.trace import TRACE_COLOUR_KEY, TRACE_STYLE_KEY, TRACE_WIDTH_KEY
 from qplot.datahandling.complex_data import (
     COMPLEX_1D_KEY,
     COMPLEX_1D_OPTIONS,
@@ -21,14 +22,20 @@ from qplot.datahandling.complex_data import (
 from qplot.tools.heatmap_geometry import MAX_AGGREGATED_HEATMAP_CELLS
 from qplot.updates import CHECK_ON_LAUNCH_KEY, INCLUDE_PRERELEASES_KEY
 
-from ._colorbar import (
-    _colorbar_colormap_label,
-    _colorbar_colormap_preview,
-    _colorbar_colormaps,
-)
+from ._colorbar import _colorbar_colormaps
+from ._colour_map_picker import ColourMapButton, ColourMapChooser
 from ._commands import create_action
 from ._config_persistence import persist_config_values
 from ._csv_filenames import CSV_FILENAME_FORMAT_KEY, CSV_FILENAME_FORMAT_OPTIONS
+from ._drawing_controls import (
+    LINE_STYLES,
+    TRACE_COLOR_PALETTE,
+    ColourSwatchCombo,
+    DrawingSizeSpinBox,
+    IconPreviewCombo,
+    colour_swatch_icon,
+    line_style_icon,
+)
 from ._plot_annotation import SHOW_SOURCE_ANNOTATION_KEY
 from ._plot_tiling import PLOT_TILE_COLUMNS_KEY, PLOT_TILE_ROWS_KEY
 from ._signal_blocking import blocked_signals
@@ -69,7 +76,10 @@ _PREFERENCE_CONTROLS = (
     (COMPLEX_1D_KEY, "complex1dCombo"),
     (COMPLEX_ND_KEY, "complexNdCombo"),
     (COLORBAR_WIDTH_KEY, "colorbarWidthSpin"),
-    ("user_preference.bar_colour", "defaultColourMapCombo"),
+    ("user_preference.bar_colour", "defaultColourMapButton"),
+    (TRACE_COLOUR_KEY, "defaultTraceColourCombo"),
+    (TRACE_WIDTH_KEY, "defaultTraceWidthSpin"),
+    (TRACE_STYLE_KEY, "defaultTraceStyleCombo"),
     (AXIS_TICK_WIDTH_KEY, "axisTickWidthSpin"),
     (AXIS_MAJOR_TICK_COUNT_KEY, "axisMajorTickCountSpin"),
     ("GUI.preview_size", "previewSizeSpin"),
@@ -92,8 +102,76 @@ _PREFERENCE_CONTROLS = (
 )
 PREFERENCE_KEYS = tuple(key for key, _control_name in _PREFERENCE_CONTROLS)
 
+
+class _PreferenceColourMapButton(ColourMapButton):
+    """Preview a pending preference without saving until Preferences applies it."""
+
+    valueChanged = QtCore.pyqtSignal(str)
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.clicked.connect(self._choose_map)
+
+    def value(self):
+        return self._name
+
+    def set_colormap(self, name):
+        super().set_colormap(name)
+        self.setAccessibleName(f"Default colour map for new plots: {self.text()}. Choose colour map.")
+        self.setToolTip(f"{self.text()}: choose the colour map used by new plots. Existing plots keep their own colour maps.")
+
+    def setValue(self, name):
+        if name != self._name:
+            self.set_colormap(name)
+            self.valueChanged.emit(name)
+
+    def _choose_map(self):
+        opening_map = self.value()
+        dialog = ColourMapChooser(_colorbar_colormaps(), opening_map, self)
+        dialog.picker.table.setToolTip("Select a colour map to preview it as the default for new plots.")
+        dialog.picker.mapSelected.connect(self.setValue)
+        accepted = False
+        try:
+            accepted = dialog.exec() == qtw.QDialog.DialogCode.Accepted
+        finally:
+            if not accepted:
+                self.setValue(opening_map)
+            dialog.deleteLater()
+
+
+class _PreferenceTraceColourCombo(ColourSwatchCombo):
+    """Keep custom colours as ordinary pending preference values."""
+
+    def __init__(self):
+        super().__init__("Default trace colour", preview_renderer=colour_swatch_icon)
+        self._colour = TRACE_COLOR_PALETTE[0]
+        for colour in TRACE_COLOR_PALETTE:
+            self.addItem(colour_swatch_icon(colour), colour, colour)
+        self.addItem("Custom", "custom")
+        self.currentIndexChanged.connect(self._colour_changed)
+
+    def set_colour(self, colour):
+        with blocked_signals(self):
+            index = self.findData(colour)
+            if index < 0:
+                index = self.count() - 1
+                self.insertItem(index, colour_swatch_icon(colour), colour, colour)
+            self.setCurrentIndex(index)
+            self._colour = colour
+        self.refresh_tooltip()
+
+    def _colour_changed(self):
+        colour = self.currentData()
+        if colour == "custom":
+            selected = qtw.QColorDialog.getColor(QtGui.QColor(self._colour), self, "Select default trace colour")
+            self.set_colour(selected.name() if selected.isValid() else self._colour)
+        elif colour is not None:
+            self._colour = colour
+
+
 _PreferenceControl = (
     qtw.QComboBox | qtw.QSpinBox | qtw.QDoubleSpinBox | qtw.QCheckBox | qtw.QLineEdit
+    | _PreferenceColourMapButton
 )
 
 
@@ -116,14 +194,20 @@ class _PreferenceBinding:
 
     def write(self, value: Any) -> None:
         control = self.control
-        if isinstance(control, qtw.QComboBox):
+        if isinstance(control, _PreferenceTraceColourCombo):
+            control.set_colour(value)
+        elif isinstance(control, qtw.QComboBox):
             control.setCurrentIndex(max(control.findData(value), 0))
+            if isinstance(control, IconPreviewCombo):
+                control.refresh_tooltip()
         elif isinstance(control, qtw.QCheckBox):
             control.setChecked(bool(value))
         elif isinstance(control, qtw.QLineEdit):
             control.setText(str(value))
         elif isinstance(control, qtw.QSpinBox):
             control.setValue(int(value))
+        elif isinstance(control, _PreferenceColourMapButton):
+            control.setValue(value)
         else:
             control.setValue(float(value))
 
@@ -132,7 +216,9 @@ class _PreferenceBinding:
             edited_keys.add(self.key)
 
         control = self.control
-        if isinstance(control, (qtw.QSpinBox, qtw.QDoubleSpinBox)):
+        if isinstance(control, _PreferenceColourMapButton):
+            control.valueChanged.connect(mark_edited)
+        elif isinstance(control, (qtw.QSpinBox, qtw.QDoubleSpinBox)):
             control.valueChanged.connect(mark_edited)
             line_edit = control.lineEdit()
             if line_edit is not None:
@@ -569,17 +655,44 @@ class PreferencesDialog(qtw.QDialog):
             )
         self._add_row(form, "Colour scale &width:", self.colorbarWidthSpin)
 
-        self.defaultColourMapCombo = qtw.QComboBox(tab)
-        self.defaultColourMapCombo.setObjectName("defaultColourMapPreferenceCombo")
-        self.defaultColourMapCombo.setAccessibleName("Default colour map for new plots")
-        self.defaultColourMapCombo.setToolTip("Colour map used by new plots. Existing plots keep their own colour maps.")
-        for name in _colorbar_colormaps():
-            self.defaultColourMapCombo.addItem(_colorbar_colormap_label(name), name)
-        self._add_row(form, "Default colour &map for new plots:", self.defaultColourMapCombo)
-        self.defaultColourMapPreview = qtw.QLabel(tab)
-        self.defaultColourMapPreview.setAccessibleName("Default colour map preview")
-        self.defaultColourMapCombo.currentIndexChanged.connect(self._update_default_colour_preview)
-        form.addRow(self.defaultColourMapPreview)
+        self._add_section(form, "Defaults")
+
+        self.defaultTraceColourCombo = _PreferenceTraceColourCombo()
+        self.defaultTraceColourCombo.setObjectName("defaultTraceColourPreferenceCombo")
+        self.defaultTraceWidthSpin = DrawingSizeSpinBox()
+        self.defaultTraceWidthSpin.setObjectName("defaultTraceWidthPreferenceSpin")
+        self.defaultTraceWidthSpin.setAccessibleName("Default trace line width")
+        self.defaultTraceWidthSpin.setRange(0.5, 15)
+        self.defaultTraceWidthSpin.setDecimals(1)
+        self.defaultTraceWidthSpin.setSingleStep(0.5)
+        self.defaultTraceWidthSpin.setSuffix(" px")
+        self.defaultTraceWidthSpin.setKeyboardTracking(False)
+        self.defaultTraceWidthSpin.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed)
+        self.defaultTraceWidthSpin.setToolTip("Line width for newly created traces, including traces added to existing plots.")
+        self.defaultTraceStyleCombo = IconPreviewCombo(
+            "Default trace line style",
+            preview_renderer=lambda name, width: line_style_icon(name, self.palette(), width),
+        )
+        self.defaultTraceStyleCombo.setObjectName("defaultTraceStylePreferenceCombo")
+        self.defaultTraceStyleCombo.setIconSize(QtCore.QSize(32, 16))
+        for name, _pen_style in LINE_STYLES:
+            self.defaultTraceStyleCombo.addItem(line_style_icon(name, self.palette()), name, name)
+        self.defaultTraceRow = qtw.QWidget(tab)
+        trace_layout = qtw.QHBoxLayout(self.defaultTraceRow)
+        trace_layout.setContentsMargins(0, 0, 0, 0)
+        trace_layout.setSpacing(6)
+        for control, stretch in ((self.defaultTraceColourCombo, 1),
+                                 (self.defaultTraceWidthSpin, 0),
+                                 (self.defaultTraceStyleCombo, 1)):
+            if stretch:
+                control.setSizePolicy(qtw.QSizePolicy.Policy.Expanding, qtw.QSizePolicy.Policy.Fixed)
+            trace_layout.addWidget(control, stretch)
+        self.defaultTraceRow.setToolTip("Appearance for newly created traces, including traces added to existing plots.")
+        self._add_row(form, "Default trace:", self.defaultTraceRow, buddy=self.defaultTraceColourCombo)
+
+        self.defaultColourMapButton = _PreferenceColourMapButton(tab)
+        self.defaultColourMapButton.setObjectName("defaultColourMapPreferenceButton")
+        self._add_row(form, "Default colour &map for new plots:", self.defaultColourMapButton)
 
         return tab
 
@@ -849,12 +962,6 @@ class PreferencesDialog(qtw.QDialog):
         with blocked_signals(*(binding.control for binding in self._bindings)):
             for binding in self._bindings:
                 binding.write(values[binding.key])
-        self._update_default_colour_preview()
-
-    def _update_default_colour_preview(self):
-        self.defaultColourMapPreview.setPixmap(
-            _colorbar_colormap_preview(self.defaultColourMapCombo.currentData() or "viridis"),
-        )
 
     def preference_values(self):
         """Return the current control values in preference registry order."""

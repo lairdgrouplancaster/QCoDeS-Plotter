@@ -437,19 +437,16 @@ class ColourMapPicker(qtw.QWidget):
         table.scrollToItem(table.item(row, 0), qtw.QAbstractItemView.ScrollHint.PositionAtCenter)
 
 
-class ColourMapDialog(qtw.QDialog):
-    """Preview a map on the owner; cancelling restores only the original map."""
+class ColourMapChooser(qtw.QDialog):
+    """Choose a colour map using the shared searchable preview table."""
 
-    def __init__(self, owner, parent):
+    def __init__(self, names, current, parent):
         super().__init__(parent)
-        self.owner = owner
-        self._opening_map = owner._current_colorbar_colormap_name()
-        self._preview_active = True
         self.setWindowTitle("Choose colour map")
         self.setWindowModality(QtCore.Qt.WindowModality.WindowModal)
         self.resize(600, 390)
         layout = qtw.QVBoxLayout(self)
-        self.picker = ColourMapPicker(owner._available_colorbar_colormaps(), self._opening_map, self)
+        self.picker = ColourMapPicker(names, current, self)
         layout.addWidget(self.picker, 1)
         self.buttons = qtw.QDialogButtonBox(
             qtw.QDialogButtonBox.StandardButton.Ok | qtw.QDialogButtonBox.StandardButton.Cancel,
@@ -457,6 +454,21 @@ class ColourMapDialog(qtw.QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.picker.reveal_current()
+
+
+class ColourMapDialog(ColourMapChooser):
+    """Preview a map on the owner; cancelling restores only the original map."""
+
+    def __init__(self, owner, parent):
+        opening_map = owner._current_colorbar_colormap_name()
+        super().__init__(owner._available_colorbar_colormaps(), opening_map, parent)
+        self.owner = owner
+        self._opening_map = opening_map
+        self._preview_active = True
         self.picker.mapSelected.connect(self._preview)
         self.finished.connect(self._finish_preview)
 
@@ -471,7 +483,3 @@ class ColourMapDialog(qtw.QDialog):
         self._preview_active = False
         if result == qtw.QDialog.DialogCode.Rejected:
             self.owner.setColorbarColorMap(self._opening_map)
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.picker.reveal_current()

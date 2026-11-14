@@ -162,6 +162,24 @@
                     "type": "string",
                     "default": "viridis"
                 },
+                "trace_colour": {
+                    "type": "string",
+                    "minLength": 7,
+                    "maxLength": 7,
+                    "pattern": "^#[0-9a-fA-F]{6}$",
+                    "default": "#1f77b4"
+                },
+                "trace_line_width": {
+                    "type": "number",
+                    "minimum": 0.5,
+                    "maximum": 15,
+                    "default": 2
+                },
+                "trace_line_style": {
+                    "type": "string",
+                    "enum": ["Solid", "Dash", "Dot", "Dash Dot"],
+                    "default": "Solid"
+                },
                 "colorbar_width": {
                     "type": "integer",
                     "minimum": 1,
@@ -228,6 +246,9 @@
                 "plot_tile_rows",
                 "plot_tile_columns",
                 "bar_colour",
+                "trace_colour",
+                "trace_line_width",
+                "trace_line_style",
                 "colorbar_width",
                 "axis_tick_width",
                 "axis_major_tick_count",

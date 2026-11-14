@@ -5,6 +5,43 @@ from PyQt6 import QtWidgets as qtw
 
 from ._plot_appearance import compact_spinbox_size_hint
 
+TRACE_COLOR_PALETTE = (
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b",
+    "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#000000", "#ffffff",
+)
+LINE_STYLES = (
+    ("Solid", QtCore.Qt.PenStyle.SolidLine),
+    ("Dash", QtCore.Qt.PenStyle.DashLine),
+    ("Dot", QtCore.Qt.PenStyle.DotLine),
+    ("Dash Dot", QtCore.Qt.PenStyle.DashDotLine),
+)
+
+
+def colour_swatch_icon(colour, width=38):
+    pixmap = QtGui.QPixmap(width, 16)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setPen(QtGui.QPen(QtGui.QColor("#444444")))
+    painter.setBrush(QtGui.QBrush(QtGui.QColor(colour)))
+    painter.drawRoundedRect(1, 1, width - 2, 14, 2, 2)
+    painter.end()
+    return QtGui.QIcon(pixmap)
+
+
+def line_style_icon(style, palette, width=54):
+    pixmap = QtGui.QPixmap(width, 16)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    pen = QtGui.QPen(palette.color(QtGui.QPalette.ColorRole.Text))
+    pen.setWidthF(2.0)
+    pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+    pen.setStyle(dict(LINE_STYLES).get(style, QtCore.Qt.PenStyle.SolidLine))
+    painter.setPen(pen)
+    painter.drawLine(4, pixmap.height() // 2, pixmap.width() - 4, pixmap.height() // 2)
+    painter.end()
+    return QtGui.QIcon(pixmap)
+
 
 class DrawingSizeSpinBox(qtw.QDoubleSpinBox):
     def sizeHint(self):
@@ -17,8 +54,9 @@ class DrawingSizeSpinBox(qtw.QDoubleSpinBox):
 class IconPreviewCombo(qtw.QComboBox):
     """Show the selected preview with descriptive tooltips and menu entries."""
 
-    def __init__(self, name):
+    def __init__(self, name, *, preview_renderer=None):
         super().__init__()
+        self._preview_renderer = preview_renderer
         self.setAccessibleName(name)
         self.setIconSize(QtCore.QSize(26, 16))
         self.setStyleSheet("QComboBox { padding: 0 2px; }")
@@ -62,6 +100,14 @@ class IconPreviewCombo(qtw.QComboBox):
                                     self.palette().brush(QtGui.QPalette.ColorRole.PlaceholderText))
         elif not option.currentIcon.isNull():
             option.currentText = ""
+            if self._preview_renderer is not None:
+                contents = self.style().subControlRect(
+                    qtw.QStyle.ComplexControl.CC_ComboBox, option,
+                    qtw.QStyle.SubControl.SC_ComboBoxEditField, self,
+                )
+                width = max(10, contents.width() - 4)
+                option.iconSize = QtCore.QSize(width, self.iconSize().height())
+                option.currentIcon = self._preview_renderer(self.currentData(), width)
         painter = qtw.QStylePainter(self)
         painter.drawComplexControl(qtw.QStyle.ComplexControl.CC_ComboBox, option)
         painter.drawControl(qtw.QStyle.ControlElement.CE_ComboBoxLabel, option)

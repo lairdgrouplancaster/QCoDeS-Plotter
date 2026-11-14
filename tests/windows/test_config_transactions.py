@@ -356,7 +356,7 @@ class TransactionalGuiTestCase(unittest.TestCase):
             self.assertTrue(plot.setColorbarColorMap("Purples"))
             preferences = PreferencesDialog(self.config)
             preferences.show_error = lambda *args: plot_errors.append(args)
-            preferences.defaultColourMapCombo.setCurrentIndex(preferences.defaultColourMapCombo.findData("Purples"))
+            preferences.defaultColourMapButton.setValue("Purples")
             with self.failing_save(self.config):
                 self.assertFalse(preferences.apply_preferences())
 
@@ -367,7 +367,7 @@ class TransactionalGuiTestCase(unittest.TestCase):
             self.assertEqual(len(plot_errors), 1)
 
             self.assertTrue(plot.setColorbarColorMap("Purples"))
-            preferences.defaultColourMapCombo.setCurrentIndex(preferences.defaultColourMapCombo.findData("Purples"))
+            preferences.defaultColourMapButton.setValue("Purples")
             self.assertTrue(preferences.apply_preferences())
             preferences.close()
             self.assertEqual(plot._colorbar_colormap_name, "Purples")

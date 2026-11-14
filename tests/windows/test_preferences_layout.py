@@ -68,7 +68,7 @@ def test_narrow_pages_scroll_and_keep_actions_visible(preferences, qapplication)
     dialog.resize(390, 330)
     qapplication.processEvents()
     for index, field in enumerate((
-        dialog.confirmQuitCheck, dialog.defaultColourMapCombo,
+        dialog.confirmQuitCheck, dialog.defaultColourMapButton,
         dialog.confirmIncompatibleAxesCheck, dialog.copyPlotImageResolutionCombo,
         dialog.delGracePeriodSpin, dialog.includePrereleasesCheck,
     )):
