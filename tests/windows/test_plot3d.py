@@ -518,6 +518,16 @@ def test_freeze_is_independent_and_supports_operations_and_cuts(tmp_path, main):
     source.select_slice(2)
     wait_for(lambda: loaded(source) and source._depth_value == 4.)
     np.testing.assert_array_equal(frozen.dataGrid, original)
+    capture = frozen._capture_heatmap_csv(layer=frozen)
+    np.testing.assert_array_equal(capture.grid, original)
+    assert dict(capture.constants)["field (V)"] == 1.
+    overlay = SimpleNamespace(
+        axis_data=source.axis_data, data_grid=source.dataGrid, from_win=source,
+        source_axis_order=lambda: ("x", "y"),
+    )
+    overlay_capture = frozen._capture_heatmap_csv(layer=overlay)
+    np.testing.assert_array_equal(overlay_capture.grid, source.dataGrid)
+    assert overlay_capture.constants == ()
     frozen.oper_widget.restore_state(OperationsState((OperationEntry("row_mean", None),), 1))
     frozen.refreshWindow(force=True)
     wait_for(lambda: loaded(frozen) and frozen.worker.operations)
@@ -780,6 +790,12 @@ def test_mixed_dimensions_any_order(tmp_path, main, monkeypatch, order):
     wait_for(lambda: all(layer is target or layer.geometry is not None for layer in target.heatmaps.values()))
     trace = next(iter(target.lines.values()))
     heatmap = next(layer for layer in target.heatmaps.values() if layer is not target)
+    capture = target._capture_heatmap_csv(layer=target)
+    np.testing.assert_array_equal(capture.grid, target.dataGrid)
+    assert dict(capture.constants)["field (V)"] == target.slice_frame.depth
+    overlay_capture = target._capture_heatmap_csv(layer=heatmap)
+    np.testing.assert_array_equal(overlay_capture.grid, heatmap.data_grid)
+    assert overlay_capture.constants == ()
     wait_for(lambda: trace.getData()[0] is not None)
     wait_for(lambda: target._range_complete)
     assert target.bar.levels() == (0., 455.)

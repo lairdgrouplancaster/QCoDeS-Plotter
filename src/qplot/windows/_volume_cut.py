@@ -3,6 +3,7 @@
 from copy import copy
 from dataclasses import replace
 from html import escape
+from typing import Any
 
 import numpy as np
 import pyqtgraph as pg
@@ -12,7 +13,7 @@ from qcodes.dataset.descriptions.param_spec import ParamSpec
 
 from qplot.datahandling.complex_data import ComplexSamples, contains_complex
 from qplot.datahandling.plot_progress import PlotProgress
-from qplot.tools.plot_csv import CsvColumns
+from qplot.tools.plot_csv import CsvColumns, HeatmapCsv
 from qplot.tools.plot_result import capture_plot_result
 from qplot.tools.volume_cuts import extract_cut
 from qplot.tools.worker import loader
@@ -511,8 +512,11 @@ class FrozenSlice(plot2d):
         super()._update_plot_annotation()
         _append_annotation(self, self._frozen_description)
 
-    def _capture_heatmap_csv(self):
-        return replace(super()._capture_heatmap_csv(), constants=self._frozen_metadata)
+    def _capture_heatmap_csv(self, layer: Any = None) -> HeatmapCsv:
+        capture = super()._capture_heatmap_csv(layer)
+        if layer is not None and layer is not self:
+            return capture
+        return replace(capture, constants=self._frozen_metadata)
 
     def openSweep(self, side):
         if self.__dict__.get("dataGrid") is None or not self.dataGrid.size:

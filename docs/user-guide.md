@@ -945,10 +945,11 @@ cancels its pending plot exports.
 
 In a plot's export dialog, select **CSV data**, then choose **Data to export**.
 Individual traces and heatmaps are identified by run number and measurement name.
-**All traces** combines the plot's traces into columns; heatmaps are exported one
+**All traces** combines the plot's measurement traces into columns; heatmaps are exported one
 at a time because their grids may have different coordinates. Hidden measurements
-are included when selected. The initial choice preserves the previous scope:
-all traces for a line plot, or the primary grid for a heatmap plot.
+are included when selected. Generated average curves are omitted from this
+measurement selection. The initial choice is all measurement traces for a line
+plot, or the primary grid for a heatmap plot.
 This is a single-choice list: choose one measurement or **All traces**.
 **Columns** is shown only when exporting multiple traces.
 

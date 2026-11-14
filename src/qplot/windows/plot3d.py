@@ -1,6 +1,7 @@
 """A coordinate-preserving 3D slice viewer built on the normal heatmap UI."""
 
 from dataclasses import replace
+from typing import Any
 
 import numpy as np
 import pyqtgraph as pg
@@ -9,6 +10,7 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.numeric_samples import numeric_isfinite
 from qplot.datahandling.plot_progress import PlotProgress
+from qplot.tools.plot_csv import HeatmapCsv
 from qplot.tools.volume_worker import VolumeLoader, VolumeTask, processed_plane
 
 from ._commands import command_spec, create_action
@@ -847,8 +849,10 @@ class plot3d(plot2d):
             cut.close()
         return True
 
-    def _capture_heatmap_csv(self):
-        capture = super()._capture_heatmap_csv()
+    def _capture_heatmap_csv(self, layer: Any = None) -> HeatmapCsv:
+        capture = super()._capture_heatmap_csv(layer)
+        if layer is not None and layer is not self:
+            return capture
         metadata = self._slice_export_metadata()
         return replace(capture, constants=metadata)
 

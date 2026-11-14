@@ -103,11 +103,10 @@ def error_window(tmp_path, monkeypatch):
         # Exercise real error-dialog construction, replacing only its modal
         # event loop so database failures cannot wait for user input in tests.
         title, message, details = requested_errors[dialog]
-        assert dialog.windowTitle() == title
-        assert any(
-            label.text() == message
-            for label in dialog.findChildren(QtWidgets.QLabel)
-        )
+        assert dialog.windowTitle() == "Error details"
+        labels = [label.text() for label in dialog.findChildren(QtWidgets.QLabel)]
+        assert title in labels
+        assert message in labels
         text = dialog.findChild(QtWidgets.QPlainTextEdit, "errorDetails")
         assert (text.toPlainText() if text is not None else None) == details
         errors.append((title, message, details or ""))
