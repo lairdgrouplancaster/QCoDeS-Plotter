@@ -522,6 +522,10 @@ class plot2d(
                     ):
                 return
 
+            # A trace dropped before this first image can already have put
+            # the shared axes into qPlot-managed Auto with empty image bounds.
+            self._refresh_trace_axis_auto_ranges()
+
             # Produce color bar on first run
             if not hasattr(self, "bar"):
                 colorbar_items = self._heatmap_colorbar_items()

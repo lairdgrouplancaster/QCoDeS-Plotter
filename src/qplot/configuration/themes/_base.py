@@ -566,13 +566,19 @@ class PlotTheme:
                     style_axis(axis)
 
         plot_item.vb.gridPen = pg.mkPen(color=cls.plot_grid)
-        cls.set_line_colours(plot_item)
+        styles = plot_win.__dict__.get("_trace_styles", {})
+        managed_lines = [line for key, line in plot_win.__dict__.get("lines", {}).items() if key in styles]
+        cls.set_line_colours(plot_item, preserve=managed_lines)
         update_annotation = getattr(plot_win, "_update_plot_annotation", None)
         if callable(update_annotation):
             update_annotation()
 
     @classmethod
-    def set_line_colours(cls, plot_item):
+    def set_line_colours(cls, plot_item, *, preserve=()):
+        """Colour unmanaged plot items without overwriting appearance styles."""
+        protected = {id(item) for item in preserve}
         for index, line in enumerate(plot_item.listDataItems()):
+            if id(line) in protected:
+                continue
             color = cls.colors[index % len(cls.colors)]
             line.setPen(pg.mkPen(color=color))
