@@ -91,8 +91,6 @@ _STYLESHEET_TEMPLATE = Template(
     }
     QMenuBar::item {
         color: $text;
-        spacing: 3px;
-        padding: 4px 4px;
         background-color: $window_bg;
     }
     QMenuBar::item:selected {
