@@ -67,7 +67,7 @@ def configure_csv_measurements(owner: Any, exporter: Any) -> None:
         default = next((token for token, entry in measurements.items()
                         if entry.kind == "heatmap" and entry.item is owner), default)
     exporter.params.insertChild(0, {
-        "name": "measurements", "title": "Measurements", "type": "list",
+        "name": "measurements", "title": "Data to export", "type": "list",
         "limits": choices, "value": default,
     })
 

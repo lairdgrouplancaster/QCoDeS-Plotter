@@ -54,7 +54,8 @@ def test_select_trace_in_line_or_heatmap_plot(mixed_plot, tmp_path, monkeypatch,
     dialog = _dialog(target)
     label = _select(dialog, line)
     assert f"Run {line.from_win.ds.run_id}" in label and "w" in label and "trace" in label
-    assert "columnMode" in dialog.controls.fields
+    assert "columnMode" not in dialog.controls.fields
+    assert dialog.currentExporter.params.child("measurements").opts["title"] == "Data to export"
     values = dialog.controls.fields["values"]
     if transformed:
         values.setCurrentIndex(values.findData(CSV_TRANSFORMED_VALUES))
@@ -105,11 +106,13 @@ def test_all_traces_option_and_hidden_individual_trace(mixed_plot, tmp_path, mon
     measurements = dialog.controls.fields["measurements"]
     measurements.setCurrentIndex(measurements.findData("all_traces"))
     qtw.QApplication.processEvents()
+    assert dialog.controls.fields["columnMode"].isVisible()
     assert "Run 1" in dialog.controls.fields["measurements"].toolTip()
     assert "Run 3" in dialog.controls.fields["measurements"].toolTip()
     headers, data, _choices = _save(target, dialog, tmp_path / "all.csv", monkeypatch)
     assert len(headers) == 4 and data.shape == (3, 4)
     _select(dialog, line)
+    assert "columnMode" not in dialog.controls.fields
     headers, data, _choices = _save(target, dialog, tmp_path / "hidden.csv", monkeypatch)
     assert len(headers) == 2
     np.testing.assert_allclose(data, [[4., 40.], [5., 50.], [6., 60.]])

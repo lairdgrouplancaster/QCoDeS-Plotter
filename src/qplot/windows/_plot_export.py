@@ -226,7 +226,7 @@ if (
                     exporter_class,
                     QtCore.QCoreApplication.translate(
                         "Exporter",
-                        "CSV data" if exporter_class is CSVExporter else exporter_class.Name,
+                        {ImageExporter: "PNG image", CSVExporter: "CSV data", SVGExporter: "SVG"}[exporter_class],
                     ),
                 )
                 self.ui.formatList.addItem(item)
@@ -1235,21 +1235,10 @@ class PlotExportMixin(_PlotExportBase):
             ) -> tuple[tuple[str, ...], str, str, str] | None:
         """Describe exporters that accept a private same-suffix filename."""
         if type(exporter) is ImageExporter:
-            patterns = tuple(exporter.getSupportedImageFormats())
-            suffixes = tuple(
-                suffix
-                for pattern in patterns
-                if (suffix := path.splitext(pattern)[1])
-            )
-            if not suffixes:
-                return None
             return (
-                suffixes,
-                suffixes[0],
-                ";;".join(
-                    f"{suffix[1:].upper()} image (*{suffix})"
-                    for suffix in suffixes
-                ),
+                (".png",),
+                ".png",
+                "PNG image (*.png)",
                 "plot image",
             )
         if type(exporter) is CSVExporter:

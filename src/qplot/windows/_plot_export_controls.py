@@ -6,7 +6,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter, ImageExporter, SVGExporter
 
-from ._plot_csv_selection import csv_selection_description
+from ._plot_csv_selection import csv_selection_description, selected_csv_measurements
 
 
 class _ExportBackgroundCombo(qtw.QComboBox):
@@ -30,7 +30,7 @@ class _ExportBackgroundCombo(qtw.QComboBox):
         for label in self.colour_dialog.findChildren(qtw.QLabel):
             if label.text() == alpha_label:
                 tip = ("Background opacity: 0 is fully transparent; 255 is fully opaque. "
-                       "PNG and SVG retain transparency; JPEG does not.")
+                       "PNG and SVG retain transparency.")
                 label.setToolTip(tip)
                 editor = label.buddy()
                 if editor is not None:
@@ -138,7 +138,7 @@ class PlotExportControls(qtw.QWidget):
         form = qtw.QFormLayout()
         form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.format_combo = qtw.QComboBox()
-        for label, exporter in (("Image (PNG, TIFF, JPEG…)", ImageExporter),
+        for label, exporter in (("PNG image", ImageExporter),
                                 ("SVG", SVGExporter), ("CSV data", CSVExporter)):
             self.format_combo.addItem(label, exporter)
         self.format_combo.setAccessibleName("Export format")
@@ -188,7 +188,8 @@ class PlotExportControls(qtw.QWidget):
         form.setSpacing(10)
         form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         if csv:
-            self._combo(form, "Measurements", "measurements")
+            self._combo(form, "Data to export", "measurements")
+            self.fields["measurements"].setAccessibleName("Data to export")
             self.fields["measurements"].setToolTip(
                 "Exporting: " + csv_selection_description(self.dialog._qplot_owner, exporter)
                 + "\nHidden measurements are included when selected."
@@ -197,7 +198,8 @@ class PlotExportControls(qtw.QWidget):
             self.dialog.csv_scope.setParent(self.settings)
             form.addRow("", self.dialog.csv_scope)
             self.dialog.csv_scope.show()
-            if "columnMode" in exporter.params.names:
+            selection = selected_csv_measurements(self.dialog._qplot_owner, exporter)
+            if "columnMode" in exporter.params.names and selection and len(selection) > 1:
                 self._combo(form, "Columns", "columnMode", [
                     ("X and Y for each trace", "(x,y) per plot"),
                     ("Shared X for all traces", "(x,y,y,y) for all plots"),

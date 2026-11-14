@@ -62,6 +62,7 @@ def test_image_fields_export_full_scene_at_chosen_size(real_plot, tmp_path, monk
     dialog = plot.widget.scene().exportDialog
     controls = dialog.controls
     exporter = dialog.currentExporter
+    assert controls.format_combo.currentText() == "PNG image"
     assert exporter.item is plot.widget.scene()
     assert dialog.ui.itemTree.isHidden()
     assert controls.fields["invertValue"].isVisible()
@@ -97,6 +98,28 @@ def test_image_fields_export_full_scene_at_chosen_size(real_plot, tmp_path, monk
     assert clipboard.size() == image.size()
     assert clipboard.pixelColor(0, 0).alpha() == image.pixelColor(0, 0).alpha()
     assert dialog.feedback.text() == "Copied to clipboard."
+    assert not errors
+
+
+@pytest.mark.parametrize("suffix", [".tif", ".jpg"])
+def test_raster_export_only_writes_png(real_plot, tmp_path, monkeypatch, suffix):
+    plot, _database, errors, _dimensions = real_plot
+    plot.open_export_dialog()
+    dialog = plot.widget.scene().exportDialog
+    requested = tmp_path / f"shared{suffix}"
+    requested.write_bytes(b"existing file must remain unchanged")
+    choices = []
+    def destination(*args, **kwargs):
+        choices.append(args)
+        return str(requested), "PNG image (*.png)"
+    monkeypatch.setattr(qtw.QFileDialog, "getSaveFileName", destination)
+    dialog.ui.exportBtn.click()
+    assert choices[0][3] == "PNG image (*.png)"
+    assert choices[0][2].endswith(".png")
+    assert requested.read_bytes() == b"existing file must remain unchanged"
+    output = requested.with_name(requested.name + ".png")
+    assert output.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert not QtGui.QImage(str(output)).isNull()
     assert not errors
 
 
@@ -169,7 +192,7 @@ def test_csv_separator_suggests_matching_file_type(real_plot, tmp_path, monkeypa
     dialog = plot.widget.scene().exportDialog
     _format(dialog, CSVExporter)
     controls = dialog.controls
-    assert ("columnMode" in controls.fields) == (dimensions == 1)
+    assert "columnMode" not in controls.fields
     separator = controls.fields["separator"]
     separator.setCurrentIndex(separator.findData("tab"))
     assert dialog.currentExporter.params["separator"] == "tab"

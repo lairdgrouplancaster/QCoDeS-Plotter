@@ -908,12 +908,14 @@ message also shows the output path, which you can select and copy.
 Switching or closing the database cancels pending database copies and raw exports. Closing a plot
 cancels its pending plot exports.
 
-In a plot's export dialog, select **CSV data**, then choose **Measurements**.
+In a plot's export dialog, select **CSV data**, then choose **Data to export**.
 Individual traces and heatmaps are identified by run number and measurement name.
 **All traces** combines the plot's traces into columns; heatmaps are exported one
 at a time because their grids may have different coordinates. Hidden measurements
 are included when selected. The initial choice preserves the previous scope:
 all traces for a line plot, or the primary grid for a heatmap plot.
+This is a single-choice list: choose one measurement or **All traces**.
+**Columns** is shown only when exporting multiple traces.
 
 Check **Values** for the selected measurements:
 
@@ -933,7 +935,7 @@ later refreshes do not change the queued export. No plot CSV mode reads fresh
 database data. Use the main-window CSV action for raw measurements.
 
 Plot windows can export plot images and data through `File -> Export Plot...` or
-`Ctrl+E`. Choose **Image (PNG, TIFF, JPEG…)**, **SVG**, or **CSV data** in **Format**.
+`Ctrl+E`. Choose **PNG image**, **SVG**, or **CSV data** in **Format**.
 Images and SVG export the complete plot, including colour scales and source
 annotations. Image dimensions start at the displayed plot size; editing width or
 height preserves its aspect ratio. **Background** offers **White**, **Transparent**
