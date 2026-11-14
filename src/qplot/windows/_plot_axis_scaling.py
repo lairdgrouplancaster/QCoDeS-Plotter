@@ -3,11 +3,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from math import isclose, isfinite, log10
 from typing import TYPE_CHECKING, Any, Literal
+from weakref import ReferenceType, ref
 
 import numpy as np
 import numpy.typing as npt
 import pyqtgraph as pg
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.graphicsItems.ViewBox import axisCtrlTemplate_generic
 
@@ -52,6 +53,16 @@ _AXIS_MENU_ITEMS = tuple(
 )
 
 _NumericValue = float | npt.ArrayLike
+
+
+def _axis_quantity_text(plot: Any, axis: _AxisName) -> str:
+    """Describe the plotted quantity in the data units used by the range fields."""
+    item = plot.getAxis(_AXIS_BY_NAME[axis].side)
+    document = QtGui.QTextDocument()
+    document.setHtml(item.labelText)
+    label = document.toPlainText().strip() or _AXIS_BY_NAME[axis].tooltip
+    units = item.labelUnits
+    return f"{label} ({units})" if units else label
 
 
 if TYPE_CHECKING:
@@ -569,9 +580,23 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         Build a fresh copy of pyqtgraph's axis scaling controls for a dialog.
 
         """
-        widget = qtw.QWidget()
+        page = qtw.QWidget()
+        page_layout = qtw.QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
+        widget = qtw.QWidget(page)
         ui: Any = axisCtrlTemplate_generic.Ui_Form()
         ui.setupUi(widget)
+        ui.quantityLabel = qtw.QLabel(page)
+        ui.quantityLabel.setObjectName("axisScaleQuantity")
+        ui.quantityLabel.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        ui.quantityLabel.setWordWrap(True)
+        ui.quantityLabel.setContentsMargins(8, 8, 8, 4)
+        quantity_font = ui.quantityLabel.font()
+        quantity_font.setBold(True)
+        ui.quantityLabel.setFont(quantity_font)
+        page_layout.addWidget(ui.quantityLabel)
+        page_layout.addWidget(widget)
         widget.setMaximumWidth(qtw.QWIDGETSIZE_MAX)
         # Fit typical full-precision decimal limits without reserving space
         # for the longest possible exponent. The dialog can still be widened.
@@ -609,7 +634,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             "Percentage of the data range included during autoscaling. Lower "
             "values can reduce the influence of extreme spikes."
         )
-        ui.label.setText("Link axis:")
+        ui.label.setText("Link range to:")
         link_tooltip = (
             "Link this axis to the corresponding axis in another plot so their "
             "ranges move together when zooming or panning. "
@@ -637,7 +662,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         ui.maximumLabel.setAlignment(label_alignment)
         ui.rangeEntry = RangeEntry(
             ui.minText, ui.maxText, ui.minimumLabel, ui.maximumLabel,
-            accessible_prefix=f"{axis.upper()} axis", parent=widget,
+            accessible_prefix=f"{_AXIS_BY_NAME[axis].assignment_side} axis", parent=widget,
         )
 
         ui.copyAutoLimitsButton = _AutoLimitsButton(
@@ -743,7 +768,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         ui.gridLayout.setSizeConstraint(qtw.QLayout.SizeConstraint.SetMinimumSize)
         widget.ensurePolished()
         ui.gridLayout.activate()
-        return widget
+        return page
 
     def _sync_axis_scale_controls(self, axis: _AxisName) -> None:
         """
@@ -754,6 +779,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         if ui is None:
             return
 
+        ui.quantityLabel.setText(_axis_quantity_text(self.plot, axis))
         axis_number = self._axis_scale_axis_number(axis)
         viewbox = self._axis_scale_viewbox(axis)
         state = viewbox.getState(copy=False)
@@ -829,7 +855,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
 
     def _sync_axis_scale_link_combo(self, axis: _AxisName) -> None:
         """
-        Mirror pyqtgraph's available linked views into the dialog link combo.
+        List plot quantities while retaining the underlying ViewBox link target.
 
         """
         ui = self._axis_scale_controls[axis]
@@ -842,14 +868,41 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
 
         ui.linkCombo.clear()
         ui.linkCombo.addItem("None", "")
-        if source_combo is None:
-            return
-        for index in range(source_combo.count()):
+        targets = set()
+        application = qtw.QApplication.instance()
+        if isinstance(application, qtw.QApplication):
+            windows = sorted(application.topLevelWidgets(), key=lambda w: w.windowTitle())
+            for window in windows:
+                if (
+                    window is self
+                    or not isinstance(window, PlotAxisScalingMixin)
+                    or "vb" not in window.__dict__
+                    or "plot" not in window.__dict__
+                    or not window.isVisible()
+                ):
+                    continue
+                for spec in _AXIS_SPECS:
+                    if (
+                        window._axis_scale_axis_number(spec.name) != axis_number
+                        or not window._axis_scale_axis_is_used(spec.name)
+                    ):
+                        continue
+                    target = window._axis_scale_viewbox(spec.name)
+                    quantity = _axis_quantity_text(window.plot, spec.name)
+                    text = f"{window.windowTitle()} — {spec.assignment_side}: {quantity}"
+                    ui.linkCombo.addItem(text, target.name or ref(target))
+                    targets.add(target)
+
+        for index in range(source_combo.count() if source_combo is not None else 0):
             name = source_combo.itemText(index)
-            if name:
+            if name and pg.ViewBox.NamedViews.get(name) not in targets:
                 ui.linkCombo.addItem(name, name)
 
-        index = ui.linkCombo.findData(current)
+        linked_view = viewbox.linkedView(axis_number)
+        linked_target = ref(linked_view) if linked_view is not None else ""
+        index = ui.linkCombo.findData(current or linked_target)
+        if index < 0:
+            index = ui.linkCombo.findData(linked_target)
         ui.linkCombo.setCurrentIndex(max(index, 0))
 
     def _axis_scale_bound_item_groups(
@@ -1278,10 +1331,16 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
     def _axis_scale_link_changed(self, axis: _AxisName) -> None:
         ui = self._axis_scale_controls[axis]
         viewbox = self._axis_scale_viewbox(axis)
+        target = ui.linkCombo.currentData() or None
+        if isinstance(target, ReferenceType):
+            target = target()
+            if target is None or sip.isdeleted(target):
+                self._sync_axis_scale_controls(axis)
+                return
         if self._axis_scale_dimension(axis) == "x":
-            viewbox.setXLink(ui.linkCombo.currentData() or None)
+            viewbox.setXLink(target)
         else:
-            viewbox.setYLink(ui.linkCombo.currentData() or None)
+            viewbox.setYLink(target)
 
     def _axis_scale_auto_pan_toggled(self, axis: _AxisName, checked: bool) -> None:
         # Store the option on its semantic axis even when qPlot, rather than
@@ -1455,7 +1514,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             "QTabBar::tab:disabled { color: palette(mid); }"
         )
         for spec in _AXIS_SPECS:
-            index = tabs.addTab(self._new_axis_scale_controls(spec.name), spec.label)
+            index = tabs.addTab(self._new_axis_scale_controls(spec.name), spec.assignment_side)
             tabs.setTabToolTip(index, spec.tooltip)
         tabs.currentChanged.connect(self._axis_scale_current_tab_changed)
         layout.addWidget(tabs)
@@ -1489,6 +1548,9 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
             axis = spec.name
             enabled = self._axis_scale_axis_is_used(axis)
             tabs.setTabEnabled(index, enabled)
+            tabs.setTabToolTip(
+                index, spec.tooltip if enabled else "No datasets are assigned to this axis.",
+            )
             if enabled and axis in self._axis_scale_controls:
                 self._sync_axis_scale_controls(axis)
 

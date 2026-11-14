@@ -45,6 +45,13 @@ from ._export_paths import (
     prepare_export_destination,
     write_export_atomically,
 )
+from ._plot_csv_selection import (
+    configure_csv_measurements,
+    csv_exports_heatmap,
+    csv_selection_description,
+    selected_csv_measurements,
+)
+from ._plot_export_controls import PlotExportControls
 from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
@@ -70,7 +77,7 @@ _SAFE_PYQTGRAPH_FILE_EXPORTERS = (ImageExporter, CSVExporter, SVGExporter)
 _SAFE_PYQTGRAPH_COPY_EXPORTERS = (ImageExporter, SVGExporter)
 CSV_UNDERLYING_VALUES = "Underlying plot samples"
 CSV_TRANSFORMED_VALUES = "Transformed plot values"
-CSV_HEATMAP_VALUES = "Current primary heatmap grid"
+CSV_HEATMAP_VALUES = "Current heatmap grid"
 
 
 def _without_hover_highlight(window: Any):
@@ -108,34 +115,101 @@ if (
         def __init__(self, scene: Any, owner: Any):
             self._qplot_owner_ref = weakref.ref(owner)
             super().__init__(scene)
-            for control, tooltip in (
-                (self.ui.itemTree, "Choose the plot item to export."),
-                (self.ui.formatList, "Choose the file or clipboard format for this export."),
-                (self.ui.copyBtn, "Copy the selected plot item to the clipboard using these export settings."),
-                (self.ui.exportBtn, "Choose a destination and save using these export settings."),
-            ):
-                if not control.toolTip():
-                    control.setToolTip(tooltip)
+            while self.ui.gridLayout.count():
+                item = self.ui.gridLayout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.hide()
             self.csv_scope = qtw.QLabel(self)
             self.csv_scope.setObjectName("csvExportScope")
             self.csv_scope.setWordWrap(True)
             self.csv_scope.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-            self.csv_scope.setContentsMargins(8, 8, 8, 8)
             self.csv_scope.hide()
-            for column, button in enumerate((self.ui.copyBtn, self.ui.exportBtn, self.ui.closeBtn)):
-                self.ui.gridLayout.removeWidget(button)
-                self.ui.gridLayout.addWidget(button, 7, column)
-            self.ui.gridLayout.addWidget(self.csv_scope, 6, 0, 1, 3)
+            self.controls = PlotExportControls(self)
+            self.controls_scroll = qtw.QScrollArea(self)
+            self.controls_scroll.setWidgetResizable(True)
+            self.controls_scroll.setFrameShape(qtw.QFrame.Shape.NoFrame)
+            self.controls_scroll.setWidget(self.controls)
+            self.ui.gridLayout.addWidget(self.controls_scroll, 0, 0, 1, 3)
+            self.feedback = qtw.QLabel(self)
+            self.feedback.setWordWrap(True)
+            self.feedback.hide()
+            self.ui.gridLayout.addWidget(self.feedback, 1, 0, 1, 3)
+            actions = qtw.QHBoxLayout()
+            actions.addStretch(1)
+            for button in (self.ui.copyBtn, self.ui.exportBtn, self.ui.closeBtn):
+                actions.addWidget(button)
+                button.show()
+            self.ui.gridLayout.addLayout(actions, 2, 0, 1, 3)
             self.setWindowTitle("Export plot")
-            self.ui.gridLayout.setSpacing(8)
-            self.ui.itemTree.setMaximumHeight(100)
-            self.ui.formatList.setMaximumHeight(100)
-            self.ui.gridLayout.setRowStretch(5, 1)
-            self.ui.label.setText("Area to export (entire scene includes all plot items):")
+            self.ui.gridLayout.setContentsMargins(16, 16, 16, 12)
+            self.ui.gridLayout.setSpacing(12)
+            self.ui.gridLayout.setRowStretch(0, 1)
+            self.ui.copyBtn.setText("Copy image")
             self.ui.exportBtn.setText("Save as…")
-            self.ui.label_3.setText("Export options — image dimensions preserve the aspect ratio")
-            self.resize(560, 540)
+            self.ui.exportBtn.setToolTip("Choose a destination and save using these export settings.")
+            self.setMinimumSize(350, 230)
             owner.destroyed.connect(self._qplot_owner_destroyed)
+
+        def show(self, item: Any = None) -> None:
+            self.updateItemList()
+            super().show()
+            self.selectBox.hide()
+            self.fit_export_controls()
+
+        def updateItemList(self, select: Any = None) -> None:
+            # Keep the inherited exporter plumbing fixed to the complete
+            # scene, including colour scales and source annotations.
+            self.ui.itemTree.clear()
+            item: Any = qtw.QTreeWidgetItem(["Complete plot"])
+            item.gitem = self.scene
+            self.ui.itemTree.addTopLevelItem(item)
+            self.ui.itemTree.setCurrentItem(item)
+
+        def fit_export_controls(self) -> None:
+            if not self.isVisible():
+                return
+            buttons = [button for button in (self.ui.copyBtn, self.ui.exportBtn, self.ui.closeBtn)
+                       if not button.isHidden()]
+            width = max(button.sizeHint().width() for button in buttons)
+            for button in buttons:
+                button.setFixedWidth(width)
+            screen = self.screen()
+            bounds = screen.availableGeometry() if screen is not None else QtCore.QRect(0, 0, 1024, 768)
+            self.controls.ensurePolished()
+            self.controls.body_layout.activate()
+            preferred = self.controls.sizeHint()
+            margins = self.ui.gridLayout.contentsMargins()
+            target_width = min(max(480, preferred.width() + margins.left() + margins.right()), bounds.width() - 40)
+            # Resolve the real viewport width, including theme padding and
+            # borders, before measuring wrapped labels at that width.
+            self.resize(target_width, self.height())
+            self.ui.gridLayout.activate()
+            viewport = self.controls_scroll.viewport()
+            horizontal = self.controls_scroll.horizontalScrollBar()
+            assert viewport is not None and horizontal is not None
+            content_width = viewport.width()
+            content_height = self.controls.heightForWidth(content_width)
+            if content_height < 0:
+                content_height = preferred.height()
+            action_height = max(button.sizeHint().height() for button in buttons)
+            spacing = self.ui.gridLayout.verticalSpacing()
+            feedback_height = (self.feedback.heightForWidth(content_width) + spacing
+                               if not self.feedback.isHidden() else 0)
+            # Qt can add scrollbar chrome after this layout pass. Reserve its
+            # native height so that it cannot squeeze out the bottom controls.
+            scroll_chrome = max(self.controls_scroll.height() - viewport.height(), horizontal.sizeHint().height())
+            desired_height = (content_height + scroll_chrome + margins.top() + margins.bottom()
+                              + action_height + spacing + feedback_height + 12)
+            self.resize(target_width, min(desired_height, bounds.height() - 80))
+            frame = self.frameGeometry()
+            self.move(max(bounds.left(), min(frame.left(), bounds.right() - frame.width() + 1)),
+                      max(bounds.top(), min(frame.top(), bounds.bottom() - frame.height() + 1)))
+
+        def exportItemChanged(self, item: Any, previous: Any) -> None:
+            if item is not None:
+                self.updateFormatList()
+            self.selectBox.hide()
 
         @property
         def _qplot_owner(self) -> Any | None:
@@ -152,7 +226,7 @@ if (
                     exporter_class,
                     QtCore.QCoreApplication.translate(
                         "Exporter",
-                        "CSV data" if exporter_class is CSVExporter else exporter_class.Name,
+                        {ImageExporter: "PNG image", CSVExporter: "CSV data", SVGExporter: "SVG"}[exporter_class],
                     ),
                 )
                 self.ui.formatList.addItem(item)
@@ -166,13 +240,18 @@ if (
             scope = getattr(self, "csv_scope", None)
             if scope is not None:
                 scope.hide()
-            if exporter_class not in _SAFE_PYQTGRAPH_FILE_EXPORTERS:
+            owner = self._qplot_owner
+            if owner is None or exporter_class not in _SAFE_PYQTGRAPH_FILE_EXPORTERS:
                 self.currentExporter = None
                 self.ui.paramTree.clear()
                 self.ui.exportBtn.setEnabled(False)
                 self.ui.copyBtn.setEnabled(False)
+                self.ui.copyBtn.hide()
+                self.controls.set_exporter(None)
                 return
-            super().exportFormatChanged(item, previous)
+            target = owner.plot if exporter_class is CSVExporter else self.scene
+            self.currentExporter = exporter_class(item=target)
+            self.ui.paramTree.setParameters(self.currentExporter.parameters())
             exporter_type = type(self.currentExporter)
             if isinstance(self.currentExporter, CSVExporter):
                 # Numeric exports always retain the original precision. The
@@ -182,16 +261,9 @@ if (
                 params.child("separator").setOpts(title="Separator")
                 params.child("columnMode").setOpts(title="Columns")
                 params.removeChild(params.child("precision"))
-                heatmap = getattr(self._qplot_owner, "operation_kind", None) == "plot2d"
-                modes = ([CSV_HEATMAP_VALUES] if heatmap else
-                         [CSV_UNDERLYING_VALUES, CSV_TRANSFORMED_VALUES])
-                values = params.insertChild(0, {
-                    "name": "values", "title": "Values", "type": "list",
-                    "limits": modes, "value": modes[0],
-                })
-                if heatmap:
-                    params.removeChild(params.child("columnMode"))
-                values.sigValueChanged.connect(self._update_csv_scope)
+                configure_csv_measurements(owner, self.currentExporter)
+                self._configure_csv_data_options()
+                params.child("measurements").sigValueChanged.connect(self._csv_measurement_changed)
                 self._update_csv_scope()
             parameter_tips = {
                 "width": "Export width in pixels. Changing this also adjusts the height to preserve the aspect ratio.",
@@ -202,6 +274,7 @@ if (
                 "separator": "Choose the character separating values in the exported text file.",
                 "columnMode": "Use separate X columns for each trace, or share one X column when coordinates match.",
                 "values": "Choose which plot values to export. The description below explains the selected scope.",
+                "measurements": "Choose all traces or an individual measurement, including hidden datasets.",
             }
             exporter: Any = self.currentExporter
             exporter.parameters().setOpts(title="Export options")
@@ -216,32 +289,104 @@ if (
                     parameter.setOpts(tip=tip)
             self.ui.exportBtn.setEnabled(
                 exporter_type in _SAFE_PYQTGRAPH_FILE_EXPORTERS
+                and (exporter_type is not CSVExporter or exporter.params["measurements"] != "empty")
             )
             self.ui.copyBtn.setEnabled(
                 exporter_type in _SAFE_PYQTGRAPH_COPY_EXPORTERS
             )
+            self.ui.copyBtn.setVisible(exporter_type in _SAFE_PYQTGRAPH_COPY_EXPORTERS)
+            self.ui.copyBtn.setText("Copy SVG" if exporter_type is SVGExporter else "Copy image")
+            self.ui.copyBtn.setToolTip(
+                "Copy the complete plot using the dimensions, background and options selected in this dialog."
+            )
+            self.feedback.hide()
+            self.controls.set_exporter(self.currentExporter)
+            if exporter_type is CSVExporter:
+                self._update_csv_scope()
+
+        def _configure_csv_data_options(self) -> None:
+            exporter = self.currentExporter
+            owner = self._qplot_owner
+            if exporter is None or owner is None:
+                return
+            params = exporter.params
+            heatmap = csv_exports_heatmap(owner, exporter)
+            modes = ([CSV_HEATMAP_VALUES] if heatmap else
+                     [CSV_UNDERLYING_VALUES, CSV_TRANSFORMED_VALUES])
+            values = params.names.get("values")
+            if values is None:
+                values = params.insertChild(1, {
+                    "name": "values", "title": "Values", "type": "list",
+                    "limits": modes, "value": modes[0],
+                })
+                values.sigValueChanged.connect(self._update_csv_scope)
+            else:
+                if values.value() != CSV_HEATMAP_VALUES:
+                    exporter._qplot_csv_line_values = values.value()
+                values.setLimits(modes)
+                if not heatmap:
+                    values.setValue(getattr(exporter, "_qplot_csv_line_values", modes[0]))
+            columns = params.names.get("columnMode")
+            if heatmap and columns is not None:
+                exporter._qplot_csv_columns = columns.value()
+                params.removeChild(columns)
+            elif not heatmap and columns is None:
+                params.addChild({
+                    "name": "columnMode", "title": "Columns", "type": "list",
+                    "limits": ["(x,y) per plot", "(x,y,y,y) for all plots"],
+                    "value": getattr(exporter, "_qplot_csv_columns", "(x,y) per plot"),
+                })
+
+        def _csv_measurement_changed(self, *_args) -> None:
+            self.controls.clear_bindings()
+            self._configure_csv_data_options()
+            self._update_csv_scope()
+            self.feedback.hide()
+            self.controls.set_exporter(self.currentExporter)
 
         def _update_csv_scope(self, *_args) -> None:
             scope = getattr(self, "csv_scope", None)
             owner = self._qplot_owner
-            if scope is None or owner is None or type(self.currentExporter) is not CSVExporter:
+            exporter = self.currentExporter
+            if scope is None or owner is None or exporter is None or type(exporter) is not CSVExporter:
                 return
-            scope.setText(owner._csv_export_scope(self.currentExporter))
+            full_scope = owner._csv_export_scope(exporter)
+            scope.setToolTip(full_scope)
+            selection = selected_csv_measurements(owner, exporter)
+            if csv_exports_heatmap(owner, exporter):
+                layer = selection[0].item if selection else owner
+                grid = np.asarray(layer.__dict__.get("data_grid", layer.__dict__.get("dataGrid", [])))
+                shape = f" ({grid.shape[1]:,} × {grid.shape[0]:,} cells)" if grid.ndim == 2 else ""
+                text = (f"Selected heatmap grid{shape}, including operations and spatial averaging. "
+                        "Other measurements are excluded.")
+            elif exporter.params["values"] == CSV_TRANSFORMED_VALUES:
+                text = "All loaded samples, including applied operations and native transforms. Zoom does not limit the exported data."
+            else:
+                text = "All loaded samples, including Operations-panel processing, before native transforms. Zoom does not limit the exported data."
+            scope.setText(text)
             scope.show()
 
         @QtCore.pyqtSlot()
         def exportClicked(self) -> None:
+            self.feedback.hide()
             self.selectBox.hide()
             owner = self._qplot_owner
             if owner is not None:
-                owner._export_pyqtgraph_exporter(self.currentExporter)
+                if owner._export_pyqtgraph_exporter(self.currentExporter):
+                    self.feedback.setText("Export started." if type(self.currentExporter) is CSVExporter else "Saved.")
+                    self.feedback.show()
+                    self.fit_export_controls()
 
         @QtCore.pyqtSlot()
         def copyClicked(self) -> None:
+            self.feedback.hide()
             self.selectBox.hide()
             owner = self._qplot_owner
             if owner is not None:
-                owner._copy_pyqtgraph_exporter(self.currentExporter)
+                if owner._copy_pyqtgraph_exporter(self.currentExporter):
+                    self.feedback.setText("Copied to clipboard.")
+                    self.feedback.show()
+                    self.fit_export_controls()
 
         @QtCore.pyqtSlot()
         def _qplot_owner_destroyed(self) -> None:
@@ -759,11 +904,15 @@ class PlotExportMixin(_PlotExportBase):
 
     def _csv_export_scope(self, exporter: CSVExporter) -> str:
         """Describe the exact values selected by the numeric export option."""
-        if getattr(self, "operation_kind", None) == "plot2d":
-            grid = np.asarray(getattr(self, "dataGrid", []))
+        selection = selected_csv_measurements(self, exporter)
+        description = csv_selection_description(self, exporter)
+        prefix = f"Exporting: {description}.\n" if description else ""
+        if csv_exports_heatmap(self, exporter):
+            layer = selection[0].item if selection else self
+            grid = np.asarray(layer.__dict__.get("data_grid", layer.__dict__.get("dataGrid", [])))
             shape = f" ({grid.shape[1]:,} × {grid.shape[0]:,} cells)" if grid.ndim == 2 else ""
-            return (
-                f"Current primary heatmap grid{shape}, including applied operations and "
+            return prefix + (
+                f"Selected heatmap grid{shape}, including applied operations and "
                 "any spatial averaging. Retains the currently loaded extent and resolution; "
                 "other layers are not included. No fresh database read. "
                 "Use the main-window CSV action for raw measurement values."
@@ -771,13 +920,13 @@ class PlotExportMixin(_PlotExportBase):
         values = exporter.parameters().names.get("values")
         transformed = values is not None and values.value() == CSV_TRANSFORMED_VALUES
         if transformed:
-            return (
+            return prefix + (
                 "Plot values including applied operations and native FFT, differentiation, "
                 "phase-map or mean-subtraction controls. All loaded samples, in physical "
                 "coordinates: no zoom clipping, rendering downsampling or logarithmic "
                 "coordinate conversion. No fresh database read."
             )
-        return (
+        return prefix + (
             "Underlying plot samples, including applied Operations-panel processing, "
             "before native FFT, differentiation, phase-map or mean subtraction. "
             "All loaded samples; zoom and rendering downsampling do not limit the export. "
@@ -789,10 +938,19 @@ class PlotExportMixin(_PlotExportBase):
         """Detach numeric values and metadata while their Qt items are alive."""
         if not isinstance(exporter.item, PlotItem):
             raise TypeError("Must have a PlotItem selected for CSV export.")
+        selection = selected_csv_measurements(self, exporter, validate=True)
+        items = list(exporter.item.items)
+        if selection is not None:
+            if any(entry.kind != "trace" for entry in selection):
+                raise ValueError("Select a trace measurement for this CSV export.")
+            selected_items = [entry.item for entry in selection]
+            if exporter.params["measurements"] == "all_traces" or len(exporter._qplot_csv_measurements) == 1:
+                selected_items.extend(item for item in items if isinstance(item, ErrorBarItem))
+            items = selected_items
         shared_x = exporter.params["columnMode"] == "(x,y,y,y) for all plots"
         if transformed:
             traces: list[TransformedTrace] = []
-            for item in exporter.item.items:
+            for item in items:
                 if isinstance(item, ErrorBarItem):
                     raise ValueError(
                         "Transformed export does not transform error bars. "
@@ -833,7 +991,7 @@ class PlotExportMixin(_PlotExportBase):
         collector = CSVExporter(exporter.item)
         collector.params.restoreState(exporter.params.saveState())
         coordinates = []
-        for item in exporter.item.items:
+        for item in items:
             if isinstance(item, ErrorBarItem):
                 collector._exportErrorBarItem(item)
             elif hasattr(item, "implements") and item.implements("plotData"):
@@ -849,14 +1007,15 @@ class PlotExportMixin(_PlotExportBase):
         return CsvColumns(tuple(collector.header), columns, tuple(coordinates), shared_x)
 
 
-    def _capture_heatmap_csv(self) -> HeatmapCsv:
-        """Freeze the current primary grid without another source read."""
-        axis_data = self.__dict__.get("axis_data")
+    def _capture_heatmap_csv(self, layer: Any = None) -> HeatmapCsv:
+        """Freeze a currently plotted grid without another source read."""
+        target: Any = self if layer is None else layer
+        axis_data = target.__dict__.get("axis_data")
         if not isinstance(axis_data, dict):
             raise ValueError("Heatmap coordinate data is not available.")
         x = np.asarray(axis_data.get("x", []), dtype=float)
         y = np.asarray(axis_data.get("y", []), dtype=float)
-        grid = np.asarray(self.__dict__.get("dataGrid", []))
+        grid = np.asarray(target.__dict__.get("data_grid", target.__dict__.get("dataGrid", [])))
         if x.ndim != 1 or y.ndim != 1:
             raise ValueError("Heatmap coordinate axes must be one-dimensional.")
         if grid.ndim != 2 or grid.shape != (y.size, x.size):
@@ -866,7 +1025,18 @@ class PlotExportMixin(_PlotExportBase):
             )
         if grid.size == 0:
             raise ValueError("The currently plotted heatmap is empty.")
-        return HeatmapCsv(self._heatmap_csv_column_names(), frozen_array(x), frozen_array(y),
+        names = self._heatmap_csv_column_names()
+        if target is not self:
+            source = target.from_win
+            order = target.source_axis_order()
+            if order is None:
+                raise ValueError("The selected heatmap has no current coordinate mapping.")
+            parameters = source.__dict__.get("axis_param", {})
+            value = source.__dict__.get("display_param", source.__dict__.get("param"))
+            names = (self._export_parameter_name(parameters.get(order[0]), "x"),
+                     self._export_parameter_name(parameters.get(order[1]), "y"),
+                     self._export_parameter_name(value, "value"))
+        return HeatmapCsv(names, frozen_array(x), frozen_array(y),
                           frozen_array(grid))
 
 
@@ -885,10 +1055,16 @@ class PlotExportMixin(_PlotExportBase):
             return False
 
         suffixes, default_suffix, name_filter, description = specification
-        suggested_path = path.splitext(self._default_plot_pdf_filename())[0]
+        if type(exporter) is CSVExporter and exporter.params["separator"] == "tab":
+            default_suffix = ".tsv"
+            name_filter = "TSV files (*.tsv);;CSV files (*.csv)"
+        selection = selected_csv_measurements(self, exporter) if type(exporter) is CSVExporter else None
+        filename_owner = selection[0].source if selection and len(selection) == 1 else self
+        filename_provider = getattr(filename_owner, "_default_plot_pdf_filename", self._default_plot_pdf_filename)
+        suggested_path = path.splitext(filename_provider())[0]
         suggested_path = f"{suggested_path}{default_suffix}"
         if type(exporter) is CSVExporter:
-            dataset = getattr(self, "ds", None)
+            dataset = getattr(filename_owner, "ds", None)
             filename = csv_filename(
                 getattr(self, "config", None), path.basename(suggested_path),
                 guid=getattr(dataset, "guid", None),
@@ -896,6 +1072,8 @@ class PlotExportMixin(_PlotExportBase):
             )
             suggested_path = path.join(path.dirname(suggested_path), filename)
         try:
+            if type(exporter) is CSVExporter:
+                selected_csv_measurements(self, exporter, validate=True)
             destination = choose_export_path_with_suffixes(
                 self,
                 caption="Export Plot",
@@ -924,8 +1102,11 @@ class PlotExportMixin(_PlotExportBase):
             elif type(exporter) is CSVExporter:
                 from ._export_tasks import start_export_task
 
-                if getattr(self, "operation_kind", None) == "plot2d":
-                    snapshot = self._capture_heatmap_csv()
+                if csv_exports_heatmap(self, exporter):
+                    selection = selected_csv_measurements(self, exporter, validate=True)
+                    layer = selection[0].item if selection else self
+                    snapshot = (self._capture_heatmap_csv() if layer is self
+                                else self._capture_heatmap_csv(layer=layer))
                 else:
                     mode = exporter.parameters().names.get("values")
                     snapshot = self._capture_line_csv(
@@ -1054,21 +1235,10 @@ class PlotExportMixin(_PlotExportBase):
             ) -> tuple[tuple[str, ...], str, str, str] | None:
         """Describe exporters that accept a private same-suffix filename."""
         if type(exporter) is ImageExporter:
-            patterns = tuple(exporter.getSupportedImageFormats())
-            suffixes = tuple(
-                suffix
-                for pattern in patterns
-                if (suffix := path.splitext(pattern)[1])
-            )
-            if not suffixes:
-                return None
             return (
-                suffixes,
-                suffixes[0],
-                ";;".join(
-                    f"{suffix[1:].upper()} image (*{suffix})"
-                    for suffix in suffixes
-                ),
+                (".png",),
+                ".png",
+                "PNG image (*.png)",
                 "plot image",
             )
         if type(exporter) is CSVExporter:

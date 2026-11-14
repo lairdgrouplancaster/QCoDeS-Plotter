@@ -553,6 +553,11 @@ Common plot controls:
 * Right-click inside a marquee selection for zoom and statistics actions.
 * Press `Esc` or double-click the plot to clear a marquee selection.
 * Double-click an X or Y axis to open its scaling dialog, or use **View → Axis Scaling…**.
+* The axis-scaling tabs are **Bottom**, **Left**, **Top** and **Right**. Each
+  shows the plotted quantity above its range controls. Unused axes are disabled;
+  hover over a disabled tab for an explanation. **Link range to** identifies
+  each available target by plot title, axis position and quantity. Select
+  **None** to control the range independently.
 * Range controls default to `Min / Max`. Select `Centre / Span` to enter an
   arithmetic midpoint and the full range width (`maximum - minimum`). Switching
   formats leaves the plotted range and Auto/Manual mode unchanged. The readout
@@ -923,24 +928,48 @@ message also shows the output path, which you can select and copy.
 Switching or closing the database cancels pending database copies and raw exports. Closing a plot
 cancels its pending plot exports.
 
-In a plot's export dialog, select **CSV data** and check **Values**:
+In a plot's export dialog, select **CSV data**, then choose **Data to export**.
+Individual traces and heatmaps are identified by run number and measurement name.
+**All traces** combines the plot's traces into columns; heatmaps are exported one
+at a time because their grids may have different coordinates. Hidden measurements
+are included when selected. The initial choice preserves the previous scope:
+all traces for a line plot, or the primary grid for a heatmap plot.
+This is a single-choice list: choose one measurement or **All traces**.
+**Columns** is shown only when exporting multiple traces.
+
+Check **Values** for the selected measurements:
 
 * **Underlying plot samples** includes applied Operations-panel processing,
   before native FFT, differentiation, phase-map, or mean-subtraction controls.
 * **Transformed plot values** also includes those native controls. Both line
-  modes export all loaded samples in physical coordinates, including secondary
-  traces; zoom, rendering downsampling, and logarithmic axis display do not
+  modes export all loaded samples from the selected traces in physical
+  coordinates; zoom, rendering downsampling, and logarithmic axis display do not
   change their values. Transformed export does not support error bars.
-* **Current primary heatmap grid** exports the currently loaded primary grid,
+* **Current heatmap grid** exports the selected heatmap's currently loaded grid,
   including applied operations and spatial averaging. It retains the loaded
-  extent and resolution and excludes other heatmap layers.
+  extent and resolution and excludes other measurements. Secondary heatmaps use
+  their own grid coordinates and measurement names.
 
 Plot CSV values are captured from the plot after the destination is chosen;
 later refreshes do not change the queued export. No plot CSV mode reads fresh
 database data. Use the main-window CSV action for raw measurements.
 
 Plot windows can export plot images and data through `File -> Export Plot...` or
-`Ctrl+E`, using pyqtgraph's export dialog. Use `File -> Save Plot as PDF...` or
+`Ctrl+E`. Choose **PNG image**, **SVG**, or **CSV data** in **Format**.
+Images and SVG export the complete plot, including colour scales and source
+annotations. Image dimensions start at the displayed plot size; editing width or
+height preserves its aspect ratio. **Background** offers **White**, **Transparent**
+and **Choose colour…**. Custom colours retain alpha support, and cancelling the
+colour picker keeps the previous background. The selected swatch shows a
+checkerboard for transparency or the hex code for a custom colour.
+**Invert brightness** is shown beside **Smooth edges**. CSV shows data options
+instead of image controls; the scope description has a tooltip with full details.
+Choosing **Tab** suggests a TSV file, while the final CSV/TSV file type determines
+the delimiter. **Save as…** leaves the dialog open for further exports.
+**Copy image** or **Copy SVG** copies the complete plot using the dimensions,
+background and options selected in this dialog. CSV has no clipboard action.
+
+Use `File -> Save Plot as PDF...` or
 the plot context menu to save a plot-sized PDF of the rendered plot area. Use
 `Edit -> Copy Plot Image`, `Ctrl+C`, or the plot context menu to copy it to the
 clipboard without the surrounding window menus or toolbars. The copy resolution
