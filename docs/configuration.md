@@ -137,7 +137,7 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.bar_colour_include_matplotlib_other` | boolean | `true` | `true` or `false` | Show uncategorised Matplotlib maps. |
 | `user_preference.bar_colour_excluded` | string array | `[]` | any strings | Hide colour maps with these exact names. |
 | `user_preference.bar_colour_excluded_prefixes` | string array | `[]` | any strings | Hide colour maps with these prefixes. |
-| `user_preference.confirm_close` | boolean | `true` | `true` or `false` | Ask before closing the main window. |
+| `user_preference.confirm_close` | boolean | `false` | `true` or `false` | Ask before closing the main window. |
 | `user_preference.confirm_close_all` | boolean | `true` | `true` or `false` | Ask before closing all plot windows. |
 | `user_preference.auto_plot` | boolean | `false` | `true` or `false` | Automatically open newly detected runs. |
 | `user_preference.copy_plot_image_resolution` | string | `"screen"` | `screen`, `dpi_300`, or `svg` | Format/resolution used by plot-window Copy Plot Image. |

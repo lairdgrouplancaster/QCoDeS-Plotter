@@ -256,7 +256,7 @@
                 },
                 "confirm_close": {
                     "type": "boolean",
-                    "default": true
+                    "default": false
                 },
                 "confirm_close_all": {
                     "type": "boolean",
