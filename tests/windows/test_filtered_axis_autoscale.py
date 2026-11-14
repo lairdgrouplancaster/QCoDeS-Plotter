@@ -96,7 +96,7 @@ def test_visible_auto_follows_perpendicular_range(loaded_plot, sides, dimension,
         source.vb.enableAutoRange(enable=False)
         window.open_axis_scale_dialog(perpendicular)
         combo = window._axis_scale_controls[perpendicular].linkCombo
-        index = combo.findText(source.vb.name)
+        index = combo.findData(source.vb.name)
         assert index >= 0
         combo.setCurrentIndex(index)
         assert window._axis_scale_viewbox(perpendicular).linkedView(dimension) is source.vb

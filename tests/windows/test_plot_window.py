@@ -3262,7 +3262,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual(set(host._axis_scale_controls), {"x", "y", "x2", "y2"})
             self.assertEqual(
                 [host._axis_scale_tabs.tabText(index) for index in range(4)],
-                ["X", "Y", "X2", "Y2"],
+                ["Bottom", "Left", "Top", "Right"],
                 )
             self.assertTrue(host._axis_scale_tabs.isTabEnabled(0))
             self.assertTrue(host._axis_scale_tabs.isTabEnabled(1))
@@ -3291,7 +3291,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 x_controls.autoPanCheck.text(),
                 "Follow new data, keep span",
                 )
-            self.assertEqual(x_controls.label.text(), "Link axis:")
+            self.assertEqual(x_controls.label.text(), "Link range to:")
             self.assertEqual(x_controls.linkCombo.currentText(), "None")
             self.assertIsInstance(x_controls.linkCombo, qtw.QComboBox)
             self.assertGreaterEqual(x_controls.manualRadio.parentWidget().width(), 340)
@@ -3392,7 +3392,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual(main_line.opts["logMode"], [False, False])
             self.assertEqual(
                 host._axis_scale_tabs.tabToolTip(2),
-                "Top horizontal axis",
+                "No datasets are assigned to this axis.",
                 )
             auto_limits = host._axis_scale_auto_limits("x")
             self.assertIsNotNone(auto_limits)

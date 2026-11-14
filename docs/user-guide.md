@@ -548,6 +548,11 @@ Common plot controls:
 * Right-click inside a marquee selection for zoom and statistics actions.
 * Press `Esc` or double-click the plot to clear a marquee selection.
 * Double-click an X or Y axis to open its scaling dialog, or use **View → Axis Scaling…**.
+* The axis-scaling tabs are **Bottom**, **Left**, **Top** and **Right**. Each
+  shows the plotted quantity above its range controls. Unused axes are disabled;
+  hover over a disabled tab for an explanation. **Link range to** identifies
+  each available target by plot title, axis position and quantity. Select
+  **None** to control the range independently.
 * Range controls default to `Min / Max`. Select `Centre / Span` to enter an
   arithmetic midpoint and the full range width (`maximum - minimum`). Switching
   formats leaves the plotted range and Auto/Manual mode unchanged. The readout
