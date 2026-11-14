@@ -409,6 +409,22 @@ Ordinary pushes and pull requests use this desktop scope regardless of which
 files changed. Linux tests, coverage and source-distribution validation are
 reserved for releases and explicit full runs.
 
+Runtime source tests cover both the latest PyQt6 release and the minimum
+declared in `pyproject.toml` (`PyQt6>=6.9.0`). The latest release retains the
+full/compatibility split described above. The minimum runs the compatibility
+suite on every supported Python version and platform in the selected scope:
+Windows and both macOS architectures routinely, with Linux added for full
+validation. CI selects Qt explicitly before installing the audited application
+and native wheels, retains that constraint during dependency resolution, and
+reports the installed binding, Qt library and SIP versions. A newer PyQt6
+release is permitted without raising the application's runtime minimum.
+
+Static analysis uses its separate validated PyQt6 6.11.0 pin because later
+stubs have known typing defects. This analysis pin does not constrain runtime
+jobs. Documentation screenshots retain their exact, independent pins in
+`requirements/screenshots.txt` for reproducible capture; changing either set
+of pins requires validating that environment separately.
+
 Routine compatibility runs use `.github/pytest-compatibility-routine.txt`,
 which includes the complete compatibility list and deselects five large-data
 stress cases: the ten-run shape specification, two large interleaved-grid

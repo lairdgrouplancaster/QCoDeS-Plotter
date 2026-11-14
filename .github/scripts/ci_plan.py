@@ -4,9 +4,22 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import tomllib
 from pathlib import Path
 
 PYTHON_VERSIONS = ("3.12", "3.13", "3.14")
+PROJECT_FILE = Path(__file__).resolve().parents[2] / "pyproject.toml"
+
+
+def minimum_pyqt6_version(project_file: Path = PROJECT_FILE) -> str:
+    """Test the runtime floor declared by the application, without a second pin."""
+    project = tomllib.loads(project_file.read_text(encoding="utf-8"))["project"]
+    for requirement in project["dependencies"]:
+        match = re.fullmatch(r"PyQt6>=([0-9]+(?:\.[0-9]+)+)", requirement)
+        if match:
+            return match[1]
+    raise ValueError("CI requires an explicit PyQt6>=VERSION runtime dependency.")
 
 
 def validation_mode(
@@ -38,6 +51,8 @@ def check_matrix(full_validation: bool) -> dict[str, list[dict[str, str]]]:
                 "python-version": version,
                 "suite": "full" if full_validation or version == "3.14" else "compatibility",
                 "native-artifact": artifact,
+                "qt-version": "latest",
+                "qt-requirement": "PyQt6",
             }
             if entry["suite"] == "full":
                 count = 4 if runner == "windows-2025" else 2
@@ -53,7 +68,22 @@ def check_matrix(full_validation: bool) -> dict[str, list[dict[str, str]]]:
             "python-version": version,
             "suite": "compatibility",
             "native-artifact": artifact,
+            "qt-version": "latest",
+            "qt-requirement": "PyQt6",
         } for version in PYTHON_VERSIONS)
+    # Keep the existing full-suite partitions on latest Qt. Exercise the
+    # advertised minimum with the compatibility suite on every Python/platform
+    # pair too, without doubling all of the expensive full-suite partitions.
+    minimum = minimum_pyqt6_version()
+    platforms = sorted({(row["os"], row["native-artifact"]) for row in entries})
+    entries.extend({
+        "os": runner,
+        "python-version": version,
+        "suite": "compatibility",
+        "native-artifact": artifact,
+        "qt-version": minimum,
+        "qt-requirement": f"PyQt6=={minimum}",
+    } for runner, artifact in platforms for version in PYTHON_VERSIONS)
     for entry in entries:
         if entry["suite"] == "compatibility":
             entry["test-list"] = (

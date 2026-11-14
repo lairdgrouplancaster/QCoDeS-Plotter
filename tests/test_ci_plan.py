@@ -56,7 +56,8 @@ def test_unknown_events_default_to_full_validation(event_name):
 
 @pytest.mark.parametrize("full", [False, True])
 def test_check_matrix_selects_full_versions_and_keeps_complete_partitions(full):
-    entries = plan.check_matrix(full)["include"]
+    entries = [row for row in plan.check_matrix(full)["include"]
+               if row["qt-version"] == "latest"]
     actual = {(row["os"], row["python-version"], row["suite"], row.get("partition")) for row in entries}
     expected = {
         (runner, version, "full", partition)
@@ -80,6 +81,7 @@ def test_check_matrix_selects_full_versions_and_keeps_complete_partitions(full):
         "ubuntu-latest": "qplotter-native-linux-x86_64",
     }
     assert all(row["native-artifact"] == artifacts[row["os"]] for row in entries)
+    assert all(row["qt-requirement"] == "PyQt6" for row in entries)
     for row in entries:
         if row["suite"] == "compatibility":
             expected_list = (
@@ -90,6 +92,40 @@ def test_check_matrix_selects_full_versions_and_keeps_complete_partitions(full):
             assert (SCRIPT.parents[2] / row["test-list"]).is_file()
         else:
             assert "test-list" not in row
+
+
+@pytest.mark.parametrize("full", [False, True])
+def test_minimum_qt_covers_every_python_platform_pair_without_duplicate_jobs(full):
+    entries = plan.check_matrix(full)["include"]
+    minimum = plan.minimum_pyqt6_version()
+    minimum_entries = [row for row in entries if row["qt-version"] == minimum]
+    latest_pairs = {(row["os"], row["python-version"]) for row in entries
+                    if row["qt-version"] == "latest"}
+    assert {(row["os"], row["python-version"]) for row in minimum_entries} == latest_pairs
+    assert len(minimum_entries) == len(latest_pairs) == (12 if full else 9)
+    assert all(row["qt-requirement"] == f"PyQt6=={minimum}" for row in minimum_entries)
+    assert all(row["suite"] == "compatibility" and "partition" not in row
+               for row in minimum_entries)
+    expected_list = (".github/pytest-compatibility.txt" if full
+                     else ".github/pytest-compatibility-routine.txt")
+    assert all(row["test-list"] == expected_list for row in minimum_entries)
+    identities = {(row["os"], row["python-version"], row["qt-version"],
+                   row["suite"], row.get("partition")) for row in entries}
+    assert len(identities) == len(entries) == (36 if full else 22)
+
+
+def test_minimum_qt_is_read_from_application_metadata(tmp_path):
+    project = tmp_path / "pyproject.toml"
+    project.write_text('[project]\ndependencies = ["numpy>=2", "PyQt6>=6.10.2"]\n')
+    assert plan.minimum_pyqt6_version(project) == "6.10.2"
+
+
+@pytest.mark.parametrize("requirements", [[], ["PyQt6"], ["PyQt6~=6.9"], ["PyQt6>=6.9,<7"]])
+def test_ambiguous_qt_floor_fails_planning_instead_of_silently_omitting_coverage(tmp_path, requirements):
+    project = tmp_path / "pyproject.toml"
+    project.write_text(f'[project]\ndependencies = {json.dumps(requirements)}\n')
+    with pytest.raises(ValueError, match="explicit PyQt6>=VERSION"):
+        plan.minimum_pyqt6_version(project)
 
 
 @pytest.mark.parametrize("full", [False, True])
@@ -135,7 +171,7 @@ def test_cli_emits_complete_matrices_without_git_or_event_payload(
     assert outputs["reason"]
     platforms = json.loads(outputs["platforms"])
     assert platforms == plan.platform_matrices(full)
-    assert sum(len(row["checks"]["include"]) for row in platforms.values()) == (24 if full else 13)
+    assert sum(len(row["checks"]["include"]) for row in platforms.values()) == (36 if full else 22)
     assert sum(len(row["installations"]["include"]) for row in platforms.values()) == (12 if full else 9)
     assert f"CI mode: {'full' if full else 'routine'}." in result.stdout
 
@@ -170,3 +206,21 @@ def test_workflow_offers_explicit_full_validation_and_keeps_release_gates():
     validation = release.split("  validate:\n", 1)[1].split("  prepare:\n", 1)[0]
     assert "uses: ./.github/workflows/ci.yml" in validation
     assert "full-validation: true" in validation
+
+
+def test_runtime_qt_selection_preserves_wheel_audit_and_separate_analysis_pin():
+    workflows = SCRIPT.parents[1] / "workflows"
+    platform = (workflows / "ci-platform.yml").read_text()
+    selection = platform.split("- name: Select runtime Qt version\n", 1)[1].split("- name:", 1)[0]
+    assert 'python -m pip install --upgrade --only-binary=:all:' in selection
+    assert '"${{ matrix.qt-requirement }}"' in selection
+    installation = platform.split("- name: Install package and test tools\n", 1)[1].split("- name:", 1)[0]
+    assert '--extra-requirement "${{ matrix.qt-requirement }}"' in installation
+    assert '--audit-path dist/wheel-installation-audit.py dist' in installation
+    assert platform.index("Select runtime Qt version") < platform.index("Install package and test tools")
+    assert "QPLOT_CI_WHEEL_AUDIT:" in platform
+    assert "python -m pip show PyQt6 PyQt6-Qt6 PyQt6-sip" in platform
+    ci = (workflows / "ci.yml").read_text()
+    analysis = ci.split("\n  static-analysis:\n", 1)[1].split("\n  coverage:\n", 1)[0]
+    assert 'python -m pip install "PyQt6==6.11.0"' in analysis
+    assert "qt-requirement" not in analysis
