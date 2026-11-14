@@ -19,6 +19,10 @@ On macOS, prefix the command with
 `MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache` and use `.venv-mac/bin/python`
 unless the environment is activated. The ICO includes a dedicated 16-pixel
 version; larger sizes are rendered directly from the main vector artwork.
+The Windows program icon uses `qplot-windows.svg` and `qplot-windows-small.svg`:
+a larger tile with a stronger grey outline and a larger, bolder red peak to match
+neighbouring taskbar icons. PNG and macOS ICNS artwork retain their original
+masters and margins.
 Commit the regenerated assets with the SVG changes. Desktop setup uses these
 prebuilt files and does not run this script.
 
