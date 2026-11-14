@@ -1867,7 +1867,7 @@ class SnapToTraceTestCase(unittest.TestCase):
             host.line = pg.PlotDataItem()
             host.lines = {host.label: host.line}
             host._trace_styles = {
-                host.label: host._TraceStyle(line_color="#d62728", dots_enabled=True)
+                host.label: host._TraceStyle(line_color="#d62728", markers_enabled=True, markers_size=6.0)
                 }
 
             dialog = _TraceAppearanceDialog(host)
@@ -1902,7 +1902,7 @@ class SnapToTraceTestCase(unittest.TestCase):
                 "Traces",
                 [group.title() for group in dialog.findChildren(qtw.QGroupBox)],
             )
-            self.assertFalse(
+            self.assertTrue(
                 any(
                     label.text().startswith("Editing ")
                     for label in dialog.findChildren(qtw.QLabel)
@@ -1953,14 +1953,11 @@ class SnapToTraceTestCase(unittest.TestCase):
             dialog.x_axis.setCurrentText("Top")
             self.assertEqual(host._trace_styles[host.label].x_axis, "Top")
 
-            dialog.dots_enable.setChecked(True)
             dialog.marker_enable.setChecked(True)
-            self.assertFalse(dialog.dots_enable.isChecked())
             self.assertTrue(dialog.marker_enable.isChecked())
-
-            dialog.dots_enable.setChecked(True)
-            self.assertTrue(dialog.dots_enable.isChecked())
-            self.assertFalse(dialog.marker_enable.isChecked())
+            self.assertTrue(host._trace_styles[host.label].markers_enabled)
+            dialog.marker_enable.setChecked(False)
+            self.assertFalse(host._trace_styles[host.label].markers_enabled)
         finally:
             if dialog is not None:
                 dialog.deleteLater()
@@ -2088,7 +2085,7 @@ class SnapToTraceTestCase(unittest.TestCase):
 
             self.assertEqual(host.removed, [(host.source.label, secondary_key)])
             self.assertEqual(dialog.table.rowCount(), 1)
-            self.assertEqual(dialog._selected_labels(), [host.label])
+            self.assertEqual(dialog._selected_labels(), [])
             self.assertFalse(dialog.remove_trace_button.isEnabled())
             self.assertGreaterEqual(
                 dialog.add_trace_combo.findData(secondary_key),

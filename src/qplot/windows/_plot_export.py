@@ -126,7 +126,15 @@ if (
                 self.ui.gridLayout.removeWidget(button)
                 self.ui.gridLayout.addWidget(button, 7, column)
             self.ui.gridLayout.addWidget(self.csv_scope, 6, 0, 1, 3)
-            self.resize(460, 620)
+            self.setWindowTitle("Export plot")
+            self.ui.gridLayout.setSpacing(8)
+            self.ui.itemTree.setMaximumHeight(100)
+            self.ui.formatList.setMaximumHeight(100)
+            self.ui.gridLayout.setRowStretch(5, 1)
+            self.ui.label.setText("Area to export (entire scene includes all plot items):")
+            self.ui.exportBtn.setText("Save as…")
+            self.ui.label_3.setText("Export options — image dimensions preserve the aspect ratio")
+            self.resize(560, 540)
             owner.destroyed.connect(self._qplot_owner_destroyed)
 
         @property
@@ -196,7 +204,13 @@ if (
                 "values": "Choose which plot values to export. The description below explains the selected scope.",
             }
             exporter: Any = self.currentExporter
+            exporter.parameters().setOpts(title="Export options")
+            titles = {"width": "Width (px)", "height": "Height (px)",
+                      "antialias": "Smooth edges", "background": "Background colour",
+                      "invertValue": "Invert brightness"}
             for parameter in exporter.parameters().children():
+                if parameter.name() in titles:
+                    parameter.setOpts(title=titles[parameter.name()])
                 tip = parameter_tips.get(parameter.name())
                 if tip and not parameter.opts.get("tip"):
                     parameter.setOpts(tip=tip)

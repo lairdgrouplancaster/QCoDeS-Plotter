@@ -52,7 +52,7 @@ def show_first_launch_invitation(parent: qtw.QWidget) -> qtw.QMessageBox | None:
     prompt.setText("Add qPlot to your desktop and register database icons?")
     prompt.setInformativeText(
         "Choose which shortcuts and file icons to install. Your default file opener "
-        "will stay unchanged. You can also do this later from Help → Desktop integration."
+        "will stay unchanged. You can also do this later from Settings → Set Up or Remove Desktop Integration."
     )
     icon = application_icon()
     prompt.setWindowIcon(icon)

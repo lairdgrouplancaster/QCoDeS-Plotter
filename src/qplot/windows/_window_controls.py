@@ -176,7 +176,8 @@ def populate_available_window_actions(window, window_menu):
     if main_window is None:
         return
 
-    plot_windows = tuple(getattr(main_window, "windows", ()) or ())
+    plot_windows = tuple(plot for plot in (getattr(main_window, "windows", ()) or ())
+                         if not getattr(plot, "_appearance_preview_hidden", False))
     labels = [_plot_window_menu_label(plot_window) for plot_window in plot_windows]
     label_counts = Counter(labels)
     label_indexes = Counter()

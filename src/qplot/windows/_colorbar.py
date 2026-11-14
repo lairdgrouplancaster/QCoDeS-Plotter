@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from functools import cache
 
 import numpy as np
@@ -6,35 +5,12 @@ import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-
-@dataclass(frozen=True)
-class _ColorbarFilterSpec:
-    """One broad catalogue filter and its existing settings/control names."""
-
-    name: str
-    label: str
-
-    @property
-    def config_key(self) -> str:
-        return f"user_preference.bar_colour_include_{self.name}"
-
-    @property
-    def widget_name(self) -> str:
-        return f"colorbar_include_{self.name}_check"
-
-    @property
-    def changed_slot(self) -> str:
-        return f"_colorbar_include_{self.name}_changed"
-
-
-# Catalogue group names differ from the persisted preference name for local
-# pyqtgraph maps. Keep that mapping, UI order and labels in one place.
-_COLORBAR_FILTERS = {
-    "cet": _ColorbarFilterSpec("cet", "CET"),
-    "matplotlib": _ColorbarFilterSpec("matplotlib", "Matplotlib"),
-    "pyqtgraph": _ColorbarFilterSpec("local", "Local"),
-    "custom": _ColorbarFilterSpec("custom", "Custom"),
-}
+_COLORBAR_SOURCES = (
+    ("cet", "CET"),
+    ("matplotlib", "Matplotlib"),
+    ("pyqtgraph", "Local"),
+    ("custom", "Custom"),
+)
 
 
 _PREFERRED_COLORBAR_COLORMAPS = (
@@ -71,6 +47,21 @@ _MATPLOTLIB_COLORBAR_SUBTYPES = (
     ("qualitative", "Qualitative"),
     ("other", "Other"),
 )
+
+
+# Menu order: ordered-value maps first, then specialised categories, with Other last.
+_COLORBAR_CATEGORY_DESCRIPTIONS = {
+    "all": "Show every category available from the selected source.",
+    "perceptual": "Designed to make equal steps in value look similarly distinct.",
+    "sequential": "An ordered progression of colours for values from low to high.",
+    "linear": "An ordered progression in lightness for values from low to high.",
+    "divergent": "Two colour progressions meeting at a midpoint, useful around a reference such as zero.",
+    "cyclic": "Matching end colours for quantities that wrap around, such as phase or angle.",
+    "qualitative": "Distinct colours for separate categories rather than numerical magnitude.",
+    "isoluminant": "Colours with approximately equal brightness, distinguished mainly by hue.",
+    "rainbow": "A progression through multiple rainbow hues.",
+    "other": "Maps without a more specific category.",
+}
 
 
 _MATPLOTLIB_PERCEPTUAL_COLORBAR_COLORMAPS = {
@@ -259,10 +250,6 @@ def _config_value(config_obj, key, default):
     return config_obj.get(key)
 
 
-def _colorbar_subtype_config_key(group, subtype):
-    return f"user_preference.bar_colour_include_{group}_{subtype}"
-
-
 @cache
 def _build_colorbar_colormap_catalog():
     """
@@ -351,6 +338,18 @@ def _matplotlib_colorbar_colormap_subtype(name):
         return "cyclic"
     if name in _MATPLOTLIB_QUALITATIVE_COLORBAR_COLORMAPS:
         return "qualitative"
+    return "other"
+
+
+def _colorbar_colormap_category(name):
+    """Return a source-independent category for browsing the catalogue."""
+    group = _colorbar_colormap_group(name)
+    if group == "cet":
+        return _cet_colorbar_colormap_subtype(name)
+    if group == "matplotlib":
+        return _matplotlib_colorbar_colormap_subtype(name)
+    if group == "custom":
+        return "sequential"
     return "other"
 
 

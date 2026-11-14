@@ -23,7 +23,6 @@ from ._commands import (
     toolbar_toggle_command_spec,
 )
 from ._complex_plots import apply_complex_preference, format_complex_cursor
-from ._config_persistence import persist_config_value
 from ._dataset_handle import DatasetKey, TraceKey
 from ._dragdrop import (
     preview_drop_is_compatible,
@@ -1510,7 +1509,7 @@ class plotWidget(
                     if tab_widget.tabText(index) == initial_tab:
                         tab_widget.setCurrentIndex(index)
                         break
-        if initial_tab == "Runtime":
+        if initial_tab == "Performance":
             QtCore.QTimer.singleShot(
                 0,
                 dialog.maxFullHeatmapPointsSpin.setFocus,
@@ -1634,6 +1633,7 @@ class plotWidget(
         Unused but required by slot.
 
         """
+        self._appearance_closing = True
         self._clear_cursor_hover()
         # Qt leaves child windows visible when their parent is merely closed.
         # Hide detached panels and reject editors before releasing the dataset

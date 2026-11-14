@@ -17,10 +17,7 @@ from qplot.tools.operation_registry import OperationValidationError
 from qplot.tools.plot_result import capture_plot_result
 from qplot.windows import _plot_axis_scaling as axis_scaling_module
 from qplot.windows._colorbar import (
-    _CET_COLORBAR_SUBTYPES,
-    _MATPLOTLIB_COLORBAR_SUBTYPES,
     _colorbar_colormaps,
-    _colorbar_subtype_config_key,
 )
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey, TraceKey
 from qplot.windows._plot2d_sweeps import Plot2DSweepMixin
@@ -148,21 +145,9 @@ def _colorbar_config_values(overrides=None):
     values = {
         "user_preference.bar_colour": "viridis",
         "user_preference.colorbar_width": 15,
-        "user_preference.bar_colour_include_cet": True,
-        "user_preference.bar_colour_include_matplotlib": True,
-        "user_preference.bar_colour_include_local": True,
-        "user_preference.bar_colour_include_custom": True,
         "user_preference.bar_colour_excluded": [],
         "user_preference.bar_colour_excluded_prefixes": [],
         }
-    for group, subtypes in (
-            ("cet", _CET_COLORBAR_SUBTYPES),
-            ("matplotlib", _MATPLOTLIB_COLORBAR_SUBTYPES),
-            ):
-        values.update({
-            _colorbar_subtype_config_key(group, subtype): True
-            for subtype, _label in subtypes
-            })
     if overrides is not None:
         values.update(overrides)
     return values
@@ -3183,7 +3168,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertEqual(window._colorbar_colormap_name, "Purples")
         self.assertEqual(
             window.config.updates,
-            [("user_preference.bar_colour", "Purples")],
+            [],
             )
         self.assertIsInstance(window.bar.color_map, pg.ColorMap)
 
@@ -3220,76 +3205,37 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertNotIn("none", _colorbar_colormaps())
         self.assertEqual(window.status_messages, [("Unknown colour map.", 5000)])
 
-    def test_colorbar_colormap_config_filters_names_prefixes_and_groups(self):
+    def test_colorbar_catalogue_excludes_configured_names_and_prefixes(self):
         class Config:
             values = _colorbar_config_values({
-                "user_preference.bar_colour_include_cet": True,
-                "user_preference.bar_colour_include_matplotlib": False,
-                "user_preference.bar_colour_include_local": False,
-                "user_preference.bar_colour_include_custom": False,
                 "user_preference.bar_colour_excluded": ["Purples"],
                 "user_preference.bar_colour_excluded_prefixes": ["CET-D"],
-                })
+            })
 
             def get(self, key):
                 return self.values[key]
 
         window = plot2d.__new__(plot2d)
         window.config = Config()
-
         available = window._available_colorbar_colormaps()
+        for name in ("Purples", "CET-D1", "gist_yerg", "gray", "grey", "Grays", "Grays_r"):
+            self.assertNotIn(name, available)
+        for name in ("viridis", "PAL-relaxed", "Greys", "CET-C1"):
+            self.assertIn(name, available)
 
-        self.assertNotIn("Purples", available)
-        self.assertNotIn("viridis", available)
-        self.assertNotIn("PAL-relaxed", available)
-        self.assertNotIn("Greys", available)
-        self.assertNotIn("CET-D1", available)
-        self.assertNotIn("gist_yerg", available)
-        self.assertNotIn("gray", available)
-        self.assertNotIn("grey", available)
-        self.assertNotIn("Grays", available)
-        self.assertNotIn("Grays_r", available)
-        self.assertIn("CET-C1", available)
-
-    def test_colorbar_colormap_can_hide_every_source(self):
+    def test_colorbar_colormap_fallback_with_empty_catalogue(self):
         class Config:
             values = _colorbar_config_values({
-                "user_preference.bar_colour_include_cet": False,
-                "user_preference.bar_colour_include_matplotlib": False,
-                "user_preference.bar_colour_include_local": False,
-                "user_preference.bar_colour_include_custom": False,
-                })
+                "user_preference.bar_colour_excluded_prefixes": [""],
+            })
 
             def get(self, key):
                 return self.values[key]
 
         window = plot2d.__new__(plot2d)
         window.config = Config()
-
         self.assertEqual(window._available_colorbar_colormaps(), ())
         self.assertEqual(window._fallback_colorbar_colormap_name(), "viridis")
-
-    def test_colorbar_colormap_config_filters_subtypes(self):
-        class Config:
-            values = _colorbar_config_values({
-                "user_preference.bar_colour_include_cet": True,
-                "user_preference.bar_colour_include_matplotlib": True,
-                "user_preference.bar_colour_include_cet_linear": False,
-                "user_preference.bar_colour_include_matplotlib_qualitative": False,
-                })
-
-            def get(self, key):
-                return self.values[key]
-
-        window = plot2d.__new__(plot2d)
-        window.config = Config()
-
-        available = window._available_colorbar_colormaps()
-
-        self.assertNotIn("CET-L1", available)
-        self.assertIn("CET-D1", available)
-        self.assertNotIn("tab10", available)
-        self.assertIn("viridis", available)
 
     def test_colorbar_tick_formatter_uses_scaled_ticks_and_unit_label(self):
         class Param:

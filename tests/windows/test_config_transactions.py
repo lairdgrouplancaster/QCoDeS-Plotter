@@ -11,8 +11,6 @@ from PyQt6 import QtWidgets as qtw
 from qplot.configuration.config import config
 from qplot.windows import main as main_window
 from qplot.windows._database_actions import DatabaseActionsMixin
-from qplot.windows._plot2d_colorbar_dialog import ColorbarScaleDialogMixin
-from qplot.windows._plotWin import plotWidget
 from qplot.windows._preferences import PreferencesDialog
 from qplot.windows._run_controls import AUTO_PLOT_KEY, RunControlsMixin
 from qplot.windows._window_controls import (
@@ -337,77 +335,7 @@ class TransactionalGuiTestCase(unittest.TestCase):
         finally:
             window.deleteLater()
 
-    def test_color_map_filter_and_selection_roll_back_then_retry(self):
-        class FilterHarness(qtw.QMainWindow):
-            _set_colorbar_filter_setting = (
-                ColorbarScaleDialogMixin._set_colorbar_filter_setting
-                )
-            _colorbar_include_local_changed = (
-                ColorbarScaleDialogMixin._colorbar_include_local_changed
-                )
-            _sync_colorbar_filter_controls = (
-                ColorbarScaleDialogMixin._sync_colorbar_filter_controls
-                )
-
-            def __init__(self, config_object):
-                super().__init__()
-                self.config = config_object
-                self.colorbar_include_cet_check = qtw.QCheckBox()
-                self.colorbar_include_matplotlib_check = qtw.QCheckBox()
-                self.colorbar_include_local_check = qtw.QCheckBox()
-                self.colorbar_include_custom_check = qtw.QCheckBox()
-                self.colorbar_cet_subtype_checks = {}
-                self.colorbar_matplotlib_subtype_checks = {}
-                for widget in (
-                        self.colorbar_include_cet_check,
-                        self.colorbar_include_matplotlib_check,
-                        self.colorbar_include_local_check,
-                        self.colorbar_include_custom_check,
-                        ):
-                    widget.setChecked(True)
-                self.errors = []
-                self.rebuilds = 0
-
-            def show_error(self, *args):
-                self.errors.append(args)
-
-            def _populate_colorbar_colormap_table(self):
-                self.rebuilds += 1
-
-            def _sync_colorbar_scale_controls(self):
-                self._sync_colorbar_filter_controls()
-
-        window = FilterHarness(self.config)
-        toggles = []
-        window.colorbar_include_local_check.toggled.connect(
-            window._colorbar_include_local_changed
-            )
-        window.colorbar_include_local_check.toggled.connect(toggles.append)
-
-        try:
-            with self.failing_save(self.config):
-                window.colorbar_include_local_check.setChecked(False)
-
-            self.assertTrue(window.colorbar_include_local_check.isChecked())
-            self.assertTrue(
-                self.config.get("user_preference.bar_colour_include_local")
-                )
-            self.assertTrue(
-                self.disk_value("user_preference.bar_colour_include_local")
-                )
-            self.assertEqual(toggles, [False])
-            self.assertEqual(window.rebuilds, 0)
-            self.assertEqual(len(window.errors), 1)
-
-            window.colorbar_include_local_check.setChecked(False)
-            self.assertFalse(window.colorbar_include_local_check.isChecked())
-            self.assertFalse(
-                self.disk_value("user_preference.bar_colour_include_local")
-                )
-            self.assertEqual(window.rebuilds, 1)
-        finally:
-            window.deleteLater()
-
+    def test_default_colour_map_rolls_back_then_retries(self):
         class Colorbar:
             def __init__(self):
                 self.color_map = "previous color map"
@@ -425,16 +353,23 @@ class TransactionalGuiTestCase(unittest.TestCase):
         plot.show_error = lambda *args: plot_errors.append(args)
 
         try:
+            self.assertTrue(plot.setColorbarColorMap("Purples"))
+            preferences = PreferencesDialog(self.config)
+            preferences.show_error = lambda *args: plot_errors.append(args)
+            preferences.defaultColourMapCombo.setCurrentIndex(preferences.defaultColourMapCombo.findData("Purples"))
             with self.failing_save(self.config):
-                self.assertFalse(plot.setColorbarColorMap("Purples"))
+                self.assertFalse(preferences.apply_preferences())
 
-            self.assertEqual(plot._colorbar_colormap_name, "viridis")
-            self.assertEqual(plot.bar.color_map, "previous color map")
+            self.assertEqual(plot._colorbar_colormap_name, "Purples")
+            self.assertIsInstance(plot.bar.color_map, pg.ColorMap)
             self.assertEqual(self.config.get("user_preference.bar_colour"), "viridis")
             self.assertEqual(self.disk_value("user_preference.bar_colour"), "viridis")
             self.assertEqual(len(plot_errors), 1)
 
             self.assertTrue(plot.setColorbarColorMap("Purples"))
+            preferences.defaultColourMapCombo.setCurrentIndex(preferences.defaultColourMapCombo.findData("Purples"))
+            self.assertTrue(preferences.apply_preferences())
+            preferences.close()
             self.assertEqual(plot._colorbar_colormap_name, "Purples")
             self.assertIsInstance(plot.bar.color_map, pg.ColorMap)
             self.assertEqual(self.disk_value("user_preference.bar_colour"), "Purples")

@@ -85,6 +85,18 @@ def mixed_plot(request, tmp_path, monkeypatch):
         assert exceptions == []
 
 
+def _commit_removal(dialog):
+    # Removal is previewed until OK. Reopen only when this test continues
+    # inspecting a replacement owner's controls.
+    owner = dialog.owner
+    dialog.remove_item_button.click()
+    dialog.accept()
+    replacement_ref = owner.__dict__.get('_preview_drop_replacement')
+    replacement = replacement_ref() if replacement_ref is not None else None
+    if replacement is not None:
+        replacement.open_plot_appearance_dialog()
+
+
 def _drop(target, run, *, pending=False):
     event = _PreviewDropEvent(make_run_preview_mime(
         run.guid, run.name, None if pending else run.axes, axes_pending=pending,
@@ -176,7 +188,7 @@ def test_new_data_is_on_top_before_dialog_opens_and_after_removal(mixed_plot, mo
     target.open_plot_appearance_dialog()
     dialog = target._plot_appearance_dialog
     assert [dialog._row_entry(row) for row in range(4)] == order
-    dialog.reject()
+    dialog.accept()
     key = order[0][1]
     removed_items = target._heatmap_render_items(target.heatmaps[key])
     assert target.remove_heatmap(trace_key=key)
@@ -231,7 +243,7 @@ def test_dragging_shared_rows_changes_scene_order_across_axis_pairs(mixed_plot, 
     _wait_for(lambda: all(not layer.from_win.worker.running for layer in target._secondary_lines()))
     assert target._plot_item_order == edited
     _assert_scene_data_order(target)
-    dialog.reject()
+    dialog.accept()
     target.open_plot_appearance_dialog()
     assert [dialog._row_entry(row) for row in range(4)] == edited
     _assert_scene_data_order(target)
@@ -410,13 +422,13 @@ def test_one_appearance_dialog_switches_controls_and_keeps_edits(mixed_plot, mon
     heatmap_key = next(key for key, value in target.heatmaps.items() if value is heatmap)
     target.appearance_action.trigger()
     dialog = target._plot_appearance_dialog
-    assert dialog.windowTitle() == "Plot Appearance"
+    assert dialog.windowTitle() == "Plot appearance"
     assert dialog is target._trace_appearance_dialog is target._heatmap_appearance_dialog
     assert dialog.table.rowCount() == 2
     assert not isinstance(dialog.heatmap_controls, qtw.QDialog)
     view = next(action.menu() for action in target.menuBar().actions()
                 if action.text().replace("&", "") == "View")
-    assert [action.text() for action in view.actions() if "Appearance" in action.text()] == ["Appearance…"]
+    assert [action.text() for action in view.actions() if "appearance" in action.text().lower()] == ["Plot appearance…"]
     assert dialog.select_trace(line_key)
     assert dialog.controls_stack.currentWidget() is dialog.trace_controls_panel
     dialog.line_width.setValue(4.5)
@@ -454,7 +466,7 @@ def test_one_appearance_dialog_switches_controls_and_keeps_edits(mixed_plot, mon
     dialog.refresh_rows()
     assert dialog.controls_stack.currentWidget() is controls
     assert controls.opacity.value() == 37
-    dialog.reject()
+    dialog.accept()
     assert not dialog.isVisible()
 
 
@@ -494,7 +506,7 @@ def test_removing_dataset_releases_spare_axes_and_readding_assigns_them(mixed_pl
     row = next(row for row in range(dialog.table.rowCount()) if dialog._row_entry(row) == (kind, key))
     dialog.table.clearSelection()
     dialog.table.selectRow(row)
-    dialog.remove_item_button.click()
+    _commit_removal(dialog)
     assert dialog.table.rowCount() == 1
     _assert_axis_mirrors(target, "top", "bottom", (2, 8))
     _assert_axis_mirrors(target, "right", "left", (3, 9))
@@ -522,7 +534,7 @@ def test_removing_dataset_keeps_shared_axes_assigned(mixed_plot, monkeypatch):
     dialog = target._plot_appearance_dialog
     heatmap_key = next(key for key in target.heatmaps if getattr(key, "parameter_name", None) == "q")
     assert dialog.select_heatmap(heatmap_key)
-    dialog.remove_item_button.click()
+    _commit_removal(dialog)
     assert target.plot.getAxis("top").linkedView() is target.top_vb
     assert target.plot.getAxis("right").linkedView() is target.right_vb
     assert target.plot.getAxis("top").style["showValues"]
@@ -540,7 +552,7 @@ def test_source_removal_mirrors_unused_bottom_and_left_axes(mixed_plot, monkeypa
     dialog.table.clearSelection()
     dialog.table.selectRow(row)
     next_position = window._plot_tile_grid, window._next_plot_tile
-    dialog.remove_item_button.click()
+    _commit_removal(dialog)
     replacement = next(plot for plot in window.windows if plot is not target and plot.isVisible())
     _wait_for(lambda: not replacement.worker.running)
     assert (window._plot_tile_grid, window._next_plot_tile) == next_position
@@ -561,7 +573,7 @@ def test_source_removal_restores_bottom_tick_numbers_for_remaining_traces(mixed_
     row = next(row for row in range(dialog.table.rowCount()) if dialog._is_primary(*dialog._row_entry(row)))
     dialog.table.clearSelection()
     dialog.table.selectRow(row)
-    dialog.remove_item_button.click()
+    _commit_removal(dialog)
     replacement = next(plot for plot in window.windows if plot is not target and plot.isVisible())
     _wait_for(lambda: not replacement.worker.running)
     assert replacement.operation_kind == "plot1d"
@@ -700,7 +712,7 @@ def test_shared_appearance_list_adds_removes_and_reorders_both_types(mixed_plot,
     assert dialog.remove_item_button.isEnabled()
     dialog.refresh_rows()
     assert set(dialog._selected_entries()) == {(kind, key) for kind, key, _source in sources}
-    dialog.remove_item_button.click()
+    _commit_removal(dialog)
     assert dialog.table.rowCount() == 1
     assert not dialog.remove_item_button.isEnabled()
     assert all(source._merged_trace_users == 0 for _kind, _key, source in sources)
@@ -782,7 +794,7 @@ def test_removing_source_promotes_bottom_remaining_dataset(
                 QtCore.QItemSelectionModel.SelectionFlag.Select | QtCore.QItemSelectionModel.SelectionFlag.Rows,
             )
     assert dialog.remove_item_button.isEnabled()
-    dialog.remove_item_button.click()
+    _commit_removal(dialog)
     assert errors == []
     replacement = next(win for win in window.windows if win.visible)
     _wait_for(lambda: not replacement.worker.running and not replacement.__dict__.get("_refresh_pending", False))
@@ -849,7 +861,7 @@ def test_removing_source_promotes_bottom_remaining_dataset(
         new_dialog.table.clearSelection()
         new_dialog.table.selectRow(next(row for row in range(2)
                                         if new_dialog._is_primary(*new_dialog._row_entry(row))))
-        new_dialog.remove_item_button.click()
+        _commit_removal(new_dialog)
         assert errors == []
         final = next(win for win in window.windows if win.visible)
         assert final.windowTitle() == original_title
@@ -890,7 +902,7 @@ def test_failed_promotion_keeps_original_plot_and_dataset_ownership(mixed_plot, 
     monkeypatch.setattr(window, "openWin", fail_after_construction)
     dialog.table.clearSelection()
     dialog.table.selectRow(next(row for row in range(2) if dialog._row_entry(row) == original_entry))
-    dialog.remove_item_button.click()
+    _commit_removal(dialog)
     assert len(errors) == 1
     assert window.windows == original_windows
     assert (window._plot_tile_grid, window._next_plot_tile) == original_position
@@ -917,7 +929,7 @@ def test_source_promotion_cancels_pending_old_refresh(mixed_plot, monkeypatch):
     target.refreshWindow(force=True)
     old_worker = target.worker
     assert old_worker.running
-    dialog.remove_item_button.click()
+    _commit_removal(dialog)
     assert errors == []
     replacement = next(win for win in window.windows if win.visible)
     _wait_for(lambda: not replacement.worker.running and not replacement.__dict__.get("_refresh_pending", False))
@@ -941,7 +953,7 @@ def test_removed_source_can_be_added_again(mixed_plot, monkeypatch, add_method):
     dialog = target._plot_appearance_dialog
     dialog.table.clearSelection()
     dialog.table.selectRow(next(row for row in range(2) if dialog._row_entry(row) == original_entry))
-    dialog.remove_item_button.click()
+    _commit_removal(dialog)
     assert errors == []
     replacement = next(win for win in window.windows if win.visible)
     _wait_for(lambda: not replacement.worker.running)

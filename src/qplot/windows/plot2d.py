@@ -1019,7 +1019,7 @@ class plot2d(
         dialog.accept()
         QtCore.QTimer.singleShot(
             0,
-            lambda: self.show_preferences_dialog(initial_tab="Runtime"),
+            lambda: self.show_preferences_dialog(initial_tab="Performance"),
             )
 
 

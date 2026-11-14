@@ -559,7 +559,55 @@ Common plot controls:
   linear and base-10 logarithmic scaling. Non-positive values are omitted.
 * Scroll over an axis to scale that axis. Right-drag on the plot has no scaling action.
 * The bottom toolbar shows cursor coordinates and array indices.
-* Use `Swap X/Y` in the Appearance dialog to exchange the plotted axes.
+* Use `Swap X/Y` in the Plot appearance dialog to exchange the plotted axes.
+* Open **View → Plot appearance…** to edit the plot with live preview.
+  Resize the split between the dataset list and the selected-dataset controls;
+  narrow windows stack these panes vertically, and the controls scroll when
+  needed. **Whole plot** contains the shared colour-map and axis-swap controls,
+  available independently of dataset selection. **Data-point markers** provides
+  one control for marker colour, size and shape, including circular dots.
+  Choose `OK` to keep the changes, or `Cancel` to undo the session and close.
+  `Esc` and the window's close button also cancel. Cancellation undoes dataset
+  additions and removals, and restores styles, axis assignments, drawing order, the colour map
+  and its range, Auto/Manual mode, symmetry and refresh-autoscaling choice.
+  Multiple selections show `Mixed` where their values differ. Controls affect only
+  selected datasets of the type being edited; the colour scale and axis swap apply
+  to the plot. Clearing the selection disables dataset-specific controls until
+  you select a dataset again; refreshing does not select a dataset for you.
+  For heatmaps, click the colour-map name and gradient in **Whole plot** to
+  open **Choose colour map**. This dialog shares the full Colour Scale dialog's
+  searchable preview list, without the scaling controls. Selecting a map previews
+  it on the plot; `OK` keeps it, while `Cancel`, `Esc` or closing the dialog
+  restores the previous map. Colour limits and autoscaling are unaffected.
+  The name and gradient update together, and the gradient previews expand when
+  you widen either chooser. Cancelling the parent Appearance dialog also undoes
+  colour-map changes accepted in the chooser during that session.
+* **Colour scale** starts with **Colour map**, followed by **Set scaling** and
+  **Choose colour map**. Search by map name or narrow the list with **Source** and
+  **Category**; the available categories follow the chosen source. Filtering does
+  not change the plot. The **Colour map** section always shows
+  the active name and preview, even when it is filtered out of the list. Opening
+  the dialog reveals and scrolls to the active map.
+  Select the current map name to copy it, or use **Show in list** to reveal its
+  row; filters are cleared if they hide it. Click the **Name** or **Type** heading
+  to sort, and click again to reverse the order. Category tooltips explain the
+  different kinds of colour map.
+  Colour limits use a compact display; focusing a field reveals its full
+  precision. Display rounding never changes the actual limits. **Symmetric
+  about zero** remains available in both Auto and Manual modes; only
+  **Autoscale on refresh** is disabled in Manual mode.
+* Colour-map selection affects the current plot. Set **Preferences → Appearance
+  → Default colour map for new plots** to choose the default. Existing plots keep
+  their own colour maps. Preferences are saved with
+  `Apply` or `OK`; `Cancel` discards changes that have not been applied.
+  The Preferences dialog fits the available screen and can be resized. Pages scroll
+  vertically when needed, with the action buttons kept outside the scrolling
+  area. Labels reflow in narrow windows, and arrows reveal tab headings when
+  they do not all fit.
+* Invalid range entries stay in the editor with an explanation underneath.
+  Correct the values to apply them, or choose `Auto` to discard the invalid entry.
+  Correct an invalid entry before switching between `Min / Max` and `Centre / Span`;
+  a blocked format change keeps your input and the current format.
 * Cut windows have a `Cut controls` panel for the cut direction and position.
 * The right `Data operations` panel applies data operations during refresh, after
   data is loaded from the database.

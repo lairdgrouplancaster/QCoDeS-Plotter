@@ -296,7 +296,6 @@ def _rendered_value(line, field):
 
 _FIELDS = [
     ("line_width", "line_width", None, 4.5),
-    ("dots_size", "dots_size", "dots_enable", 7.5),
     ("marker_size", "markers_size", "marker_enable", 12.5),
 ]
 
@@ -373,7 +372,7 @@ def test_uncommitted_fraction_survives_live_refresh(
             assert editor.hasFocus()
             assert len(committed) == 0
             assert getattr(plot._trace_styles[plot.label], style_name) == original_style
-            assert editor.text() == str(int(value))
+            assert editor.text() == str(int(value)) + getattr(dialog, field).suffix()
             QtTest.QTest.keyClicks(editor, ".5")
             QtTest.QTest.keyClick(editor, QtCore.Qt.Key.Key_Tab)
             assert getattr(plot._trace_styles[plot.label], style_name) == value

@@ -6,16 +6,9 @@ import pyqtgraph as pg
 from PyQt6 import QtCore
 
 from ._colorbar import (
-    _CET_COLORBAR_SUBTYPES,
-    _COLORBAR_FILTERS,
-    _MATPLOTLIB_COLORBAR_SUBTYPES,
-    _cet_colorbar_colormap_subtype,
     _colorbar_colormap_for_name,
-    _colorbar_colormap_group,
     _colorbar_colormaps,
-    _colorbar_subtype_config_key,
     _config_value,
-    _matplotlib_colorbar_colormap_subtype,
 )
 from ._plot2d_colorbar_dialog import ColorbarScaleDialogMixin
 from ._plot_axis_scaling import (
@@ -1028,30 +1021,10 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
 
     def _available_colorbar_colormaps(self):
         """
-        Return color maps after applying persistent user filters.
+        Return the usable catalogue, independent of the picker search filters.
 
         """
         config_obj = self.__dict__.get("config")
-        include_groups = {
-            group: _config_value(config_obj, spec.config_key, True)
-            for group, spec in _COLORBAR_FILTERS.items()
-        }
-        include_cet_subtypes = {
-            subtype: _config_value(
-                config_obj,
-                _colorbar_subtype_config_key("cet", subtype),
-                True,
-            )
-            for subtype, _label in _CET_COLORBAR_SUBTYPES
-        }
-        include_matplotlib_subtypes = {
-            subtype: _config_value(
-                config_obj,
-                _colorbar_subtype_config_key("matplotlib", subtype),
-                True,
-            )
-            for subtype, _label in _MATPLOTLIB_COLORBAR_SUBTYPES
-        }
         excluded_names = set(_config_value(
             config_obj,
             "user_preference.bar_colour_excluded",
@@ -1074,22 +1047,6 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             if name in excluded_names:
                 continue
             if excluded_prefixes and name.startswith(excluded_prefixes):
-                continue
-
-            group = _colorbar_colormap_group(name)
-            if not include_groups.get(group, True):
-                continue
-            if (
-                    group == "cet"
-                    and not include_cet_subtypes[_cet_colorbar_colormap_subtype(name)]
-                    ):
-                continue
-            if (
-                    group == "matplotlib"
-                    and not include_matplotlib_subtypes[
-                        _matplotlib_colorbar_colormap_subtype(name)
-                        ]
-                    ):
                 continue
 
             available.append(name)

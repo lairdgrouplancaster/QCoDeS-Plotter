@@ -21,6 +21,11 @@ from qplot.datahandling.complex_data import (
 from qplot.tools.heatmap_geometry import MAX_AGGREGATED_HEATMAP_CELLS
 from qplot.updates import CHECK_ON_LAUNCH_KEY, INCLUDE_PRERELEASES_KEY
 
+from ._colorbar import (
+    _colorbar_colormap_label,
+    _colorbar_colormap_preview,
+    _colorbar_colormaps,
+)
 from ._commands import create_action
 from ._config_persistence import persist_config_values
 from ._csv_filenames import CSV_FILENAME_FORMAT_KEY, CSV_FILENAME_FORMAT_OPTIONS
@@ -64,6 +69,7 @@ _PREFERENCE_CONTROLS = (
     (COMPLEX_1D_KEY, "complex1dCombo"),
     (COMPLEX_ND_KEY, "complexNdCombo"),
     (COLORBAR_WIDTH_KEY, "colorbarWidthSpin"),
+    ("user_preference.bar_colour", "defaultColourMapCombo"),
     (AXIS_TICK_WIDTH_KEY, "axisTickWidthSpin"),
     (AXIS_MAJOR_TICK_COUNT_KEY, "axisMajorTickCountSpin"),
     ("GUI.preview_size", "previewSizeSpin"),
@@ -142,13 +148,137 @@ class _PreferenceBinding:
 
 
 class _PreferencesTabBar(qtw.QTabBar):
-    """Stretch headings across the page, including after Qt relayouts."""
+    """Fill the tab strip while retaining Qt's normal overflow buttons."""
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         parent = self.parentWidget()
         if parent is not None and self.width() != parent.width():
             self.resize(parent.width(), self.height())
+
+
+class _PreferencesPage(qtw.QScrollArea):
+    """Let page contents grow vertically without imposing their full size."""
+
+    def __init__(self, page):
+        super().__init__()
+        self.setWidgetResizable(True)
+        self.setFrameShape(qtw.QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setWidget(page)
+        page.setAutoFillBackground(False)
+        form = page.layout()
+        form.setSizeConstraint(qtw.QLayout.SizeConstraint.SetNoConstraint)
+        page.setMinimumWidth(0)
+        page.setSizePolicy(qtw.QSizePolicy.Policy.Ignored, qtw.QSizePolicy.Policy.Preferred)
+        if isinstance(form, qtw.QFormLayout):
+            form.setRowWrapPolicy(qtw.QFormLayout.RowWrapPolicy.WrapLongRows)
+            form.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+        for child in page.findChildren(qtw.QWidget):
+            if child.focusPolicy() != QtCore.Qt.FocusPolicy.NoFocus:
+                child.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QtCore.QEvent.Type.FocusIn and isinstance(watched, qtw.QWidget):
+            self.ensureWidgetVisible(watched)
+        elif watched is self.widget() and event.type() == QtCore.QEvent.Type.LayoutRequest:
+            self._reflow_form()
+        return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow_form()
+
+    def _reflow_form(self):
+        page = self.widget()
+        if page is None or not isinstance(page.layout(), qtw.QFormLayout):
+            return
+        form = page.layout()
+        margins = form.contentsMargins()
+        available = self.viewport().width() - margins.left() - margins.right()
+        for child in page.findChildren(qtw.QWidget, options=QtCore.Qt.FindChildOption.FindDirectChildrenOnly):
+            child.setMaximumWidth(max(1, available))
+        needed = 0
+        for row in range(form.rowCount()):
+            label = form.itemAt(row, qtw.QFormLayout.ItemRole.LabelRole)
+            field = form.itemAt(row, qtw.QFormLayout.ItemRole.FieldRole)
+            if label is not None and field is not None:
+                needed = max(needed, label.sizeHint().width() + field.minimumSize().width()
+                             + max(0, form.horizontalSpacing()))
+        policy = (qtw.QFormLayout.RowWrapPolicy.WrapAllRows if available < needed
+                  else qtw.QFormLayout.RowWrapPolicy.WrapLongRows)
+        if form.rowWrapPolicy() != policy:
+            form.setRowWrapPolicy(policy)
+
+    def sizeHint(self):
+        return self.widget().sizeHint().boundedTo(QtCore.QSize(600, 440))
+
+    def minimumSizeHint(self):
+        return QtCore.QSize(160, 80)
+
+
+class _PreferencesLabel(qtw.QLabel):
+    """Prefer a single line while still allowing native word wrapping."""
+
+    def sizeHint(self):
+        rect = self.fontMetrics().boundingRect(
+            QtCore.QRect(0, 0, 10_000, 10_000),
+            QtCore.Qt.TextFlag.TextSingleLine | QtCore.Qt.TextFlag.TextShowMnemonic, self.text(),
+        )
+        return QtCore.QSize(rect.width(), self.fontMetrics().height())
+
+
+class _PreferencesCheckBox(qtw.QCheckBox):
+    """Keep native checkbox interaction while wrapping long labels."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        policy = self.sizePolicy()
+        policy.setHorizontalPolicy(qtw.QSizePolicy.Policy.Preferred)
+        policy.setVerticalPolicy(qtw.QSizePolicy.Policy.Preferred)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+
+    def _text_rect(self, width):
+        option = qtw.QStyleOptionButton()
+        self.initStyleOption(option)
+        option.rect = QtCore.QRect(0, 0, width, self.height())
+        return self.style().subElementRect(qtw.QStyle.SubElement.SE_CheckBoxContents, option, self)
+
+    def minimumSizeHint(self):
+        size = super().minimumSizeHint()
+        text_width = max((self.fontMetrics().horizontalAdvance(word) for word in self.text().split()), default=0)
+        size.setWidth(self.width() - self._text_rect(self.width()).width() + text_width)
+        return size
+
+    def heightForWidth(self, width):
+        rect = QtCore.QRect(0, 0, max(1, self._text_rect(width).width()), 10_000)
+        text = self.fontMetrics().boundingRect(
+            rect, QtCore.Qt.TextFlag.TextWordWrap | QtCore.Qt.TextFlag.TextShowMnemonic, self.text(),
+        )
+        return max(super().sizeHint().height(), text.height() + 4)
+
+    def hitButton(self, point):
+        return self.rect().contains(point)
+
+    def paintEvent(self, event):
+        option = qtw.QStyleOptionButton()
+        self.initStyleOption(option)
+        option.text = ""
+        painter = qtw.QStylePainter(self)
+        painter.drawControl(qtw.QStyle.ControlElement.CE_CheckBox, option)
+        rect = self._text_rect(self.width())
+        flags = (QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter
+                 | QtCore.Qt.TextFlag.TextWordWrap | QtCore.Qt.TextFlag.TextShowMnemonic)
+        if not self.style().styleHint(qtw.QStyle.StyleHint.SH_UnderlineShortcut, option, self):
+            flags |= QtCore.Qt.TextFlag.TextHideMnemonic
+        self.style().drawItemText(painter, rect, flags, option.palette, self.isEnabled(),
+                                  self.text(), QtGui.QPalette.ColorRole.WindowText)
+        if self.hasFocus():
+            focus = qtw.QStyleOptionFocusRect()
+            focus.initFrom(self)
+            focus.rect = rect
+            painter.drawPrimitive(qtw.QStyle.PrimitiveElement.PE_FrameFocusRect, focus)
 
 
 class PreferencesDialog(qtw.QDialog):
@@ -164,7 +294,8 @@ class PreferencesDialog(qtw.QDialog):
 
         self.setWindowTitle("Preferences")
         self.setModal(True)
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(300)
+        self._initial_geometry_set = False
 
         self._build_ui()
         self._bindings = tuple(
@@ -182,23 +313,19 @@ class PreferencesDialog(qtw.QDialog):
         layout.setSpacing(10)
 
         tabs = qtw.QTabWidget(self)
-        tabs.setTabBar(_PreferencesTabBar(tabs))
-        tabs.tabBar().setExpanding(True)
-        tabs.addTab(self._general_tab(), "General")
-        tabs.addTab(self._appearance_tab(), "Appearance")
-        tabs.addTab(self._plotting_tab(), "Plotting")
-        tabs.addTab(self._files_tab(), "Files && export")
-        tabs.addTab(self._performance_tab(), "Performance")
-        tabs.addTab(self._updates_tab(), "Updates")
-        # Include every heading in the initial width, using the active font
-        # and platform style rather than a fixed pixel estimate.
+        tabs.setObjectName("preferencesTabs")
+        self.tabs = tabs
+        tab_bar = _PreferencesTabBar(tabs)
+        tabs.setTabBar(tab_bar)
+        tab_bar.setExpanding(True)
+        tab_bar.setUsesScrollButtons(True)
+        for title, build in (("General", self._general_tab), ("Appearance", self._appearance_tab),
+                             ("Plotting", self._plotting_tab), ("Files && export", self._files_tab),
+                             ("Performance", self._performance_tab), ("Updates", self._updates_tab)):
+            page = _PreferencesPage(build())
+            page.setObjectName("preferencesPage" + str(tabs.count()))
+            tabs.addTab(page, title)
         tabs.setElideMode(QtCore.Qt.TextElideMode.ElideNone)
-        margins = layout.contentsMargins()
-        self.setMinimumWidth(max(
-            self.minimumWidth(),
-            tabs.tabBar().sizeHint().width() + margins.left() + margins.right()
-            + 2 * tabs.style().pixelMetric(qtw.QStyle.PixelMetric.PM_DefaultFrameWidth),
-        ))
         layout.addWidget(tabs)
 
         self.buttonBox = qtw.QDialogButtonBox(
@@ -237,7 +364,58 @@ class PreferencesDialog(qtw.QDialog):
             "Restore the preferences shown here to their defaults"
             )
         self.restoreDefaultsButton.clicked.connect(self.restore_defaults)
+        self.buttonBox.setSizePolicy(qtw.QSizePolicy.Policy.Ignored, qtw.QSizePolicy.Policy.Fixed)
         layout.addWidget(self.buttonBox)
+
+    def _available_geometry(self):
+        parent = self.parentWidget()
+        screen = parent.screen() if parent is not None else self.screen()
+        return screen.availableGeometry() if screen is not None else QtCore.QRect(0, 0, 1024, 768)
+
+    def _match_action_button_widths(self):
+        buttons = [self.buttonBox.button(standard) for standard in (
+            qtw.QDialogButtonBox.StandardButton.Ok, qtw.QDialogButtonBox.StandardButton.Cancel,
+            qtw.QDialogButtonBox.StandardButton.Apply,
+        )]
+        width = max(button.sizeHint().width() for button in buttons)
+        for button in buttons:
+            button.setFixedWidth(width)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._match_action_button_widths()
+        if self._initial_geometry_set:
+            return
+        self._initial_geometry_set = True
+        available = self._available_geometry().adjusted(16, 16, -16, -16)
+        frame = self.frameGeometry().size() - self.size()
+        hint = self.sizeHint()
+        margins = self.layout().contentsMargins()
+        bar = self.tabs.tabBar()
+        tabs_width = sum(bar.tabSizeHint(index).width() for index in range(bar.count()))
+        tabs_width += (margins.left() + margins.right()
+                       + 2 * self.style().pixelMetric(qtw.QStyle.PixelMetric.PM_DefaultFrameWidth))
+        self.resize(min(max(600, hint.width(), tabs_width), available.width() - max(0, frame.width())),
+                    min(max(420, hint.height()), available.height() - max(0, frame.height())))
+        self.layout().activate()
+        position = self.frameGeometry()
+        position.moveCenter(available.center())
+        self.move(position.topLeft())
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not hasattr(self, "buttonBox"):
+            return
+        self._match_action_button_widths()
+        margins = self.layout().contentsMargins()
+        spacing = self.style().pixelMetric(qtw.QStyle.PixelMetric.PM_LayoutHorizontalSpacing)
+        buttons = self.buttonBox.buttons()
+        needed = (sum(max(button.sizeHint().width(), button.minimumWidth()) for button in buttons)
+                  + max(0, spacing) * (len(buttons) - 1))
+        available = self.width() - margins.left() - margins.right()
+        orientation = QtCore.Qt.Orientation.Vertical if available < needed else QtCore.Qt.Orientation.Horizontal
+        if self.buttonBox.orientation() != orientation:
+            self.buttonBox.setOrientation(orientation)
 
     def _general_tab(self):
         tab = qtw.QWidget(self)
@@ -311,7 +489,7 @@ class PreferencesDialog(qtw.QDialog):
 
         self._add_section(form, "Closing windows")
 
-        self.confirmCloseAllCheck = qtw.QCheckBox(
+        self.confirmCloseAllCheck = _PreferencesCheckBox(
             "Confirm before closing all plot windows",
             tab,
             )
@@ -322,7 +500,7 @@ class PreferencesDialog(qtw.QDialog):
             )
         form.addRow(self.confirmCloseAllCheck)
 
-        self.confirmQuitCheck = qtw.QCheckBox("Confirm before quitting qPlot", tab)
+        self.confirmQuitCheck = _PreferencesCheckBox("Confirm before quitting qPlot", tab)
         self.confirmQuitCheck.setObjectName("confirmQuitPreferenceCheck")
         self.confirmQuitCheck.setToolTip("Ask for confirmation before quitting qPlot.")
         self.confirmQuitCheck.setAccessibleName("Confirm before quitting qPlot")
@@ -349,7 +527,7 @@ class PreferencesDialog(qtw.QDialog):
             )
         self._add_row(form, "Plot &font size:", self.fontSizeSpin)
 
-        self.showSourceAnnotationCheck = qtw.QCheckBox("Show database and run details above plots", tab)
+        self.showSourceAnnotationCheck = _PreferencesCheckBox("Show database and run details above plots", tab)
         self.showSourceAnnotationCheck.setObjectName("showSourceAnnotationPreferenceCheck")
         self.showSourceAnnotationCheck.setToolTip(
             "Show the database, run IDs and parameters above plots, including in exports"
@@ -391,6 +569,18 @@ class PreferencesDialog(qtw.QDialog):
             )
         self._add_row(form, "Colour scale &width:", self.colorbarWidthSpin)
 
+        self.defaultColourMapCombo = qtw.QComboBox(tab)
+        self.defaultColourMapCombo.setObjectName("defaultColourMapPreferenceCombo")
+        self.defaultColourMapCombo.setAccessibleName("Default colour map for new plots")
+        self.defaultColourMapCombo.setToolTip("Colour map used by new plots. Existing plots keep their own colour maps.")
+        for name in _colorbar_colormaps():
+            self.defaultColourMapCombo.addItem(_colorbar_colormap_label(name), name)
+        self._add_row(form, "Default colour &map for new plots:", self.defaultColourMapCombo)
+        self.defaultColourMapPreview = qtw.QLabel(tab)
+        self.defaultColourMapPreview.setAccessibleName("Default colour map preview")
+        self.defaultColourMapCombo.currentIndexChanged.connect(self._update_default_colour_preview)
+        form.addRow(self.defaultColourMapPreview)
+
         return tab
 
     def _plotting_tab(self):
@@ -431,7 +621,7 @@ class PreferencesDialog(qtw.QDialog):
 
         self._add_section(form, "Adding data")
 
-        self.confirmIncompatibleAxesCheck = qtw.QCheckBox(
+        self.confirmIncompatibleAxesCheck = _PreferencesCheckBox(
             "Warn before adding data with incompatible axes", tab,
         )
         self.confirmIncompatibleAxesCheck.setObjectName("confirmIncompatibleAxesPreferenceCheck")
@@ -601,14 +791,14 @@ class PreferencesDialog(qtw.QDialog):
     def _updates_tab(self):
         tab = qtw.QWidget(self)
         layout = qtw.QVBoxLayout(tab)
-        self.checkUpdatesOnLaunchCheck = qtw.QCheckBox(
+        self.checkUpdatesOnLaunchCheck = _PreferencesCheckBox(
             "Check for updates on launch (at most once a day)", tab,
         )
         self.checkUpdatesOnLaunchCheck.setObjectName("checkUpdatesOnLaunchPreferenceCheck")
         self.checkUpdatesOnLaunchCheck.setToolTip("Check PyPI for newer qPlot releases in the background, at most once a day. Requires an Internet connection.")
         self.checkUpdatesOnLaunchCheck.setAccessibleName("Check for updates on launch")
         layout.addWidget(self.checkUpdatesOnLaunchCheck)
-        self.includePrereleasesCheck = qtw.QCheckBox("Include pre-release versions", tab)
+        self.includePrereleasesCheck = _PreferencesCheckBox("Include pre-release versions", tab)
         self.includePrereleasesCheck.setObjectName("includePrereleasesPreferenceCheck")
         self.includePrereleasesCheck.setToolTip("Include development and preview releases when checking for updates.")
         layout.addWidget(self.includePrereleasesCheck)
@@ -625,6 +815,7 @@ class PreferencesDialog(qtw.QDialog):
     @staticmethod
     def _add_section(form, title):
         heading = qtw.QLabel(title)
+        heading.setWordWrap(True)
         font = heading.font()
         font.setBold(True)
         heading.setFont(font)
@@ -633,8 +824,12 @@ class PreferencesDialog(qtw.QDialog):
         form.addRow(heading)
 
     def _add_row(self, form, label_text, widget, buddy=None):
-        label = qtw.QLabel(label_text, self)
+        label = _PreferencesLabel(label_text, self)
         label.setBuddy(buddy or widget)
+        label.setWordWrap(True)
+        if isinstance(widget, qtw.QComboBox):
+            widget.setMinimumContentsLength(12)
+            widget.setSizeAdjustPolicy(qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         form.addRow(label, widget)
 
     def load_from_config(self):
@@ -654,6 +849,12 @@ class PreferencesDialog(qtw.QDialog):
         with blocked_signals(*(binding.control for binding in self._bindings)):
             for binding in self._bindings:
                 binding.write(values[binding.key])
+        self._update_default_colour_preview()
+
+    def _update_default_colour_preview(self):
+        self.defaultColourMapPreview.setPixmap(
+            _colorbar_colormap_preview(self.defaultColourMapCombo.currentData() or "viridis"),
+        )
 
     def preference_values(self):
         """Return the current control values in preference registry order."""

@@ -28,11 +28,6 @@ from qplot.tools.operation_registry import OperationValidationError
 from qplot.tools.plot_result import capture_plot_result
 from qplot.windows import _plot_export as plot_export_module
 from qplot.windows import _plot_refresh as plot_refresh_module
-from qplot.windows._colorbar import (
-    _CET_COLORBAR_SUBTYPES,
-    _MATPLOTLIB_COLORBAR_SUBTYPES,
-    _colorbar_subtype_config_key,
-)
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
 from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._plot_status import PlotStatusWidget
@@ -81,21 +76,9 @@ def _print_database_artifact_state(database_path):
 def _colorbar_config_values():
     values = {
         "user_preference.bar_colour": "viridis",
-        "user_preference.bar_colour_include_cet": True,
-        "user_preference.bar_colour_include_matplotlib": True,
-        "user_preference.bar_colour_include_local": True,
-        "user_preference.bar_colour_include_custom": True,
         "user_preference.bar_colour_excluded": [],
         "user_preference.bar_colour_excluded_prefixes": [],
         }
-    for group, subtypes in (
-            ("cet", _CET_COLORBAR_SUBTYPES),
-            ("matplotlib", _MATPLOTLIB_COLORBAR_SUBTYPES),
-            ):
-        values.update({
-            _colorbar_subtype_config_key(group, subtype): True
-            for subtype, _label in subtypes
-            })
     return values
 
 
@@ -3628,8 +3611,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
                     viewbox.viewRange()[axis_number],
                     [1.0, 3.0],
                 )
-                self.assertEqual(float(controls.minText.text()), 10.0)
-                self.assertIn("greater than zero", statuses[-1][0])
+                self.assertEqual(float(controls.minText.text()), 0.0)
+                self.assertIn("greater than zero", controls.rangeEntry.summary.text())
 
             window._axis_scale_auto_limits = lambda _axis: (0.0, 2.0)
             x_controls = window._axis_scale_controls["x"]
@@ -3677,10 +3660,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
             before = list(window.vb.viewRange()[0])
             plotWidget._axis_scale_range_text_changed(window, "x")
             self.assertEqual(list(window.vb.viewRange()[0]), before)
-            self.assertTrue(all(value not in {"nan", "inf"} for value in (
-                minimum.text(),
-                maximum.text(),
-                )))
+            self.assertEqual(minimum.text(), "nan")
+            self.assertTrue(ui.rangeEntry._error)
 
             minimum.setText("2")
             maximum.setText("1")
@@ -3778,21 +3759,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             _init_colorbar_scope_controls = plot2d._init_colorbar_scope_controls
             _colorbar_symmetric_changed = plot2d._colorbar_symmetric_changed
             _symmetric_colorbar_levels = plot2d._symmetric_colorbar_levels
-            _init_colorbar_filter_controls = plot2d._init_colorbar_filter_controls
-            _init_colorbar_colormap_table = plot2d._init_colorbar_colormap_table
             _populate_colorbar_colormap_table = plot2d._populate_colorbar_colormap_table
-            _sync_colorbar_filter_controls = plot2d._sync_colorbar_filter_controls
-            _set_colorbar_filter_setting = plot2d._set_colorbar_filter_setting
-            _set_colorbar_subtype_filter_setting = (
-                plot2d._set_colorbar_subtype_filter_setting
-                )
-            _colorbar_include_cet_changed = plot2d._colorbar_include_cet_changed
-            _colorbar_include_matplotlib_changed = (
-                plot2d._colorbar_include_matplotlib_changed
-                )
-            _colorbar_include_local_changed = plot2d._colorbar_include_local_changed
-            _colorbar_include_custom_changed = plot2d._colorbar_include_custom_changed
-            _colorbar_include_subtype_changed = plot2d._colorbar_include_subtype_changed
+            _sync_current_colorbar_map = plot2d._sync_current_colorbar_map
+            _show_current_colorbar_map = plot2d._show_current_colorbar_map
             _install_colorbar_scale_bar_handlers = plot2d._install_colorbar_scale_bar_handlers
             _install_colorbar_scale_axis_handlers = plot2d._install_colorbar_scale_axis_handlers
             _install_colorbar_scale_double_click_handler = (
@@ -3829,9 +3798,6 @@ class RunListParentLookupTestCase(unittest.TestCase):
             _sync_colorbar_level_fields = plot2d._sync_colorbar_level_fields
             _colorbar_colormap_row = plot2d._colorbar_colormap_row
             _select_colorbar_colormap = plot2d._select_colorbar_colormap
-            _colorbar_colormap_selection_changed = (
-                plot2d._colorbar_colormap_selection_changed
-                )
             _colorbar_colormap_changed = plot2d._colorbar_colormap_changed
             open_colorbar_scale_dialog = plot2d.open_colorbar_scale_dialog
             _apply_colorbar_manual_fields = plot2d._apply_colorbar_manual_fields
@@ -3889,14 +3855,12 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 )
             range_layout = host.colorbar_manual_radio.parentWidget().layout()
             self.assertIsInstance(range_layout, qtw.QGridLayout)
-            for column in (0, 2, 3, 4, 5):
-                item = range_layout.itemAtPosition(1, column)
-                self.assertIsNotNone(item)
-                self.assertTrue(
-                    item.alignment() & QtCore.Qt.AlignmentFlag.AlignVCenter
-                    )
-            self.assertIs(range_layout.itemAtPosition(0, 3).widget(), host.colorbar_min_label)
-            self.assertIs(range_layout.itemAtPosition(0, 4).widget(), host.colorbar_max_label)
+            for column, widget in enumerate((host.colorbar_manual_radio,
+                                              host.colorbar_min_text, host.colorbar_max_text,
+                                              host.colorbar_copy_auto_limits_button)):
+                self.assertIs(range_layout.itemAtPosition(2, column).widget(), widget)
+            self.assertIs(range_layout.itemAtPosition(1, 1).widget(), host.colorbar_min_label)
+            self.assertIs(range_layout.itemAtPosition(1, 2).widget(), host.colorbar_max_label)
             copy_button = host.colorbar_copy_auto_limits_button
             self.assertEqual(
                 copy_button.accessibleName(),
@@ -3935,7 +3899,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 host._colorbar_colormap_row("viridis"),
                 1,
                 )
-            self.assertFalse(preview_item.icon().isNull())
+            self.assertEqual(preview_item.data(QtCore.Qt.ItemDataRole.UserRole), "viridis")
             host.colorbar_colormap_table.sortItems(2, QtCore.Qt.SortOrder.AscendingOrder)
             self.assertGreater(host._colorbar_colormap_row("viridis"), -1)
 
@@ -3948,40 +3912,18 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 host._colorbar_colormap_row("Purples"),
                 0,
                 )
-            self.assertEqual(
-                host.config.updates,
-                [("user_preference.bar_colour", "Purples")],
-                )
+            self.assertEqual(host.config.updates, [])
+            self.assertFalse(hasattr(host, "colorbar_default_button"))
             self.assertIsInstance(host.bar.color_map, pg.ColorMap)
 
-            host.colorbar_include_local_check.setChecked(False)
-            self.assertEqual(
-                host.config.updates[-1],
-                ("user_preference.bar_colour_include_local", False),
-                )
-            self.assertEqual(host._colorbar_colormap_row("PAL-relaxed"), -1)
-
-            host.colorbar_include_custom_check.setChecked(False)
-            self.assertEqual(
-                host.config.updates[-1],
-                ("user_preference.bar_colour_include_custom", False),
-                )
-            self.assertEqual(host._colorbar_colormap_row("Greys"), -1)
-
-            host.colorbar_cet_subtype_checks["linear"].setChecked(False)
-            self.assertEqual(
-                host.config.updates[-1],
-                ("user_preference.bar_colour_include_cet_linear", False),
-                )
-            self.assertEqual(host._colorbar_colormap_row("CET-L1"), -1)
-            self.assertGreater(host._colorbar_colormap_row("CET-C1"), -1)
-
-            host.colorbar_include_cet_check.setChecked(False)
-            self.assertEqual(
-                host.config.updates[-1],
-                ("user_preference.bar_colour_include_cet", False),
-                )
-            self.assertEqual(host._colorbar_colormap_row("CET-C1"), -1)
+            host.colorbar_source_combo.setCurrentIndex(host.colorbar_source_combo.findData("cet"))
+            host.colorbar_category_combo.setCurrentIndex(host.colorbar_category_combo.findData("cyclic"))
+            self.assertTrue(host.colorbar_colormap_table.isRowHidden(host._colorbar_colormap_row("PAL-relaxed")))
+            self.assertTrue(host.colorbar_colormap_table.isRowHidden(host._colorbar_colormap_row("CET-L1")))
+            self.assertFalse(host.colorbar_colormap_table.isRowHidden(host._colorbar_colormap_row("CET-C1")))
+            self.assertEqual(host._current_colorbar_colormap_name(), "Purples")
+            self.assertEqual(host.colorbar_current_name.text(), "Purples")
+            self.assertEqual(host.config.updates, [])
 
             double_click_calls = []
             host.open_colorbar_scale_dialog = lambda: double_click_calls.append(True)

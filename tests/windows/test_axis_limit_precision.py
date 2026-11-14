@@ -79,15 +79,14 @@ def test_copy_auto_preserves_precise_limits_in_real_controls(qapplication, axis,
             QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
         np.testing.assert_array_equal(window.vb.viewRange()[axis_number], expected)
 
-        # Rejected edits must restore the same full-precision physical limits.
+        # Rejected edits remain editable; full-precision physical limits stay intact.
         for invalid in (["0", "nan"] if log_mode else ["nan", "5000007000"]):
             controls.minText.setFocus()
             controls.minText.setText(invalid)
             QtTest.QTest.keyClick(controls.minText, QtCore.Qt.Key.Key_Return)
-            np.testing.assert_array_equal(
-                [float(controls.minText.text()), float(controls.maxText.text())],
-                expected_data,
-            )
+            assert controls.minText.text() == invalid
+            assert controls.rangeEntry._error
+            assert controls.rangeEntry.summary.text()
             np.testing.assert_array_equal(window.vb.viewRange()[axis_number], expected)
         assert window.statuses
     finally:

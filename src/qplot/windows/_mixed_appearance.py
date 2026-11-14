@@ -2,9 +2,15 @@
 
 from typing import TYPE_CHECKING, Any
 
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 
+from ._appearance_layout import (
+    AppearanceControlsStack,
+    build_appearance_panes,
+    fit_appearance_dialog,
+    resize_appearance_panes,
+)
 from ._plot1d_traces import _TraceAppearanceDialog
 from ._plot2d_layers import _HeatmapAppearanceControls
 from ._plot_appearance import CenteredPreviewDelegate, reordered_rows
@@ -37,7 +43,27 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
 
     def __init__(self, owner: "MixedPlotMixin"):
         super().__init__(owner)
-        self.setWindowTitle("Plot Appearance")
+        self._session_active = False
+        self._session_finishing = False
+        self._preview_removed = {}
+        self._preview_owners = []
+        self.appearance_buttons.removeButton(self.revert_button)
+        self.revert_button.hide()
+        self.appearance_buttons.setStandardButtons(
+            qtw.QDialogButtonBox.StandardButton.Ok | qtw.QDialogButtonBox.StandardButton.Cancel,
+        )
+        self.appearance_buttons.rejected.disconnect()
+        self.appearance_buttons.rejected.connect(self.reject)
+        self.appearance_buttons.accepted.connect(self.accept)
+        self.appearance_buttons.button(qtw.QDialogButtonBox.StandardButton.Ok).setToolTip(
+            "Keep all changes made in this dialog."
+        )
+        self.appearance_buttons.button(qtw.QDialogButtonBox.StandardButton.Cancel).setToolTip(
+            "Discard all changes made in this dialog."
+        )
+        for button in self.appearance_buttons.buttons():
+            button.setAutoDefault(False)
+        self.setWindowTitle("Plot appearance")
         self.table.setObjectName("plotAppearanceTable")
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["ID", "Preview", "Measurement", ""])
@@ -51,18 +77,19 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         self.table.setToolTip("Data at the top is drawn on top. Drag rows to change the drawing order.")
         self.setStyleSheet(self.styleSheet().replace("traceAppearanceTable", "plotAppearanceTable"))
         self.heatmap_controls = _HeatmapControls(self)
-        self.controls_stack = qtw.QStackedWidget(self)
+        self.controls_stack = AppearanceControlsStack(self)
         self.controls_stack.setObjectName("plotAppearanceControls")
         self.appearance_body.removeWidget(self.trace_controls_panel)
         self.controls_stack.addWidget(self.trace_controls_panel)
         self.controls_stack.addWidget(self.heatmap_controls)
-        self.controls_stack.setMinimumWidth(self.trace_controls_panel.minimumSizeHint().width())
         self.appearance_body.addWidget(self.controls_stack, 4)
         for widget in (self.add_trace_combo, self.add_trace_button, self.remove_trace_button):
             widget.hide()
         self.add_item_combo = qtw.QComboBox(self)
         self.add_item_combo.setObjectName("plotAppearanceAddCombo")
-        self.add_item_combo.setMinimumContentsLength(18)
+        self.add_item_combo.setMinimumContentsLength(12)
+        self.add_item_combo.setMinimumWidth(60)
+        self.add_item_combo.setSizePolicy(qtw.QSizePolicy.Policy.Ignored, qtw.QSizePolicy.Policy.Fixed)
         self.add_item_combo.setSizeAdjustPolicy(
             qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
@@ -79,8 +106,44 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         self.add_item_button.clicked.connect(self._add_item)
         self.remove_item_button.clicked.connect(self._remove_items)
         self.table.currentCellChanged.connect(lambda *_args: self._sync_controls_from_selection())
-        self.setMinimumWidth(max(self.minimumWidth(), self.minimumSizeHint().width()))
+        self._build_whole_plot_controls()
+        build_appearance_panes(self)
+        self.table.setMinimumHeight(56)
+        self.setMinimumSize(350, 300)
+        self._geometry_initialised = False
         self.refresh_rows()
+
+    def _build_whole_plot_controls(self):
+        self.whole_plot_group = qtw.QGroupBox("Whole plot")
+        self.whole_plot_group.setObjectName("plotAppearanceWholePlot")
+        layout = qtw.QVBoxLayout(self.whole_plot_group)
+        layout.setContentsMargins(8, 12, 8, 8)
+        controls = self.heatmap_controls
+        controls.color_scale_group.hide()
+        self.global_colour_row = qtw.QWidget()
+        colours = qtw.QHBoxLayout(self.global_colour_row)
+        colours.setContentsMargins(0, 0, 0, 0)
+        colours.setSpacing(8)
+        colours.addWidget(qtw.QLabel("Colour map"))
+        colours.addWidget(controls.color_scale_button, 1)
+        layout.addWidget(self.global_colour_row)
+        self.plot_axes_group.hide()
+        controls.plot_axes_group.hide()
+        controls.swap_axes.toggled.disconnect(controls._swap_axes_toggled)
+        controls.swap_axes.hide()
+        controls.swap_axes = self.swap_axes
+        layout.addWidget(self.swap_axes)
+        self.layout().insertWidget(self.layout().count() - 1, self.whole_plot_group)
+
+    def _sync_whole_plot_controls(self):
+        group = self.__dict__.get("whole_plot_group")
+        if group is None:
+            return
+        self.global_colour_row.setVisible(any(
+            kind == "heatmap" and (kind, key) not in self._preview_removed
+            for kind, key in self.owner._plot_item_order
+        ))
+        self.sync_swap_axes_control()
 
     def _row_entry(self, row: int) -> tuple[str, Any] | None:
         item = self.table.item(row, self._COL_ID)
@@ -98,7 +161,14 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         if controls is None:
             super()._sync_controls_from_selection()
             return
+        self._sync_whole_plot_controls()
         selected = self._selected_entries()
+        if not selected:
+            super()._sync_controls_from_selection()
+            controls._update_control_enabled_states(False)
+            self.remove_item_button.setEnabled(False)
+            self.remove_item_button.setToolTip("Select a dataset to remove it.")
+            return
         current = self._row_entry(self.table.currentRow())
         entry = current if current in selected else next(iter(selected), None)
         if entry is not None and entry[0] == "heatmap":
@@ -107,6 +177,18 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         else:
             self.controls_stack.setCurrentWidget(self.trace_controls_panel)
             super()._sync_controls_from_selection()
+        kind = entry[0] if entry else "trace"
+        count = sum(selected_kind == kind for selected_kind, _key in selected)
+        feedback = getattr(controls, "selection_feedback", "") if kind == "heatmap" else self.selection_feedback
+        self.selection_summary.setText(
+            f"Editing {count} selected {kind}{'s' if count != 1 else ''}"
+            + (f" (of {len(selected)} datasets)" if count != len(selected) else "")
+            + (" · Mixed values" if feedback else "")
+        )
+        self.selection_summary.setToolTip(
+            (feedback + "\n" if feedback else "")
+            + ("Other selected dataset types are unaffected." if count != len(selected) else "")
+        )
         self.remove_item_button.setEnabled(self._can_remove_items(selected))
         self.remove_item_button.setToolTip(
             self.owner.plot_item_removal_error(selected)
@@ -114,9 +196,132 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         )
 
     def _can_remove_items(self, selected):
-        entries = set(self.owner._plot_item_order)
+        entries = set(self.owner._plot_item_order) - self._preview_removed.keys()
         selected = set(selected)
-        return bool(selected) and selected < entries and not self.owner.plot_item_removal_error(selected)
+        return bool(selected) and selected < entries and not self.owner.plot_item_removal_error(
+            selected | self._preview_removed.keys(),
+        )
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._session_active and not self._session_finishing:
+            self._session_root = self.owner
+            self._action_token = {"cancelled": False}
+            self.owner._appearance_action_token = self._action_token
+            self._preview_owners = [self.owner]
+            self._preview_removed = {}
+            self._pending_added_entry = None
+            self._session_active = True
+        if not self._geometry_initialised:
+            self._geometry_initialised = True
+            fit_appearance_dialog(self)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        resize_appearance_panes(self)
+
+    @staticmethod
+    def _entry_identity(owner, entry):
+        kind, key = entry
+        item = (owner.lines if kind == "trace" else owner.heatmaps)[key]
+        source = owner if item is owner or item is owner.__dict__.get("line") else item.from_win
+        return kind, source._dataset_key, source.param.name
+
+    def _bind_owner(self, owner):
+        for window in self._preview_owners:
+            for name in ("_plot_appearance_dialog", "_trace_appearance_dialog", "_heatmap_appearance_dialog"):
+                if window.__dict__.get(name) is self:
+                    window.__dict__[name] = None
+        self.owner = owner
+        owner._appearance_action_token = self._action_token
+        self.heatmap_controls.owner = owner
+        self.setParent(owner, self.windowFlags())
+        for name in ("_plot_appearance_dialog", "_trace_appearance_dialog", "_heatmap_appearance_dialog"):
+            owner.__dict__[name] = self
+
+    def adopt_preview(self, replacement):
+        """Retain the original source while a volume previews new controls."""
+        removed = {self._entry_identity(self.owner, entry): visible
+                   for entry, visible in self._preview_removed.items()}
+        self.owner._appearance_preview_hidden = True
+        self.owner.hide()
+        self._preview_owners.append(replacement)
+        self._bind_owner(replacement)
+        self._preview_removed = {entry: removed[self._entry_identity(replacement, entry)]
+                                 for entry in replacement._plot_item_order
+                                 if self._entry_identity(replacement, entry) in removed}
+        self.refresh_rows()
+        self.show()
+        self.raise_()
+
+    def _close_colour_editor(self):
+        picker = self.heatmap_controls.colour_map_dialog
+        if picker is not None and not sip.isdeleted(picker) and picker.isVisible():
+            picker.reject()
+        for owner in self._preview_owners:
+            dialog = owner.__dict__.get("colorbar_scale_dialog")
+            if dialog is not None and not sip.isdeleted(dialog):
+                dialog.close()
+
+    def accept(self):
+        if not self._session_active:
+            super().accept()
+            return
+        self._close_colour_editor()
+        self._session_finishing = True
+        self.hide()  # Source promotion must not reopen an already accepted editor.
+        removed = dict(self._preview_removed)
+        self._preview_removed.clear()
+        try:
+            if removed:
+                self.owner.remove_plot_items(list(removed))
+        except Exception as error:
+            self._preview_removed = removed
+            self._session_finishing = False
+            self.show()
+            qtw.QMessageBox.critical(self, "Could Not Apply Plot Appearance", str(error))
+            return
+        self._session_active = False
+        for window in self._preview_owners:
+            window._appearance_action_token = None
+        self._preview_removed.clear()
+        for window in self._preview_owners[:-1]:
+            window._appearance_preview_hidden = False
+            window.close()
+        super().accept()
+        self._session_finishing = False
+
+    def reject(self):
+        if self._session_active and not self._session_finishing:
+            self._session_finishing = True
+            self._action_token["cancelled"] = True
+            for window in self._preview_owners:
+                window._appearance_action_token = None
+            self._close_colour_editor()
+            self._session_active = False
+            self._pending_added_entry = None
+            self._preview_removed.clear()
+            root = self._session_root
+            if not root.__dict__.get("_closed", False) and not root.__dict__.get("_appearance_closing", False):
+                self._bind_owner(root)
+                root._appearance_action_token = None
+                extras = [entry for entry in root._plot_item_order if entry not in self._opening_order]
+                if extras:
+                    root.remove_plot_items(extras)
+                self.revert_appearance()
+                root._appearance_preview_hidden = False
+                if len(self._preview_owners) > 1:
+                    root.__dict__.pop("_preview_drop_replacement", None)
+                    root.show()
+            for window in self._preview_owners[1:]:
+                if not window.__dict__.get("_appearance_closing", False):
+                    window.close()
+            self._session_finishing = False
+        super().reject()
+
+    def closeEvent(self, event):
+        self.reject()
+        event.accept()
 
     def _is_primary(self, kind: str, key: Any) -> bool:
         if kind == "trace":
@@ -132,6 +337,7 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
     def refresh_rows(self):
         if "heatmap_controls" not in self.__dict__:
             return
+        select_first = self.table.rowCount() == 0
         selected = set(self._selected_entries())
         current = self._row_entry(self.table.currentRow())
         self.owner._sync_plot_item_order()
@@ -147,6 +353,9 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         try:
             self.table.setRowCount(0)
             for row, (kind, key) in enumerate(self.owner._plot_item_order):
+                if (kind, key) in self._preview_removed:
+                    continue
+                row = self.table.rowCount()
                 self.table.insertRow(row)
                 if kind == "trace":
                     renderer = self.owner.lines[key]
@@ -191,7 +400,7 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         finally:
             self.table.blockSignals(blocked)
             self._building = False
-        if self.table.rowCount() and not self._selected_entries():
+        if select_first and self.table.rowCount() and not self._selected_entries():
             self.table.selectRow(0)
         self._sync_controls_from_selection()
         self.refresh_available_items()
@@ -226,8 +435,9 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         self.owner._sync_plot_item_order()
 
     def _move_rows_to_position(self, source_rows, destination_row):
-        entries = list(self.owner._plot_item_order)
+        entries = [entry for entry in self.owner._plot_item_order if entry not in self._preview_removed]
         self.owner._plot_item_order = reordered_rows(entries, source_rows, destination_row)
+        self.owner._plot_item_order.extend(self._preview_removed)
         for kind, registry in (("trace", self.owner.lines), ("heatmap", self.owner.heatmaps)):
             reordered = [(key, registry[key]) for entry_kind, key in self.owner._plot_item_order if entry_kind == kind]
             registry.clear()
@@ -253,6 +463,10 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         try:
             self.add_item_combo.clear()
             self.add_item_combo.addItem("Select a measurement to add…", None)
+            for kind, key in self._preview_removed:
+                registry = self.owner.lines if kind == "trace" else self.owner.heatmaps
+                label = (self.owner._trace_display_label if kind == "trace" else self.owner._heatmap_display_label)(key, registry[key])
+                self.add_item_combo.addItem(f"{label} ({kind})", (kind, key, label))
             for kind, provider, registry in (
                 ("trace", self.owner.available_trace_candidates, self.owner.lines),
                 ("heatmap", self.owner.available_heatmap_candidates, self.owner.heatmaps),
@@ -273,6 +487,11 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         if entry is None:
             return
         kind, key, label = entry
+        if (kind, key) in self._preview_removed:
+            visible = self._preview_removed.pop((kind, key))
+            self._set_preview_visibility(kind, key, visible)
+            self.refresh_rows()
+            return
         self._pending_added_entry = (kind, key)
         try:
             if kind == "trace":
@@ -292,10 +511,17 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         selected = self._selected_entries()
         if not self._can_remove_items(selected):
             return
-        try:
-            owner = self.owner.remove_plot_items(selected)
-        except Exception as error:
-            qtw.QMessageBox.critical(self, "Could Not Remove Dataset", str(error))
-            return
-        if owner is self.owner:
-            self.refresh_rows()
+        for kind, key in selected:
+            self._preview_removed[(kind, key)] = (
+                self.owner._trace_styles[key].visible if kind == "trace"
+                else self.owner._heatmap_is_visible(self.owner.heatmaps[key])
+            )
+            self._set_preview_visibility(kind, key, False)
+        self.refresh_rows()
+
+    def _set_preview_visibility(self, kind, key, visible):
+        if kind == "trace":
+            self.owner._trace_styles[key].visible = visible
+            self.owner._apply_trace_style(key, self.owner.lines[key])
+        else:
+            self.owner._set_layer_visibility(self.owner.heatmaps[key], visible)
