@@ -45,6 +45,12 @@ from ._export_paths import (
     prepare_export_destination,
     write_export_atomically,
 )
+from ._plot_csv_selection import (
+    configure_csv_measurements,
+    csv_exports_heatmap,
+    csv_selection_description,
+    selected_csv_measurements,
+)
 from ._plot_export_controls import PlotExportControls
 from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
@@ -71,7 +77,7 @@ _SAFE_PYQTGRAPH_FILE_EXPORTERS = (ImageExporter, CSVExporter, SVGExporter)
 _SAFE_PYQTGRAPH_COPY_EXPORTERS = (ImageExporter, SVGExporter)
 CSV_UNDERLYING_VALUES = "Underlying plot samples"
 CSV_TRANSFORMED_VALUES = "Transformed plot values"
-CSV_HEATMAP_VALUES = "Current primary heatmap grid"
+CSV_HEATMAP_VALUES = "Current heatmap grid"
 
 
 def _without_hover_highlight(window: Any):
@@ -255,16 +261,9 @@ if (
                 params.child("separator").setOpts(title="Separator")
                 params.child("columnMode").setOpts(title="Columns")
                 params.removeChild(params.child("precision"))
-                heatmap = getattr(self._qplot_owner, "operation_kind", None) == "plot2d"
-                modes = ([CSV_HEATMAP_VALUES] if heatmap else
-                         [CSV_UNDERLYING_VALUES, CSV_TRANSFORMED_VALUES])
-                values = params.insertChild(0, {
-                    "name": "values", "title": "Values", "type": "list",
-                    "limits": modes, "value": modes[0],
-                })
-                if heatmap:
-                    params.removeChild(params.child("columnMode"))
-                values.sigValueChanged.connect(self._update_csv_scope)
+                configure_csv_measurements(owner, self.currentExporter)
+                self._configure_csv_data_options()
+                params.child("measurements").sigValueChanged.connect(self._csv_measurement_changed)
                 self._update_csv_scope()
             parameter_tips = {
                 "width": "Export width in pixels. Changing this also adjusts the height to preserve the aspect ratio.",
@@ -275,6 +274,7 @@ if (
                 "separator": "Choose the character separating values in the exported text file.",
                 "columnMode": "Use separate X columns for each trace, or share one X column when coordinates match.",
                 "values": "Choose which plot values to export. The description below explains the selected scope.",
+                "measurements": "Choose all traces or an individual measurement, including hidden datasets.",
             }
             exporter: Any = self.currentExporter
             exporter.parameters().setOpts(title="Export options")
@@ -289,6 +289,7 @@ if (
                     parameter.setOpts(tip=tip)
             self.ui.exportBtn.setEnabled(
                 exporter_type in _SAFE_PYQTGRAPH_FILE_EXPORTERS
+                and (exporter_type is not CSVExporter or exporter.params["measurements"] != "empty")
             )
             self.ui.copyBtn.setEnabled(
                 exporter_type in _SAFE_PYQTGRAPH_COPY_EXPORTERS
@@ -303,6 +304,46 @@ if (
             if exporter_type is CSVExporter:
                 self._update_csv_scope()
 
+        def _configure_csv_data_options(self) -> None:
+            exporter = self.currentExporter
+            owner = self._qplot_owner
+            if exporter is None or owner is None:
+                return
+            params = exporter.params
+            heatmap = csv_exports_heatmap(owner, exporter)
+            modes = ([CSV_HEATMAP_VALUES] if heatmap else
+                     [CSV_UNDERLYING_VALUES, CSV_TRANSFORMED_VALUES])
+            values = params.names.get("values")
+            if values is None:
+                values = params.insertChild(1, {
+                    "name": "values", "title": "Values", "type": "list",
+                    "limits": modes, "value": modes[0],
+                })
+                values.sigValueChanged.connect(self._update_csv_scope)
+            else:
+                if values.value() != CSV_HEATMAP_VALUES:
+                    exporter._qplot_csv_line_values = values.value()
+                values.setLimits(modes)
+                if not heatmap:
+                    values.setValue(getattr(exporter, "_qplot_csv_line_values", modes[0]))
+            columns = params.names.get("columnMode")
+            if heatmap and columns is not None:
+                exporter._qplot_csv_columns = columns.value()
+                params.removeChild(columns)
+            elif not heatmap and columns is None:
+                params.addChild({
+                    "name": "columnMode", "title": "Columns", "type": "list",
+                    "limits": ["(x,y) per plot", "(x,y,y,y) for all plots"],
+                    "value": getattr(exporter, "_qplot_csv_columns", "(x,y) per plot"),
+                })
+
+        def _csv_measurement_changed(self, *_args) -> None:
+            self.controls.clear_bindings()
+            self._configure_csv_data_options()
+            self._update_csv_scope()
+            self.feedback.hide()
+            self.controls.set_exporter(self.currentExporter)
+
         def _update_csv_scope(self, *_args) -> None:
             scope = getattr(self, "csv_scope", None)
             owner = self._qplot_owner
@@ -311,11 +352,13 @@ if (
                 return
             full_scope = owner._csv_export_scope(exporter)
             scope.setToolTip(full_scope)
-            if getattr(owner, "operation_kind", None) == "plot2d":
-                grid = np.asarray(getattr(owner, "dataGrid", []))
+            selection = selected_csv_measurements(owner, exporter)
+            if csv_exports_heatmap(owner, exporter):
+                layer = selection[0].item if selection else owner
+                grid = np.asarray(layer.__dict__.get("data_grid", layer.__dict__.get("dataGrid", [])))
                 shape = f" ({grid.shape[1]:,} × {grid.shape[0]:,} cells)" if grid.ndim == 2 else ""
-                text = (f"Current primary heatmap grid{shape}, including operations and spatial averaging. "
-                        "Other layers are excluded.")
+                text = (f"Selected heatmap grid{shape}, including operations and spatial averaging. "
+                        "Other measurements are excluded.")
             elif exporter.params["values"] == CSV_TRANSFORMED_VALUES:
                 text = "All loaded samples, including applied operations and native transforms. Zoom does not limit the exported data."
             else:
@@ -861,11 +904,15 @@ class PlotExportMixin(_PlotExportBase):
 
     def _csv_export_scope(self, exporter: CSVExporter) -> str:
         """Describe the exact values selected by the numeric export option."""
-        if getattr(self, "operation_kind", None) == "plot2d":
-            grid = np.asarray(getattr(self, "dataGrid", []))
+        selection = selected_csv_measurements(self, exporter)
+        description = csv_selection_description(self, exporter)
+        prefix = f"Exporting: {description}.\n" if description else ""
+        if csv_exports_heatmap(self, exporter):
+            layer = selection[0].item if selection else self
+            grid = np.asarray(layer.__dict__.get("data_grid", layer.__dict__.get("dataGrid", [])))
             shape = f" ({grid.shape[1]:,} × {grid.shape[0]:,} cells)" if grid.ndim == 2 else ""
-            return (
-                f"Current primary heatmap grid{shape}, including applied operations and "
+            return prefix + (
+                f"Selected heatmap grid{shape}, including applied operations and "
                 "any spatial averaging. Retains the currently loaded extent and resolution; "
                 "other layers are not included. No fresh database read. "
                 "Use the main-window CSV action for raw measurement values."
@@ -873,13 +920,13 @@ class PlotExportMixin(_PlotExportBase):
         values = exporter.parameters().names.get("values")
         transformed = values is not None and values.value() == CSV_TRANSFORMED_VALUES
         if transformed:
-            return (
+            return prefix + (
                 "Plot values including applied operations and native FFT, differentiation, "
                 "phase-map or mean-subtraction controls. All loaded samples, in physical "
                 "coordinates: no zoom clipping, rendering downsampling or logarithmic "
                 "coordinate conversion. No fresh database read."
             )
-        return (
+        return prefix + (
             "Underlying plot samples, including applied Operations-panel processing, "
             "before native FFT, differentiation, phase-map or mean subtraction. "
             "All loaded samples; zoom and rendering downsampling do not limit the export. "
@@ -891,10 +938,19 @@ class PlotExportMixin(_PlotExportBase):
         """Detach numeric values and metadata while their Qt items are alive."""
         if not isinstance(exporter.item, PlotItem):
             raise TypeError("Must have a PlotItem selected for CSV export.")
+        selection = selected_csv_measurements(self, exporter, validate=True)
+        items = list(exporter.item.items)
+        if selection is not None:
+            if any(entry.kind != "trace" for entry in selection):
+                raise ValueError("Select a trace measurement for this CSV export.")
+            selected_items = [entry.item for entry in selection]
+            if exporter.params["measurements"] == "all_traces" or len(exporter._qplot_csv_measurements) == 1:
+                selected_items.extend(item for item in items if isinstance(item, ErrorBarItem))
+            items = selected_items
         shared_x = exporter.params["columnMode"] == "(x,y,y,y) for all plots"
         if transformed:
             traces: list[TransformedTrace] = []
-            for item in exporter.item.items:
+            for item in items:
                 if isinstance(item, ErrorBarItem):
                     raise ValueError(
                         "Transformed export does not transform error bars. "
@@ -935,7 +991,7 @@ class PlotExportMixin(_PlotExportBase):
         collector = CSVExporter(exporter.item)
         collector.params.restoreState(exporter.params.saveState())
         coordinates = []
-        for item in exporter.item.items:
+        for item in items:
             if isinstance(item, ErrorBarItem):
                 collector._exportErrorBarItem(item)
             elif hasattr(item, "implements") and item.implements("plotData"):
@@ -951,14 +1007,15 @@ class PlotExportMixin(_PlotExportBase):
         return CsvColumns(tuple(collector.header), columns, tuple(coordinates), shared_x)
 
 
-    def _capture_heatmap_csv(self) -> HeatmapCsv:
-        """Freeze the current primary grid without another source read."""
-        axis_data = self.__dict__.get("axis_data")
+    def _capture_heatmap_csv(self, layer: Any = None) -> HeatmapCsv:
+        """Freeze a currently plotted grid without another source read."""
+        target: Any = self if layer is None else layer
+        axis_data = target.__dict__.get("axis_data")
         if not isinstance(axis_data, dict):
             raise ValueError("Heatmap coordinate data is not available.")
         x = np.asarray(axis_data.get("x", []), dtype=float)
         y = np.asarray(axis_data.get("y", []), dtype=float)
-        grid = np.asarray(self.__dict__.get("dataGrid", []))
+        grid = np.asarray(target.__dict__.get("data_grid", target.__dict__.get("dataGrid", [])))
         if x.ndim != 1 or y.ndim != 1:
             raise ValueError("Heatmap coordinate axes must be one-dimensional.")
         if grid.ndim != 2 or grid.shape != (y.size, x.size):
@@ -968,7 +1025,18 @@ class PlotExportMixin(_PlotExportBase):
             )
         if grid.size == 0:
             raise ValueError("The currently plotted heatmap is empty.")
-        return HeatmapCsv(self._heatmap_csv_column_names(), frozen_array(x), frozen_array(y),
+        names = self._heatmap_csv_column_names()
+        if target is not self:
+            source = target.from_win
+            order = target.source_axis_order()
+            if order is None:
+                raise ValueError("The selected heatmap has no current coordinate mapping.")
+            parameters = source.__dict__.get("axis_param", {})
+            value = source.__dict__.get("display_param", source.__dict__.get("param"))
+            names = (self._export_parameter_name(parameters.get(order[0]), "x"),
+                     self._export_parameter_name(parameters.get(order[1]), "y"),
+                     self._export_parameter_name(value, "value"))
+        return HeatmapCsv(names, frozen_array(x), frozen_array(y),
                           frozen_array(grid))
 
 
@@ -990,10 +1058,13 @@ class PlotExportMixin(_PlotExportBase):
         if type(exporter) is CSVExporter and exporter.params["separator"] == "tab":
             default_suffix = ".tsv"
             name_filter = "TSV files (*.tsv);;CSV files (*.csv)"
-        suggested_path = path.splitext(self._default_plot_pdf_filename())[0]
+        selection = selected_csv_measurements(self, exporter) if type(exporter) is CSVExporter else None
+        filename_owner = selection[0].source if selection and len(selection) == 1 else self
+        filename_provider = getattr(filename_owner, "_default_plot_pdf_filename", self._default_plot_pdf_filename)
+        suggested_path = path.splitext(filename_provider())[0]
         suggested_path = f"{suggested_path}{default_suffix}"
         if type(exporter) is CSVExporter:
-            dataset = getattr(self, "ds", None)
+            dataset = getattr(filename_owner, "ds", None)
             filename = csv_filename(
                 getattr(self, "config", None), path.basename(suggested_path),
                 guid=getattr(dataset, "guid", None),
@@ -1001,6 +1072,8 @@ class PlotExportMixin(_PlotExportBase):
             )
             suggested_path = path.join(path.dirname(suggested_path), filename)
         try:
+            if type(exporter) is CSVExporter:
+                selected_csv_measurements(self, exporter, validate=True)
             destination = choose_export_path_with_suffixes(
                 self,
                 caption="Export Plot",
@@ -1029,8 +1102,11 @@ class PlotExportMixin(_PlotExportBase):
             elif type(exporter) is CSVExporter:
                 from ._export_tasks import start_export_task
 
-                if getattr(self, "operation_kind", None) == "plot2d":
-                    snapshot = self._capture_heatmap_csv()
+                if csv_exports_heatmap(self, exporter):
+                    selection = selected_csv_measurements(self, exporter, validate=True)
+                    layer = selection[0].item if selection else self
+                    snapshot = (self._capture_heatmap_csv() if layer is self
+                                else self._capture_heatmap_csv(layer=layer))
                 else:
                     mode = exporter.parameters().names.get("values")
                     snapshot = self._capture_line_csv(

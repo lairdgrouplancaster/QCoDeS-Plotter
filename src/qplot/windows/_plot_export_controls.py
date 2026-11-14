@@ -6,6 +6,8 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter, ImageExporter, SVGExporter
 
+from ._plot_csv_selection import csv_selection_description
+
 
 class _ExportBackgroundCombo(qtw.QComboBox):
     colourChanged = QtCore.pyqtSignal(QtGui.QColor)
@@ -161,9 +163,7 @@ class PlotExportControls(qtw.QWidget):
                 return
 
     def set_exporter(self, exporter):
-        for parameter in self._parameters:
-            parameter.sigValueChanged.disconnect(self._sync_values)
-        self._parameters.clear()
+        self.clear_bindings()
         self.fields.clear()
         self.exporter = exporter
         self.dialog.csv_scope.setParent(self.dialog)
@@ -188,6 +188,11 @@ class PlotExportControls(qtw.QWidget):
         form.setSpacing(10)
         form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         if csv:
+            self._combo(form, "Measurements", "measurements")
+            self.fields["measurements"].setToolTip(
+                "Exporting: " + csv_selection_description(self.dialog._qplot_owner, exporter)
+                + "\nHidden measurements are included when selected."
+            )
             self._combo(form, "Values", "values")
             self.dialog.csv_scope.setParent(self.settings)
             form.addRow("", self.dialog.csv_scope)
@@ -243,13 +248,19 @@ class PlotExportControls(qtw.QWidget):
         self.body_layout.invalidate()
         self.dialog.fit_export_controls()
 
+    def clear_bindings(self):
+        for parameter in self._parameters:
+            parameter.sigValueChanged.disconnect(self._sync_values)
+        self._parameters.clear()
+
     def _combo(self, form, label, name, choices=None):
         combo = qtw.QComboBox()
         combo.setAccessibleName(f"Export {label.lower()}")
         combo.setMinimumContentsLength(12)
         combo.setSizeAdjustPolicy(qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         if choices is None:
-            choices = [(value, value) for value in self.exporter.params.child(name).opts["limits"]]
+            limits = self.exporter.params.child(name).opts["limits"]
+            choices = limits.items() if isinstance(limits, dict) else [(value, value) for value in limits]
         for text, value in choices:
             combo.addItem(text, value)
         combo.currentIndexChanged.connect(lambda _index: self._write(name, combo.currentData()))

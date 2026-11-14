@@ -908,17 +908,25 @@ message also shows the output path, which you can select and copy.
 Switching or closing the database cancels pending database copies and raw exports. Closing a plot
 cancels its pending plot exports.
 
-In a plot's export dialog, select **CSV data** and check **Values**:
+In a plot's export dialog, select **CSV data**, then choose **Measurements**.
+Individual traces and heatmaps are identified by run number and measurement name.
+**All traces** combines the plot's traces into columns; heatmaps are exported one
+at a time because their grids may have different coordinates. Hidden measurements
+are included when selected. The initial choice preserves the previous scope:
+all traces for a line plot, or the primary grid for a heatmap plot.
+
+Check **Values** for the selected measurements:
 
 * **Underlying plot samples** includes applied Operations-panel processing,
   before native FFT, differentiation, phase-map, or mean-subtraction controls.
 * **Transformed plot values** also includes those native controls. Both line
-  modes export all loaded samples in physical coordinates, including secondary
-  traces; zoom, rendering downsampling, and logarithmic axis display do not
+  modes export all loaded samples from the selected traces in physical
+  coordinates; zoom, rendering downsampling, and logarithmic axis display do not
   change their values. Transformed export does not support error bars.
-* **Current primary heatmap grid** exports the currently loaded primary grid,
+* **Current heatmap grid** exports the selected heatmap's currently loaded grid,
   including applied operations and spatial averaging. It retains the loaded
-  extent and resolution and excludes other heatmap layers.
+  extent and resolution and excludes other measurements. Secondary heatmaps use
+  their own grid coordinates and measurement names.
 
 Plot CSV values are captured from the plot after the destination is chosen;
 later refreshes do not change the queued export. No plot CSV mode reads fresh

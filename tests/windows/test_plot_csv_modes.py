@@ -66,7 +66,7 @@ def test_csv_dialog_names_values_and_scope(real_plot):
     assert "precision" not in params.names
     if dimensions == 2:
         assert mode.value() == CSV_HEATMAP_VALUES
-        assert "primary heatmap" in dialog.csv_scope.text()
+        assert "Selected heatmap" in dialog.csv_scope.text()
         assert "spatial averaging" in dialog.csv_scope.text()
         assert "columnMode" not in params.names
     else:
