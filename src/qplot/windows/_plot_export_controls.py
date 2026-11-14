@@ -47,26 +47,6 @@ class PlotExportControls(qtw.QWidget):
         self.format_combo.setAccessibleName("Export format")
         form.addRow("&Format", self.format_combo)
         layout.addLayout(form)
-        self.content = qtw.QWidget()
-        content = qtw.QHBoxLayout(self.content)
-        content.setContentsMargins(0, 0, 0, 0)
-        content.addWidget(qtw.QLabel("Content"))
-        self.content_combo = qtw.QComboBox()
-        self.content_combo.addItems(["Complete plot", "Selected part of plot"])
-        self.content_combo.setAccessibleName("Export content")
-        self.content_combo.setToolTip("The complete plot includes axes, labels, colour scales and annotations.")
-        content.addWidget(self.content_combo, 1)
-        self.choose_part = qtw.QPushButton("Choose part…")
-        self.choose_part.setCheckable(True)
-        self.choose_part.setToolTip("Show or hide the list of individual plot areas.")
-        content.addWidget(self.choose_part)
-        layout.addWidget(self.content)
-        self.item_tree = dialog.ui.itemTree
-        self.item_tree.setMaximumHeight(150)
-        self.item_tree.setMinimumHeight(90)
-        self.item_tree.setToolTip("Choose a plot with axes, or just its data area. The outline marks the chosen area.")
-        layout.addWidget(self.item_tree)
-        self.item_tree.hide()
         self.heading = qtw.QLabel()
         font = self.heading.font()
         font.setBold(True)
@@ -75,8 +55,6 @@ class PlotExportControls(qtw.QWidget):
         self.settings = qtw.QWidget()
         layout.addWidget(self.settings)
         self.format_combo.currentIndexChanged.connect(self._format_changed)
-        self.content_combo.currentIndexChanged.connect(self._content_changed)
-        self.choose_part.toggled.connect(self._show_parts)
 
     def _format_changed(self):
         if self._syncing:
@@ -86,33 +64,6 @@ class PlotExportControls(qtw.QWidget):
             if self.dialog.ui.formatList.item(row).expClass is kind:
                 self.dialog.ui.formatList.setCurrentRow(row)
                 return
-
-    def _content_changed(self, index):
-        if self._syncing:
-            return
-        root = self.item_tree.topLevelItem(0)
-        if root is None:
-            return
-        if index == 0:
-            self.item_tree.setCurrentItem(root)
-        else:
-            self.choose_part.setChecked(True)
-            if self.item_tree.currentItem() is root and root.childCount():
-                self.item_tree.setCurrentItem(root.child(0))
-
-    def _show_parts(self, checked):
-        enabled = type(self.exporter) is not CSVExporter
-        self.item_tree.setVisible(checked and enabled)
-        self.dialog.selectBox.setVisible(checked and enabled)
-        self.dialog.fit_export_controls()
-
-    def sync_content(self):
-        self._syncing = True
-        try:
-            item = self.item_tree.currentItem()
-            self.content_combo.setCurrentIndex(0 if item is None or item.parent() is None else 1)
-        finally:
-            self._syncing = False
 
     def set_exporter(self, exporter):
         for parameter in self._parameters:
@@ -136,9 +87,6 @@ class PlotExportControls(qtw.QWidget):
         finally:
             self._syncing = False
         csv = type(exporter) is CSVExporter
-        self.content.setVisible(not csv)
-        self.item_tree.setVisible(not csv and self.choose_part.isChecked())
-        self.dialog.selectBox.setVisible(not csv and self.choose_part.isChecked())
         self.heading.setText("Data" if csv else "Image settings" if type(exporter) is ImageExporter else "SVG settings")
         form = qtw.QFormLayout(self.settings)
         form.setContentsMargins(0, 0, 0, 0)
@@ -187,23 +135,7 @@ class PlotExportControls(qtw.QWidget):
             form.addRow("Background", colour)
             if type(exporter) is ImageExporter:
                 self._check(form, "Smooth edges", "antialias")
-                more = qtw.QToolButton()
-                more.setText("More options")
-                more.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-                more.setArrowType(QtCore.Qt.ArrowType.RightArrow)
-                more.setCheckable(True)
-                extra = qtw.QWidget()
-                extra_form = qtw.QFormLayout(extra)
-                extra_form.setContentsMargins(0, 0, 0, 0)
-                self._check(extra_form, "Invert brightness", "invertValue")
-                extra.hide()
-                def expand(checked):
-                    more.setArrowType(QtCore.Qt.ArrowType.DownArrow if checked else QtCore.Qt.ArrowType.RightArrow)
-                    extra.setVisible(checked)
-                    self.dialog.fit_export_controls()
-                more.toggled.connect(expand)
-                form.addRow(more)
-                form.addRow(extra)
+                self._check(form, "Invert brightness", "invertValue")
             else:
                 self._check(form, "Scale line widths with image", "scaling stroke")
         for name in self.fields:
@@ -211,7 +143,6 @@ class PlotExportControls(qtw.QWidget):
             parameter.sigValueChanged.connect(self._sync_values)
             self._parameters.append(parameter)
         self._sync_values()
-        self.sync_content()
         self.dialog.fit_export_controls()
 
     def _combo(self, form, label, name, choices=None):

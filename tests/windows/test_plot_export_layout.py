@@ -23,8 +23,10 @@ def test_image_fields_export_full_scene_at_chosen_size(real_plot, tmp_path, monk
     controls = dialog.controls
     exporter = dialog.currentExporter
     assert exporter.item is plot.widget.scene()
-    assert controls.content_combo.currentText() == "Complete plot"
-    assert not controls.item_tree.isVisible()
+    assert dialog.ui.itemTree.isHidden()
+    assert controls.fields["invertValue"].isVisible()
+    controls.fields["invertValue"].setChecked(True)
+    assert exporter.params["invertValue"] is True
     assert not dialog.selectBox.isVisible()
     assert dialog.ui.copyBtn.isHidden()
     np.testing.assert_allclose(
@@ -50,33 +52,25 @@ def test_image_fields_export_full_scene_at_chosen_size(real_plot, tmp_path, monk
     assert not errors
 
 
-def test_partial_area_is_explicit_and_csv_uses_plot_data(real_plot):
+def test_visual_exports_always_use_complete_scene_and_csv_uses_plot_data(real_plot):
     plot, _database, errors, _dimensions = real_plot
     plot.open_export_dialog()
     dialog = plot.widget.scene().exportDialog
     controls = dialog.controls
-    controls.choose_part.click()
-    iterator = qtw.QTreeWidgetItemIterator(controls.item_tree)
-    while iterator.value().gitem is not plot.plot:
-        iterator += 1
-    controls.item_tree.setCurrentItem(iterator.value())
-    assert dialog.currentExporter.item is plot.plot
-    assert controls.content_combo.currentText() == "Selected part of plot"
-    assert dialog.selectBox.isVisible()
+    assert dialog.currentExporter.item is plot.widget.scene()
+    assert dialog.ui.itemTree.topLevelItem(0).childCount() == 0
     _format(dialog, CSVExporter)
     assert dialog.currentExporter.item is plot.plot
-    assert not controls.content.isVisible()
-    assert not controls.item_tree.isVisible()
+    assert dialog.ui.itemTree.isHidden()
     assert not dialog.selectBox.isVisible()
     assert "width" not in controls.fields
     assert controls.heading.text() == "Data"
     _format(dialog, SVGExporter)
-    assert dialog.currentExporter.item is plot.plot
+    assert dialog.currentExporter.item is plot.widget.scene()
     assert controls.fields["scaling stroke"].isVisible()
     controls.fields["scaling stroke"].setChecked(True)
     assert dialog.currentExporter.params["scaling stroke"] is True
     _format(dialog, ImageExporter)
-    controls.content_combo.setCurrentIndex(0)
     assert dialog.currentExporter.item is plot.widget.scene()
     dialog.close()
     plot.open_export_dialog()

@@ -145,21 +145,19 @@ if (
             owner.destroyed.connect(self._qplot_owner_destroyed)
 
         def show(self, item: Any = None) -> None:
-            # A visual export starts with the whole scene, including colour
-            # scales and annotations outside the individual PlotItem.
             self.updateItemList()
-            root = self.ui.itemTree.topLevelItem(0)
-            root.setText(0, "Complete plot")
-            iterator = qtw.QTreeWidgetItemIterator(self.ui.itemTree)
-            while (node := iterator.value()) is not None:
-                if node.text(0) == "ViewBox":
-                    node.setText(0, "Data area")
-                elif node.text(0) == "Plot":
-                    node.setText(0, "Plot with axes")
-                iterator += 1
             super().show()
-            self.selectBox.setVisible(self.controls.item_tree.isVisible())
+            self.selectBox.hide()
             self.fit_export_controls()
+
+        def updateItemList(self, select: Any = None) -> None:
+            # Keep the inherited exporter plumbing fixed to the complete
+            # scene, including colour scales and source annotations.
+            self.ui.itemTree.clear()
+            item: Any = qtw.QTreeWidgetItem(["Complete plot"])
+            item.gitem = self.scene
+            self.ui.itemTree.addTopLevelItem(item)
+            self.ui.itemTree.setCurrentItem(item)
 
         def fit_export_controls(self) -> None:
             if not self.isVisible():
@@ -177,9 +175,9 @@ if (
                       max(bounds.top(), min(frame.top(), bounds.bottom() - frame.height() + 1)))
 
         def exportItemChanged(self, item: Any, previous: Any) -> None:
-            super().exportItemChanged(item, previous)
-            self.controls.sync_content()
-            self.selectBox.setVisible(self.controls.item_tree.isVisible())
+            if item is not None:
+                self.updateFormatList()
+            self.selectBox.hide()
 
         @property
         def _qplot_owner(self) -> Any | None:
@@ -218,7 +216,7 @@ if (
                 self.ui.copyBtn.setEnabled(False)
                 self.controls.set_exporter(None)
                 return
-            target = owner.plot if exporter_class is CSVExporter else self.ui.itemTree.currentItem().gitem
+            target = owner.plot if exporter_class is CSVExporter else self.scene
             self.currentExporter = exporter_class(item=target)
             self.ui.paramTree.setParameters(self.currentExporter.parameters())
             exporter_type = type(self.currentExporter)
