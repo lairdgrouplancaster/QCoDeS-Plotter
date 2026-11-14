@@ -19,12 +19,14 @@ def git(root, *args):
 
 
 @pytest.fixture
-def checkout(tmp_path):
+def checkout(tmp_path, monkeypatch):
     root = tmp_path / "checkout"
     root.mkdir()
     (root / "pyproject.toml").write_text('[project]\nname="qplotter"\nversion="2.0.0"\n')
     git(root, "init")
     git(root, "add", "pyproject.toml")
+    monkeypatch.setenv("GIT_AUTHOR_DATE", "2000-01-01T00:00:00+00:00")
+    monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-11-14T12:42:15+02:00")
     git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "Initial")
     return root
 
@@ -33,6 +35,7 @@ def test_checkout_distinguishes_release_development_and_local_changes(checkout):
     info = _metadata.checkout_info(checkout)
     assert info["version"] == "2.0.0"
     assert info["commit"] == git(checkout, "rev-parse", "HEAD")
+    assert info["commit_date"] == "2026-11-14T12:42:15+02:00"
     assert info["released"] is False
     git(checkout, "tag", "v1.0.0")
     assert _metadata.checkout_info(checkout)["released"] is False
@@ -72,6 +75,7 @@ def test_checkout_reports_provenance_when_git_startup_takes_over_one_second(chec
     monkeypatch.setattr(_metadata.subprocess, "run", slow_startup)
     assert _metadata.checkout_info(checkout) == {
         "version": "2.0.0", "checkout": True, "commit": expected_commit,
+        "commit_date": "2026-11-14T12:42:15+02:00",
         "dirty": False, "released": False,
     }
 
@@ -88,7 +92,7 @@ def test_checkout_git_reads_share_one_deadline_and_do_not_guess_release_status(
         calls.append(kwargs["timeout"])
         if len(calls) == 1:
             now += 6 if exhausted else 4
-            return SimpleNamespace(stdout="a" * 40)
+            return SimpleNamespace(stdout="a" * 40 + "\n2026-11-14T12:42:15+02:00")
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
 
     monkeypatch.setattr(_metadata.time, "monotonic", lambda: now)
@@ -123,7 +127,8 @@ def installed_package(tmp_path, monkeypatch):
 def test_installed_build_uses_packaged_provenance_and_ignores_enclosing_git(tmp_path, monkeypatch):
     package = installed_package(tmp_path, monkeypatch)
     git(tmp_path, "init")
-    build = dict(version="2.0.0", commit="a" * 40, released=False, pull_request="123")
+    build = dict(version="2.0.0", commit="a" * 40, released=False, pull_request="123",
+                 commit_date="2026-11-14T12:42:15+02:00")
     (package / "_build_info.json").write_text(json.dumps(build))
     assert _metadata.version_info() == build
 
@@ -154,6 +159,7 @@ def test_ci_stamp_records_pr_and_release_and_rejects_dirty_build(checkout, monke
     info = json.loads(output.read_text())
     assert info["pull_request"] == "123"
     assert info["commit"] == git(checkout, "rev-parse", "HEAD")
+    assert info["commit_date"] == "2026-11-14T12:42:15+02:00"
     assert info["released"] is False
     with pytest.raises(RuntimeError, match="clean Git checkout"):
         main()

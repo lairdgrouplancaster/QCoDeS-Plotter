@@ -421,6 +421,11 @@ Common actions:
   defaults.
 * `Help -> Quick Start` shows the core workflow inside qPlot.
 * `Help -> Keyboard and Mouse Controls` shows the controls reference inside qPlot.
+* `Help -> About qPlot` shows the version, build status and available source
+  commit details. `Committed` is the Git committer date and time shown in UTC;
+  it describes the recorded commit, including when there are local changes.
+  This information works offline in source checkouts and stamped packages.
+  The date is omitted when unavailable; it is not a merge or publication date.
 * `Help -> Check for Updates…` checks PyPI for a newer qPlot release and shows
   release notes and upgrade instructions. Stable releases are selected by
   default; withdrawn releases and incompatible application wheels are ignored.

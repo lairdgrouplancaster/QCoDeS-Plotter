@@ -1,4 +1,5 @@
 import sys
+from datetime import UTC, datetime
 from html import escape
 from typing import Any, cast
 
@@ -160,6 +161,13 @@ def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
         rows.append("<p><b>Build:</b> Source checkout</p>")
     if info.get("commit"):
         rows.append(f"<p><b>Commit:</b> {escape(str(info['commit']))}</p>")
+        try:
+            committed = datetime.fromisoformat(str(info.get("commit_date", "")))
+        except ValueError:
+            committed = None
+        if committed is not None and committed.tzinfo is not None:
+            date = committed.astimezone(UTC).strftime("%d %B %Y, %H:%M:%S UTC")
+            rows.append(f"<p><b>Committed:</b> {escape(date)}</p>")
     if info.get("pull_request"):
         rows.append(f"<p><b>Pull request:</b> #{escape(str(info['pull_request']))}</p>")
     html = (
