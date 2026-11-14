@@ -23,6 +23,17 @@ class AppearanceControlsStack(qtw.QStackedWidget):
             size.setHeight(self.currentWidget().minimumSizeHint().height())
         return size
 
+    def hasHeightForWidth(self):
+        page = self.currentWidget()
+        return page is not None and page.hasHeightForWidth()
+
+    def heightForWidth(self, width):
+        page = self.currentWidget()
+        if page is None:
+            return -1
+        height = page.heightForWidth(width)
+        return height if height >= 0 else page.sizeHint().height()
+
 
 class AppearanceControlsScroll(qtw.QScrollArea):
     def __init__(self, controls):
@@ -32,17 +43,29 @@ class AppearanceControlsScroll(qtw.QScrollArea):
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setWidget(controls)
         controls.setAutoFillBackground(False)
+        self.viewport().installEventFilter(self)
+        controls.currentChanged.connect(lambda _index: self.updateGeometry())
         for child in controls.findChildren(qtw.QWidget):
             if child.focusPolicy() != QtCore.Qt.FocusPolicy.NoFocus:
                 child.installEventFilter(self)
 
     def eventFilter(self, watched, event):
+        if (watched is self.viewport() and event.type() == QtCore.QEvent.Type.Resize
+                and event.size().width() != event.oldSize().width()):
+            self.updateGeometry()
         if event.type() == QtCore.QEvent.Type.FocusIn and isinstance(watched, qtw.QWidget):
             self.ensureWidgetVisible(watched)
         return super().eventFilter(watched, event)
 
     def sizeHint(self):
-        return self.widget().sizeHint().boundedTo(QtCore.QSize(400, 440))
+        controls = self.widget()
+        size = controls.sizeHint()
+        page = controls.currentWidget()
+        if page is not None:
+            height = page.heightForWidth(self.viewport().width())
+            if height >= 0:
+                size.setHeight(height)
+        return QtCore.QSize(min(400, size.width()), max(40, size.height()))
 
     def minimumSizeHint(self):
         return QtCore.QSize(max(220, self.widget().minimumSizeHint().width()), 40)
@@ -54,6 +77,7 @@ def build_appearance_panes(dialog):
     dialog.appearance_body.removeWidget(datasets)
     dialog.appearance_body.removeWidget(dialog.controls_stack)
     dialog.selected_group = qtw.QGroupBox("Selected datasets")
+    dialog.selected_group.setSizePolicy(qtw.QSizePolicy.Policy.Preferred, qtw.QSizePolicy.Policy.Maximum)
     layout = qtw.QVBoxLayout(dialog.selected_group)
     layout.setContentsMargins(8, 12, 8, 8)
     dialog.layout().removeWidget(dialog.selection_summary)
@@ -65,8 +89,9 @@ def build_appearance_panes(dialog):
     properties_layout = qtw.QVBoxLayout(properties)
     properties_layout.setContentsMargins(0, 0, 0, 0)
     properties_layout.setSpacing(8)
-    properties_layout.addWidget(dialog.selected_group, 1)
+    properties_layout.addWidget(dialog.selected_group)
     properties_layout.addWidget(dialog.whole_plot_group)
+    properties_layout.addStretch(1)
     dialog.appearance_splitter = qtw.QSplitter(QtCore.Qt.Orientation.Horizontal)
     dialog.appearance_splitter.setObjectName("plotAppearanceSplitter")
     dialog.appearance_splitter.setChildrenCollapsible(False)

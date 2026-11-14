@@ -7,7 +7,7 @@ import pytest
 from PyQt6 import QtCore
 
 from qplot.windows import _appearance_layout
-from tests.windows.test_mixed_plot_drops import _added, _drop, mixed_plot
+from tests.windows.test_mixed_plot_drops import _added, _drop, _wait_for, mixed_plot
 
 __all__ = ["mixed_plot"]
 
@@ -53,7 +53,7 @@ def test_appearance_fits_screen_and_keeps_actions_accessible(
     assert selected.bottom() < whole.top()
     assert dialog.rect().contains(whole)
     if dialog.appearance_splitter.orientation() == QtCore.Qt.Orientation.Horizontal:
-        assert dataset_rect.bottom() == whole.bottom()
+        assert dataset_rect.bottom() >= whole.bottom()
         assert dataset_rect.right() < selected.left()
     else:
         assert dataset_rect.bottom() < selected.top()
@@ -67,6 +67,7 @@ def test_global_settings_remain_available_across_selection_types(mixed_plot, qap
     _added(target, foreign)
     target.open_plot_appearance_dialog()
     dialog = target._plot_appearance_dialog
+    dialog.resize(1000, 800)
     button = dialog.heatmap_controls.color_scale_button
     assert dialog.whole_plot_group.isAncestorOf(button)
     assert dialog.whole_plot_group.isAncestorOf(dialog.swap_axes)
@@ -74,6 +75,14 @@ def test_global_settings_remain_available_across_selection_types(mixed_plot, qap
     for row in range(dialog.table.rowCount()):
         dialog.table.selectRow(row)
         qapplication.processEvents()
+        def section_fits():
+            controls = (dialog.heatmap_controls
+                        if dialog.controls_stack.currentWidget() is dialog.heatmap_controls else dialog)
+            axes = controls.x_axis.parentWidget()
+            bottom = axes.mapTo(dialog.selected_group, axes.rect().bottomLeft()).y()
+            gap = dialog.selected_group.rect().bottom() - bottom
+            return not dialog.controls_scroll.verticalScrollBar().isVisible() and 0 <= gap <= 24
+        _wait_for(section_fits)
         assert button.isVisible() and button.isEnabled()
     dialog.table.clearSelection()
     qapplication.processEvents()
