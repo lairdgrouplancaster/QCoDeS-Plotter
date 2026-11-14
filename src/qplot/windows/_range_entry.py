@@ -16,12 +16,12 @@ class AutoLimitsButton(qtw.QToolButton):
         self.setFixedSize(26, 24)
         self.setAutoRaise(True)
 
-    def event(self, event: QtCore.QEvent) -> bool:
-        if event.type() == QtCore.QEvent.Type.ToolTip:
+    def event(self, event: QtCore.QEvent | None) -> bool:
+        if event is not None and event.type() == QtCore.QEvent.Type.ToolTip:
             self._refresh_tooltip()
         return super().event(event)
 
-    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+    def paintEvent(self, event: QtGui.QPaintEvent | None) -> None:
         super().paintEvent(event)
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
@@ -113,7 +113,7 @@ class CompactNumberEdit(qtw.QLineEdit):
             return self._compact_text
         return self.text()
 
-    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+    def paintEvent(self, event: QtGui.QPaintEvent | None) -> None:
         text = self.presentation_text()
         if text == self.text():
             super().paintEvent(event)
@@ -122,7 +122,9 @@ class CompactNumberEdit(qtw.QLineEdit):
         self.initStyleOption(option)
         painter = qtw.QStylePainter(self)
         painter.drawPrimitive(qtw.QStyle.PrimitiveElement.PE_PanelLineEdit, option)
-        rect = self.style().subElementRect(qtw.QStyle.SubElement.SE_LineEditContents, option, self)
+        style = self.style()
+        assert style is not None
+        rect = style.subElementRect(qtw.QStyle.SubElement.SE_LineEditContents, option, self)
         margins = self.textMargins()
         rect.adjust(margins.left() + 2, margins.top(), -margins.right() - 2, -margins.bottom())
         group = QtGui.QPalette.ColorGroup.Active if self.isEnabled() else QtGui.QPalette.ColorGroup.Disabled

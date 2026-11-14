@@ -371,13 +371,17 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         if first_open:
             # Measure the styled viewport after layout, including the actual
             # frame/header sizes, so the default ends on six complete rows.
-            dialog.layout().activate()
-            row_height = table.rowHeight(0) if table.rowCount() else table.verticalHeader().defaultSectionSize()
+            dialog_layout = dialog.layout()
+            header = table.verticalHeader()
+            viewport = table.viewport()
+            assert dialog_layout is not None and header is not None and viewport is not None
+            dialog_layout.activate()
+            row_height = table.rowHeight(0) if table.rowCount() else header.defaultSectionSize()
             viewport_height = 6 * row_height
-            table.setMinimumHeight(table.height() - table.viewport().height() + viewport_height)
-            dialog.layout().activate()
-            dialog.resize(dialog.width(), dialog.height() + viewport_height - table.viewport().height())
-            dialog.layout().activate()
+            table.setMinimumHeight(table.height() - viewport.height() + viewport_height)
+            dialog_layout.activate()
+            dialog.resize(dialog.width(), dialog.height() + viewport_height - viewport.height())
+            dialog_layout.activate()
         if row >= 0:
             table.scrollToItem(table.item(row, 0), qtw.QAbstractItemView.ScrollHint.PositionAtCenter)
         dialog.raise_()

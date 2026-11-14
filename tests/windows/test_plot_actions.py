@@ -422,6 +422,8 @@ def test_non_single_run_list_selection_cannot_reuse_plot_or_export_target(tmp_pa
         harness.exportRunCsv()
         assert len(harness.plot_calls) == 2
         assert len(exported) == 1
+        assert exported_batches == []
+        harness.export_selected_runs_csv()
         assert exported_batches == [(1, 2)]
     finally:
         treeWidgets.isfile = old_isfile

@@ -9,7 +9,12 @@ from qplot._icons import application_icon
 from qplot._metadata import version_info
 from qplot.diagnostics import default_log_file
 
-from ._commands import COMMANDS, MOUSE_AND_SELECTION_HELP, create_action, shortcut_help_html
+from ._commands import (
+    COMMANDS,
+    MOUSE_AND_SELECTION_HELP,
+    create_action,
+    shortcut_help_html,
+)
 
 _OPEN_HELP_DIALOGS: list[qtw.QDialog] = []
 
@@ -101,7 +106,8 @@ def add_help_menu(
             None,
         )
         if settings_menu is None:
-            settings_menu = menu_bar.addMenu("&Settings")
+            settings_menu = qtw.QMenu("&Settings", menu_bar)
+            menu_bar.addMenu(settings_menu)
         settings_menu.addAction(desktop_action)
 
     about_action = QtGui.QAction("&About qPlot", window)
@@ -171,9 +177,8 @@ def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     dialog.setProperty("qplotUpdatePrefixHtml", html + "<hr>")
     buttons = dialog.findChild(qtw.QDialogButtonBox)
     if buttons is not None:
-        check_button = buttons.addButton(
-            "Check for Updates", qtw.QDialogButtonBox.ButtonRole.ActionRole,
-        )
+        check_button = qtw.QPushButton("Check for Updates", buttons)
+        buttons.addButton(check_button, qtw.QDialogButtonBox.ButtonRole.ActionRole)
         check_button.setObjectName("aboutCheckForUpdatesButton")
         check_button.setToolTip("Check PyPI for a newer qPlot release.")
 

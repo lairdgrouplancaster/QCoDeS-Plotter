@@ -1340,7 +1340,8 @@ class PreviewImageLabel(qtw.QLabel):
         self.setAccessibleDescription(
             "Ctrl/Cmd-click to select several thumbnails; Shift-click selects a range. "
             "Drag a highlighted thumbnail to add the selection to a plot. "
-            "Press Enter or Space to plot. Press Menu or Shift+F10 for plot and export actions."
+            "Press Enter to plot; Space toggles selection. "
+            "Press Menu or Shift+F10 for plot, export and statistics actions."
             if self.plot_supported else
             "Ctrl/Cmd-click to select several thumbnails; Shift-click selects a range. "
             "Press Menu or Shift+F10 for CSV export and statistics. Plotting is unavailable."

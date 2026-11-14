@@ -128,10 +128,7 @@ def test_appearance_swap_keeps_multiple_cuts_linked(heatmap_with_cuts, axes):
     dialog = heatmap._heatmap_appearance_dialog
     dialog.x_axis.setCurrentText(axes[0])
     dialog.y_axis.setCurrentText(axes[1])
-    swap = next(
-        checkbox for checkbox in dialog.findChildren(qtw.QCheckBox)
-        if checkbox.text() == "Swap X/Y"
-    )
+    swap = dialog.swap_axes
     original_axes = dict(heatmap.axis_options)
     original_cuts = {
         cut.sweep_id: (cut.fixed_indep, cut.fixed_value,

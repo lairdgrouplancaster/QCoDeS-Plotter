@@ -1772,10 +1772,11 @@ class _TraceAppearanceDialog(qtw.QDialog):
         return -1
 
     def _selected_style_color(self, combo: qtw.QComboBox) -> str:
-        attr = {
+        attributes: dict[qtw.QComboBox, str] = {
             self.line_color: "line_color",
             self.marker_color: "markers_color",
-            }.get(combo)
+            }
+        attr = attributes.get(combo)
         labels = self._selected_labels()
         if attr and labels:
             style = self.owner._trace_styles.get(labels[0])

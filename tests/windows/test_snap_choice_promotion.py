@@ -62,7 +62,7 @@ def promotion_plot(request, tmp_path, monkeypatch):
 def _assert_source_values(host):
     for line in host.lines.values():
         np.testing.assert_array_equal(line.getOriginalDataset(), [[0, 1, 2], [0, 1, 2]])
-    for layer in host.heatmaps.values():
+    for layer in getattr(host, "heatmaps", {}).values():
         grid = layer.dataGrid if layer is host else layer.data_grid
         np.testing.assert_array_equal(grid, [[10, 11, 12], [20, 21, 22]])
 
@@ -78,7 +78,7 @@ def _assert_pointer_mode(host, snapping):
         dialog.select_trace(key)
         dialog.x_axis.setCurrentText("Top")
         dialog.y_axis.setCurrentText("Right")
-    dialog.hide()
+    dialog.accept()
     line = next(iter(host.lines.values()))
     owner = line.getViewBox()
     owner.setRange(xRange=(-0.5, 2.5), yRange=(-0.5, 2.5), padding=0)
@@ -147,6 +147,7 @@ def test_appearance_removal_preserves_cursor_mode(
         dialog.select_trace(overlay.from_win._trace_key)
     previous = set(main.windows)
     QtTest.QTest.mouseClick(dialog.remove_item_button, QtCore.Qt.MouseButton.LeftButton)
+    dialog.accept()
     if remove_primary:
         _wait_for(lambda: any(window not in previous for window in main.windows))
         target = next(window for window in main.windows if window not in previous)

@@ -115,7 +115,7 @@ def test_trace_hover_warnings_match_appearance_and_clear_with_target_changes(mix
     expected = tuple(side.lower() for side in axes)
     _assert_appearance_parity(window, dialog, "trace", key, expected)
     _assert_appearance_parity(window, dialog, "trace", window.label, ())
-    dialog.reject()
+    dialog.accept()
     qtw.QApplication.processEvents()
 
     _inspect_line(window, line)
@@ -172,7 +172,9 @@ def test_primary_heatmap_hover_warns_for_reordered_shared_axis_labels(mixed_plot
     dialog._move_rows_to_position([row], 0)
     key = window._primary_heatmap_key
     _assert_appearance_parity(window, dialog, "heatmap", key, ("bottom", "left"))
-    dialog.reject()
+    dialog.accept()
+    # Keep the sample clear of inward axis ticks on small offscreen canvases.
+    window.resize(1200, 700)
     qtw.QApplication.processEvents()
 
     point = window._primary_heatmap_viewbox().mapViewToScene(QtCore.QPointF(1, 10))

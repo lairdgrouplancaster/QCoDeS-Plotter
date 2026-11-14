@@ -254,6 +254,7 @@ class _PreferencesPage(qtw.QScrollArea):
         self.setWidget(page)
         page.setAutoFillBackground(False)
         form = page.layout()
+        assert form is not None
         form.setSizeConstraint(qtw.QLayout.SizeConstraint.SetNoConstraint)
         page.setMinimumWidth(0)
         page.setSizePolicy(qtw.QSizePolicy.Policy.Ignored, qtw.QSizePolicy.Policy.Preferred)
@@ -277,11 +278,15 @@ class _PreferencesPage(qtw.QScrollArea):
 
     def _reflow_form(self):
         page = self.widget()
-        if page is None or not isinstance(page.layout(), qtw.QFormLayout):
+        if page is None:
             return
         form = page.layout()
+        if not isinstance(form, qtw.QFormLayout):
+            return
         margins = form.contentsMargins()
-        available = self.viewport().width() - margins.left() - margins.right()
+        viewport = self.viewport()
+        assert viewport is not None
+        available = viewport.width() - margins.left() - margins.right()
         for child in page.findChildren(qtw.QWidget, options=QtCore.Qt.FindChildOption.FindDirectChildrenOnly):
             child.setMaximumWidth(max(1, available))
         needed = 0
@@ -297,7 +302,9 @@ class _PreferencesPage(qtw.QScrollArea):
             form.setRowWrapPolicy(policy)
 
     def sizeHint(self):
-        return self.widget().sizeHint().boundedTo(QtCore.QSize(600, 440))
+        page = self.widget()
+        assert page is not None
+        return page.sizeHint().boundedTo(QtCore.QSize(600, 440))
 
     def minimumSizeHint(self):
         return QtCore.QSize(160, 80)
@@ -329,7 +336,9 @@ class _PreferencesCheckBox(qtw.QCheckBox):
         option = qtw.QStyleOptionButton()
         self.initStyleOption(option)
         option.rect = QtCore.QRect(0, 0, width, self.height())
-        return self.style().subElementRect(qtw.QStyle.SubElement.SE_CheckBoxContents, option, self)
+        style = self.style()
+        assert style is not None
+        return style.subElementRect(qtw.QStyle.SubElement.SE_CheckBoxContents, option, self)
 
     def minimumSizeHint(self):
         size = super().minimumSizeHint()
@@ -356,9 +365,11 @@ class _PreferencesCheckBox(qtw.QCheckBox):
         rect = self._text_rect(self.width())
         flags = (QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter
                  | QtCore.Qt.TextFlag.TextWordWrap | QtCore.Qt.TextFlag.TextShowMnemonic)
-        if not self.style().styleHint(qtw.QStyle.StyleHint.SH_UnderlineShortcut, option, self):
+        style = self.style()
+        assert style is not None
+        if not style.styleHint(qtw.QStyle.StyleHint.SH_UnderlineShortcut, option, self):
             flags |= QtCore.Qt.TextFlag.TextHideMnemonic
-        self.style().drawItemText(painter, rect, flags, option.palette, self.isEnabled(),
+        style.drawItemText(painter, rect, flags, option.palette, self.isEnabled(),
                                   self.text(), QtGui.QPalette.ColorRole.WindowText)
         if self.hasFocus():
             focus = qtw.QStyleOptionFocusRect()
@@ -459,10 +470,10 @@ class PreferencesDialog(qtw.QDialog):
         return screen.availableGeometry() if screen is not None else QtCore.QRect(0, 0, 1024, 768)
 
     def _match_action_button_widths(self):
-        buttons = [self.buttonBox.button(standard) for standard in (
+        buttons = [button for standard in (
             qtw.QDialogButtonBox.StandardButton.Ok, qtw.QDialogButtonBox.StandardButton.Cancel,
             qtw.QDialogButtonBox.StandardButton.Apply,
-        )]
+        ) if (button := self.buttonBox.button(standard)) is not None]
         width = max(button.sizeHint().width() for button in buttons)
         for button in buttons:
             button.setFixedWidth(width)
@@ -476,14 +487,19 @@ class PreferencesDialog(qtw.QDialog):
         available = self._available_geometry().adjusted(16, 16, -16, -16)
         frame = self.frameGeometry().size() - self.size()
         hint = self.sizeHint()
-        margins = self.layout().contentsMargins()
+        layout = self.layout()
+        assert layout is not None
+        margins = layout.contentsMargins()
         bar = self.tabs.tabBar()
+        assert bar is not None
         tabs_width = sum(bar.tabSizeHint(index).width() for index in range(bar.count()))
+        style = self.style()
+        assert style is not None
         tabs_width += (margins.left() + margins.right()
-                       + 2 * self.style().pixelMetric(qtw.QStyle.PixelMetric.PM_DefaultFrameWidth))
+                       + 2 * style.pixelMetric(qtw.QStyle.PixelMetric.PM_DefaultFrameWidth))
         self.resize(min(max(600, hint.width(), tabs_width), available.width() - max(0, frame.width())),
                     min(max(420, hint.height()), available.height() - max(0, frame.height())))
-        self.layout().activate()
+        layout.activate()
         position = self.frameGeometry()
         position.moveCenter(available.center())
         self.move(position.topLeft())
@@ -493,8 +509,11 @@ class PreferencesDialog(qtw.QDialog):
         if not hasattr(self, "buttonBox"):
             return
         self._match_action_button_widths()
-        margins = self.layout().contentsMargins()
-        spacing = self.style().pixelMetric(qtw.QStyle.PixelMetric.PM_LayoutHorizontalSpacing)
+        layout = self.layout()
+        style = self.style()
+        assert layout is not None and style is not None
+        margins = layout.contentsMargins()
+        spacing = style.pixelMetric(qtw.QStyle.PixelMetric.PM_LayoutHorizontalSpacing)
         buttons = self.buttonBox.buttons()
         needed = (sum(max(button.sizeHint().width(), button.minimumWidth()) for button in buttons)
                   + max(0, spacing) * (len(buttons) - 1))

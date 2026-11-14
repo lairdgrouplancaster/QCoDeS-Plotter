@@ -86,12 +86,12 @@ def _assert_overlays(window, viewbox):
         assert item not in window.plot.curves
 
 
-def _drag_in_view(window, start, end, modifiers, viewbox=None):
+def _drag_in_view(window, start, end, modifiers, viewbox=None, *, button=QtCore.Qt.MouseButton.LeftButton):
     viewbox = window.vb if viewbox is None else viewbox
     viewport = window.widget.viewport()
     start = window.widget.mapFromScene(viewbox.mapViewToScene(start))
     end = window.widget.mapFromScene(viewbox.mapViewToScene(end))
-    QTest.mousePress(viewport, QtCore.Qt.MouseButton.LeftButton, modifiers, start)
+    QTest.mousePress(viewport, button, modifiers, start)
     # Supply pressed-button state explicitly; offscreen QTest.mouseMove does
     # not retain it on every Qt platform.
     midpoint = QtCore.QPoint((start.x() + end.x()) // 2, (start.y() + end.y()) // 2)
@@ -99,10 +99,10 @@ def _drag_in_view(window, start, end, modifiers, viewbox=None):
         event = QtGui.QMouseEvent(
             QtCore.QEvent.Type.MouseMove,
             QtCore.QPointF(position), QtCore.QPointF(viewport.mapToGlobal(position)),
-            QtCore.Qt.MouseButton.NoButton, QtCore.Qt.MouseButton.LeftButton, modifiers,
+            QtCore.Qt.MouseButton.NoButton, button, modifiers,
         )
         qtw.QApplication.sendEvent(viewport, event)
-    QTest.mouseRelease(viewport, QtCore.Qt.MouseButton.LeftButton, modifiers, end)
+    QTest.mouseRelease(viewport, button, modifiers, end)
     qtw.QApplication.processEvents()
 
 

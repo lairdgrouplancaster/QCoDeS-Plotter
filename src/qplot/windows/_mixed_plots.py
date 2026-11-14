@@ -25,6 +25,9 @@ else:
 
 
 class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _MixedPlotBase):
+    _appearance_action_token: dict[str, bool] | None = None
+    _appearance_preview_hidden: bool = False
+
     def initMenu(self):
         super().initMenu()
         menu_bar = self.menuBar()

@@ -186,7 +186,12 @@ def test_writer_can_commit_during_export(tmp_path):
 
 @pytest.mark.parametrize("live", [False, True])
 def test_selected_runs_reopen_in_qcodes(tmp_path, live):
-    from qcodes.dataset import initialise_or_create_database_at, load_or_create_experiment, Measurement, load_by_id
+    from qcodes.dataset import (
+        Measurement,
+        initialise_or_create_database_at,
+        load_by_id,
+        load_or_create_experiment,
+    )
     from qcodes.dataset.sqlite.database import connect
     path = tmp_path / "qcodes.db"
     initialise_or_create_database_at(str(path), journal_mode="WAL" if live else "DELETE")

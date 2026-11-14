@@ -111,7 +111,9 @@ def test_one_marker_editor_changes_symbols_without_changing_samples(mixed_plot, 
     style = deepcopy(target._trace_styles[key])
     target.open_plot_appearance_dialog()
     dialog = target._plot_appearance_dialog
-    dialog.select_trace(key)
+    assert dialog.select_trace(key)
+    # Settle native show/focus events before editing the selected dataset.
+    qapplication.processEvents()
     assert not hasattr(dialog, "dots_enable")
     dialog.marker_enable.setChecked(True)
     dialog.marker_symbol.setCurrentIndex(dialog.marker_symbol.findData("s"))

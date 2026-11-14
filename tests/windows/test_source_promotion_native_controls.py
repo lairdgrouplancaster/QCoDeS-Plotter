@@ -100,6 +100,7 @@ def test_appearance_removal_preserves_native_display_and_average(
     assert dialog.remove_item_button.isEnabled()
     previous_windows = set(window.windows)
     dialog.remove_item_button.click()
+    dialog.accept()  # Removal is committed when the appearance session is accepted.
     assert not errors
     if primary:
         wait_for(lambda: any(plot not in previous_windows for plot in window.windows))
@@ -158,6 +159,7 @@ def test_removal_keeps_maximum_visible_traces(
     dialog.select_trace(key)
     previous = set(window.windows)
     dialog.remove_item_button.click()
+    dialog.accept()  # Removal is committed when the appearance session is accepted.
     assert not errors
     if primary:
         wait_for(lambda: any(plot not in previous for plot in window.windows))

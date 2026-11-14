@@ -443,7 +443,7 @@ def test_placeholders_offer_export_stats_and_supported_plots_with_drag(
         QtTest.QTest.mouseDClick(label, QtCore.Qt.MouseButton.LeftButton)
         QtTest.QTest.keyClick(label, QtCore.Qt.Key.Key_Return)
         QtTest.QTest.keyClick(label, QtCore.Qt.Key.Key_Space)
-        assert [kind for kind, _ in signals] == (["plot"] * 3 if dimension <= 3 else [])
+        assert [kind for kind, _ in signals] == (["plot"] * 2 if dimension <= 3 else [])
         signals.clear()
 
         def choose(menu, _position):

@@ -34,6 +34,7 @@ class _GradientDelegate(qtw.QStyledItemDelegate):
         opt.text = ""
         opt.icon = QtGui.QIcon()
         style = opt.widget.style() if opt.widget else qtw.QApplication.style()
+        assert style is not None
         style.drawControl(qtw.QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
         rect = opt.rect.adjusted(6, 0, -6, 0)
         rect.setHeight(min(14, opt.rect.height()))
@@ -69,6 +70,7 @@ class ColourMapButton(qtw.QPushButton):
         option.text = ""
         painter = QtGui.QPainter(self)
         style = self.style()
+        assert style is not None
         style.drawControl(qtw.QStyle.ControlElement.CE_PushButton, option, painter, self)
         rect = style.subElementRect(qtw.QStyle.SubElement.SE_PushButtonContents, option, self)
         rect.adjust(10, 0, -10, 0)
@@ -232,9 +234,9 @@ class ColourMapPicker(qtw.QWidget):
                                                  QtCore.Qt.ItemDataRole.ToolTipRole)
         for title, combo in (("Source:", self.source_combo),
                              ("Category:", self.category_combo)):
-            label = qtw.QLabel(title)
-            label.setBuddy(combo)
-            layout.addWidget(label)
+            field_label = qtw.QLabel(title)
+            field_label.setBuddy(combo)
+            layout.addWidget(field_label)
             layout.addWidget(combo)
             combo.setToolTip(f"Filter colour maps by {title[:-1].lower()}.")
             combo.currentIndexChanged.connect(self._apply_filters)
@@ -247,7 +249,9 @@ class ColourMapPicker(qtw.QWidget):
         table = self.table
         categories = set()
         for row in range(table.rowCount()):
-            name = table.item(row, 0).data(QtCore.Qt.ItemDataRole.UserRole)
+            item = table.item(row, 0)
+            assert item is not None
+            name = item.data(QtCore.Qt.ItemDataRole.UserRole)
             if source == "all" or source == _colorbar_colormap_group(name):
                 categories.add(_colorbar_colormap_category(name))
         labels = dict(_CET_COLORBAR_SUBTYPES + _MATPLOTLIB_COLORBAR_SUBTYPES)
@@ -279,6 +283,7 @@ class ColourMapPicker(qtw.QWidget):
         with QtCore.QSignalBlocker(table):
             for row in range(table.rowCount()):
                 item = table.item(row, 0)
+                assert item is not None
                 name = item.data(QtCore.Qt.ItemDataRole.UserRole)
                 visible = (
                     (not query or query in item.text().casefold() or query in name.casefold())
@@ -297,7 +302,9 @@ class ColourMapPicker(qtw.QWidget):
         table.setColumnCount(3)
         table.setHorizontalHeaderLabels(("Name", "Preview", "Type"))
         for column, title in ((0, "name"), (2, "type")):
-            table.horizontalHeaderItem(column).setToolTip(
+            header_item = table.horizontalHeaderItem(column)
+            assert header_item is not None
+            header_item.setToolTip(
                 f"Click to sort by {title}; click again to reverse the order."
             )
         vertical_header = table.verticalHeader()
@@ -360,9 +367,11 @@ class ColourMapPicker(qtw.QWidget):
         table.resizeColumnToContents(0)
         table.resizeColumnToContents(2)
         # Reserve a useful minimum gradient width beside the longest name/type.
+        scrollbar = table.verticalScrollBar()
+        assert scrollbar is not None
         table.setMinimumWidth(
             table.columnWidth(0) + table.columnWidth(2) + 120 + 12
-            + table.verticalScrollBar().sizeHint().width() + 2 * table.frameWidth()
+            + scrollbar.sizeHint().width() + 2 * table.frameWidth()
         )
         table.setSortingEnabled(sorting_enabled)
         table.blockSignals(False)
@@ -430,7 +439,8 @@ class ColourMapPicker(qtw.QWidget):
                     else:
                         widget.setCurrentIndex(0)
             self._apply_filters()
-        table.doItemsLayout()
+        # QTableView implements this protected slot, omitted from PyQt's stubs.
+        QtCore.QMetaObject.invokeMethod(table, "doItemsLayout")
         table.resizeColumnToContents(0)
         table.resizeColumnToContents(2)
         self.select_map(name)

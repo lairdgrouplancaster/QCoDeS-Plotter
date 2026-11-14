@@ -165,7 +165,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             mode = "new"
 
         handle_offset = QtCore.QPointF()
-        if mode not in {"new", "move"} and self.marquee is not None:
+        if mode != "new" and mode != "move" and self.marquee is not None:
             handle_point = self._marquee_handle_points_for_rect(self.marquee)[mode]
             handle_offset = start - handle_point
 

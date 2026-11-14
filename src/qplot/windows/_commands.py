@@ -547,7 +547,7 @@ def configure_action(
         if not hasattr(action, "_qplot_key_focus_filter"):
             focus_filter = _PlotKeyFocusFilter(action)
             action.installEventFilter(focus_filter)
-            action._qplot_key_focus_filter = focus_filter
+            action.__dict__["_qplot_key_focus_filter"] = focus_filter
 
     action.setShortcutContext(spec.shortcut_context)
     if hasattr(action, "setShortcutVisibleInContextMenu"):

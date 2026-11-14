@@ -46,9 +46,10 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         super().__init__(owner)
         self._session_active = False
         self._session_finishing = False
-        self._preview_removed = {}
-        self._preview_owners = []
+        self._preview_removed: dict[tuple[str, Any], bool] = {}
+        self._preview_owners: list[MixedPlotMixin] = []
         self.appearance_buttons.removeButton(self.revert_button)
+        assert self.revert_button is not None
         self.revert_button.hide()
         self.appearance_buttons.setStandardButtons(
             qtw.QDialogButtonBox.StandardButton.Ok | qtw.QDialogButtonBox.StandardButton.Cancel,
@@ -56,14 +57,18 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         self.appearance_buttons.rejected.disconnect()
         self.appearance_buttons.rejected.connect(self.reject)
         self.appearance_buttons.accepted.connect(self.accept)
-        self.appearance_buttons.button(qtw.QDialogButtonBox.StandardButton.Ok).setToolTip(
+        ok_button = self.appearance_buttons.button(qtw.QDialogButtonBox.StandardButton.Ok)
+        cancel_button = self.appearance_buttons.button(qtw.QDialogButtonBox.StandardButton.Cancel)
+        assert ok_button is not None and cancel_button is not None
+        ok_button.setToolTip(
             "Keep all changes made in this dialog."
         )
-        self.appearance_buttons.button(qtw.QDialogButtonBox.StandardButton.Cancel).setToolTip(
+        cancel_button.setToolTip(
             "Discard all changes made in this dialog."
         )
         for button in self.appearance_buttons.buttons():
-            button.setAutoDefault(False)
+            if isinstance(button, qtw.QPushButton):
+                button.setAutoDefault(False)
         self.setWindowTitle("Plot appearance")
         self.table.setObjectName("plotAppearanceTable")
         self.table.setColumnCount(4)

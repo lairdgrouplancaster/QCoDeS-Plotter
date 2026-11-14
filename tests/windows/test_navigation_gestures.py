@@ -6,8 +6,8 @@ import pytest
 from PyQt6 import QtCore, QtGui, QtTest, QtWidgets
 
 from qplot.windows._commands import _PlotKeyFocusFilter, create_action
-from qplot.windows._plot_marquee import PlotMarqueeMixin
 from qplot.windows._plot2d_sweeps import Plot2DSweepMixin
+from qplot.windows._plot_marquee import PlotMarqueeMixin
 from qplot.windows._subplots.subplot1d import custom_viewbox
 
 
