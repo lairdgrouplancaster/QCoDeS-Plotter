@@ -129,6 +129,18 @@ class PlotExportControls(qtw.QWidget):
             colour.setAccessibleName("Export background colour")
             colour.setToolTip("Choose the background colour and transparency.")
             colour.colorDialog.setParent(colour, QtCore.Qt.WindowType.Dialog)
+            # Qt exposes the alpha editor through its label's buddy, rather
+            # than an object name. Match Qt's own translated label.
+            alpha_label = QtCore.QCoreApplication.translate("QColorDialog", "A&lpha channel:")
+            for label in colour.colorDialog.findChildren(qtw.QLabel):
+                if label.text() == alpha_label:
+                    tip = ("Background opacity: 0 is fully transparent; 255 is fully opaque. "
+                           "PNG and SVG retain transparency; JPEG does not.")
+                    label.setToolTip(tip)
+                    editor = label.buddy()
+                    if editor is not None:
+                        editor.setToolTip(tip)
+                    break
             colour.sigColorChanging.connect(lambda button: self._write("background", button.color()))
             colour.sigColorChanged.connect(lambda button: self._write("background", button.color()))
             self.fields["background"] = colour
