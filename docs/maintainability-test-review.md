@@ -25,9 +25,10 @@ contain 143,846 lines, including their fixtures and helpers.
 | Numerical, database and cancellation tests often look similar while checking different failure mechanisms. | Retain the independent rational oracles, scalar/array and memory/buffered/streamed routes, numerical boundaries, cancellation phases and writer/reader lifecycle checks. |
 | Large mixed test modules and implementation-sensitive assertions remain. | Keep their current protection during this refactor. Split by a demonstrable behaviour boundary when modifying the relevant feature; a file-size target alone is not sufficient justification for changing assertions. |
 
-No application or native-reader code is changed. The settings simplification
-does not introduce support for old settings formats. It derives invalid inputs
-from the current settings schema and checks the documented reset behaviour.
+No application or native-reader code is changed by the initial reorganisation.
+The settings simplification does not introduce support for old settings formats.
+It derives invalid inputs from the current settings schema and checks the
+documented reset behaviour.
 Dedicated tests of particular default values remain separate from recovery.
 
 ## Requirements and evidence
@@ -269,27 +270,36 @@ selected runs and external measurement storage both reject the export. A parent
 can terminate a child after receiving its error, before the child saves coverage.
 Keep those rejection tests and ordinary termination behaviour intact.
 
-Seven additional cases cover concrete gaps:
+Nine additional cases cover concrete gaps:
 
 | Condition | Observable protection |
 | --- | --- |
 | An export child stops reporting progress, while the overall deadline remains in the future. | Report the no-progress timeout, reap the observed child, remove its private files and leave the source and empty stage unchanged. |
 | A child exits without a result, or reports completion but exits unsuccessfully. | Reject both outcomes before copying its output; reap the child and remove its private files. |
+| The export pipe disconnects during polling or receiving. | Report the expected export-process failure, retain the original exception as its cause, reap the child and remove its private files. |
 | Either shutdown watchdog, or both, cannot start. | Retain the exact startup diagnostics and the supervisor's original deadline; an expired deadline still reaches the caller's forced-exit path. |
 | The diagnostic persistence thread cannot start. | Permit a subsequent retry with the latest resource snapshot and the startup diagnostic; avoid duplicate writes and persistence after disarming. |
 
 The existing cancellation and total-deadline cases now also observe populated
-private database, WAL, SHM and journal files before aborting. All five export
+private database, WAL, SHM and journal files before aborting. All seven export
 failure cases use real spawned children, with an explicit startup observation.
 The incomplete-result cases use a handshake before the child exits. Watchdog
 startup tests use real joined threads and an already expired deadline, avoiding
 assumptions about operating-system timer rounding. The persistence retry test
 isolates its worker from unrelated deadline watchdogs.
 
+The real child-exit test exposed a Windows race: `Connection.poll()` can raise
+`BrokenPipeError` when its peer exits. Previously, only `EOFError` from `recv()`
+was translated into the intended export-process failure. The application now
+handles EOF and operating-system errors around both pipe operations. The original
+exception remains available as the cause, and existing child and scratch-file
+cleanup is preserved. Both deterministic disconnection tests failed on the
+original application code and pass with this narrow repair.
+
 The focused checks pass both ordinarily and with parent-process measurement:
-**28 passed** in each run. The broader lifecycle, database export, database-copy
-UI, bounded shutdown and shutdown coordinator selection reports **222 passed,
-21 POSIX-specific skips** on Windows. Collection is **8,312 cases**, with no lost
+**30 passed** in each run. The broader lifecycle, database export, database-copy
+UI, bounded shutdown and shutdown coordinator selection reports **224 passed,
+21 POSIX-specific skips** on Windows. Collection is **8,314 cases**, with no lost
 or duplicated cases. These follow-up changes have local Windows validation;
 the earlier hosted matrix validates the merged PR #141 revision.
 
@@ -297,19 +307,23 @@ Four isolated fault injections disable no-progress rejection, unsuccessful-child
 exit rejection, the expired-deadline exit or retry after a diagnostic thread
 startup failure. Each corresponding test fails as expected. The faults modify
 loaded functions only within separate test processes; application source files
-remain untouched. Ruff, documentation image validation and a strict MkDocs build
-also pass.
+remain untouched by those diagnostics. Ruff, documentation image validation and
+a strict MkDocs build also pass. Mypy passes for all 159 configured source files
+using CI's Linux/Python 3.12 target and an analysis-only overlay of its validated
+PyQt6 6.11.0 stubs. The overlay silences imported stub diagnostics as installed
+packages normally do; the project's checks and runtime environment are unchanged.
+An isolated offscreen `python -m qplot` run opened and rendered the main window
+and closed normally with exit code zero.
 
-| Application module | Previously measured statements | Additional statements | Total statements |
-| --- | ---: | ---: | ---: |
-| `database_export.py` | 140 | 4 | 157 |
-| `_process_shutdown.py` | 152 | 16 | 193 |
-
-This table combines the earlier local and hosted observations with the focused
-follow-up measurement. Remaining unmeasured paths include child termination,
-native/platform-specific operations and fault branches requiring separate
-behavioural analysis. Application and native-reader source remain unchanged.
-Logs, JUnit results and the line comparison are retained locally under
+The focused coverage report confirms execution of the pipe-disconnection,
+no-progress, unsuccessful-exit and shutdown thread-start failure paths.
+The unchanged `_process_shutdown.py` gains 16 measured statements relative to
+the earlier local and hosted observations. Export line totals are kept separate
+because the pipe repair changes its source. Remaining unmeasured paths include
+child termination, native/platform-specific operations and fault branches
+requiring separate behavioural analysis. The native reader, database access
+invariant and release workflow are unchanged. Logs, JUnit results, coverage
+reports, fault-injection results and the startup smoke record are retained under
 `.recovery/export-shutdown-review/`.
 
 ## Practical limits

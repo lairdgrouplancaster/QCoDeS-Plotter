@@ -249,12 +249,12 @@ def test_failed_watchdog_start_cannot_prevent_exit_at_expired_deadline(
         persist_diagnostics=lambda **snapshot: persisted.append(snapshot),
         force_exit=lambda code: forced.append(code),
     )
-    started_at = monotonic()
-    hard_deadline = started_at - 1
+    started_at = monotonic() - 2
+    hard_deadline = started_at + 1
     try:
         diagnostic = fail_safe.arm(
             started_at=started_at,
-            diagnostic_deadline=started_at - 2,
+            diagnostic_deadline=started_at + 0.5,
             hard_deadline=hard_deadline,
         )
         expected = tuple(
