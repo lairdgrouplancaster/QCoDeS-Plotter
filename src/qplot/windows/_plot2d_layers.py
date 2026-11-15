@@ -2114,11 +2114,15 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         for row in range(self.table.rowCount()):
             if self._key_for_row(row) != key:
                 continue
-            self.table.clearSelection()
-            self.table.selectRow(row)
             item = self.table.item(row, self._COL_ID)
             if item is not None:
-                self.table.setCurrentItem(item)
+                # Explicit flags keep held Ctrl/Shift from toggling or
+                # extending this programmatic whole-row selection.
+                self.table.setCurrentItem(
+                    item,
+                    QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect
+                    | QtCore.QItemSelectionModel.SelectionFlag.Rows,
+                )
                 self.table.scrollToItem(item)
             return True
         return False
