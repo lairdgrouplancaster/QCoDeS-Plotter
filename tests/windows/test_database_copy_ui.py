@@ -19,6 +19,8 @@ def prepare(window, tmp_path, monkeypatch):
         connection.execute("INSERT INTO runs VALUES (197)")
     window._loaded_database_instance = database_instance(source)
     window.fileTextbox.setText(str(source))
+    window.RunList.addRuns({197: {"guid": "export-run"}})
+    window._sync_database_generation_controls()
     monkeypatch.setattr(window, "_generation_gate_allows_action", lambda **_: True)
     target = tmp_path / "copy.db"
     monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", lambda *a, **k: (str(target), ""))
@@ -31,6 +33,7 @@ def test_menu_exports_standalone_database(export_window, tmp_path, monkeypatch):
     before = source.read_bytes()
     action = window.findChild(QtGui.QAction, "exportDatabaseCopyAction")
     assert action.text() == "Export All Runs as Database…"
+    assert action.isEnabled()
     action.trigger()
     manager = window._export_task_manager
     wait_for(lambda: not manager.tasks)
@@ -89,12 +92,15 @@ def test_selected_database_action_captures_only_run_selection(export_window, tmp
     window, errors = export_window
     _, target = prepare(window, tmp_path, monkeypatch)
     monkeypatch.setattr(window.RunList, "selected_run_ids", lambda: [197])
+    window._sync_database_generation_controls()
     captured = []
     def write(filename, **kwargs):
         captured.append(kwargs["run_ids"])
         Path(filename).write_bytes(b"test copy")
     monkeypatch.setattr(_database_export, "export_database_copy", write)
-    window.findChild(QtGui.QAction, "exportSelectedRunsDatabaseAction").trigger()
+    action = window.findChild(QtGui.QAction, "exportSelectedRunsDatabaseAction")
+    assert action.isEnabled()
+    action.trigger()
     wait_for(lambda: not window._export_task_manager.tasks)
     assert captured == [(197,)]
     assert target.exists()

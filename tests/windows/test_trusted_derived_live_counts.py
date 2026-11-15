@@ -157,7 +157,7 @@ def test_background_metadata_clears_unselected_real_qcodes_run(
                 assert item.run_metadata == before
                 for _ in range(3):
                     accepted = publish(fields, observation)
-                    assert item.text(column) == "unknown"
+                    assert item.text(column) == "Unknown"
                     for metadata in (
                         item.run_metadata,
                         window.infoBox.preview.run_metadata[guid],
@@ -171,7 +171,7 @@ def test_background_metadata_clears_unselected_real_qcodes_run(
                         replace(accepted, generation=accepted.generation - 1)
                     )
                     assert item.run_metadata == before
-                    assert item.text(column) == "unknown"
+                    assert item.text(column) == "Unknown"
                     assert (item not in window.RunList.watching) == completed
                     assert window.RunList.selectedItems() == []
                     assert window._selected_run_guid is None

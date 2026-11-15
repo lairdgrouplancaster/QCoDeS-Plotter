@@ -887,7 +887,9 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
             line_dataset,
             window._current_dataset_key(line_dataset.guid),
         )
-        window.openPlot(params=[line_param], show=True)
+        # Background metadata may change the table selection during launch.
+        # Keep the requested run explicit across asynchronous plot loading.
+        window.openPlot(guid=str(line_dataset.guid), params=[line_param], show=True)
         wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         line_window = window.windows[-1]
         wait_for(
@@ -912,7 +914,7 @@ def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
             heatmap_dataset,
             window._current_dataset_key(heatmap_dataset.guid),
         )
-        window.openPlot(params=[heatmap_param], show=False)
+        window.openPlot(guid=str(heatmap_dataset.guid), params=[heatmap_param], show=False)
         wait_for(lambda: not getattr(window, "_trusted_plot_pending", ()))
         heatmap_window = window.windows[-1]
         wait_for(
@@ -3268,8 +3270,9 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
         assert_same_path_generation_consumers_released(window)
         assert window.testDatabaseGenerationThreadPool.activeThreadCount() == 1
         assert window.loadDatabaseButton.isEnabled()
-        assert window.spinBox.isEnabled()
         for control in (
+            window.spinBox,
+            window.refreshIntervalLabel,
             window.refreshDatabaseButton,
             window.databaseInfoButton,
             window.plotRunButton,
@@ -3294,6 +3297,7 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
         assert not window._database_view_released_for_generation
         assert window._test_database_replacement_state is None
         assert window.generateTestDatabaseAction.isEnabled()
+        assert window.spinBox.isEnabled()
         assert window.monitor.isActive()
         assert window.monitor.interval() == expected_monitor_interval
         assert window.ds is None
