@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -389,6 +390,25 @@ def _replace_metadata_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
+def service_clock(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """Control broker deadlines while retaining a real fake-job safety timeout."""
+    clock = SimpleNamespace(now=100.0)
+    monkeypatch.setattr(
+        service_module, "time",
+        SimpleNamespace(monotonic=lambda: clock.now, sleep=time.sleep),
+    )
+    original_wait = _FakeSupervisor.wait
+
+    def wait(self, job, *, timeout=None):
+        # The broker's clock is controlled; this real timeout only detects a
+        # stuck test and must not expire its deliberately blocked fake job.
+        return original_wait(self, job, timeout=5.0)
+
+    monkeypatch.setattr(_FakeSupervisor, "wait", wait)
+    return clock
+
+
+@pytest.fixture
 def service_factory(tmp_path: Path):
     harnesses: list[_ServiceHarness] = []
     next_identity = 1
@@ -565,13 +585,15 @@ def test_cancelling_one_coalesced_subscriber_does_not_cancel_shared_job(
 
 def test_staggered_default_duplicates_share_one_bounded_operation(
     service_factory: Callable[..., _ServiceHarness],
+    service_clock: SimpleNamespace,
 ) -> None:
     harness = service_factory(request_timeout_seconds=0.45)
     harness.supervisor.block("page:0:5")
 
     cancelled = harness.service.submit_basic_page(0, 5)
+    assert cancelled.deadline == service_clock.now + 0.45
     harness.supervisor.wait_until_started("page:0:5")
-    time.sleep(0.12)
+    service_clock.now += 0.12
     survivor = harness.service.submit_basic_page(0, 5)
 
     assert survivor.deadline == cancelled.deadline
@@ -588,10 +610,11 @@ def test_staggered_default_duplicates_share_one_bounded_operation(
 
 def test_different_explicit_deadlines_remain_exact_after_earlier_cancellation(
     service_factory: Callable[..., _ServiceHarness],
+    service_clock: SimpleNamespace,
 ) -> None:
     harness = service_factory(request_timeout_seconds=0.45)
     harness.supervisor.block("page:0:5")
-    first_deadline = time.monotonic() + 0.45
+    first_deadline = service_clock.now + 0.45
 
     cancelled = harness.service.submit_basic_page(
         0,
@@ -599,10 +622,8 @@ def test_different_explicit_deadlines_remain_exact_after_earlier_cancellation(
         deadline=first_deadline,
     )
     first_job = harness.supervisor.wait_until_started("page:0:5")
-    time.sleep(0.12)
-    # Keep the deadlines observably distinct even when a loaded runner delays
-    # the second worker transition before the earlier deadline assertion.
-    survivor_deadline = time.monotonic() + 0.90
+    service_clock.now += 0.12
+    survivor_deadline = service_clock.now + 0.90
     survivor = harness.service.submit_basic_page(
         0,
         5,
@@ -623,8 +644,8 @@ def test_different_explicit_deadlines_remain_exact_after_earlier_cancellation(
     _wait_for(second_job_started)
     second_job = [job for job in harness.supervisor.jobs if job.label == "page:0:5"][1]
     assert second_job is not first_job
-    time.sleep(max(0.0, cancelled.deadline - time.monotonic() + 0.03))
-    assert time.monotonic() < survivor.deadline
+    service_clock.now = cancelled.deadline + 0.03
+    assert service_clock.now < survivor.deadline
     second_job.release.set()
 
     assert survivor.wait(1.0).complete
