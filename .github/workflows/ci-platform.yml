@@ -235,13 +235,17 @@ jobs:
             "-m", "pytest", "-o", "pythonpath=", "--no-cov", "--maxfail=1",
             "-n", "2", "--dist=loadfile",
             "--no-loadscope-reorder",
-            "--timeout=90", "--timeout-method=thread", "--durations=20",
+            "--timeout=90", "--timeout-method=thread", "--durations=20", "-v",
             "-o", "junit_family=xunit1", "--junitxml=$env:QPLOT_CI_TEST_REPORT",
             "@${{ matrix.test-list }}"
           )
+          # The compatibility list has hundreds of tests. Give the whole suite
+          # its own 15-minute budget, retaining two workers, 90-second tests
+          # and two-minute cleanup within the 30-minute job.
           & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
             -FilePath $python `
-            -ArgumentList $arguments
+            -ArgumentList $arguments `
+            -TimeoutSeconds 900
 
       - name: Upload test timings
         if: ${{ !cancelled() }}

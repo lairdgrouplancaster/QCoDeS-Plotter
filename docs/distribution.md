@@ -442,6 +442,12 @@ used by `validate_distribution.py`; the current run's application/native wheels
 are still installed and audited explicitly. Compiler-free installation
 acceptance continues to use fresh environments without package caches.
 
+Windows source suites have explicit total execution budgets: fifteen minutes
+for compatibility checks and twenty-five minutes for each full-suite partition.
+Both retain two workers and a ninety-second individual-test timeout, with two
+minutes reserved for process cleanup within each thirty-minute job. Verbose
+test output identifies the active test if a suite reaches its total deadline.
+
 Full validation runs the complete Windows and ARM64 macOS suites on every
 supported Python version (3.12–3.14), using the same partition counts. It also
 adds Linux compatibility and compiler-free installation checks on Python
