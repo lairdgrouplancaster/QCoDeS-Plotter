@@ -24,6 +24,8 @@ from qplot.updates import (
     latest_release,
 )
 
+from ._small_dialogs import close_default, resize_dialog
+
 
 class UpdateChecker(QtCore.QObject):
     """Share one finite request across Help menus; never occupy a data worker."""
@@ -197,7 +199,7 @@ class UpdateChecker(QtCore.QObject):
         from ._help import _show_help_dialog
 
         dialog = _show_help_dialog(
-            parent, "Check for Updates", message.html, "qplotUpdatesDialog", size=(650, 430),
+            parent, "Check for updates", message.html, "qplotUpdatesDialog", size=(650, 430),
         )
         buttons = dialog.findChild(qtw.QDialogButtonBox)
         if buttons is not None:
@@ -212,6 +214,8 @@ class UpdateChecker(QtCore.QObject):
                         clipboard.setText(str(dialog.property("qplotUpgradeCommand")))
 
                 copy.clicked.connect(copy_command)
+            close_default(buttons)
+            resize_dialog(dialog, 650, 430)
         self._set_upgrade_command(dialog, message.upgrade_command)
         return dialog
 

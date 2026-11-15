@@ -7,11 +7,12 @@ import threading
 from dataclasses import replace
 from typing import Any
 
-from PyQt6 import QtCore, sip
+from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.diagnostics import log_exception
 
+from ._error_dialog import ErrorDialog
 from ._export_paths import ExportDestinationTransaction, StagedExport
 from ._window_controls import _window_is_retired
 
@@ -123,7 +124,10 @@ class ExportTaskManager(QtCore.QObject):
         self.summary.setWordWrap(True)
         layout.addWidget(self.summary)
         self.tree = qtw.QTreeWidget()
-        self.tree.setToolTip("Select exports to cancel. Each row shows its destination, status and progress.")
+        self.tree.setToolTip(
+            "Select a completed export to open its file or folder. Select a failed "
+            "export for details, or unfinished exports to cancel."
+        )
         self.tree.setHeaderLabels(["Export", "Status", "Progress"])
         self.tree.setRootIsDecorated(False)
         self.tree.setSelectionMode(qtw.QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -131,22 +135,36 @@ class ExportTaskManager(QtCore.QObject):
         self.tree.setColumnWidth(1, 210)
         layout.addWidget(self.tree)
         buttons = qtw.QHBoxLayout()
+        self.open_file_button = qtw.QPushButton("Open file")
+        self.open_file_button.setToolTip("Open the selected completed export in its default application.")
+        self.open_file_button.clicked.connect(lambda: self._open_selected_export(folder=False))
+        buttons.addWidget(self.open_file_button)
+        self.open_folder_button = qtw.QPushButton("Open folder")
+        self.open_folder_button.setToolTip("Open the folder containing the selected completed export.")
+        self.open_folder_button.clicked.connect(lambda: self._open_selected_export(folder=True))
+        buttons.addWidget(self.open_folder_button)
+        self.details_button = qtw.QPushButton("Details…")
+        self.details_button.setToolTip("View and copy the selected export's failure details.")
+        self.details_button.clicked.connect(self._show_selected_failure)
+        buttons.addWidget(self.details_button)
+        buttons.addStretch()
         self.cancel_selected_button = qtw.QPushButton("Cancel selected")
         self.cancel_selected_button.setToolTip("Cancel the selected unfinished exports. Completed files are kept.")
         self.cancel_selected_button.setEnabled(False)
         self.cancel_selected_button.clicked.connect(self.cancel_selected)
-        self.tree.itemSelectionChanged.connect(self._update_cancel_selected_button)
+        self.tree.itemSelectionChanged.connect(self._update_selection_actions)
+        self.tree.itemDoubleClicked.connect(self._export_row_activated)
         buttons.addWidget(self.cancel_selected_button)
         self.cancel_button = qtw.QPushButton("Cancel all")
         self.cancel_button.setToolTip("Cancel all unfinished exports. Completed files are kept.")
         self.cancel_button.clicked.connect(self.cancel_all)
         buttons.addWidget(self.cancel_button)
-        buttons.addStretch()
         self.dismiss_button = qtw.QPushButton("Done")
         self.dismiss_button.setToolTip("Close the export progress window.")
         self.dismiss_button.clicked.connect(self.dialog.hide)
         buttons.addWidget(self.dismiss_button)
         layout.addLayout(buttons)
+        self._update_selection_actions()
 
     def start(self, owner, *, title, destination, writer, before_publish=None,
               on_success=None, on_failure=None, source_keys=()) -> ExportTask:
@@ -171,6 +189,8 @@ class ExportTaskManager(QtCore.QObject):
         owner.__dict__.setdefault("_export_tasks", set()).add(task)
         self.tree.addTopLevelItem(task.row)
         self.tree.setItemWidget(task.row, 2, task.bar)
+        if self.tree.currentItem() is None:
+            self.tree.setCurrentItem(task.row)
         owner.destroyed.connect(task.cancel)
         closed = getattr(owner, "closed", None)
         if closed is not None and hasattr(closed, "connect"):
@@ -207,20 +227,71 @@ class ExportTaskManager(QtCore.QObject):
             task.cancel()
         # Poll retires unstarted tasks without allocating a stage or worker.
         # The active worker retains its stage until its cancellation returns.
-        self._update_cancel_selected_button()
+        self._update_selection_actions()
 
-    def _update_cancel_selected_button(self) -> None:
+    def _selected_task(self) -> ExportTask | None:
+        selected = self.tree.selectedItems()
+        if len(selected) != 1:
+            return None
+        return next((task for task in self.history if task.row is selected[0]), None)
+
+    @staticmethod
+    def _has_failure_details(task: ExportTask | None) -> bool:
+        return bool(task is not None and task.done and task.error is not None
+                    and not task.cancelled and not task.stage.published)
+
+    def _update_selection_actions(self) -> None:
         selected = self.tree.selectedItems()
         self.cancel_selected_button.setEnabled(any(
             task.row in selected and not task.cancelled for task in self.tasks
         ))
+        task = self._selected_task()
+        completed = bool(task is not None and task.done and task.stage.published)
+        self.open_file_button.setEnabled(completed)
+        self.open_folder_button.setEnabled(completed)
+        self.details_button.setEnabled(self._has_failure_details(task))
+
+    def _open_selected_export(self, *, folder: bool) -> None:
+        task = self._selected_task()
+        if task is None or not task.done or not task.stage.published:
+            return
+        filename = task.destination.filename
+        location = os.path.dirname(filename) if folder else filename
+        title = "Could not open export folder" if folder else "Could not open exported file"
+        available = os.path.isdir(location) if folder else os.path.isfile(location)
+        if not available:
+            self._show_details(title, "The export location is no longer available.", location)
+        elif not QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(location)):
+            self._show_details(title, "Your system could not open the export location.", location)
+
+    def _show_details(self, title: str, message: str, details: str) -> None:
+        dialog = ErrorDialog(title, message, details, self.dialog)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _show_selected_failure(self) -> None:
+        self._show_failure_details(self._selected_task())
+
+    def _export_row_activated(self, row: qtw.QTreeWidgetItem, _column: int) -> None:
+        task = next((task for task in self.history if task.row is row), None)
+        self._show_failure_details(task)
+
+    def _show_failure_details(self, task: ExportTask | None) -> None:
+        if not self._has_failure_details(task) or task is None:
+            return
+        details = (
+            f"Export: {task.title}\nDestination: {task.destination.filename}\n\n"
+            f"{type(task.error).__name__}: {task.error}"
+        )
+        self._show_details("Export failed", "The export could not be completed.", details)
 
     def cancel_selected(self) -> None:
         selected = self.tree.selectedItems()
         for task in tuple(self.tasks):
             if task.row in selected:
                 task.cancel()
-        self._update_cancel_selected_button()
+        self._update_selection_actions()
 
     def cancel_owner(self, owner) -> None:
         for task in tuple(self.tasks):
@@ -292,7 +363,7 @@ class ExportTaskManager(QtCore.QObject):
             if self.tasks else "Close the export progress window."
         )
         self.cancel_button.setEnabled(bool(self.tasks))
-        self._update_cancel_selected_button()
+        self._update_selection_actions()
 
     def _finish(self, task: ExportTask) -> None:
         try:

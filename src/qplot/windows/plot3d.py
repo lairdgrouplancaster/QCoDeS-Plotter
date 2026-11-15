@@ -1,13 +1,16 @@
 """A coordinate-preserving 3D slice viewer built on the normal heatmap UI."""
 
 from dataclasses import replace
+from typing import Any
 
 import numpy as np
+import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.numeric_samples import numeric_isfinite
 from qplot.datahandling.plot_progress import PlotProgress
+from qplot.tools.plot_csv import HeatmapCsv
 from qplot.tools.volume_worker import VolumeLoader, VolumeTask, processed_plane
 
 from ._commands import command_spec, create_action
@@ -808,8 +811,48 @@ class plot3d(plot2d):
         if cut is not None and cut in self._cuts:
             cut.move_marker(key)
 
-    def _capture_heatmap_csv(self):
-        capture = super()._capture_heatmap_csv()
+    def _move_keyboard_selected_cut(self, key):
+        self.move_sweep_with_arrow_key(key)
+
+    def activate_volume_cut(self, cut):
+        self._active_volume_cut = cut
+        for candidate in self._cuts:
+            if candidate.marker is not None:
+                width = 3 if candidate is cut else (1 if candidate.selection.kind == "d" else 2)
+                candidate.marker.setPen(pg.mkPen(candidate.cut_color, width=width))
+        self.widget.setFocus()
+
+    def cycle_selected_cut(self, backwards=False):
+        cuts = sorted(
+            (cut for cut in self._cuts if not cut._closed
+             and cut.marker is not None and cut.marker.isVisible()),
+            key=lambda cut: cut.cut_id,
+        )
+        if not cuts:
+            return
+        selected = self.__dict__.get("_active_volume_cut")
+        if selected in cuts:
+            index = (cuts.index(selected) + (-1 if backwards else 1)) % len(cuts)
+        else:
+            index = -1 if backwards else 0
+        self.activate_volume_cut(cuts[index])
+
+    def handle_sweep_line_double_click(self, event):
+        cuts = [cut for cut in self._cuts if not cut._closed and cut.marker is not None]
+        marker = self._probe_at_scene_position([cut.marker for cut in cuts], event.scenePos())
+        if marker is None:
+            return False
+        event.accept()
+        selected = next(cut for cut in cuts if cut.marker is marker)
+        closing = tuple(self._cuts) if self.sweep_line_remove_all_requested(event) else (selected,)
+        for cut in closing:
+            cut.close()
+        return True
+
+    def _capture_heatmap_csv(self, layer: Any = None) -> HeatmapCsv:
+        capture = super()._capture_heatmap_csv(layer)
+        if layer is not None and layer is not self:
+            return capture
         metadata = self._slice_export_metadata()
         return replace(capture, constants=metadata)
 

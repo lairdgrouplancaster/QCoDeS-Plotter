@@ -42,13 +42,18 @@ def checkout_info(root: Path) -> dict:
         # Cold Git startup can exceed one second on Windows. Share one budget
         # across all three reads so startup and About remain bounded.
         deadline = time.monotonic() + 5
-        commit = _git(root, "rev-parse", "HEAD", deadline=deadline)
+        # Read the identity and committer date from the same revision. The
+        # author date can predate rebases or cherry-picks of this source.
+        commit, commit_date = _git(
+            root, "show", "-s", "--format=%H%n%cI", "HEAD", deadline=deadline,
+        ).splitlines()
         dirty = bool(_git(
             root, "status", "--porcelain", "--untracked-files=normal", deadline=deadline,
         ))
         tags = _git(root, "tag", "--points-at", "HEAD", deadline=deadline).splitlines()
         release_tags = {f"v{project['version']}", f"native-and-app/v{project['version']}"}
-        info.update(commit=commit, dirty=dirty, released=bool(release_tags.intersection(tags)) and not dirty)
+        info.update(commit=commit, commit_date=commit_date, dirty=dirty,
+                    released=bool(release_tags.intersection(tags)) and not dirty)
         return info
     except (OSError, subprocess.SubprocessError, ValueError, KeyError):
         # Git is optional for source installations; the source version still helps.

@@ -20,26 +20,28 @@ def github_directory() -> Path:
     return directory
 
 
-def test_full_windows_suite_has_its_own_bounded_time_budget(
-    github_directory: Path,
+@pytest.mark.parametrize("suite", ["full", "compatibility"])
+def test_windows_source_suite_has_its_own_bounded_time_budget(
+    github_directory: Path, suite: str,
 ) -> None:
     workflow = (github_directory / "workflows/ci-platform.yml").read_text(encoding="utf-8")
-    full_suite = workflow.split(
-        "      - name: Run full test suite as a standard Windows user\n", 1
+    source_suite = workflow.split(
+        f"      - name: Run {suite} test suite as a standard Windows user\n", 1
     )[1].split("      - name:", 1)[0]
-    budget = re.search(r"-TimeoutSeconds (\d+)", full_suite)
-    assert budget is not None, "The full suite must not use the 420-second default"
+    budget = re.search(r"-TimeoutSeconds (\d+)", source_suite)
+    assert budget is not None, f"The {suite} suite must not use the 420-second default"
     assert 600 <= int(budget[1]) <= 1500
     checks_job = workflow.split("\n  checks:\n", 1)[1]
     job_minutes = re.search(r"timeout-minutes: (\d+)", checks_job)
     assert job_minutes is not None
     # Reserve two minutes for bounded cleanup and three for setup/diagnostics.
     assert int(budget[1]) + 120 + 180 <= int(job_minutes[1]) * 60
-    # More time for the complete suite must not weaken individual-test bounds
+    # More time for a source suite must not weaken individual-test bounds
     # or increase disk/thread contention by adding workers.
-    assert '"--timeout=90"' in full_suite
-    assert '"--timeout-method=thread"' in full_suite
-    assert '"-n", "2", "--dist=loadfile"' in full_suite
+    assert '"--timeout=90"' in source_suite
+    assert '"--timeout-method=thread"' in source_suite
+    assert '"-n", "2", "--dist=loadfile"' in source_suite
+    assert '"-v"' in source_suite  # Persist the active test if the suite times out.
 
 
 @pytest.mark.parametrize("full_validation", [False, True], ids=["routine", "full"])

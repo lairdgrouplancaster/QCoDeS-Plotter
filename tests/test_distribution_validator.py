@@ -197,7 +197,7 @@ def test_wheel_smoke_exercises_mixed_size_live_wal_priority() -> None:
         "continuation_pages += 1",
         'remaining_run["datasaver"].add_result',
         'remaining_run["datasaver"].flush_data_to_database',
-        "reader_baseline = protected_artifact_state",
+        "reader_baseline = settled_writer_artifact_state",
         'checkpoint_until_idle("PASSIVE")',
         'checkpoint_until_idle("TRUNCATE")',
         "protected_artifact_state",
@@ -228,6 +228,43 @@ def test_generated_wal_smoke_completes_real_window_shutdown(tmp_path) -> None:
         timeout=120,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _generated_artifact_helpers(observe, monotonic):
+    module = ast.parse(wheel_smoke_code())
+    functions = ast.Module(body=[
+        node for node in module.body if isinstance(node, ast.FunctionDef)
+        and node.name in {"settled_writer_artifact_state", "assert_source_policy"}
+    ], type_ignores=[])
+    namespace = {
+        "protected_artifact_state": observe,
+        "time": SimpleNamespace(monotonic=monotonic),
+    }
+    exec(compile(functions, "<generated-artifact-helpers>", "exec"), namespace)
+    return namespace
+
+
+@pytest.mark.parametrize("field", ["st_mtime_ns", "st_ctime_ns", "sha256", "st_ino"])
+def test_generated_writer_baseline_requires_full_state_agreement(field):
+    before = {"synthetic.db": {field: 1}, "synthetic.db-wal": {field: 1}}
+    after = {**before, "synthetic.db-wal": {field: 2}}
+    observe = Mock(side_effect=[before] * 5 + [after] * 6)
+    helpers = _generated_artifact_helpers(observe, lambda: 0)
+    assert helpers["settled_writer_artifact_state"]("synthetic.db") == after
+    assert observe.call_count == 11
+    # Post-reader checks never retry or absorb even metadata-only differences.
+    with pytest.raises(AssertionError):
+        helpers["assert_source_policy"](before, after, "synthetic.db")
+    assert observe.call_count == 11
+
+
+def test_generated_writer_baseline_fails_if_artifacts_do_not_settle():
+    clock = iter(range(20))
+    observe = Mock(side_effect=lambda _path: {"mtime": observe.call_count})
+    helpers = _generated_artifact_helpers(observe, lambda: next(clock))
+    with pytest.raises(AssertionError, match="did not settle"):
+        helpers["settled_writer_artifact_state"]("synthetic.db")
+    assert observe.call_count == 9
 
 
 def test_wheel_smoke_exercises_installed_exact_process_supervision() -> None:

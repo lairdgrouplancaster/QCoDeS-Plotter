@@ -2,11 +2,12 @@
 
 import sys
 from copy import deepcopy
+from weakref import ref
 
 import numpy as np
 import pyqtgraph as pg
 import pytest
-from PyQt6 import QtCore, QtTest
+from PyQt6 import QtCore, QtTest, sip
 
 from tests.windows.test_axis_limit_precision import AxisLimitWindow
 from tests.windows.test_color_scale_locale import heatmap as _heatmap_fixture
@@ -199,6 +200,64 @@ def test_axis_link_none_unlinks_without_confusing_a_view_name(axis_window, axis,
         target.deleteLater()
 
 
+def test_axis_heading_tracks_quantity_without_changing_range_units(axis_window):
+    axis_window.plot.setLabel("bottom", "Gate <b>voltage</b>", units="V")
+    axis_window.vb.setXRange(0.001, 0.002, padding=0)
+    axis_window.open_axis_scale_dialog("bottom")
+    ui = axis_window._axis_scale_controls["x"]
+    assert ui.quantityLabel.text() == "Gate voltage (V)"
+    assert float(ui.minText.text()) == 0.001
+    assert float(ui.maxText.text()) == 0.002
+    axis_window.plot.setLabel("bottom", "Frequency", units="Hz")
+    axis_window._sync_axis_scale_controls("x")
+    assert ui.quantityLabel.text() == "Frequency (Hz)"
+
+
+@pytest.mark.parametrize("axis, side, number", [("x", "bottom", 0), ("y", "left", 1)])
+def test_axis_link_choices_identify_plot_and_quantity(axis_window, qapplication, axis, side, number):
+    target = AxisLimitWindow()
+    target.setWindowTitle("Plot 42")
+    target.plot.plot([1, 2, 3], [2, 4, 6])
+    target.plot.setLabel(side, "Gate voltage", units="V")
+    target.resize(800, 600)
+    target.show()
+    try:
+        qapplication.processEvents()
+        axis_window.open_axis_scale_dialog(axis)
+        ui = axis_window._axis_scale_controls[axis]
+        index = ui.linkCombo.findData(ref(target.vb))
+        assert index > 0
+        assert ui.linkCombo.itemText(index) == f"Plot 42 — {side.title()}: Gate voltage (V)"
+        ui.linkCombo.setCurrentIndex(index)
+        assert axis_window.vb.linkedView(number) is target.vb
+        setter = target.vb.setXRange if number == 0 else target.vb.setYRange
+        setter(10, 20, padding=0)
+        qapplication.processEvents()
+        assert axis_window.vb.viewRange()[number] == pytest.approx([10, 20])
+        axis_window._sync_axis_scale_controls(axis)
+        assert ui.linkCombo.currentData()() is target.vb
+        ui.linkCombo.setCurrentIndex(0)
+        assert axis_window.vb.linkedView(number) is None
+    finally:
+        target.close()
+        target.deleteLater()
+        qapplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+
+
+def test_axis_link_ignores_target_destroyed_while_dialog_is_open(axis_window, qapplication):
+    target = AxisLimitWindow()
+    target.show()
+    qapplication.processEvents()
+    axis_window.open_axis_scale_dialog("x")
+    combo = axis_window._axis_scale_controls["x"].linkCombo
+    index = combo.findData(ref(target.vb))
+    assert index > 0
+    sip.delete(target)
+    combo.setCurrentIndex(index)
+    assert axis_window.vb.linkedView(0) is None
+    assert combo.currentIndex() == 0
+
+
 @pytest.mark.parametrize("texts", [
     ("9.9", "10.2"),
     ("0.010012718532581035", "0.010017029084329264"),
@@ -256,7 +315,7 @@ def test_axis_switch_preserves_range_auto_and_per_axis_format(
     )
     assert ui.minimumLabel.text() == "Centre"
     assert ui.maximumLabel.text() == "Span"
-    assert ui.maxText.accessibleName() == f"{axis.upper()} axis span"
+    assert ui.maxText.accessibleName() == f"{'Bottom' if axis == 'x' else 'Left'} axis span"
     other = window._axis_scale_controls["y" if axis == "x" else "x"]
     assert not other.rangeEntry.center_span
     window._axis_scale_dialog.close()

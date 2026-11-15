@@ -1248,6 +1248,9 @@ class Plot2DLayerMixin(PlotHost):
             ):
                 button = getattr(event, "button", lambda: None)()
                 if button == QtCore.Qt.MouseButton.LeftButton:
+                    remove_cut = getattr(self, "handle_sweep_line_double_click", None)
+                    if callable(remove_cut) and remove_cut(event):
+                        return
                     heatmap_key = getattr(
                         target,
                         "_qplot_heatmap_key",
@@ -2111,11 +2114,15 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         for row in range(self.table.rowCount()):
             if self._key_for_row(row) != key:
                 continue
-            self.table.clearSelection()
-            self.table.selectRow(row)
             item = self.table.item(row, self._COL_ID)
             if item is not None:
-                self.table.setCurrentItem(item)
+                # Explicit flags keep held Ctrl/Shift from toggling or
+                # extending this programmatic whole-row selection.
+                self.table.setCurrentItem(
+                    item,
+                    QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect
+                    | QtCore.QItemSelectionModel.SelectionFlag.Rows,
+                )
                 self.table.scrollToItem(item)
             return True
         return False

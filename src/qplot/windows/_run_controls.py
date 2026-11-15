@@ -340,7 +340,7 @@ class RunControlsMixin:
         help_button = qtw.QToolButton()
         help_button.setObjectName("databaseIconButton")
         help_button.setIcon(self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogHelpButton))
-        help_button.setText("Quick Start")
+        help_button.setText("Quick start")
         help_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         help_button.setToolTip("Show the basic qPlot workflow")
         help_button.setAccessibleName("Show quick start")

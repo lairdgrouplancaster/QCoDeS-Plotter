@@ -24,14 +24,14 @@ class HelpMenuTestCase(unittest.TestCase):
                 }
 
             self.assertEqual(menu.title(), "&Help")
-            self.assertEqual(actions["quickStartHelpAction"].text(), "&Quick Start")
+            self.assertEqual(actions["quickStartHelpAction"].text(), "&Quick start")
             self.assertEqual(
                 actions["quickStartHelpAction"].shortcut().toString(),
                 "F1",
                 )
             self.assertEqual(
                 actions["keyboardShortcutsHelpAction"].text(),
-                "&Keyboard and Mouse Controls",
+                "&Keyboard and mouse controls",
                 )
             self.assertEqual(
                 actions["copyDiagnosticLogPathAction"].text(),
@@ -56,6 +56,7 @@ class HelpMenuTestCase(unittest.TestCase):
             qtw.QApplication.processEvents()
             with patch("qplot.windows._help.version_info", return_value={
                 "version": "2.0.0", "commit": "a" * 40,
+                "commit_date": "2026-11-14T12:42:15+02:00",
                 "released": False, "dirty": True, "pull_request": "123",
             }):
                 menu = add_help_menu(window)
@@ -66,6 +67,7 @@ class HelpMenuTestCase(unittest.TestCase):
             self.assertIn("Version: 2.0.0", text)
             self.assertIn("Unreleased development build (local changes)", text)
             self.assertIn("a" * 40, text)
+            self.assertIn("Committed: 14 November 2026, 10:42:15 UTC", text)
             self.assertIn("Pull request: #123", text)
             dialog.close()
         finally:
@@ -115,7 +117,25 @@ class HelpMenuTestCase(unittest.TestCase):
             self.assertIn("Version: 2.0.0", text)
             self.assertNotIn("Unreleased", text)
             self.assertNotIn("Commit:", text)
+            self.assertNotIn("Committed:", text)
             dialog.close()
+        finally:
+            window.deleteLater()
+
+    def test_about_omits_unavailable_or_invalid_commit_date(self):
+        from unittest.mock import patch
+
+        window = qtw.QMainWindow()
+        try:
+            for date in (None, "invalid", "2026-11-14T10:42:15", ""):
+                with self.subTest(date=date), patch("qplot.windows._help.version_info", return_value={
+                    "version": "2.0.0", "commit": "a" * 40, "commit_date": date,
+                }):
+                    dialog = show_about(window)
+                text = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser").toPlainText()
+                self.assertIn("Commit: " + "a" * 40, text)
+                self.assertNotIn("Committed:", text)
+                dialog.close()
         finally:
             window.deleteLater()
 
@@ -164,7 +184,7 @@ class HelpMenuTestCase(unittest.TestCase):
                     else:
                         window.show_status.assert_not_called()
                         window.show_error.assert_called_once_with(
-                            "Show Diagnostic Log Failed",
+                            "Show diagnostic log failed",
                             "Could not open the diagnostic log location in the file manager.",
                             path,
                         )

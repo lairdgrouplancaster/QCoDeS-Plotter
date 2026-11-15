@@ -1070,6 +1070,26 @@ def assert_source_policy(before, after, database_path):
         )
 
 
+def settled_writer_artifact_state(database_path):
+    # Call only while the synthetic writer is paused, before the next reader
+    # interval. Windows can publish ChangeTime when the first audit read closes
+    # its descriptor, after its fstat. Require the complete state to settle;
+    # post-reader observations and equality assertions remain immediate.
+    previous = None
+    matches = 0
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        current = protected_artifact_state(database_path)
+        if current == previous:
+            matches += 1
+            if matches == 5:
+                return current
+        else:
+            matches = 0
+            previous = current
+    raise AssertionError("The paused writer's source artifacts did not settle")
+
+
 def process_is_running(pid):
     if os.name == "nt":
         from ctypes import wintypes
@@ -2791,7 +2811,7 @@ def exercise_stage5c_mixed_size_wal_priority(temporary):
             else:
                 checkpoint_until_idle("TRUNCATE")
                 truncate_checkpoints += 1
-            reader_baseline = protected_artifact_state(database_path)
+            reader_baseline = settled_writer_artifact_state(database_path)
             prior_count = parameters_item.childCount()
             snapshot_tree.itemActivated.emit(load_more, 0)
             process_until(
@@ -2989,7 +3009,7 @@ def exercise_stage5c_mixed_size_wal_priority(temporary):
         selected_guid = str(selected_dataset.guid)
         visible_guid = str(visible_run["dataset"].guid)
         remaining_guid = str(remaining_run["dataset"].guid)
-        protected_before_reader = protected_artifact_state(database_path)
+        protected_before_reader = settled_writer_artifact_state(database_path)
 
         main_window.config.default_path = str(qplot_home)
         main_window.config.default_file = str(

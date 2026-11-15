@@ -1087,6 +1087,9 @@ def live_writer(tmp_path: Path) -> _QcodesWalWriter:
         assert writer.startup["run_count"] == 1
         assert Path(f"{writer.database_path}-wal").is_file()
         assert Path(f"{writer.database_path}-shm").is_file()
+        # The command-driven writer is idle and no reader has started. On
+        # Windows the first audit read/close can publish pending WAL metadata.
+        _stable_artifact_state(writer.database_path)
         yield writer
     finally:
         writer.close()
@@ -1165,7 +1168,12 @@ def _stable_artifact_state(
     consecutive_observations: int = 5,
     observation_interval: float = 0.05,
 ) -> dict[str, tuple[Any, ...] | None]:
-    """Wait for repeated identical source-family content and metadata."""
+    """Wait for identical content AND metadata at an explicit writer boundary.
+
+    In particular, Windows can publish ChangeTime on the first audit read's
+    close, after that audit sampled fstat. Establish writer baselines before
+    reader activity; never replace a baseline after a protection failure.
+    """
     previous: dict[str, tuple[Any, ...] | None] | None = None
     stable_observations = 0
     for _ in range(100):
@@ -1221,6 +1229,47 @@ def _assert_safe_audit(counters: Mapping[str, int]) -> None:
     assert counters["proof_open"] >= 3
     assert counters["proof_close"] <= counters["proof_open"]
     assert 0 <= counters["proof_active"] <= counters["proof_peak"]
+
+
+def test_paused_writer_control_has_stable_artifacts_without_qplot_reader(
+    live_writer: _QcodesWalWriter,
+) -> None:
+    before_commit = _artifact_state(live_writer.database_path)
+    live_writer.request("commit", value="writer-only control")
+    baseline = _stable_artifact_state(live_writer.database_path)
+    assert baseline["-wal"] != before_commit["-wal"]
+    for _ in range(3):
+        _assert_protected_artifacts_unchanged(
+            baseline, _artifact_state(live_writer.database_path),
+        )
+
+
+@pytest.mark.parametrize("timestamp_index", [8, 9], ids=["mtime", "ctime"])
+def test_artifact_baseline_settles_metadata_but_reader_checks_reject_changes(
+    monkeypatch: pytest.MonkeyPatch, timestamp_index: int,
+) -> None:
+    # Identical bytes and identity are insufficient: a delayed timestamp must
+    # reset baseline settling, and the same change DURING reading must fail.
+    original = ("digest", 1, 2, stat.S_IFREG | 0o600, 1, 0, 0, 32, 100, 200)
+    changed = list(original)
+    changed[timestamp_index] += 1
+    before = {suffix: original for suffix in ("", "-wal", "-shm", "-journal")}
+    after = {**before, "-wal": tuple(changed)}
+    observations = iter((before, before, after, after, after))
+    observed = []
+
+    def observe(_path):
+        state = next(observations)
+        observed.append(state)
+        return state
+
+    monkeypatch.setattr(sys.modules[__name__], "_artifact_state", observe)
+    assert _stable_artifact_state(
+        Path("synthetic.db"), consecutive_observations=2, observation_interval=0,
+    ) == after
+    assert len(observed) == 5
+    with pytest.raises(AssertionError, match="-wal"):
+        _assert_protected_artifacts_unchanged(before, after)
 
 
 def test_committed_qcodes_wal_rows_refresh_on_one_persistent_reader(

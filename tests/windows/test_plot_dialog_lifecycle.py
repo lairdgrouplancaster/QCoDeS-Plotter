@@ -190,7 +190,7 @@ def test_plot_close_rejects_active_downsample_dialog(dialog_plot):
     def close_plot_from_active_dialog():
         dialog = next(
             dialog for dialog in plot.findChildren(qtw.QDialog)
-            if dialog.windowTitle() == "Warning: Heatmap downsampled"
+            if dialog.windowTitle() == "Heatmap displayed at reduced resolution"
         )
         assert dialog.isVisible()
         plot.close()

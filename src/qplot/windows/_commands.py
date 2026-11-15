@@ -88,7 +88,7 @@ def _platform_shortcuts(
 COMMANDS: dict[str, CommandSpec] = {
     "help.quick_start": CommandSpec(
         "help.quick_start",
-        "&Quick Start",
+        "&Quick start",
         "Show the basic qPlot workflow",
         "F1",
         object_name="quickStartHelpAction",
@@ -431,6 +431,20 @@ COMMANDS: dict[str, CommandSpec] = {
         help_section="2D Heatmap Windows",
         help_shortcut="Arrow keys",
     ),
+    "heatmap.next_cut": CommandSpec(
+        "heatmap.next_cut", "Select Next Cut",
+        "Select the next visible cut in creation order on the canvas",
+        "Ctrl+Tab",
+        shortcut_context=QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
+        help_section="2D Heatmap Windows",
+    ),
+    "heatmap.previous_cut": CommandSpec(
+        "heatmap.previous_cut", "Select Previous Cut",
+        "Select the previous visible cut in creation order on the canvas",
+        "Ctrl+Shift+Tab",
+        shortcut_context=QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
+        help_section="2D Heatmap Windows",
+    ),
 }
 
 SHORTCUT_HELP_SECTIONS = (
@@ -603,6 +617,8 @@ MOUSE_AND_SELECTION_HELP = {
     "2D Heatmap Windows": (
         ("Double-click colour bar", "Open colour scaling controls; also available from View"),
         ("Click a cut cursor", "Select a cut for arrow-key movement; new cuts are selected automatically"),
+        ("Double-click a cut cursor", "Close its cut window and remove the probe"),
+        ("Shift+double-click a cut cursor", "Close all cut windows from this heatmap"),
     ),
 }
 
@@ -613,7 +629,7 @@ def shortcut_help_html(shortcut_column_width: int = 280) -> str:
 
     """
     parts = [
-        "<h2>Keyboard and Mouse Controls</h2>",
+        "<h2>Keyboard and mouse controls</h2>",
     ]
     for section in SHORTCUT_HELP_SECTIONS:
         rows: list[tuple[str, str]] = []

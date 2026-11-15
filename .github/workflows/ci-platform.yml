@@ -18,7 +18,7 @@ env:
 
 jobs:
   checks:
-    name: ${{ matrix.os }} Python ${{ matrix.python-version }} (${{ matrix.suite }}${{ matrix.partition && format(' {0}', matrix.partition) || '' }})
+    name: ${{ matrix.os }} Python ${{ matrix.python-version }} PyQt6 ${{ matrix.qt-version }} (${{ matrix.suite }}${{ matrix.partition && format(' {0}', matrix.partition) || '' }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
 
@@ -79,10 +79,23 @@ jobs:
         run: >-
           python -m pip install --only-binary apsw apsw==3.53.4.0
 
+      # Resolve latest explicitly even if a runner already has an older Qt.
+      # The minimum uses an exact binding version from pyproject.toml instead.
+      # Select Qt before the application install to avoid downloading latest
+      # Qt first only to downgrade it for a minimum-version job.
+      - name: Select runtime Qt version
+        run: >-
+          python -m pip install --upgrade --only-binary=:all:
+          "${{ matrix.qt-requirement }}"
+
       - name: Install package and test tools
         run: >-
           python scripts/validate_distribution.py --install-only --with-dev-tools
+          --extra-requirement "${{ matrix.qt-requirement }}"
           --audit-path dist/wheel-installation-audit.py dist
+
+      - name: Report runtime Qt versions
+        run: python -m pip show PyQt6 PyQt6-Qt6 PyQt6-sip
 
       - name: Install Qt system libraries
         if: runner.os == 'Linux'
@@ -222,13 +235,17 @@ jobs:
             "-m", "pytest", "-o", "pythonpath=", "--no-cov", "--maxfail=1",
             "-n", "2", "--dist=loadfile",
             "--no-loadscope-reorder",
-            "--timeout=90", "--timeout-method=thread", "--durations=20",
+            "--timeout=90", "--timeout-method=thread", "--durations=20", "-v",
             "-o", "junit_family=xunit1", "--junitxml=$env:QPLOT_CI_TEST_REPORT",
             "@${{ matrix.test-list }}"
           )
+          # The compatibility list has hundreds of tests. Give the whole suite
+          # its own 15-minute budget, retaining two workers, 90-second tests
+          # and two-minute cleanup within the 30-minute job.
           & "$env:GITHUB_WORKSPACE\.github\scripts\invoke-bounded-unprivileged-windows.ps1" `
             -FilePath $python `
-            -ArgumentList $arguments
+            -ArgumentList $arguments `
+            -TimeoutSeconds 900
 
       - name: Upload test timings
         if: ${{ !cancelled() }}
@@ -238,7 +255,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           # job-index avoids '/' in partition labels and distinguishes every entry.
-          name: qplot-test-timings-${{ strategy.job-index }}-${{ matrix.os }}-${{ matrix.python-version }}-${{ matrix.suite }}
+          name: qplot-test-timings-${{ strategy.job-index }}-${{ matrix.os }}-${{ matrix.python-version }}-qt-${{ matrix.qt-version }}-${{ matrix.suite }}
           path: ${{ env.QPLOT_CI_TEST_REPORT }}
           if-no-files-found: ignore
 

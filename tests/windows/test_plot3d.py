@@ -324,6 +324,133 @@ def test_slice_navigation_all_planes_and_global_colours(tmp_path, main, array):
     assert_database_artifacts_unchanged_except_trusted_shm(path, before)
 
 
+def test_keyboard_cycles_visible_volume_probes_and_moves_selected_probe(tmp_path, main, qapplication):
+    window, errors = main
+    path = tmp_path / "volume.db"
+    guid = build_volume(path)
+    assert window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(guid)
+    wait_for(lambda: bool(window.windows))
+    plot = window.windows[0]
+    wait_for(lambda: loaded(plot))
+    plot._selected_coordinates.update(gate=0., bias=0.)
+    cuts = []
+    for kind in ("h", "h", "v", "d", "mean"):
+        if kind == "mean":
+            plot.set_marquee_rect(QtCore.QRectF(-2., 0., 7., 3.))
+        plot.openSweep(kind)
+        wait_for(lambda: len(window.windows) == len(cuts) + 2 or bool(errors))
+        assert not errors
+        cuts.append(window.windows[-1])
+        wait_for(lambda: loaded(cuts[-1]) or bool(errors))
+        assert not errors
+    first, second, vertical, depth, mean = cuts
+    assert mean.marker is None
+    assert plot._active_volume_cut is depth
+    assert depth.marker.pen.widthF() == 3.
+    plot.activateWindow()
+    plot.widget.setFocus()
+    qapplication.processEvents()
+    control = QtCore.Qt.KeyboardModifier.ControlModifier
+    backwards = control | QtCore.Qt.KeyboardModifier.ShiftModifier
+
+    def press(key, modifiers=QtCore.Qt.KeyboardModifier.NoModifier):
+        QtTest.QTest.keyClick(plot.widget, key, modifiers)
+
+    press(QtCore.Qt.Key.Key_Tab, control)
+    assert plot._active_volume_cut is first
+    assert first.marker.pen.widthF() == 3.
+    assert depth.marker.pen.widthF() == 1.
+    press(QtCore.Qt.Key.Key_Up)
+    assert first.selection.y_value == 3.
+    assert second.selection.y_value == 0.
+    press(QtCore.Qt.Key.Key_Tab, control)
+    assert plot._active_volume_cut is second
+    press(QtCore.Qt.Key.Key_Tab, control)
+    assert plot._active_volume_cut is vertical
+    press(QtCore.Qt.Key.Key_Right)
+    assert vertical.selection.x_value == 5.
+    press(QtCore.Qt.Key.Key_Tab, control)
+    assert plot._active_volume_cut is depth
+    press(QtCore.Qt.Key.Key_Up)
+    press(QtCore.Qt.Key.Key_Right)
+    assert (depth.selection.x_value, depth.selection.y_value) == (5., 3.)
+    assert qapplication.activeWindow() is plot
+    assert plot.widget.hasFocus()
+    press(QtCore.Qt.Key.Key_Tab, backwards)
+    assert plot._active_volume_cut is vertical
+
+    # Pinned cuts on another slice and cuts without a source marker are skipped.
+    first.pin_slice.setChecked(True)
+    plot.select_slice(1)
+    wait_for(lambda: loaded(plot) and plot.slice_frame.index == 1)
+    assert not first.marker.isVisible()
+    plot.activate_volume_cut(depth)
+    press(QtCore.Qt.Key.Key_Tab, control)
+    assert plot._active_volume_cut is second
+    second.marker.sigClicked.emit(second.marker, None)
+    assert plot._active_volume_cut is second
+    depth.marker.sigClicked.emit(depth.marker, None)
+    assert plot._active_volume_cut is depth
+    depth.close()
+    press(QtCore.Qt.Key.Key_Tab, backwards)
+    assert plot._active_volume_cut is vertical
+    assert not errors
+
+
+@pytest.mark.parametrize("kind", ["h", "v", "d"])
+@pytest.mark.parametrize("all_cuts", [False, True])
+def test_volume_probe_double_click_closes_profiles_without_opening_appearance(
+    tmp_path, main, monkeypatch, kind, all_cuts,
+):
+    window, errors = main
+    path = tmp_path / "volume.db"
+    guid = build_volume(path)
+    assert window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(guid)
+    wait_for(lambda: bool(window.windows))
+    plot = window.windows[0]
+    wait_for(lambda: loaded(plot))
+    plot._selected_coordinates.update(gate=0., bias=0.)
+    plot.openSweep(kind)
+    wait_for(lambda: len(window.windows) == 2)
+    target = window.windows[-1]
+    wait_for(lambda: loaded(target))
+    plot._selected_coordinates.update(gate=5., bias=3.)
+    plot.openSweep("h")
+    wait_for(lambda: len(window.windows) == 3)
+    other = window.windows[-1]
+    wait_for(lambda: loaded(other))
+    opened = []
+    monkeypatch.setattr(plot, "open_heatmap_appearance_dialog", opened.append)
+    plot.activateWindow()
+    plot.widget.setFocus()
+    QtTest.QTest.qWait(30)
+    x, y = {"h": (1., 0.), "v": (0., 1.5), "d": (0., 0.)}[kind]
+    position = plot.widget.mapFromScene(plot.vb.mapViewToScene(QtCore.QPointF(x, y)))
+    if kind == "d":
+        marker_bounds = target.marker.deviceTransform(plot.widget.viewportTransform()).map(
+            target.marker.shape()).boundingRect()
+        position = QtCore.QPoint(round(marker_bounds.right() + 4.), round(marker_bounds.center().y()))
+    else:
+        position += QtCore.QPoint(5, 0) if kind == "v" else QtCore.QPoint(0, 5)
+    modifiers = (QtCore.Qt.KeyboardModifier.ShiftModifier if all_cuts
+                 else QtCore.Qt.KeyboardModifier.NoModifier)
+    viewport = plot.widget.viewport()
+    QtTest.QTest.mouseMove(viewport, position)
+    QtTest.QTest.mouseClick(viewport, QtCore.Qt.MouseButton.LeftButton, modifiers, position)
+    QtTest.QTest.mouseDClick(viewport, QtCore.Qt.MouseButton.LeftButton, modifiers, position)
+    QtTest.QTest.mouseRelease(viewport, QtCore.Qt.MouseButton.LeftButton, modifiers, position)
+    wait_for(lambda: target._closed or bool(opened))
+    assert opened == []
+    assert target._closed and target not in plot._cuts
+    assert other._closed == all_cuts
+    assert len(plot._cuts) == (0 if all_cuts else 1)
+    assert not errors
+
+
 def test_cuts_follow_pin_processed_depth_and_csv(tmp_path, main):
     window, errors = main
     path = tmp_path / "volume.db"
@@ -391,6 +518,16 @@ def test_freeze_is_independent_and_supports_operations_and_cuts(tmp_path, main):
     source.select_slice(2)
     wait_for(lambda: loaded(source) and source._depth_value == 4.)
     np.testing.assert_array_equal(frozen.dataGrid, original)
+    capture = frozen._capture_heatmap_csv(layer=frozen)
+    np.testing.assert_array_equal(capture.grid, original)
+    assert dict(capture.constants)["field (V)"] == 1.
+    overlay = SimpleNamespace(
+        axis_data=source.axis_data, data_grid=source.dataGrid, from_win=source,
+        source_axis_order=lambda: ("x", "y"),
+    )
+    overlay_capture = frozen._capture_heatmap_csv(layer=overlay)
+    np.testing.assert_array_equal(overlay_capture.grid, source.dataGrid)
+    assert overlay_capture.constants == ()
     frozen.oper_widget.restore_state(OperationsState((OperationEntry("row_mean", None),), 1))
     frozen.refreshWindow(force=True)
     wait_for(lambda: loaded(frozen) and frozen.worker.operations)
@@ -653,6 +790,12 @@ def test_mixed_dimensions_any_order(tmp_path, main, monkeypatch, order):
     wait_for(lambda: all(layer is target or layer.geometry is not None for layer in target.heatmaps.values()))
     trace = next(iter(target.lines.values()))
     heatmap = next(layer for layer in target.heatmaps.values() if layer is not target)
+    capture = target._capture_heatmap_csv(layer=target)
+    np.testing.assert_array_equal(capture.grid, target.dataGrid)
+    assert dict(capture.constants)["field (V)"] == target.slice_frame.depth
+    overlay_capture = target._capture_heatmap_csv(layer=heatmap)
+    np.testing.assert_array_equal(overlay_capture.grid, heatmap.data_grid)
+    assert overlay_capture.constants == ()
     wait_for(lambda: trace.getData()[0] is not None)
     wait_for(lambda: target._range_complete)
     assert target.bar.levels() == (0., 455.)

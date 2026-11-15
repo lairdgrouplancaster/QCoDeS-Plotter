@@ -80,7 +80,7 @@ def test_error_feedback_uses_resizable_dialog_and_preserves_status(monkeypatch, 
         host.show_error("Generation Failed", "Could not generate.", "Complete details")
         assert statuses == [("Could not generate.", 10_000)]
         assert dialogs == (
-            [] if kind == "hidden-plot" else [("Generation Failed", "Complete details")]
+            [] if kind == "hidden-plot" else [("Error details", "Complete details")]
         )
     finally:
         host.close()

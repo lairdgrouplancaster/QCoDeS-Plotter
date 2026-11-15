@@ -198,6 +198,7 @@ class _PyqtgraphExportHost(qtw.QMainWindow):
 
 
 class _PyqtgraphDialogHost(qtw.QMainWindow):
+    _csv_export_scope = plotWidget._csv_export_scope
     open_export_dialog = plotWidget.open_export_dialog
     _install_safe_pyqtgraph_export_dialog = (
         plotWidget._install_safe_pyqtgraph_export_dialog
@@ -1433,7 +1434,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             )
             self.assertIs(dialog._qplot_owner, host)
             self.assertTrue(dialog.isVisible())
-            self.assertIs(dialog.ui.itemTree.currentItem().gitem, host.plot)
+            self.assertIs(dialog.ui.itemTree.currentItem().gitem, host.widget.scene())
 
             exporter_classes = [
                 dialog.ui.formatList.item(row).expClass
@@ -1456,6 +1457,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
                         dialog.ui.copyBtn.isEnabled(),
                         exporter_class in (ImageExporter, SVGExporter),
                     )
+                    self.assertEqual(dialog.ui.copyBtn.isVisible(),
+                                     exporter_class in (ImageExporter, SVGExporter))
 
             dialog.ui.formatList.setCurrentRow(1)
             qtw.QApplication.processEvents()
@@ -1468,6 +1471,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             dialog.ui.formatList.setCurrentRow(0)
             qtw.QApplication.processEvents()
             selected_exporter = dialog.currentExporter
+            self.assertTrue(dialog.ui.copyBtn.isVisible())
             dialog.ui.copyBtn.click()
             self.assertEqual(host.copy_calls, [selected_exporter])
             self.assertFalse(dialog.selectBox.isVisible())
@@ -1827,7 +1831,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             directory = Path(temp_dir)
             host = _PyqtgraphExportHost(directory / "suggested.pdf")
-            exporter = CSVExporter.__new__(CSVExporter)
+            exporter = CSVExporter(None)
             exporter.export = lambda **_kwargs: self.fail(
                 "A cancelled exporter attempted to write"
             )
@@ -3258,7 +3262,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual(set(host._axis_scale_controls), {"x", "y", "x2", "y2"})
             self.assertEqual(
                 [host._axis_scale_tabs.tabText(index) for index in range(4)],
-                ["X", "Y", "X2", "Y2"],
+                ["Bottom", "Left", "Top", "Right"],
                 )
             self.assertTrue(host._axis_scale_tabs.isTabEnabled(0))
             self.assertTrue(host._axis_scale_tabs.isTabEnabled(1))
@@ -3287,7 +3291,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 x_controls.autoPanCheck.text(),
                 "Follow new data, keep span",
                 )
-            self.assertEqual(x_controls.label.text(), "Link axis:")
+            self.assertEqual(x_controls.label.text(), "Link range to:")
             self.assertEqual(x_controls.linkCombo.currentText(), "None")
             self.assertIsInstance(x_controls.linkCombo, qtw.QComboBox)
             self.assertGreaterEqual(x_controls.manualRadio.parentWidget().width(), 340)
@@ -3388,7 +3392,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual(main_line.opts["logMode"], [False, False])
             self.assertEqual(
                 host._axis_scale_tabs.tabToolTip(2),
-                "Top horizontal axis",
+                "No datasets are assigned to this axis.",
                 )
             auto_limits = host._axis_scale_auto_limits("x")
             self.assertIsNotNone(auto_limits)

@@ -6,9 +6,10 @@ import weakref
 from pathlib import Path
 
 import pytest
-from PyQt6 import QtCore, QtWidgets, sip
+from PyQt6 import QtCore, QtGui, QtTest, QtWidgets, sip
 
 from qplot.diagnostics import configure_logging
+from qplot.windows._error_dialog import ErrorDialog
 from qplot.windows._export_paths import (
     UnsafeExportDestinationError,
     prepare_export_destination,
@@ -49,6 +50,128 @@ def _start(window, target, writer, **kwargs):
 
 def _assert_no_stage(target):
     assert not list(target.parent.glob(f".{target.name}.*"))
+
+
+def test_completed_export_opens_exact_file_and_folder(export_window, tmp_path, monkeypatch):
+    window, _errors = export_window
+    target = tmp_path / "shared data μ.csv"
+    opened = []
+    monkeypatch.setattr(QtGui.QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
+    task = _start(window, target, lambda name, *_args: Path(name).write_text("data"))
+    wait_for(lambda: task.done)
+    manager = task.manager
+    assert manager.open_file_button.isEnabled()
+    assert manager.open_folder_button.isEnabled()
+    assert not manager.details_button.isEnabled()
+    manager.open_file_button.click()
+    manager.open_folder_button.click()
+    assert all(url.isLocalFile() for url in opened)
+    assert [Path(url.toLocalFile()) for url in opened] == [target, target.parent]
+    manager.tree.clearSelection()
+    assert not manager.open_file_button.isEnabled()
+    manager._open_selected_export(folder=False)
+    assert len(opened) == 2
+
+
+def test_failed_export_details_open_from_row_and_copy(export_window, tmp_path, monkeypatch):
+    window, _errors = export_window
+    target = tmp_path / "failed.csv"
+    target.write_bytes(b"previous export")
+    opened = []
+    monkeypatch.setattr(QtGui.QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
+
+    def fail(*_args):
+        raise OSError("Synthetic export failure")
+
+    task = _start(window, target, fail)
+    wait_for(lambda: task.done)
+    manager = task.manager
+    assert manager.details_button.isEnabled()
+    assert not manager.open_file_button.isEnabled()
+    assert not manager.open_folder_button.isEnabled()
+    manager._open_selected_export(folder=False)
+    assert not opened
+    manager.details_button.click()
+    details = manager.dialog.findChild(ErrorDialog)
+    assert details.isVisible()
+    details.findChild(QtWidgets.QPushButton, "copyErrorButton").click()
+    copied = QtWidgets.QApplication.clipboard().text()
+    assert str(target) in copied
+    assert task.title in copied
+    assert "OSError: Synthetic export failure" in copied
+    details.close()
+    QtWidgets.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    QtWidgets.QApplication.processEvents()
+    QtTest.QTest.mouseClick(
+        manager.tree.viewport(), QtCore.Qt.MouseButton.LeftButton,
+        pos=manager.tree.visualItemRect(task.row).center(),
+    )
+    QtTest.QTest.mouseDClick(
+        manager.tree.viewport(), QtCore.Qt.MouseButton.LeftButton,
+        pos=manager.tree.visualItemRect(task.row).center(),
+    )
+    details = manager.dialog.findChild(ErrorDialog)
+    assert details is not None and details.isVisible()
+    assert target.read_bytes() == b"previous export"
+    details.close()
+
+
+def test_pending_cancelled_and_multiple_exports_have_no_file_actions(export_window, tmp_path):
+    window, _errors = export_window
+    entered, release = threading.Event(), threading.Event()
+
+    def blocked(name, *_args):
+        entered.set()
+        assert release.wait(10)
+        return Path(name).write_text("finished")
+
+    first = _start(window, tmp_path / "first.csv", blocked)
+    manager = first.manager
+    try:
+        wait_for(entered.is_set)
+        assert not manager.open_file_button.isEnabled()
+        assert not manager.details_button.isEnabled()
+        queued = _start(window, tmp_path / "queued.csv", lambda *_args: True)
+        manager.tree.setCurrentItem(queued.row)
+        assert not manager.open_folder_button.isEnabled()
+        queued.cancel()
+        wait_for(lambda: queued.done)
+        assert not manager.details_button.isEnabled()
+        release.set()
+        wait_for(lambda: first.done)
+        first.row.setSelected(True)
+        assert len(manager.tree.selectedItems()) == 2
+        assert not manager.open_file_button.isEnabled()
+        assert not manager.open_folder_button.isEnabled()
+        assert not manager.details_button.isEnabled()
+    finally:
+        release.set()
+        wait_for(lambda: not manager.tasks)
+
+
+@pytest.mark.parametrize("problem", ["file-missing", "folder-missing", "system-refused"])
+def test_export_open_failure_has_copyable_location(export_window, tmp_path, monkeypatch, problem):
+    window, _errors = export_window
+    folder = tmp_path / "outputs"
+    folder.mkdir()
+    target = folder / "export.csv"
+    task = _start(window, target, lambda name, *_args: Path(name).write_text("data"))
+    wait_for(lambda: task.done)
+    manager = task.manager
+    opened = []
+    monkeypatch.setattr(QtGui.QDesktopServices, "openUrl", lambda url: opened.append(url) or False)
+    if problem != "system-refused":
+        target.unlink()
+    if problem == "folder-missing":
+        folder.rmdir()
+        manager.open_folder_button.click()
+    else:
+        manager.open_file_button.click()
+    assert len(opened) == (1 if problem == "system-refused" else 0)
+    details = manager.dialog.findChild(ErrorDialog)
+    assert details.isVisible()
+    assert str(folder if problem == "folder-missing" else target) in details._copy_text
+    details.close()
 
 
 def test_export_task_keeps_gui_responsive_and_validates_on_gui(export_window, tmp_path):

@@ -5278,7 +5278,7 @@ class DatabaseDropTestCase(unittest.TestCase):
             table = dialog.table
 
             self.assertIsInstance(table, database_actions.CopyableTableWidget)
-            self.assertEqual(dialog.windowTitle(), "Database Information")
+            self.assertEqual(dialog.windowTitle(), "Database information")
             self.assertEqual(table.objectName(), "databaseInfoTable")
             self.assertEqual(
                 [table.horizontalHeaderItem(col).text() for col in range(2)],

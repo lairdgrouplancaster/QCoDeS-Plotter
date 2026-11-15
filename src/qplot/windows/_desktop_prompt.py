@@ -52,7 +52,7 @@ def show_first_launch_invitation(parent: qtw.QWidget) -> qtw.QMessageBox | None:
     prompt.setText("Add qPlot to your desktop and register database icons?")
     prompt.setInformativeText(
         "Choose which shortcuts and file icons to install. Your default file opener "
-        "will stay unchanged. You can also do this later from Settings → Set Up or Remove Desktop Integration."
+        "will stay unchanged. You can also do this later from Settings → Desktop integration."
     )
     icon = application_icon()
     prompt.setWindowIcon(icon)
@@ -65,7 +65,7 @@ def show_first_launch_invitation(parent: qtw.QWidget) -> qtw.QMessageBox | None:
         later.setToolTip("Dismiss this invitation for now; ask again on a future launch.")
     never = prompt.addButton("Don’t ask again", qtw.QMessageBox.ButtonRole.NoRole)
     if never is not None:
-        never.setToolTip("Stop showing this invitation. Desktop integration remains available from Help.")
+        never.setToolTip("Stop showing this invitation. Desktop integration remains available from Settings.")
     prompt.setDefaultButton(later)
     prompt.setEscapeButton(later)
     prompt.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)

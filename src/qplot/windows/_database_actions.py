@@ -67,6 +67,12 @@ from ._export_paths import (
     prepare_export_destination,
     write_export_atomically,
 )
+from ._small_dialogs import (
+    close_default,
+    dialog_layout,
+    equal_button_widths,
+    resize_dialog,
+)
 from ._widgets.details_tables import (
     CopyableTableWidget,
     copy_to_clipboard,
@@ -119,13 +125,8 @@ class DatabaseInfoDialog(qtw.QDialog):
         super().__init__(parent)
         self._rows = [(format_value(label), format_value(value)) for label, value in rows]
         self.setObjectName("databaseInfoDialog")
-        self.setWindowTitle("Database Information")
-        self.setMinimumSize(520, 260)
-        self.resize(720, 360)
-
-        layout = qtw.QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        self.setWindowTitle("Database information")
+        layout = dialog_layout(self)
 
         content_layout = qtw.QHBoxLayout()
         content_layout.setSpacing(12)
@@ -141,6 +142,7 @@ class DatabaseInfoDialog(qtw.QDialog):
 
         self.table = CopyableTableWidget(self)
         self.table.setObjectName("databaseInfoTable")
+        self.table.setAccessibleName("Database information")
         self._setup_table()
         content_layout.addWidget(self.table, 1)
         layout.addLayout(content_layout, 1)
@@ -154,15 +156,20 @@ class DatabaseInfoDialog(qtw.QDialog):
         self.copyButton.clicked.connect(self.copyAll)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+        close = buttons.button(qtw.QDialogButtonBox.StandardButton.Close)
+        assert close is not None
+        equal_button_widths(self.copyButton, close)
+        close_default(buttons)
+        resize_dialog(self, 720, 360)
 
 
     def _setup_table(self):
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["Field", "Value"])
         self.table.verticalHeader().hide()
-        self.table.verticalHeader().setMinimumSectionSize(16)
-        self.table.verticalHeader().setDefaultSectionSize(20)
-        self.table.horizontalHeader().setFixedHeight(22)
+        self.table.verticalHeader().setSectionResizeMode(
+            qtw.QHeaderView.ResizeMode.ResizeToContents
+        )
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(qtw.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(qtw.QAbstractItemView.SelectionBehavior.SelectRows)
@@ -179,8 +186,6 @@ class DatabaseInfoDialog(qtw.QDialog):
         header.setSectionResizeMode(0, qtw.QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Stretch)
         header.setStretchLastSection(False)
-        for row in range(self.table.rowCount()):
-            self.table.setRowHeight(row, 20)
 
 
     def _table_item(self, value):

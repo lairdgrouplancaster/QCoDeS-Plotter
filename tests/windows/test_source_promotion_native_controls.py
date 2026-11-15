@@ -5,6 +5,7 @@ from fractions import Fraction
 import numpy as np
 import pytest
 from PyQt6 import QtWidgets as qtw
+from pyqtgraph.exporters import CSVExporter
 
 from tests.windows.test_merged_trace_metadata import merge
 from tests.windows.test_merged_trace_metadata import (
@@ -125,12 +126,17 @@ def test_appearance_removal_preserves_native_display_and_average(
         assert target.plot.getAxis(side).grid == 85
 
     export = _open_csv_dialog(target)
+    assert export.currentExporter.params["measurements"] == "all_traces"
     rows = _export_from_dialog(monkeypatch, target, export, tmp_path / "remaining.csv", ",")
-    assert len(rows[0]) == 6  # Two exact measurements and their displayed average.
+    assert len(rows[0]) == 4  # All traces selects the two surviving measurements.
     expected_raw = np.column_stack((x, y, x, y))
-    np.testing.assert_array_equal(np.asarray([row[:4] for row in rows[1:]], dtype=float), expected_raw)
+    np.testing.assert_array_equal(np.asarray(rows[1:], dtype=float), expected_raw)
+    # A standalone exporter retains its implicit plot-item scope, including
+    # the displayed average. The measurement chooser has an explicit scope.
+    standalone = target._capture_line_csv(CSVExporter(target.plot))
+    assert len(standalone.headers) == 6
     np.testing.assert_array_equal(
-        np.asarray([row[4:] for row in rows[1:len(expected_x) + 1]], dtype=float),
+        np.column_stack(standalone.columns[-2:]),
         np.column_stack((expected_x, expected_y)),
     )
 

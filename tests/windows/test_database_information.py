@@ -29,6 +29,7 @@ from tests._window_lifecycle import close_main_window
 from tests.datahandling.test_trusted_live import (
     _artifact_state,
     _assert_protected_artifacts_unchanged,
+    _stable_artifact_state,
 )
 from tests.windows.test_plot_integration import (
     configure_temp_qplot,
@@ -82,7 +83,9 @@ def loaded_live_window(tmp_path, monkeypatch):
             return 0
 
         monkeypatch.setattr(actions.DatabaseInfoDialog, "exec", inspect_dialog)
-        before = _artifact_state(path)
+        # The writer is paused. Finish the audit's own read/close metadata
+        # publication before starting qPlot; keep post-reader checks immediate.
+        before = _stable_artifact_state(path)
         try:
             assert window.load_database_path(str(path))
             wait_for(lambda: not window._database_load_active)
@@ -135,7 +138,7 @@ def test_live_info_dialog_reports_current_counts(loaded_live_window, monkeypatch
         with measurement.run(write_in_background=False) as second:
             dataset = second.dataset
             second.add_result(("value", 7))
-        current = _artifact_state(path)
+        current = _stable_artifact_state(path)
         rows = show_information(window, dialogs)
         assert rows["Runs"] == rows["Experiments"] == "2"
         assert rows["Latest run ID"] == "2"

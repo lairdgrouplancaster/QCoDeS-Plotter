@@ -421,6 +421,11 @@ Common actions:
   defaults.
 * `Help -> Quick Start` shows the core workflow inside qPlot.
 * `Help -> Keyboard and Mouse Controls` shows the controls reference inside qPlot.
+* `Help -> About qPlot` shows the version, build status and available source
+  commit details. `Committed` is the Git committer date and time shown in UTC;
+  it describes the recorded commit, including when there are local changes.
+  This information works offline in source checkouts and stamped packages.
+  The date is omitted when unavailable; it is not a merge or publication date.
 * `Help -> Check for Updates…` checks PyPI for a newer qPlot release and shows
   release notes and upgrade instructions. Stable releases are selected by
   default; withdrawn releases and incompatible application wheels are ignored.
@@ -548,6 +553,11 @@ Common plot controls:
 * Right-click inside a marquee selection for zoom and statistics actions.
 * Press `Esc` or double-click the plot to clear a marquee selection.
 * Double-click an X or Y axis to open its scaling dialog, or use **View → Axis Scaling…**.
+* The axis-scaling tabs are **Bottom**, **Left**, **Top** and **Right**. Each
+  shows the plotted quantity above its range controls. Unused axes are disabled;
+  hover over a disabled tab for an explanation. **Link range to** identifies
+  each available target by plot title, axis position and quantity. Select
+  **None** to control the range independently.
 * Range controls default to `Min / Max`. Select `Centre / Span` to enter an
   arithmetic midpoint and the full range width (`maximum - minimum`). Switching
   formats leaves the plotted range and Auto/Manual mode unchanged. The readout
@@ -641,6 +651,13 @@ When multiple traces use different Y axes:
 
 ### Heatmaps
 
+When a heatmap is displayed at reduced resolution, its warning button opens a
+compact summary showing the source and displayed grid dimensions (columns ×
+rows), where known. The summary distinguishes spatial averaging, aggregation
+and sampling. Expand **Details** for source-row counts, sampling and
+interpolation information; unavailable dimensions are not inferred. **Open
+Preferences…** opens **Performance**, where the heatmap limits can be adjusted.
+
 `Preferences -> Performance -> Maximum heatmap grid cells` sets the total
 cell budget for aggregated heatmaps (250,000 by default). A grid that fits is
 kept at its available resolution; larger grids reduce both dimensions
@@ -703,8 +720,18 @@ Colour-scale controls:
 * Right-click the heatmap and select `Horizontal Cut` or
   `Vertical Cut`.
 * A cut window opens, with a cursor shown on the heatmap.
+* Close the cut window to remove its probe. In heatmaps and 3D slices, double-click a probe
+  line to close its cut, or Shift+double-click a probe line to close all cuts on
+  that heatmap. Double-clicking elsewhere on the heatmap opens plot appearance.
+  Probe removal allows five extra screen pixels around the cursor, independent
+  of zoom, and favours the nearest probe when hit areas overlap.
 * Move the cut position with the cut window slider or by dragging the cursor on
   the heatmap.
+* With the heatmap canvas focused, press `Ctrl+Tab` or `Ctrl+Shift+Tab` to select
+  the next or previous visible cut in creation order, wrapping at either end.
+  The selected cursor is highlighted; use the arrow keys to move it by one cell.
+  This also works for horizontal, vertical and depth probes in 3D slices.
+  Ordinary `Tab` and `Shift+Tab` continue to move between controls.
 * Hold Shift while dragging a cut cursor to move all cuts with the same
   orientation together.
 * Switch the cut and fixed parameters with the `x axis` and `fixed parameter`
@@ -879,8 +906,12 @@ samples without rounding stored integer or extended-precision values.
 To export several runs, use Shift-click or Ctrl-click (Cmd-click on macOS) to
 select rows, then use the selected rows' context menu or
 `File -> Export Selected Runs as CSV…`. Choose all measurements or a named
-measurement shared by the selected runs, then choose an output folder. qPlot
-writes one file per run and asks before replacing an existing file. Each run
+measurement shared by the selected runs under **Data to export**, then choose
+an output folder. If there are no shared measurement names, **Data to export**
+shows **All measurements in each run** as plain text. The review shows the
+number of selected runs and their run numbers in a single-line field that you
+can select and copy. qPlot writes one
+file per run and asks before replacing an existing file. Each run
 captures the committed data available when its export starts; a batch is not
 a common acquisition instant across all runs. Later live appends are excluded
 from that run's captured export. Trusted live exports use the run-prefix reader
@@ -904,28 +935,57 @@ working, and reopen it from `File -> View Export Progress…`. A failed or cance
 export leaves its destination unchanged; files already completed remain saved.
 Successful exports show **Export complete** with a tick. When all exports have
 finished, **Hide** becomes **Done**; for a single successful export, the completion
-message also shows the output path, which you can select and copy.
+message also shows the output path, which you can select and copy. Select a
+completed export and use **Open file** to open it in its default application,
+or **Open folder** to open its destination folder. For a failed export, select
+the row and choose **Details…**, or double-click the row, to view and copy
+the error details.
 Switching or closing the database cancels pending database copies and raw exports. Closing a plot
 cancels its pending plot exports.
 
-In a plot's export dialog, select **CSV data** and check **Values**:
+In a plot's export dialog, select **CSV data**, then choose **Data to export**.
+Individual traces and heatmaps are identified by run number and measurement name.
+**All traces** combines the plot's measurement traces into columns; heatmaps are exported one
+at a time because their grids may have different coordinates. Hidden measurements
+are included when selected. Generated average curves are omitted from this
+measurement selection. The initial choice is all measurement traces for a line
+plot, or the primary grid for a heatmap plot.
+This is a single-choice list: choose one measurement or **All traces**.
+**Columns** is shown only when exporting multiple traces.
+
+Check **Values** for the selected measurements:
 
 * **Underlying plot samples** includes applied Operations-panel processing,
   before native FFT, differentiation, phase-map, or mean-subtraction controls.
 * **Transformed plot values** also includes those native controls. Both line
-  modes export all loaded samples in physical coordinates, including secondary
-  traces; zoom, rendering downsampling, and logarithmic axis display do not
+  modes export all loaded samples from the selected traces in physical
+  coordinates; zoom, rendering downsampling, and logarithmic axis display do not
   change their values. Transformed export does not support error bars.
-* **Current primary heatmap grid** exports the currently loaded primary grid,
+* **Current heatmap grid** exports the selected heatmap's currently loaded grid,
   including applied operations and spatial averaging. It retains the loaded
-  extent and resolution and excludes other heatmap layers.
+  extent and resolution and excludes other measurements. Secondary heatmaps use
+  their own grid coordinates and measurement names.
 
 Plot CSV values are captured from the plot after the destination is chosen;
 later refreshes do not change the queued export. No plot CSV mode reads fresh
 database data. Use the main-window CSV action for raw measurements.
 
 Plot windows can export plot images and data through `File -> Export Plot...` or
-`Ctrl+E`, using pyqtgraph's export dialog. Use `File -> Save Plot as PDF...` or
+`Ctrl+E`. Choose **PNG image**, **SVG**, or **CSV data** in **Format**.
+Images and SVG export the complete plot, including colour scales and source
+annotations. Image dimensions start at the displayed plot size; editing width or
+height preserves its aspect ratio. **Background** offers **White**, **Transparent**
+and **Choose colour…**. Custom colours retain alpha support, and cancelling the
+colour picker keeps the previous background. The selected swatch shows a
+checkerboard for transparency or the hex code for a custom colour.
+**Invert brightness** is shown beside **Smooth edges**. CSV shows data options
+instead of image controls; the scope description has a tooltip with full details.
+Choosing **Tab** suggests a TSV file, while the final CSV/TSV file type determines
+the delimiter. **Save as…** leaves the dialog open for further exports.
+**Copy image** or **Copy SVG** copies the complete plot using the dimensions,
+background and options selected in this dialog. CSV has no clipboard action.
+
+Use `File -> Save Plot as PDF...` or
 the plot context menu to save a plot-sized PDF of the rendered plot area. Use
 `Edit -> Copy Plot Image`, `Ctrl+C`, or the plot context menu to copy it to the
 clipboard without the surrounding window menus or toolbars. The copy resolution
@@ -933,6 +993,13 @@ is set in `Options -> Preferences...`: screen resolution preserves the current
 display pixels, while 300 dpi renders a higher-resolution clipboard image at the
 same logical plot size, and vector SVG copies editable SVG data for applications
 that accept SVG from the clipboard.
+
+Use `Window -> Resize Plot Canvas -> Custom...` to change the displayed plot
+area in pixels. Width and Height start at the current canvas dimensions.
+**Lock aspect ratio** is selected initially; clear it to edit the dimensions
+independently. Locking it again preserves the newly entered ratio, rounded to
+whole pixels. **Resize** applies the dimensions; **Cancel** or `Esc` discards
+the edits. Toolbars and window borders are excluded from the dimensions.
 
 Use `File -> Print Plot...`, `Ctrl+P`, or `Cmd+P` to open the system print
 dialog. Printing includes only the visible plot area, scales it to the printable
@@ -1002,6 +1069,7 @@ Heatmap shortcuts:
 | `C` | Autoscale the colour range |
 | `H` | Open a horizontal cut |
 | `V` | Open a vertical cut |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Select the next / previous visible cut on the canvas, in creation order |
 | Arrow keys | Move the selected cut cursor by one cell; new cuts are selected automatically |
 
 Dynamic context-menu entries are numbered or underlined. Once a menu is open,
