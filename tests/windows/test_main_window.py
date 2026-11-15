@@ -1680,6 +1680,7 @@ class OptionsMenuTestCase(unittest.TestCase):
 
     class Harness(qtw.QMainWindow):
         initMenu = main_window.MainWindow.initMenu
+        _sync_database_generation_controls = main_window.MainWindow._sync_database_generation_controls
 
         def __init__(self):
             super().__init__()
@@ -2948,7 +2949,6 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
             self.emptyStateFrame = DatabaseLoadUiTestCase.Frame()
             self.emptyStateTitle = DatabaseLoadUiTestCase.Label()
             self.emptyStateDetail = DatabaseLoadUiTestCase.Label()
-            self.emptyStateLoadButton = DatabaseLoadUiTestCase.Button()
             self.emptyStateRefreshButton = DatabaseLoadUiTestCase.Button()
             self.emptyStateHelpButton = DatabaseLoadUiTestCase.Button()
             self.spinBox = DatabaseLoadUiTestCase.SpinBox()
@@ -3766,7 +3766,6 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         harness._sync_empty_state()
         self.assertTrue(harness.emptyStateFrame.visible)
         self.assertEqual(harness.emptyStateTitle.text, "No database loaded")
-        self.assertTrue(harness.emptyStateLoadButton.visible)
         self.assertFalse(harness.emptyStateRefreshButton.visible)
         self.assertTrue(harness.emptyStateHelpButton.visible)
 
@@ -3776,7 +3775,6 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         self.assertEqual(harness.emptyStateTitle.text, "Waiting for measurements")
         self.assertIn("loaded.db is loaded", harness.emptyStateDetail.text)
         self.assertIn("checking every 1.5 s", harness.emptyStateDetail.text)
-        self.assertTrue(harness.emptyStateLoadButton.visible)
         self.assertTrue(harness.emptyStateRefreshButton.visible)
         self.assertFalse(harness.emptyStateHelpButton.visible)
 

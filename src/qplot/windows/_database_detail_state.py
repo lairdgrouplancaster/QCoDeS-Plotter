@@ -1,9 +1,19 @@
-"""State shared by the basic and expensive snapshot detail channels."""
+"""Metadata-loading presentation and snapshot detail channel state."""
 
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from qplot.datahandling.file_identity import DatabaseInstance
+
+BASIC_METADATA_COLUMNS = ("Started", "Status", "Duration", "Completed")
+EXPENSIVE_METADATA_COLUMNS = ("Setpoints", "Size")
+
+
+def set_run_metadata_loading(owner, guids=None, **kwargs):
+    """Notify run-list views without adding presentation flags to run data."""
+    setter = getattr(getattr(owner, "RunList", None), "set_metadata_loading", None)
+    if callable(setter):
+        setter(guids, **kwargs)
 
 
 class DetailWorker(Protocol):

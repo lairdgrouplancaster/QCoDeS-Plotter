@@ -23,6 +23,23 @@ _WINDOW_KIND_LABELS = {
     }
 
 
+def sync_close_all_plots_actions(window):
+    """Keep Close All available for both open windows and queued launches."""
+    queue = getattr(window, "_auto_plot_queue", None)
+    enabled = not getattr(window, "_shutdown_started", False) and bool(
+        getattr(window, "windows", ())
+        or getattr(window, "_trusted_plot_pending", ())
+        or getattr(queue, "runs", ())
+    )
+    for name in ("closeAllPlotsButton", "closeAllPlotsAction"):
+        action = getattr(window, name, None)
+        if action is not None:
+            action.setEnabled(enabled)
+    sync_controls = getattr(window, "_sync_database_generation_controls", None)
+    if callable(sync_controls):
+        sync_controls()
+
+
 class _ApplicationQuitFilter(QtCore.QObject):
     """Route native Quit and modal-dialog shortcuts through the main window."""
 

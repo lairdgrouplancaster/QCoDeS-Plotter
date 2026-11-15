@@ -14,6 +14,63 @@ from qplot.windows._widgets.preview import (
 
 
 class RunListTooltipTestCase(unittest.TestCase):
+    def test_pending_metadata_is_muted_without_changing_known_values_or_run_data(self):
+        run_list = treeWidgets.RunList()
+        runs = {1: {"guid": "pending", "name": "unknown", "is_completed": True, "result_count": 12}}
+        run_list.addRuns(runs)
+        item = run_list._item_for_guid("pending")
+        original = run_list.all_run_metadata()
+        column = run_list.cols.index
+        duration = column("Duration")
+        try:
+            run_list.set_metadata_loading(("pending",))
+
+            self.assertEqual(item.text(duration), "Loading…")
+            self.assertEqual(item.text(column("Status")), "Completed")
+            self.assertEqual(item.text(column("Name")), "unknown")
+            self.assertTrue(item.data(duration, treeWidgets.METADATA_LOADING_ROLE))
+            self.assertEqual(item.data(duration, QtCore.Qt.ItemDataRole.AccessibleTextRole),
+                             "Loading run metadata")
+            self.assertEqual(run_list.all_run_metadata(), original)
+
+            run_list.updateRuns({1: {"guid": "pending", "run_timestamp": 100.,
+                                    "completed_timestamp": 102., "storage_bytes": 4096}})
+            self.assertEqual(item.text(duration), "2.0 s")
+            self.assertEqual(item.text(column("Size")), "4.0 KB")
+            self.assertFalse(item.data(duration, treeWidgets.METADATA_LOADING_ROLE))
+            self.assertIsNone(item.data(duration, QtCore.Qt.ItemDataRole.AccessibleTextRole))
+            self.assertEqual(item.data(duration, QtCore.Qt.ItemDataRole.UserRole), 2.)
+
+            run_list.set_metadata_loading(("pending",), loading=False)
+            self.assertEqual(item.text(duration), "2.0 s")
+            self.assertFalse(item.loading_columns)
+        finally:
+            run_list.deleteLater()
+
+    def test_partial_loading_survives_refresh_and_clears_on_cancellation(self):
+        run_list = treeWidgets.RunList()
+        run_list.addRuns({1: {"guid": "pending", "is_completed": 0},
+                          2: {"guid": "unavailable"}})
+        item = run_list._item_for_guid("pending")
+        unavailable = run_list._item_for_guid("unavailable")
+        column = run_list.cols.index
+        try:
+            run_list.set_metadata_loading(run_ids=(1,), columns=("Size", "Started"))
+            run_list.checkWatching({"pending": {"result_count": 3}})
+            self.assertEqual(item.text(column("Size")), "Loading…")
+            self.assertEqual(unavailable.text(column("Size")), "Unknown")
+            self.assertEqual(unavailable.text(column("Completed")), "Unknown")
+            self.assertEqual(item.text(column("Completed")), "Ongoing")
+
+            run_list.set_metadata_loading(("pending",), columns=("Started",), loading=False)
+            self.assertEqual(item.text(column("Started")), "Unknown")
+            self.assertEqual(item.text(column("Size")), "Loading…")
+            run_list.set_metadata_loading(loading=False)
+            self.assertEqual(item.text(column("Size")), "Unknown")
+            self.assertNotIn("Loading", item.toolTip(column("Size")))
+        finally:
+            run_list.deleteLater()
+
     def test_controller_data_paths_do_not_open_database(self):
         database_access = AssertionError("RunList attempted database access")
         with (
@@ -253,7 +310,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             )
             self.assertEqual(
                 missing_timestamp_item.text(run_list.cols.index("Started")),
-                "unknown",
+                "Unknown",
             )
         finally:
             treeWidgets.isfile = old_isfile
@@ -1355,7 +1412,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             self.assertEqual(
                 items["unfinished-guid"].text(status_col), "Running (10.0%)"
             )
-            self.assertEqual(items["unfinished-guid"].text(duration_col), "unknown")
+            self.assertEqual(items["unfinished-guid"].text(duration_col), "Unknown")
             self.assertEqual(items["unfinished-guid"].text(size_col), "100 KB")
             self.assertEqual(items["unfinished-guid"].text(column("Experiment")), "exp")
             self.assertEqual(items["unfinished-guid"].text(column("Sample")), "sample")
@@ -1835,7 +1892,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             )
             self.assertEqual(
                 item.text(run_list.cols.index("Duration")),
-                "unknown",
+                "Unknown",
             )
             self.assertIn("Completed</td>", item.toolTip(0))
         finally:
@@ -1959,7 +2016,7 @@ class RunListTooltipTestCase(unittest.TestCase):
         finally:
             treeWidgets.isfile = old_isfile
 
-    def test_run_table_placeholders_use_subtle_tints_while_generating(self):
+    def test_unloaded_placeholders_are_grey_except_while_generating(self):
         old_isfile = getattr(treeWidgets, "isfile", None)
         treeWidgets.isfile = lambda _: False
 
@@ -1975,6 +2032,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                         "guid": "run-guid",
                         "sweep_parameters": ["x"],
                         "measure_parameters": ["a", "b", "c"],
+                        "preview_dimensions": [1, 2, 3],
                         "result_count": 2,
                         "expected_results": 2,
                         "storage_bytes": 2048,
@@ -1988,26 +2046,26 @@ class RunListTooltipTestCase(unittest.TestCase):
                 run_list.cols.index("Measurements"),
             )
 
-            run_list.set_run_preview_generating("run-guid", True)
             placeholders = cell.findChildren(
                 qtw.QLabel, "measurementPreviewPlaceholder"
             )
+            waiting_styles = [placeholder.styleSheet() for placeholder in placeholders]
+            self.assertEqual(waiting_styles[0], waiting_styles[1])
+            self.assertIn("color: #808080", waiting_styles[0])
+
+            run_list.set_run_preview_generating("run-guid", True)
             styles = [placeholder.styleSheet() for placeholder in placeholders]
 
             self.assertEqual(len(placeholders), 3)
             self.assertTrue(all("background-color" in style for style in styles))
             self.assertGreater(len(set(styles)), 1)
+            self.assertNotEqual(styles[0], waiting_styles[0])
+            self.assertNotEqual(styles[1], waiting_styles[1])
 
             run_list.set_run_preview_generating("run-guid", False)
 
-            self.assertTrue(
-                all(
-                    placeholder.styleSheet() == ""
-                    for placeholder in cell.findChildren(
-                        qtw.QLabel, "measurementPreviewPlaceholder"
-                    )
-                )
-            )
+            self.assertEqual([placeholder.styleSheet() for placeholder in placeholders],
+                             waiting_styles)
         finally:
             treeWidgets.isfile = old_isfile
 

@@ -203,8 +203,9 @@ def test_public_load_exclusive_lock_reports_error_and_allows_retry(
         assert window._database_load_state is None
         assert window._database_load_worker is None
         assert not window._pending_trusted_read_services
-        assert window.RunList.isEnabled()
-        assert window.infoBox.isEnabled()
+        assert window.RunList.isEnabled() == prior_loaded
+        assert window.infoBox.isEnabled() == prior_loaded
+        assert window.loadDatabaseButton.isEnabled()
         # The closed flag can precede the control thread's final return.
         # Use the zero-wait join/reap contract while keeping Qt events moving.
         _process_until(lambda: service.wait_closed(0))
@@ -320,8 +321,9 @@ def test_cloud_load_error_details_explain_recovery_and_allow_retry(
         assert details == str(technical_error)
     assert window._database_load_state is None
     assert window._database_load_worker is None
-    assert window.RunList.isEnabled()
-    assert window.infoBox.isEnabled()
+    assert window.RunList.isEnabled() == prior_loaded
+    assert window.infoBox.isEnabled() == prior_loaded
+    assert window.loadDatabaseButton.isEnabled()
     _process_until(lambda: service.closed)
     assert window._loaded_database_instance == prior_instance
     assert window.RunList.all_run_metadata() == prior_runs

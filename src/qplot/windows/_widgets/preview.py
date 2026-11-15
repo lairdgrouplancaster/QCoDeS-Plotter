@@ -45,6 +45,10 @@ from ._run_formatting import preview_tooltip_text
 PREVIEW_SIZE = 200
 PREVIEW_THUMBNAIL_SIZE = 64
 PREVIEW_BACKGROUND_COLOR = "#f4f7fb"
+UNLOADED_PREVIEW_STYLE = (
+    "QLabel { color: #808080; border: 1px solid #a0a0a0;"
+    " background-color: rgba(128, 128, 128, 24); }"
+)
 PREVIEW_HEIGHT_PADDING = 48
 COLLAPSE_MINIMUM_RATIO = 0.25
 MAX_PREVIEW_ROWS = 50_000
@@ -1234,6 +1238,8 @@ class PreviewTab(qtw.QWidget):
                 placeholder.setFixedSize(self.preview_size, self.preview_size)
                 placeholder.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
                 placeholder.setFrameShape(qtw.QFrame.Shape.Box)
+                if dimension in (1, 2):
+                    placeholder.setStyleSheet(UNLOADED_PREVIEW_STYLE)
                 placeholder.setToolTip(message)
                 placeholder.setAccessibleName(
                     f"{dimension}D preview pending" if dimension else "Preview pending"
@@ -1984,6 +1990,8 @@ def unsupported_preview_label(preview, size, object_name):
     )
     label.setFrameShape(qtw.QFrame.Shape.Box)
     label.setFrameShadow(qtw.QFrame.Shadow.Plain)
+    if dimensions in (1, 2):
+        label.setStyleSheet(UNLOADED_PREVIEW_STYLE)
     label.set_complex_dataset(preview.get("complex", False))
     return label
 

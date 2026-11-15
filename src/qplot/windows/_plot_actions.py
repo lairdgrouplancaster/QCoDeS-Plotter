@@ -53,6 +53,7 @@ from ._subplots.subplot1d import (
     _subplot_shared_parameter,
 )
 from ._widgets.preview import preview_placeholder_dimensions
+from ._window_controls import sync_close_all_plots_actions
 from .plot1d import plot1d
 from .plot2d import plot2d
 from .plot3d import plot3d
@@ -129,6 +130,7 @@ class PlotActionsMixin:
         queue = getattr(self, "_auto_plot_queue", None)
         if queue is not None:
             queue.discard_pending()
+        sync_close_all_plots_actions(self)
 
     def _defer_trusted_plot_action(self, target, resume, *, target_window=None):
         if getattr(self, "_database_access_mode", None) != TRUSTED_LIVE_MODE:
@@ -177,6 +179,7 @@ class PlotActionsMixin:
             self.show_error("Plot Load Failed", "Could not load plot metadata.", str(error))
             return True
         pending.add(request)
+        sync_close_all_plots_actions(self)
         launch_generation = getattr(self, "_plot_launch_generation", 0)
         timer = QtCore.QTimer(self)
         timer.setInterval(10)
@@ -198,6 +201,7 @@ class PlotActionsMixin:
             timer.deleteLater()
             pending.discard(request)
             if stale:
+                sync_close_all_plots_actions(self)
                 return
             try:
                 dataset = request.wait(0)
@@ -205,6 +209,8 @@ class PlotActionsMixin:
             except Exception as error:
                 log_exception("Trusted plot launch failed", error, __name__)
                 self.show_error("Plot Load Failed", "Could not load the selected run.", str(error))
+            finally:
+                sync_close_all_plots_actions(self)
 
         timer.timeout.connect(poll)
         timer.start()
@@ -696,6 +702,7 @@ class PlotActionsMixin:
 
         """
         self.windows.remove(win)
+        sync_close_all_plots_actions(self)
         self.remove_ds_at(win._dataset_key)
         self.post_admin()
         self.show_status(f"Closed {win.label}", 3000)
@@ -868,6 +875,7 @@ class PlotActionsMixin:
         self.add_ds_at(dataset_key, ds=construction_ds)
 
         self.windows.append(win)
+        sync_close_all_plots_actions(self)
         win._plot_preview_sink = self._publish_displayed_plot_preview
 
         win.closed.connect(self.onClose)

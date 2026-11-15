@@ -49,6 +49,7 @@ from qplot.datahandling.trusted_work_scheduler import (
 )
 
 from ._auto_plot import update_auto_plot
+from ._database_detail_state import set_run_metadata_loading
 from ._snapshot_session import (
     SnapshotRequestFence,
     SnapshotSession,
@@ -97,6 +98,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self._index_by_guid: dict[str, int] = {}
         self._index_by_run_id: dict[int, int] = {}
         self._metadata_by_guid: dict[str, dict[str, Any]] = {}
+        self._pending_metadata_guids: set[str] = set()
         self._parameters_by_guid: dict[str, tuple[TrustedParameterView, ...]] = {}
         self._summaries_by_guid: dict[str, tuple[TrustedSetpointSummary, ...]] = {}
         self._selected_guid = ""
@@ -212,6 +214,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             refresh(runs)
         else:
             preview.set_trusted_derived_runs(runs)
+        set_run_metadata_loading(self._window, self._pending_metadata_guids)
         self.select_run(getattr(self._window, "_selected_run_guid", None))
         self.request_priority_update()
         self._request_wakeup()
@@ -326,6 +329,8 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self._coordinator_generation = coordinator.snapshot().generation
         preview = self._window.infoBox.preview
         preview.set_trusted_derived_runs(runs)
+        self._pending_metadata_guids.clear()
+        self._set_metadata_loading(run_guids)
         self._accepting_publications = True
         with self._wakeup_lock:
             self._accepting_wakeups = True
@@ -372,6 +377,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         index_by_guid = {guid: index for index, guid in enumerate(run_guids)}
         selected_guid = str(getattr(self._window, "_selected_run_guid", "") or "")
         visible_indices = self._visible_stable_indices(index_by_guid)
+        self._set_metadata_loading(run_guids[len(self._run_guids) :])
         coordinator.reconcile_runs(
             (*coordinator.runs, *additions),
             priority=(index_by_guid.get(selected_guid), visible_indices),
@@ -466,6 +472,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             )
             if callable(discard_plot) and discard_plot(guid):
                 self._window.RunList.set_run_previews(guid, [])
+            self._set_metadata_loading((guid,))
             coordinator.source_changed(index)
 
     def helper_restarted(self) -> None:
@@ -478,6 +485,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self._selected_detail_publication = None
         self._invalidate_selected_detail_viewer()
         self._last_helper_incarnation += 1
+        self._set_metadata_loading(self._run_guids)
         coordinator.helper_restarted()
         self._coordinator_generation = coordinator.snapshot().generation
 
@@ -526,6 +534,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
 
         self._require_owner()
         self.suspend_publications()
+        self._set_metadata_loading(self._run_guids, loading=False)
         coordinator = self._coordinator
         self._coordinator = None
         self._coordinator_generation = None
@@ -695,6 +704,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
                 self._invalidate_selected_detail_viewer()
                 coordinator = self._coordinator
                 if coordinator is not None:
+                    self._set_metadata_loading(self._run_guids)
                     coordinator.helper_restarted()
                     self._coordinator_generation = coordinator.snapshot().generation
                 return
@@ -919,6 +929,15 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             prioritize=True,
         )
 
+    def _set_metadata_loading(self, guids: Sequence[str], *, loading: bool = True) -> None:
+        # Retain presentation state across a rolled-back database switch, which
+        # rebuilds the old rows from their measurement metadata.
+        if loading:
+            self._pending_metadata_guids.update(guids)
+        else:
+            self._pending_metadata_guids.difference_update(guids)
+        set_run_metadata_loading(self._window, guids, loading=loading)
+
     def _publish_metadata(
         self,
         publication: WorkPublication,
@@ -929,6 +948,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         status = str(payload.get("status") or "error")
         description = str(payload.get("description") or "Run metadata unavailable.")
         if status != "ok":
+            self._set_metadata_loading((guid,), loading=False)
             if guid == getattr(self._window, "_selected_run_guid", None):
                 item = self._window.RunList._item_for_guid(guid)
                 run = dict(getattr(item, "run_metadata", {}) or {})
@@ -942,6 +962,7 @@ class TrustedDerivedQtBridge(QtCore.QObject):
             if isinstance(name, str)
         }
         if metadata.get("run_id") != run_id or metadata.get("guid") != guid:
+            self._set_metadata_loading((guid,), loading=False)
             return
         raw_run_fields = self._pairs(metadata.get("run_fields"))
         run_fields: dict[str, object] = {
@@ -972,6 +993,9 @@ class TrustedDerivedQtBridge(QtCore.QObject):
         self._parameters_by_guid[guid] = parameters
         self._summaries_by_guid[guid] = summaries
         self._window.RunList.updateRuns({run_id: run_fields})
+        if not self._publication_is_current(publication):
+            return
+        self._set_metadata_loading((guid,), loading=False)
         update_auto_plot(self._window, {run_id: run_fields})
         # PreviewTab replaces each run record, while RunList merges patches.
         # Give both consumers the same accepted facts, including omitted fields

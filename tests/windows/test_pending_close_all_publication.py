@@ -186,13 +186,36 @@ def test_close_all_without_visible_plots_retires_pending_launches(
 ):
     window, guids, _writer, _experiment, _database = pending_plot_window
     window.config.config["user_preference"]["confirm_close_all"] = confirm
+    assert not window.closeAllPlotsButton.isEnabled()
+    assert not window.closeAllPlotsAction.isEnabled()
     _queue_plot(window, guids[0], automatic)
     _queue_plot(window, guids[1], automatic)
     assert _pending_count(window, automatic) == 2
     assert window.windows == []
-    window.closeAll()
+    assert window.closeAllPlotsButton.isEnabled()
+    assert window.closeAllPlotsAction.isEnabled()
+    window.closeAllPlotsButton.click()
     _drain_plot_publication(window)
     assert window.windows == []
+    assert not window.closeAllPlotsButton.isEnabled()
+    assert not window.closeAllPlotsAction.isEnabled()
+
+
+def test_close_all_is_disabled_after_last_plot_is_closed_individually(pending_plot_window):
+    window, guids, _writer, _experiment, _database = pending_plot_window
+    first = _open_original(window, guids[-1])
+    window.openPlot(guid=guids[0])
+    _drain_plot_publication(window)
+    second = window.windows[1]
+    assert window.closeAllPlotsButton.isEnabled()
+    assert window.closeAllPlotsAction.isEnabled()
+    first.close()
+    assert window.windows == [second]
+    assert window.closeAllPlotsButton.isEnabled()
+    second.close()
+    assert window.windows == []
+    assert not window.closeAllPlotsButton.isEnabled()
+    assert not window.closeAllPlotsAction.isEnabled()
 
 
 @pytest.mark.parametrize("automatic", [False, True], ids=["manual", "automatic"])

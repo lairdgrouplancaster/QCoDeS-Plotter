@@ -268,7 +268,6 @@ def test_native_finder_open_reaches_launcher_while_gui_is_running(tmp_path):
     ready = tmp_path / "ready"
     driver = tmp_path / "running_gui.py"
     driver.write_text(textwrap.dedent(f'''\
-        import os, subprocess
         from pathlib import Path
         from PyQt6.QtCore import QTimer
         from PyQt6.QtWidgets import QApplication, QWidget
@@ -278,16 +277,8 @@ def test_native_finder_open_reaches_launcher_while_gui_is_running(tmp_path):
         window.show_error = lambda *args: print(args, flush=True)
         install_file_open_handler(app, window, {str(database)!r})
         window.show()
-        app.processEvents()
-        query = ('ObjC.import("AppKit"); '
-                 '$.NSRunningApplication.runningApplicationWithProcessIdentifier('
-                 + str(os.getpid()) + ').bundleURL.path.js')
-        native_bundle = subprocess.check_output(
-            ['/usr/bin/osascript', '-l', 'JavaScript', '-e', query],
-            text=True, timeout=10,
-        ).strip()
-        Path({str(ready)!r}).write_text(native_bundle)
-        QTimer.singleShot(15000, app.quit)
+        QTimer.singleShot(0, lambda: Path({str(ready)!r}).touch())
+        QTimer.singleShot(45000, app.quit)
         app.exec()
     '''), encoding="utf-8")
     # This is the interpreter the production supervisor uses for the GUI. The
@@ -299,11 +290,20 @@ def test_native_finder_open_reaches_launcher_while_gui_is_running(tmp_path):
             env=dict(os.environ, QT_QPA_PLATFORM="cocoa", __PYVENV_LAUNCHER__=sys.executable),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 30
         while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
             time.sleep(0.05)
-        assert ready.exists(), "The synthetic GUI did not start"
-        assert Path(ready.read_text()).resolve() == bundle.resolve()
+        assert ready.exists(), f"The synthetic GUI did not start (exit code: {child.poll()})"
+        # Query AppKit from the parent while the child's Qt event loop keeps
+        # servicing native startup and document events.
+        query = ('ObjC.import("AppKit"); '
+                 '$.NSRunningApplication.runningApplicationWithProcessIdentifier('
+                 + str(child.pid) + ').bundleURL.path.js')
+        native_bundle = subprocess.check_output(
+            ['/usr/bin/osascript', '-l', 'JavaScript', '-e', query],
+            text=True, timeout=10,
+        ).strip()
+        assert Path(native_bundle).resolve() == bundle.resolve()
         assert not received.exists(), "The command-line document was forwarded twice"
         subprocess.run(["/usr/bin/open", "-a", str(bundle), str(database)],
                        check=True, timeout=10)
@@ -317,10 +317,14 @@ def test_native_finder_open_reaches_launcher_while_gui_is_running(tmp_path):
         if child is not None:
             child.terminate()
             try:
-                child.communicate(timeout=5)
+                stdout, stderr = child.communicate(timeout=5)
             except subprocess.TimeoutExpired:
                 child.kill()
-                child.communicate(timeout=5)
+                stdout, stderr = child.communicate(timeout=5)
+            if stdout:
+                print(stdout)
+            if stderr:
+                print(stderr, file=sys.stderr)
         desktop._mac_registration(bundle, remove=True)
 
 

@@ -68,7 +68,9 @@ from .preview import (
 from .run_list_items import (
     MEASUREMENT_PREVIEW_SIZE,
     MEASUREMENT_PREVIEW_SPACING,
+    METADATA_LOADING_ROLE,
     EqualsAlignedDelegate,
+    RunMetadataDelegate,
     RunPreviewCell,
     SortableTreeWidgetItem,
 )
@@ -160,6 +162,9 @@ class RunList(qtw.QTreeWidget):
         "Size",
         "GUID",
     ]
+    _metadata_loading_columns = (
+        "Setpoints", "Started", "Status", "Duration", "Size", "Completed",
+    )
     default_visible_column_ids = (
         "run_id",
         "measurements",
@@ -338,6 +343,7 @@ class RunList(qtw.QTreeWidget):
         self.setUniformRowHeights(False)
         self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setHorizontalScrollMode(qtw.QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.setItemDelegate(RunMetadataDelegate(self))
         self._setpoints_delegate = EqualsAlignedDelegate(self)
         self.setItemDelegateForColumn(
             self.cols.index("Setpoints"),
@@ -512,6 +518,7 @@ class RunList(qtw.QTreeWidget):
                     metadata.get("storage_bytes"),
                 )
                 item.update_tooltip()
+                self._refresh_metadata_loading(item)
 
                 # Add to top.  Record every mutation before the next operation
                 # so a nested-event abort or widget error can remove the whole
@@ -571,6 +578,42 @@ class RunList(qtw.QTreeWidget):
                 roll_back_added_items()
                 self._setpoints_delegate.invalidate_width_cache()
                 self.setSortingEnabled(True)
+
+    def set_metadata_loading(self, guids=None, *, run_ids=None, columns=None, loading=True):
+        """Present pending work separately from missing measurement metadata."""
+        columns = set(self._metadata_loading_columns if columns is None else columns)
+        items = (self._items_by_guid.values() if guids is None else
+                 (self._item_for_guid(guid) for guid in guids))
+        ids = None if run_ids is None else {str(run_id) for run_id in run_ids}
+        sorting_enabled = self.isSortingEnabled()
+        self.setSortingEnabled(False)
+        try:
+            for item in items:
+                if item is None or (ids is not None and item.text(0) not in ids):
+                    continue
+                pending = item.loading_columns
+                updated = pending | columns if loading else pending - columns
+                if pending == updated:
+                    continue
+                item.loading_columns = updated
+                item.update_tooltip()
+                self._refresh_metadata_loading(item)
+        finally:
+            self._setpoints_delegate.invalidate_width_cache()
+            self.setSortingEnabled(sorting_enabled)
+
+    def _refresh_metadata_loading(self, item):
+        values = self._run_column_texts(item.text(0), item.run_metadata)
+        for name in self._metadata_loading_columns:
+            column = self.cols.index(name)
+            value = values[column]
+            pending = name in item.loading_columns and value in ("Unknown", "")
+            item.setText(column, "Loading…" if pending else value)
+            item.setData(column, METADATA_LOADING_ROLE, pending)
+            item.setData(column, QtCore.Qt.ItemDataRole.AccessibleTextRole,
+                         "Loading run metadata" if pending else None)
+            if pending:
+                item.setToolTip(column, "Loading run metadata…")
 
     def updateRuns(self, runs):
         """
@@ -694,6 +737,7 @@ class RunList(qtw.QTreeWidget):
         )
 
         item.update_tooltip()
+        self._refresh_metadata_loading(item)
 
     @classmethod
     def _run_column_texts(cls, run_id, metadata):
@@ -711,6 +755,9 @@ class RunList(qtw.QTreeWidget):
             "Completed": cls._format_completed_timestamp(metadata),
             "GUID": cls._metadata_cell_text(metadata.get("guid")),
         }
+        for name in cls._metadata_loading_columns:
+            if values[name] == "unknown":
+                values[name] = "Unknown"
         return [values[name] for name in cls.cols]
 
     @staticmethod
@@ -724,7 +771,7 @@ class RunList(qtw.QTreeWidget):
             return format_timestamp(completed_timestamp)
         if run_is_complete(metadata):
             return "unknown"
-        return "Ongoing"
+        return "Ongoing" if metadata.get("is_completed") is not None else "unknown"
 
     def _refresh_metadata_columns(self, item):
         metadata = item.run_metadata
@@ -1472,6 +1519,7 @@ class RunList(qtw.QTreeWidget):
 
             self._refresh_metadata_columns(run)
             run.update_tooltip()
+            self._refresh_metadata_loading(run)
             run_id: int | str
             try:
                 run_id = int(run.text(0))

@@ -54,8 +54,11 @@ _REAL_QTHREADPOOL_SHUTDOWN_PROBE = textwrap.dedent(
     configure_logging(log_file=log_path, force=True)
     # Grace is capped at one quarter of the total timeout. Give real file I/O
     # the production 0.25 s grace; blocked I/O still faces the 0.45 s deadline.
+    # Graceful Qt teardown is followed by Python/library finalisation on busy
+    # runners. Its 5 s budget stays below the application's 15 s deadline;
+    # forced-shutdown probes retain their short, precisely asserted deadlines.
     main_window._APPLICATION_SHUTDOWN_TIMEOUT_SECONDS = {
-        "graceful": 1.5,
+        "graceful": 5.0,
         "stuck": 1.0,
         "blocked-diagnostics": 0.45,
     }[mode]
@@ -552,7 +555,7 @@ def test_real_qthreadpool_completion_disarms_after_graceful_destruction(
     teardown_completed_at = float(
         _probe_value(completed.stdout, "PROCESS_TEARDOWN_COMPLETED", "at")
     )
-    assert 1.45 <= hard_deadline - shutdown_started_at <= 1.55
+    assert 4.95 <= hard_deadline - shutdown_started_at <= 5.05
     assert teardown_completed_at - request_at >= 0.04
     assert teardown_completed_at < hard_deadline
     assert "Bounded Application Shutdown" not in log_path.read_text(encoding="utf-8")

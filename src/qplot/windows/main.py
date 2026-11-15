@@ -271,6 +271,7 @@ class MainWindow(
         w = qtw.QFrame()
         w.setLayout(self.l)
         self.setCentralWidget(w)
+        self._match_run_action_button_widths()
        
         # Fetch window size from config.json, but keep the run list readable.
         configured_width, configured_height = self.config.get("GUI.main_frame_size")
@@ -288,7 +289,7 @@ class MainWindow(
         status_bar.addPermanentWidget(self.refreshStateLabel)
         status_bar.addPermanentWidget(self.status_label, 1)
         startup_elapsed = perf_counter() - startup_start
-        self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
+        self.show_status(f"Ready - qPlot opened in {startup_elapsed:.2f} s")
         
         # Get user's window dimensions to control new window position
         primary_screen = cast(QtGui.QScreen, qtw.QApplication.primaryScreen())
@@ -333,30 +334,30 @@ class MainWindow(
         refreshAction = create_action("window.refresh", self)
         refreshAction.triggered.connect(self.refresh_all)
         fileMenu.addAction(refreshAction)
+        self.refreshAction = refreshAction
 
         open_folder_action = create_action("database.open_folder", self)
         open_folder_action.triggered.connect(self.open_database_location)
         fileMenu.addAction(open_folder_action)
+        self.openDatabaseFolderAction = open_folder_action
 
         fileMenu.addSeparator()
 
         export_runs = create_action("run.export_selected", self)
         export_runs.triggered.connect(self.export_selected_runs_csv)
         fileMenu.addAction(export_runs)
+        self.exportSelectedRunsAction = export_runs
         from ._database_export import export_database
 
         export_selected_database = create_action("database.export_selected", self)
         export_selected_database.triggered.connect(lambda: export_database(self, selected=True))
         fileMenu.addAction(export_selected_database)
+        self.exportSelectedDatabaseAction = export_selected_database
         export_database_action = create_action("database.export_copy", self)
         export_database_action.triggered.connect(lambda: export_database(self))
         fileMenu.addAction(export_database_action)
-        def update_export_actions():
-            has_selection = bool(self.RunList.selected_run_ids())
-            export_runs.setEnabled(has_selection)
-            export_selected_database.setEnabled(has_selection)
-            export_database_action.setEnabled(getattr(self, "_loaded_database_instance", None) is not None)
-        fileMenu.aboutToShow.connect(update_export_actions)
+        self.exportDatabaseAction = export_database_action
+        fileMenu.aboutToShow.connect(self._sync_database_generation_controls)
         exports_progress = create_action("exports.show", self)
         exports_progress.triggered.connect(self.show_csv_exports)
         fileMenu.addAction(exports_progress)
@@ -395,6 +396,7 @@ class MainWindow(
             status_tip="Close all open plot windows",
             )
         self.closeAllPlotsAction.triggered.connect(self.closeAll)
+        self.closeAllPlotsAction.setEnabled(False)
         fileMenu.addAction(self.closeAllPlotsAction)
 
         closeAction = create_action(
@@ -429,14 +431,26 @@ class MainWindow(
         self.targetLayout.setContentsMargins(8, 2, 8, 2)
         self.targetLayout.setSpacing(6)
 
-        database_label = qtw.QLabel("Database:")
-        database_label.setToolTip("Current QCoDeS database")
-        self.targetLayout.addWidget(database_label)
+        self.loadDatabaseButton = qtw.QToolButton()
+        self.loadDatabaseButton.setObjectName("databaseIconButton")
+        self.loadDatabaseButton.setIcon(
+            style.standardIcon(qtw.QStyle.StandardPixmap.SP_DialogOpenButton)
+            )
+        self.loadDatabaseButton.setText("Load database…")
+        self.loadDatabaseButton.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+            )
+        self.loadDatabaseButton.setToolTip("Load a QCoDeS .db database (Ctrl+L)")
+        self.loadDatabaseButton.setAccessibleName("Load database")
+        self.loadDatabaseButton.setFixedHeight(26)
+        self.loadDatabaseButton.clicked.connect(self.getfile)
+        self.targetLayout.addWidget(self.loadDatabaseButton)
 
         self.fileTextbox = DatabasePathLineEdit()
         self.fileTextbox.setObjectName("databasePathField")
+        self.fileTextbox.setAccessibleName("Current database")
         self.fileTextbox.setReadOnly(True)
-        self.fileTextbox.setPlaceholderText("Drop a QCoDeS .db file here or use File -> Load")
+        self.fileTextbox.setPlaceholderText("Drop a QCoDeS .db file here or use Load database…")
         self.fileTextbox.setToolTip(
             "Current database path. Drop a QCoDeS .db file here to load it."
             )
@@ -465,21 +479,6 @@ class MainWindow(
         self.databaseInfoButton.clicked.connect(self.show_database_info)
         self.targetLayout.addWidget(self.databaseInfoButton)
 
-        self.loadDatabaseButton = qtw.QToolButton()
-        self.loadDatabaseButton.setObjectName("databaseIconButton")
-        self.loadDatabaseButton.setIcon(
-            style.standardIcon(qtw.QStyle.StandardPixmap.SP_DialogOpenButton)
-            )
-        self.loadDatabaseButton.setText("Open…")
-        self.loadDatabaseButton.setToolButtonStyle(
-            QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-            )
-        self.loadDatabaseButton.setToolTip("Load a QCoDeS .db database (Ctrl+L)")
-        self.loadDatabaseButton.setAccessibleName("Load database")
-        self.loadDatabaseButton.setFixedHeight(26)
-        self.loadDatabaseButton.clicked.connect(self.getfile)
-        self.targetLayout.addWidget(self.loadDatabaseButton)
-
         self.openDatabaseFolderButton = qtw.QToolButton()
         self.openDatabaseFolderButton.setObjectName("databaseIconButton")
         self.openDatabaseFolderButton.setIcon(
@@ -492,10 +491,6 @@ class MainWindow(
         self.openDatabaseFolderButton.setFixedSize(28, 26)
         self.openDatabaseFolderButton.clicked.connect(self.open_database_location)
         self.targetLayout.addWidget(self.openDatabaseFolderButton)
-
-        self.targetLayout.addStretch()
-        self.targetLayout.addSpacing(18)
-        self.targetLayout.addWidget(self.closeAllPlotsButton)
 
         self.databaseLoadFrame = qtw.QFrame()
         self.databaseLoadFrame.setObjectName("databaseLoadFrame")
@@ -714,6 +709,7 @@ class MainWindow(
         
         # Update all windows.
         self.setStyleSheet(self.config.theme.main)
+        self._match_run_action_button_widths()
         for win in self.windows:
             win.update_theme(self.config)
         self.show_status(f"Theme changed to {theme}.", 2000)
@@ -806,6 +802,7 @@ class MainWindow(
             if hasattr(run_list, "apply_configured_column_visibility"):
                 run_list.apply_configured_column_visibility()
         self.setStyleSheet(self.config.theme.main)
+        self._match_run_action_button_widths()
         for win in self.windows:
             win.update_theme(self.config)
             apply_major_ticks = getattr(
