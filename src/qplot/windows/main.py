@@ -289,7 +289,7 @@ class MainWindow(
         status_bar.addPermanentWidget(self.refreshStateLabel)
         status_bar.addPermanentWidget(self.status_label, 1)
         startup_elapsed = perf_counter() - startup_start
-        self.show_status(f"Ready - QPlot opened in {startup_elapsed:.2f} s")
+        self.show_status(f"Ready - qPlot opened in {startup_elapsed:.2f} s")
         
         # Get user's window dimensions to control new window position
         primary_screen = cast(QtGui.QScreen, qtw.QApplication.primaryScreen())
