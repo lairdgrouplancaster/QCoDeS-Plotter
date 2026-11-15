@@ -10,11 +10,11 @@ from qplot.windows._plot_drop_axes import (
     dataset_axis_warning_details,
     dataset_axis_warnings,
 )
-from tests.windows.test_mixed_plot_drops import _added, _axis_warning_item, _drop
-from tests.windows.test_mixed_plot_drops import (
+from tests.support.windows.mixed_plot_drops import _added, _axis_warning_item, _drop
+from tests.support.windows.mixed_plot_drops import (
     mixed_plot as mixed_plot,
 )
-from tests.windows.test_plot_overlay_integration import _assign_trace_axes
+from tests.support.windows.plot_overlay_integration import _assign_trace_axes
 
 
 def _parameter(name, unit):

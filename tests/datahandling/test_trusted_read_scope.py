@@ -16,8 +16,8 @@ from qplot.datahandling.trusted_live import (
     TrustedLiveSourceChangedError,
     TrustedLiveUnsupportedSourceError,
 )
-from tests.datahandling.test_trusted_live import _assert_safe_audit
-from tests.datahandling.test_trusted_plot import make_run, protected_state
+from tests.support.datahandling.trusted_live import _assert_safe_audit
+from tests.support.datahandling.trusted_plot import make_run, protected_state
 
 
 @pytest.fixture

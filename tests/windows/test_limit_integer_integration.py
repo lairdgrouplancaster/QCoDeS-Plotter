@@ -12,14 +12,14 @@ from pyqtgraph.exporters import CSVExporter
 from qplot.datahandling.qcodes_cache import cache_parameter_data
 from qplot.tools.plot_tools import pass_filter
 from qplot.windows._plot1d_snap import _line_snap_data
-from tests.windows.test_differentiation_integration import (
+from tests.support.windows.differentiation_integration import (
     apply_operations,
     operation_option,
 )
-from tests.windows.test_differentiation_integration import (
+from tests.support.windows.differentiation_integration import (
     integer_array_plot as _integer_array_plot_fixture,
 )
-from tests.windows.test_plot_integration import wait_for
+from tests.support.windows.plot_integration import wait_for
 
 integer_array_plot = _integer_array_plot_fixture
 

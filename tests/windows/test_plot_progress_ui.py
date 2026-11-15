@@ -16,8 +16,8 @@ from qplot.windows._plot_status import PlotStatusWidget
 from qplot.windows._plotWin import plotWidget
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
-from tests.datahandling.test_trusted_plot import make_run, prohibit_snapshots
-from tests.windows.test_trusted_plot_launch import wait_for
+from tests.support.datahandling.trusted_plot import make_run, prohibit_snapshots
+from tests.support.windows.trusted_plot_launch import wait_for
 
 
 def worker(progress):

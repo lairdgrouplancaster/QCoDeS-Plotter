@@ -112,7 +112,7 @@
       "seconds": 0.01,
       "tests": 6
     },
-    "tests/datahandling/test_stage5c_real_qcodes.py": {
+    "tests/datahandling/test_qcodes_measurement_layouts.py": {
       "seconds": 472.046,
       "tests": 142
     },
@@ -184,7 +184,7 @@
       "seconds": 3.339,
       "tests": 55
     },
-    "tests/datahandling/test_trusted_live_stage4_integration.py": {
+    "tests/datahandling/test_live_run_discovery.py": {
       "seconds": 19.072,
       "tests": 8
     },
@@ -240,503 +240,499 @@
       "seconds": 0.041,
       "tests": 7
     },
-    "tests/test_auxiliary_database_protection.py": {
+    "tests/configuration/test_auxiliary_database_protection.py": {
       "seconds": 0.65,
       "tests": 17
     },
-    "tests/test_bounded_heatmap_means.py": {
+    "tests/workers/test_bounded_heatmap_means.py": {
       "seconds": 7.505,
       "tests": 49
     },
-    "tests/test_bounded_integer_precision.py": {
+    "tests/workers/test_bounded_integer_precision.py": {
       "seconds": 2.42,
       "tests": 17
     },
-    "tests/test_bug_hunt_array_bin_ranges.py": {
+    "tests/workers/test_array_bin_ranges.py": {
       "seconds": 3.348,
       "tests": 24
     },
-    "tests/test_bug_hunt_auxiliary_safety.py": {
+    "tests/configuration/test_auxiliary_hardlink_protection.py": {
       "seconds": 0.442,
       "tests": 5
     },
-    "tests/test_bug_hunt_average_view_updates.py": {
+    "tests/windows/test_average_view_updates.py": {
       "seconds": 0.222,
       "tests": 3
     },
-    "tests/test_bug_hunt_bounded_mixed_means.py": {
+    "tests/workers/test_bounded_mixed_means.py": {
       "seconds": 7.889,
       "tests": 47
     },
-    "tests/test_bug_hunt_config.py": {
+    "tests/configuration/test_settings_recovery.py": {
       "seconds": 1.632,
       "tests": 4
     },
-    "tests/test_bug_hunt_constant_auto_recovery.py": {
+    "tests/windows/test_constant_auto_recovery.py": {
       "seconds": 6.861,
       "tests": 5
     },
-    "tests/test_bug_hunt_database_refresh.py": {
+    "tests/datahandling/test_failed_status_refresh.py": {
       "seconds": 0.327,
       "tests": 10
     },
-    "tests/test_bug_hunt_derivative_cancellation.py": {
+    "tests/workers/test_derivative_cancellation.py": {
       "seconds": 0.665,
       "tests": 3
     },
-    "tests/test_bug_hunt_duplicate_mean_cancellation.py": {
+    "tests/workers/test_duplicate_mean_cancellation.py": {
       "seconds": 0.978,
       "tests": 8
     },
-    "tests/test_bug_hunt_fill_cancellation.py": {
+    "tests/workers/test_fill_cancellation.py": {
       "seconds": 0.271,
       "tests": 13
     },
-    "tests/test_bug_hunt_float_average_performance.py": {
+    "tests/windows/test_float_average_performance.py": {
       "seconds": 13.779,
       "tests": 14
     },
-    "tests/test_bug_hunt_generator_fifo.py": {
+    "tests/generation/test_special_destinations.py": {
       "seconds": 1.754,
       "tests": 5
     },
-    "tests/test_bug_hunt_generator_safety.py": {
+    "tests/generation/test_instruction_output_protection.py": {
       "seconds": 12.589,
       "tests": 26
     },
-    "tests/test_bug_hunt_heatmap_display_ranges.py": {
+    "tests/windows/test_heatmap_display_ranges.py": {
       "seconds": 46.33,
       "tests": 21
     },
-    "tests/test_bug_hunt_integer_mean_cancellation.py": {
+    "tests/workers/test_integer_mean_cancellation.py": {
       "seconds": 0.537,
       "tests": 17
     },
-    "tests/test_bug_hunt_line_display_ranges.py": {
+    "tests/windows/test_line_display_ranges.py": {
       "seconds": 15.138,
       "tests": 20
     },
-    "tests/test_bug_hunt_longdouble_samples.py": {
+    "tests/workers/test_longdouble_samples.py": {
       "seconds": 0.219,
       "tests": 5
     },
-    "tests/test_bug_hunt_marquee_statistics_performance.py": {
+    "tests/windows/test_marquee_statistics_performance.py": {
       "seconds": 17.678,
       "tests": 10
     },
-    "tests/test_bug_hunt_measurement_generator.py": {
+    "tests/generation/test_finite_sweep_coordinates.py": {
       "seconds": 2.277,
       "tests": 12
     },
-    "tests/test_bug_hunt_measurement_lines.py": {
+    "tests/windows/test_integer_line_display_precision.py": {
       "seconds": 5.519,
       "tests": 9
     },
-    "tests/test_bug_hunt_measurement_previews.py": {
+    "tests/datahandling/test_array_preview_precision.py": {
       "seconds": 2.497,
       "tests": 24
     },
-    "tests/test_bug_hunt_mixed_average_performance.py": {
+    "tests/windows/test_mixed_average_performance.py": {
       "seconds": 0.624,
       "tests": 7
     },
-    "tests/test_bug_hunt_native_averaging.py": {
+    "tests/windows/test_integer_average_rounding.py": {
       "seconds": 0.468,
       "tests": 24
     },
-    "tests/test_bug_hunt_object_scan_cancellation.py": {
+    "tests/workers/test_object_scan_cancellation.py": {
       "seconds": 1.044,
       "tests": 8
     },
-    "tests/test_bug_hunt_shaped_coordinate_ranges.py": {
+    "tests/workers/test_shaped_coordinate_ranges.py": {
       "seconds": 4.242,
       "tests": 19
     },
-    "tests/test_bug_hunt_snapshot_fifo.py": {
+    "tests/datahandling/test_snapshot_special_files.py": {
       "seconds": 2.034,
       "tests": 16
     },
-    "tests/test_bug_hunt_tiny_heatmap_bins.py": {
+    "tests/workers/test_tiny_heatmap_bins.py": {
       "seconds": 5.518,
       "tests": 16
     },
-    "tests/test_bug_hunt_ui_cuts.py": {
+    "tests/windows/test_cut_source_promotion.py": {
       "seconds": 11.067,
       "tests": 3
     },
-    "tests/test_bug_hunt_ui_display_precision.py": {
+    "tests/windows/test_heatmap_display_precision.py": {
       "seconds": 12.398,
       "tests": 14
     },
-    "tests/test_bug_hunt_ui_refresh.py": {
+    "tests/windows/test_refresh_worker_ownership.py": {
       "seconds": 0.007,
       "tests": 1
     },
-    "tests/test_campaign_array_expansion_budget.py": {
+    "tests/workers/test_array_expansion_budget.py": {
       "seconds": 4.718,
       "tests": 20
     },
-    "tests/test_campaign_boolean_derivative.py": {
+    "tests/windows/test_boolean_derivative.py": {
       "seconds": 13.976,
       "tests": 36
     },
-    "tests/test_campaign_clipped_trace_reparenting.py": {
+    "tests/windows/test_clipped_trace_reparenting.py": {
       "seconds": 9.242,
       "tests": 4
     },
-    "tests/test_campaign_diagnostics.py": {
+    "tests/configuration/test_log_destination_replacement.py": {
       "seconds": 0.5,
       "tests": 12
     },
-    "tests/test_campaign_empty_incremental_records.py": {
+    "tests/datahandling/test_empty_incremental_records.py": {
       "seconds": 4.216,
       "tests": 9
     },
-    "tests/test_campaign_extended_float_centering.py": {
+    "tests/windows/test_extended_float_centering.py": {
       "seconds": 41.257,
       "tests": 35
     },
-    "tests/test_campaign_extended_float_derivative.py": {
+    "tests/windows/test_extended_float_derivative.py": {
       "seconds": 0.037,
       "tests": 32
     },
-    "tests/test_campaign_extended_float_display.py": {
+    "tests/windows/test_extended_float_display.py": {
       "seconds": 7.954,
       "tests": 11
     },
-    "tests/test_campaign_extended_float_fft.py": {
+    "tests/windows/test_extended_float_fft.py": {
       "seconds": 8.256,
       "tests": 35
     },
-    "tests/test_campaign_extended_float_heatmap.py": {
+    "tests/workers/test_extended_float_heatmap.py": {
       "seconds": 6.318,
       "tests": 19
     },
-    "tests/test_campaign_extended_float_previews.py": {
+    "tests/datahandling/test_extended_float_previews.py": {
       "seconds": 10.32,
       "tests": 32
     },
-    "tests/test_campaign_generator_backend.py": {
+    "tests/generation/test_backend_isolation.py": {
       "seconds": 0.974,
       "tests": 11
     },
-    "tests/test_campaign_generator_input.py": {
+    "tests/generation/test_invalid_instructions.py": {
       "seconds": 0.015,
       "tests": 2
     },
-    "tests/test_campaign_heatmap_csv_precision.py": {
+    "tests/windows/test_heatmap_csv_precision.py": {
       "seconds": 18.738,
       "tests": 12
     },
-    "tests/test_campaign_inferred_array_missing_cells.py": {
+    "tests/workers/test_inferred_array_missing_cells.py": {
       "seconds": 17.746,
       "tests": 39
     },
-    "tests/test_campaign_inferred_parameter_loading.py": {
+    "tests/datahandling/test_inferred_parameter_loading.py": {
       "seconds": 51.801,
       "tests": 18
     },
-    "tests/test_campaign_live_schema_refresh.py": {
+    "tests/datahandling/test_live_schema_refresh.py": {
       "seconds": 2.083,
       "tests": 3
     },
-    "tests/test_campaign_log_symlink_loops.py": {
+    "tests/configuration/test_log_path_recovery.py": {
       "seconds": 0.017,
       "tests": 4
     },
-    "tests/test_campaign_measurement_coordinate_gaps.py": {
+    "tests/workers/test_measurement_coordinate_gaps.py": {
       "seconds": 5.938,
       "tests": 39
     },
-    "tests/test_campaign_measurement_longdouble_csv.py": {
+    "tests/windows/test_measurement_longdouble_csv.py": {
       "seconds": 0.059,
       "tests": 5
     },
-    "tests/test_campaign_metadata_omission_recovery.py": {
+    "tests/datahandling/test_metadata_omission_recovery.py": {
       "seconds": 4.979,
       "tests": 8
     },
-    "tests/test_campaign_mixed_extended_clipping.py": {
+    "tests/windows/test_mixed_extended_clipping.py": {
       "seconds": 12.911,
       "tests": 15
     },
-    "tests/test_campaign_mixed_extended_finiteness.py": {
+    "tests/workers/test_mixed_extended_finiteness.py": {
       "seconds": 0.015,
       "tests": 18
     },
-    "tests/test_campaign_narrow_float_clipping.py": {
+    "tests/windows/test_narrow_float_clipping.py": {
       "seconds": 15.02,
       "tests": 16
     },
-    "tests/test_campaign_profiling_scripts.py": {
+    "tests/infrastructure/test_profiling_scripts.py": {
       "seconds": 58.81,
       "tests": 15
     },
-    "tests/test_campaign_rounded_uniform_derivative.py": {
+    "tests/workers/test_rounded_uniform_derivative.py": {
       "seconds": 27.291,
       "tests": 255
     },
-    "tests/test_campaign_safety_cancellation.py": {
+    "tests/workers/test_safety_cancellation.py": {
       "seconds": 4.362,
       "tests": 5
     },
-    "tests/test_campaign_singleton_array_previews.py": {
+    "tests/datahandling/test_singleton_array_previews.py": {
       "seconds": 31.597,
       "tests": 68
     },
-    "tests/test_campaign_split_storage_safety.py": {
+    "tests/datahandling/test_split_storage_safety.py": {
       "seconds": 4.943,
       "tests": 3
     },
-    "tests/test_campaign_ui_cut_axis_refresh.py": {
+    "tests/windows/test_cut_axis_refresh.py": {
       "seconds": 3.052,
       "tests": 1
     },
-    "tests/test_campaign_ui_cut_ownership.py": {
+    "tests/windows/test_cut_source_ownership.py": {
       "seconds": 16.478,
       "tests": 4
     },
-    "tests/test_campaign_ui_manual_refresh.py": {
+    "tests/windows/test_paused_plot_manual_refresh.py": {
       "seconds": 58.5,
       "tests": 21
     },
-    "tests/test_campaign_ui_paused_promotion.py": {
+    "tests/windows/test_source_promotion_refresh_interval.py": {
       "seconds": 38.884,
       "tests": 10
     },
-    "tests/test_campaign_ui_pending_drop.py": {
+    "tests/windows/test_deferred_drop_ownership.py": {
       "seconds": 43.225,
       "tests": 18
     },
-    "tests/test_campaign_ui_promoted_cut_mapping.py": {
+    "tests/windows/test_promoted_cut_mapping.py": {
       "seconds": 26.77,
       "tests": 6
     },
-    "tests/test_campaign_ui_promotion.py": {
+    "tests/windows/test_source_promotion_operations.py": {
       "seconds": 61.247,
       "tests": 16
     },
-    "tests/test_campaign_wal_artifact_observation.py": {
+    "tests/datahandling/test_wal_artifact_observation.py": {
       "seconds": 0.088,
       "tests": 11
     },
-    "tests/test_ci_artifacts.py": {
+    "tests/infrastructure/test_ci_artifacts.py": {
       "seconds": 0.032,
       "tests": 10
     },
-    "tests/test_ci_gate.py": {
+    "tests/infrastructure/test_ci_gate.py": {
       "seconds": 0.911,
       "tests": 61
     },
-    "tests/test_ci_plan.py": {
+    "tests/infrastructure/test_ci_plan.py": {
       "seconds": 4.154,
       "tests": 90
     },
-    "tests/test_ci_scheduling.py": {
+    "tests/infrastructure/test_ci_scheduling.py": {
       "seconds": 32.231,
       "tests": 26
     },
-    "tests/test_compiler_free_install.py": {
+    "tests/infrastructure/test_compiler_free_install.py": {
       "seconds": 1.445,
       "tests": 30
     },
-    "tests/test_config.py": {
+    "tests/configuration/test_config.py": {
       "seconds": 1.35,
       "tests": 80
     },
-    "tests/test_config_cli.py": {
+    "tests/configuration/test_config_cli.py": {
       "seconds": 0.015,
       "tests": 14
     },
-    "tests/test_demo_database_safety.py": {
+    "tests/infrastructure/test_demo_database_safety.py": {
       "seconds": 2.919,
       "tests": 6
     },
-    "tests/test_derivative_numeric_ranges.py": {
+    "tests/workers/test_derivative_numeric_ranges.py": {
       "seconds": 5.43,
       "tests": 40
     },
-    "tests/test_desktop.py": {
+    "tests/desktop/test_desktop.py": {
       "seconds": 2.783,
       "tests": 31
     },
-    "tests/test_desktop_associations.py": {
+    "tests/desktop/test_desktop_associations.py": {
       "seconds": 0.027,
       "tests": 11
     },
-    "tests/test_desktop_sidecars.py": {
+    "tests/desktop/test_desktop_sidecars.py": {
       "seconds": 0.044,
       "tests": 17
     },
-    "tests/test_diagnostics.py": {
+    "tests/configuration/test_diagnostics.py": {
       "seconds": 0.067,
       "tests": 16
     },
-    "tests/test_distribution_validator.py": {
+    "tests/infrastructure/test_distribution_validator.py": {
       "seconds": 16.346,
       "tests": 51
     },
-    "tests/test_fixture_scope.py": {
+    "tests/infrastructure/test_fixture_scope.py": {
       "seconds": 1.797,
       "tests": 3
     },
-    "tests/test_generation_destination_access.py": {
+    "tests/generation/test_generation_destination_access.py": {
       "seconds": 1.588,
       "tests": 10
     },
-    "tests/test_heatmap_cancellation_residuals.py": {
+    "tests/workers/test_heatmap_cancellation_residuals.py": {
       "seconds": 4.679,
       "tests": 9
     },
-    "tests/test_heatmap_float_means.py": {
+    "tests/workers/test_heatmap_float_means.py": {
       "seconds": 1.781,
       "tests": 12
     },
-    "tests/test_heatmap_geometry.py": {
+    "tests/tools/test_heatmap_geometry.py": {
       "seconds": 0.038,
       "tests": 33
     },
-    "tests/test_independent_heatmap_extremes.py": {
+    "tests/workers/test_independent_heatmap_extremes.py": {
       "seconds": 1.298,
       "tests": 10
     },
-    "tests/test_liveplot_database_safety.py": {
+    "tests/infrastructure/test_liveplot_database_safety.py": {
       "seconds": 0.191,
       "tests": 6
     },
-    "tests/test_macos_identity.py": {
+    "tests/desktop/test_macos_identity.py": {
       "seconds": 6.884,
       "tests": 17
     },
-    "tests/test_macos_window.py": {
+    "tests/desktop/test_macos_window.py": {
       "seconds": 0.007,
       "tests": 7
     },
-    "tests/test_multidimensional_measurements.py": {
+    "tests/datahandling/test_multidimensional_measurements.py": {
       "seconds": 21.884,
       "tests": 31
     },
-    "tests/test_native_fft_mixed_coordinates.py": {
+    "tests/windows/test_native_fft_mixed_coordinates.py": {
       "seconds": 1.579,
       "tests": 10
     },
-    "tests/test_nonuniform_cancellation.py": {
+    "tests/tools/test_nonuniform_cancellation.py": {
       "seconds": 0.108,
       "tests": 37
     },
-    "tests/test_package_import.py": {
+    "tests/infrastructure/test_package_import.py": {
       "seconds": 2.361,
       "tests": 7
     },
-    "tests/test_packaging_split.py": {
+    "tests/infrastructure/test_packaging_split.py": {
       "seconds": 0.011,
       "tests": 7
     },
-    "tests/test_plot_result.py": {
+    "tests/tools/test_plot_result.py": {
       "seconds": 0.013,
       "tests": 4
     },
-    "tests/test_process_shutdown.py": {
+    "tests/lifecycle/test_process_shutdown.py": {
       "seconds": 1.58,
       "tests": 6
     },
-    "tests/test_release.py": {
+    "tests/infrastructure/test_release.py": {
       "seconds": 1.037,
       "tests": 47
     },
-    "tests/test_sample_statistics_accuracy.py": {
+    "tests/tools/test_sample_statistics_accuracy.py": {
       "seconds": 0.016,
       "tests": 10
     },
-    "tests/test_shutdown_bootstrap.py": {
+    "tests/lifecycle/test_shutdown_bootstrap.py": {
       "seconds": 0.032,
       "tests": 29
     },
-    "tests/test_shutdown_protocol.py": {
+    "tests/lifecycle/test_shutdown_protocol.py": {
       "seconds": 0.038,
       "tests": 36
     },
-    "tests/test_shutdown_supervisor.py": {
-      "seconds": 39.459,
-      "tests": 102
-    },
-    "tests/test_testdata.py": {
+    "tests/generation/test_database_generation.py": {
       "seconds": 18.307,
       "tests": 103
     },
-    "tests/test_testdata_specifications.py": {
+    "tests/generation/test_specifications.py": {
       "seconds": 0.151,
       "tests": 13
     },
-    "tests/test_time_stress_database_safety.py": {
+    "tests/infrastructure/test_time_stress_database_safety.py": {
       "seconds": 5.781,
       "tests": 2
     },
-    "tests/test_tools.py": {
+    "tests/tools/test_tools.py": {
       "seconds": 0.293,
       "tests": 34
     },
-    "tests/test_update_ci_timings.py": {
+    "tests/infrastructure/test_update_ci_timings.py": {
       "seconds": 0.025,
       "tests": 9
     },
-    "tests/test_update_presentation.py": {
+    "tests/updates/test_update_presentation.py": {
       "seconds": 0.013,
       "tests": 13
     },
-    "tests/test_updates.py": {
+    "tests/updates/test_updates.py": {
       "seconds": 0.008,
       "tests": 8
     },
-    "tests/test_version_info.py": {
+    "tests/infrastructure/test_version_info.py": {
       "seconds": 4.445,
       "tests": 12
     },
-    "tests/test_windows_ci.py": {
+    "tests/infrastructure/test_windows_ci.py": {
       "seconds": 1.723,
       "tests": 10
     },
-    "tests/test_windows_shutdown_job.py": {
+    "tests/lifecycle/test_windows_shutdown_job.py": {
       "seconds": 0.43,
       "tests": 21
     },
-    "tests/test_worker_array_heatmaps.py": {
+    "tests/workers/test_worker_array_heatmaps.py": {
       "seconds": 12.905,
       "tests": 81
     },
-    "tests/test_worker_array_measurements.py": {
+    "tests/workers/test_worker_array_measurements.py": {
       "seconds": 1.253,
       "tests": 8
     },
-    "tests/test_worker_boolean_heatmap_missing.py": {
+    "tests/workers/test_worker_boolean_heatmap_missing.py": {
       "seconds": 18.367,
       "tests": 144
     },
-    "tests/test_worker_complex_heatmaps.py": {
+    "tests/workers/test_worker_complex_heatmaps.py": {
       "seconds": 4.021,
       "tests": 44
     },
-    "tests/test_worker_complex_lines.py": {
+    "tests/workers/test_worker_complex_lines.py": {
       "seconds": 0.048,
       "tests": 24
     },
-    "tests/test_worker_coordinate_precision.py": {
+    "tests/workers/test_worker_coordinate_precision.py": {
       "seconds": 4.725,
       "tests": 23
     },
-    "tests/test_worker_heatmap_limits.py": {
+    "tests/workers/test_worker_heatmap_limits.py": {
       "seconds": 0.363,
       "tests": 17
     },
-    "tests/test_worker_nonfinite_sql_heatmaps.py": {
+    "tests/workers/test_worker_nonfinite_sql_heatmaps.py": {
       "seconds": 23.805,
       "tests": 32
     },
-    "tests/test_worker_shaped_coordinate_validity.py": {
+    "tests/workers/test_worker_shaped_coordinate_validity.py": {
       "seconds": 18.189,
       "tests": 50
     },
-    "tests/test_worker_sidecar_identities.py": {
+    "tests/workers/test_worker_sidecar_identities.py": {
       "seconds": 0.019,
       "tests": 2
     },
@@ -1371,6 +1367,18 @@
     "tests/windows/test_window_menu_target_lifecycle.py": {
       "seconds": 56.793,
       "tests": 30
+    },
+    "tests/lifecycle/test_shutdown_cancellation.py": {
+      "seconds": 17.795,
+      "tests": 46
+    },
+    "tests/lifecycle/test_shutdown_public_api.py": {
+      "seconds": 7.35,
+      "tests": 19
+    },
+    "tests/lifecycle/test_shutdown_supervisor.py": {
+      "seconds": 14.314,
+      "tests": 37
     }
   }
 }

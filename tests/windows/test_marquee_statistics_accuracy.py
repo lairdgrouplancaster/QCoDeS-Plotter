@@ -6,11 +6,11 @@ import numpy as np
 import pytest
 from PyQt6 import QtCore
 
-from tests.test_sample_statistics_accuracy import summary_oracle
-from tests.windows.test_native_transform_labels import (
+from tests.support.tools.sample_statistics_accuracy import summary_oracle
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _no_callback_errors,
 )
-from tests.windows.test_numerical_stability import measured_plots as _measured_plots
+from tests.support.windows.numerical_stability import measured_plots as _measured_plots
 
 measured_plots = _measured_plots
 no_callback_errors = _no_callback_errors

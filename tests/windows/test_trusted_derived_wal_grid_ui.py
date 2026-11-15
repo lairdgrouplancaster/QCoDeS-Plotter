@@ -17,7 +17,7 @@ from qplot.windows import main as main_window
 from qplot.windows._widgets import preview as preview_module
 from qplot.windows._widgets import treeWidgets as tree_widgets
 from tests._window_lifecycle import close_main_window
-from tests.datahandling.test_trusted_live import (
+from tests.support.datahandling.trusted_live import (
     _assert_protected_artifacts_unchanged,
     _stable_artifact_state,
 )

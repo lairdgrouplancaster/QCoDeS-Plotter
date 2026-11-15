@@ -5,8 +5,8 @@ import pytest
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from tests.windows.test_native_transform_labels import click_control
-from tests.windows.test_plot_overlay_integration import loaded_plot as loaded_plot
+from tests.support.windows.native_transform_labels import click_control
+from tests.support.windows.plot_overlay_integration import loaded_plot as loaded_plot
 
 
 def assign_axes(window, x_side, y_side):

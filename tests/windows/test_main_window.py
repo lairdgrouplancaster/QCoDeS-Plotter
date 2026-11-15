@@ -54,7 +54,7 @@ from qplot.windows._window_controls import (
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot3d import plot3d
 from tests._shutdown_harness import attach_shutdown
-from tests.windows.test_plot_integration import wait_for
+from tests.support.windows.plot_integration import wait_for
 
 
 class _FailedTrustedRequest:

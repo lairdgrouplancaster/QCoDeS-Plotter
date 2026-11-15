@@ -8,19 +8,19 @@ from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._plot_data_viewbox import coordinate_viewbox
-from tests.windows.test_appearance_numeric_keyboard import (
+from tests.support.windows.appearance_numeric_keyboard import (
     _replace_text,
     _select_line,
 )
-from tests.windows.test_appearance_numeric_keyboard import (
+from tests.support.windows.appearance_numeric_keyboard import (
     trace_editor as _trace_editor,
 )
-from tests.windows.test_appearance_numeric_keyboard import (
+from tests.support.windows.appearance_numeric_keyboard import (
     typed_run_window as _typed_run_window,
 )
-from tests.windows.test_mixed_plot_drops import _added, _drop, _wait_for
-from tests.windows.test_mixed_plot_drops import mixed_plot as _mixed_plot
-from tests.windows.test_plot_integration import export_real_plot_csv
+from tests.support.windows.mixed_plot_drops import _added, _drop, _wait_for
+from tests.support.windows.mixed_plot_drops import mixed_plot as _mixed_plot
+from tests.support.windows.plot_integration import export_real_plot_csv
 
 trace_editor = _trace_editor
 typed_run_window = _typed_run_window

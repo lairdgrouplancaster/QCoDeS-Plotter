@@ -5,7 +5,7 @@ import sys
 import pytest
 from PyQt6 import QtCore, QtGui, QtTest
 
-from tests.windows.test_color_scale_locale import heatmap
+from tests.support.windows.color_scale_locale import heatmap
 
 __all__ = ["heatmap"]
 

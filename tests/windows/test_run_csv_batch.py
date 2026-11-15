@@ -10,9 +10,9 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling import csv_export
 from qplot.windows import _run_csv_export as batch
-from tests.windows.test_plot_integration import build_synthetic_database, wait_for
-from tests.windows.test_run_menu_source_lifecycle import _run_menu
-from tests.windows.test_typed_run_keyboard_launch import (
+from tests.support.windows.plot_integration import build_synthetic_database, wait_for
+from tests.support.windows.run_menu_source_lifecycle import _run_menu
+from tests.support.windows.typed_run_keyboard_launch import (
     typed_run_window as _typed_run_window,
 )
 

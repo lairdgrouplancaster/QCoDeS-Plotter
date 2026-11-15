@@ -16,16 +16,16 @@ from qplot.windows import main as main_window
 from qplot.windows._commands import command_spec
 from qplot.windows._subplots.subplot1d import custom_viewbox
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_axis_auto_padding_overflow import _axis_ranges
-from tests.windows.test_axis_auto_padding_overflow import (
+from tests.support.windows.axis_auto_padding_overflow import _axis_ranges
+from tests.support.windows.axis_auto_padding_overflow import (
     axis_messages as _axis_messages,
 )
-from tests.windows.test_axis_auto_padding_overflow import (
+from tests.support.windows.axis_auto_padding_overflow import (
     callback_errors as _callback_errors,
 )
-from tests.windows.test_merged_trace_metadata import merge
-from tests.windows.test_native_fft_coordinates import fft_plots as _fft_plots
-from tests.windows.test_plot_integration import (
+from tests.support.windows.merged_trace_metadata import merge
+from tests.support.windows.native_fft_coordinates import fft_plots as _fft_plots
+from tests.support.windows.plot_integration import (
     configure_temp_qplot,
     database_artifact_state,
     wait_for,

@@ -22,7 +22,7 @@ from qplot.windows._export_paths import prepare_export_destination
 from qplot.windows._widgets.preview import PreviewImageLabel
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window, wait_for_exports
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.plot_integration import configure_temp_qplot, wait_for
 
 
 def _protected_artifacts(database):

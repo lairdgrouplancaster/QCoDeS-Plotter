@@ -4,9 +4,9 @@ from weakref import ref
 
 from PyQt6 import QtWidgets as qtw
 
-from tests.windows.test_axis_limit_precision import AxisLimitWindow
-from tests.windows.test_mixed_plot_drops import _added, _drop
-from tests.windows.test_mixed_plot_drops import mixed_plot as mixed_plot
+from tests.support.windows.axis_limit_precision import AxisLimitWindow
+from tests.support.windows.mixed_plot_drops import _added, _drop
+from tests.support.windows.mixed_plot_drops import mixed_plot as mixed_plot
 
 
 def test_link_targets_include_primary_and_secondary_plot_quantities(mixed_plot, qapplication):

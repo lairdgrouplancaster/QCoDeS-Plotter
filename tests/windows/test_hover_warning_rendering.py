@@ -7,7 +7,7 @@ import pytest
 from PyQt6 import QtCore
 
 from qplot.windows._plot_hover import PlotHoverHighlight
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as no_callback_errors,
 )
 

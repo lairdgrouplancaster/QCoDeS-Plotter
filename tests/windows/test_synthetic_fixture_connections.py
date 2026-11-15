@@ -7,7 +7,7 @@ from qcodes.dataset import initialise_or_create_database_at
 from qcodes.dataset.measurements import DataSaver
 from qcodes.dataset.sqlite.connection import AtomicConnection
 
-from tests.windows import test_plot_integration as fixtures
+from tests.support.windows import plot_integration as fixtures
 
 
 @pytest.mark.parametrize("helper_name", [

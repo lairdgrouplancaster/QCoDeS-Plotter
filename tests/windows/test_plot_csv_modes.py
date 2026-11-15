@@ -20,11 +20,11 @@ from qplot.windows._plot_export import (
     CSV_UNDERLYING_VALUES,
     PlotExportMixin,
 )
-from tests.windows.test_plot_integration import wait_for
-from tests.windows.test_svg_export_integration import (
+from tests.support.windows.plot_integration import wait_for
+from tests.support.windows.svg_export_integration import (
     real_plot as real_plot,
 )
-from tests.windows.test_svg_export_integration import (
+from tests.support.windows.svg_export_integration import (
     select_exporter,
 )
 

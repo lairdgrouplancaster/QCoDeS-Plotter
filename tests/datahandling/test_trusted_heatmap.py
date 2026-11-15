@@ -7,22 +7,19 @@ import pytest
 
 import qplot.tools.worker as worker_module
 from qplot.datahandling import trusted_heatmap, trusted_plot
-from qplot.datahandling.trusted_heatmap import NumericHeatmap, NumericHeatmapPlan
+from qplot.datahandling.trusted_heatmap import NumericHeatmap
 from qplot.datahandling.trusted_live_service import (
     TrustedLiveReadService,
     TrustedReadRequestCancelledError,
 )
-from tests.datahandling.test_trusted_plot import (
+from tests.support.datahandling.trusted_heatmap import (
+    plan as plan,
+)
+from tests.support.datahandling.trusted_plot import (
     make_run,
     prohibit_snapshots,
     protected_state,
 )
-
-
-def plan(**overrides):
-    values = dict(x='y', y='x', z='z', full_limit=4, max_cells=4, max_side=2,
-                  ranges=(None, None), operations=False)
-    return NumericHeatmapPlan(**(values | overrides))
 
 
 @pytest.mark.parametrize('dense_tail', [False, True])

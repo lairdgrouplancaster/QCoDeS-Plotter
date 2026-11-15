@@ -11,7 +11,7 @@ from qcodes.dataset import (
 from qplot.datahandling.LoadFromDB import load_param_data_from_db
 from qplot.datahandling.parameter_data import flatten_record_columns
 from qplot.datahandling.readonly import load_by_id_read_only
-from tests.windows.test_complex_line_data import database_state
+from tests.support.windows.complex_line_data import database_state
 
 
 @pytest.mark.parametrize("shaped", [False, True])

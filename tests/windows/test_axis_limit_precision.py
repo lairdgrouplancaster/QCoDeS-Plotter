@@ -1,33 +1,12 @@
 """Exercise axis-limit precision through the production plot controls."""
 
 import numpy as np
-import pyqtgraph as pg
 import pytest
 from PyQt6 import QtCore, QtTest
-from PyQt6 import QtWidgets as qtw
 
-from qplot.windows._plot_axis_scaling import PlotAxisScalingMixin
-
-
-class AxisLimitWindow(PlotAxisScalingMixin, qtw.QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.widget = pg.GraphicsLayoutWidget()
-        self.setCentralWidget(self.widget)
-        self.plot = self.widget.addPlot()
-        self.vb = self.plot.vb
-        self.vbMenu = self.vb.menu
-        self.statuses = []
-        self._init_axis_scale_dialogs()
-
-    def _context_menu_action(self, _text):
-        return None
-
-    def _view_range_changed_programmatically(self):
-        pass
-
-    def show_status(self, message, _timeout):
-        self.statuses.append(message)
+from tests.support.windows.axis_limit_precision import (
+    AxisLimitWindow as AxisLimitWindow,
+)
 
 
 @pytest.mark.parametrize("axis", ["x", "y"])

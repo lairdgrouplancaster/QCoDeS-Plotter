@@ -5,13 +5,13 @@ from PyQt6 import QtCore, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._plot2d_layers import _HeatmapAppearanceDialog
-from tests.windows.test_appearance_numeric_keyboard import (
+from tests.support.windows.appearance_numeric_keyboard import (
     trace_editor as _trace_editor,
 )
-from tests.windows.test_appearance_numeric_keyboard import (
+from tests.support.windows.appearance_numeric_keyboard import (
     typed_run_window as _typed_run_window,
 )
-from tests.windows.test_heatmap_appearance import (
+from tests.support.windows.heatmap_appearance import (
     _Host,
     _key,
     _Layer,

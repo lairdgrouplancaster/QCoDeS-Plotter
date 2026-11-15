@@ -7,18 +7,18 @@ import numpy as np
 import pytest
 from PyQt6 import QtCore, QtTest
 
-from tests.windows.test_differentiation_integration import (
+from tests.support.windows.differentiation_integration import (
     apply_operations,
     operation_option,
 )
-from tests.windows.test_merged_trace_metadata import merge
-from tests.windows.test_native_averaging import click_average
-from tests.windows.test_native_fft_coordinates import fft_plots as _fft_plots_fixture
-from tests.windows.test_native_transform_labels import click_control
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.merged_trace_metadata import merge
+from tests.support.windows.native_averaging import click_average
+from tests.support.windows.native_fft_coordinates import fft_plots as _fft_plots_fixture
+from tests.support.windows.native_transform_labels import click_control
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _no_callback_errors_fixture,
 )
-from tests.windows.test_plot_integration import wait_for
+from tests.support.windows.plot_integration import wait_for
 
 fft_plots = _fft_plots_fixture
 no_callback_errors = _no_callback_errors_fixture

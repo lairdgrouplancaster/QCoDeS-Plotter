@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from tests.windows.test_axis_limit_precision import AxisLimitWindow
-from tests.windows.test_plot_dialog_lifecycle import dialog_plot as _dialog_plot
+from tests.support.windows.axis_limit_precision import AxisLimitWindow
+from tests.support.windows.plot_dialog_lifecycle import dialog_plot as _dialog_plot
 
 dialog_plot = _dialog_plot
 

@@ -1,7 +1,6 @@
 """Complex measurements render and export; complex coordinates fail safely."""
 
 import csv
-import hashlib
 import sys
 import warnings
 
@@ -21,7 +20,10 @@ from qplot.datahandling.qcodes_cache import (
 from qplot.windows import main as main_window
 from qplot.windows._database_detail_state import detail_channel
 from tests._window_lifecycle import close_main_window, wait_for_exports
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.complex_line_data import (
+    database_state as database_state,
+)
+from tests.support.windows.plot_integration import configure_temp_qplot, wait_for
 
 
 def create_measurement(path, kind):
@@ -60,15 +62,6 @@ def create_measurement(path, kind):
     dataset.conn.close()
     experiment.conn.close()
     return run_id, guid, x, signal, params
-
-
-def database_state(path):
-    return {
-        suffix: (hashlib.sha256(artifact.read_bytes()).digest(), artifact.stat().st_mtime_ns)
-        if artifact.exists() else None
-        for suffix in ("", "-wal", "-journal")
-        for artifact in (path.with_name(path.name + suffix),)
-    }
 
 
 @pytest.mark.parametrize("kind", [

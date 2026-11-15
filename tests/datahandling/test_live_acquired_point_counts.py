@@ -10,11 +10,14 @@ from qcodes.dataset import (
 )
 from qcodes.parameters import ManualParameter
 
-from qplot.datahandling.file_identity import database_instance
 from qplot.datahandling.readSQL import materialize_run_observation
-from qplot.datahandling.trusted_live_service import TrustedLiveReadService
 from qplot.windows._widgets.treeWidgets import RunList, moreInfo
-from tests.datahandling.test_stage5c_real_qcodes import _protected_artifact_state
+from tests.support.datahandling.live_acquired_point_counts import (
+    _open_reader as _open_reader,
+)
+from tests.support.datahandling.qcodes_measurement_layouts import (
+    _protected_artifact_state,
+)
 
 
 def _overview(widget):
@@ -22,21 +25,6 @@ def _overview(widget):
         widget.overview.item(row, 0).text(): widget.overview.item(row, 1).text()
         for row in range(widget.overview.rowCount())
     }
-
-
-def _open_reader(path):
-    service = TrustedLiveReadService(
-        path,
-        expected_database_instance=database_instance(path),
-        request_timeout_seconds=30,
-    )
-    try:
-        bootstrap = service.submit_bootstrap().wait(30)
-        service.submit_basic_page(0, bootstrap.run_id_watermark).wait(30)
-    except BaseException:
-        service.close(timeout=30)
-        raise
-    return service
 
 
 @pytest.mark.timeout(120)

@@ -1,4 +1,4 @@
-"""Real public-QCoDeS WAL acceptance for the Stage 5B backend."""
+"""Live metadata and derived previews from a real QCoDeS WAL writer."""
 
 from __future__ import annotations
 
@@ -31,11 +31,11 @@ from qplot.datahandling.trusted_work_coordinator import (
     TrustedWorkCoordinator,
 )
 from qplot.datahandling.trusted_work_scheduler import TrustedWorkKind
-from tests.datahandling.test_trusted_derived_rendering import (
+from tests.support.datahandling.trusted_derived_rendering import (
     _decode_png_rgba,
     _rgba_at,
 )
-from tests.datahandling.test_trusted_live import (
+from tests.support.datahandling.trusted_live import (
     _assert_protected_artifacts_unchanged,
     _QcodesWalWriter,
     _stable_artifact_state,
@@ -475,7 +475,7 @@ def test_real_qcodes_observed_grid_infers_and_renders_missing_cell_without_write
     _assert_protected_artifacts_unchanged(before, after)
 
 
-def test_real_stage5b_backend_publishes_live_prefixes_without_source_writes(
+def test_live_derived_previews_publish_committed_prefixes_without_source_writes(
     stage5b_wal_writer: _QcodesWalWriter,
     tmp_path: Path,
 ) -> None:
@@ -629,7 +629,7 @@ def test_real_stage5b_backend_publishes_live_prefixes_without_source_writes(
     assert writer.request("checkpoint", mode="TRUNCATE") == (0, 0, 0)
 
 
-def test_real_stage5b_metadata_refreshes_run_completion_without_pre_enrichment(
+def test_live_metadata_refreshes_completion_before_derived_enrichment(
     stage5b_wal_writer: _QcodesWalWriter,
 ) -> None:
     writer = stage5b_wal_writer

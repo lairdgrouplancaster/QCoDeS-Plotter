@@ -8,7 +8,7 @@ from PyQt6 import QtCore
 
 from qplot.windows import _plot1d_snap as snap
 from qplot.windows._native_transforms import NativePlotDataItem
-from tests.windows.test_plot_overlay_integration import loaded_plot as loaded_plot
+from tests.support.windows.plot_overlay_integration import loaded_plot as loaded_plot
 
 
 @pytest.fixture

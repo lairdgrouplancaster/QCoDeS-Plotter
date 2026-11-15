@@ -8,8 +8,8 @@ from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter
 
 from qplot.windows._plot_export import CSV_TRANSFORMED_VALUES
-from tests.windows.test_mixed_plot_drops import _added, _drop, _wait_for
-from tests.windows.test_mixed_plot_drops import mixed_plot as mixed_plot
+from tests.support.windows.mixed_plot_drops import _added, _drop, _wait_for
+from tests.support.windows.mixed_plot_drops import mixed_plot as mixed_plot
 
 
 def _dialog(target):

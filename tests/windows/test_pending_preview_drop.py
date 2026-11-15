@@ -16,7 +16,7 @@ from qplot.windows._dragdrop import (
 )
 from qplot.windows._widgets._preview_selection import active_preview_labels
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_heatmap_layer_integration import (
+from tests.support.windows.heatmap_layer_integration import (
     _assert_reader_artifact_invariant,
     _configure_temp_qplot,
     _database_artifact_state,

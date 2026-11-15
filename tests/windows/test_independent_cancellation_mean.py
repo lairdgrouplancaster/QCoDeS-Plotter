@@ -7,15 +7,15 @@ import numpy as np
 import pytest
 
 import qplot.tools.plot_tools as plot_tools
-from tests.windows.test_differentiation_integration import (
+from tests.support.windows.differentiation_integration import (
     apply_operations,
     operation_option,
 )
-from tests.windows.test_native_transform_labels import click_control
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.native_transform_labels import click_control
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _no_callback_errors_fixture,
 )
-from tests.windows.test_numerical_stability import (
+from tests.support.windows.numerical_stability import (
     measured_plots as _measured_plots_fixture,
 )
 

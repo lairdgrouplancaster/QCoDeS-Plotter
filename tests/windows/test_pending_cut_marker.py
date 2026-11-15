@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from qplot.windows._plot_drop_axes import plan_drop_axes
-from tests.windows import test_cut_color_lifecycle as cut_helpers
+from tests.support.windows import cut_color_lifecycle as cut_helpers
 
 heatmap = cut_helpers.heatmap
 ready = cut_helpers.ready

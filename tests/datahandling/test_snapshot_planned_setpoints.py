@@ -1,4 +1,4 @@
-﻿"""Snapshot planned steps stay associated with current QCoDeS dependents."""
+"""Snapshot planned steps stay associated with current QCoDeS dependents."""
 
 import numpy as np
 import pytest
@@ -9,7 +9,7 @@ from qcodes.dataset import (
 )
 
 from qplot.datahandling import readSQL
-from tests.datahandling.test_array_record_metadata import (
+from tests.support.datahandling.array_record_metadata import (
     _artifact_state,
     _protect_source,
 )

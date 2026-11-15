@@ -6,8 +6,8 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 from PyQt6.QtTest import QTest
 
-from tests.windows import test_plot_overlay_integration as overlays
-from tests.windows.test_plot_integration import wait_for
+from tests.support.windows import plot_overlay_integration as overlays
+from tests.support.windows.plot_integration import wait_for
 
 loaded_plot = overlays.loaded_plot
 

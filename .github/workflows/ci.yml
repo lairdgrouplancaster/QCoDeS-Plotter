@@ -265,6 +265,20 @@ jobs:
           --qplot-ci-partition=${{ matrix.partition }}/2
           --cov=qplot --cov-report=
 
+      # Measure normal child exits separately: do not install coverage signal
+      # handlers or exit patches in the deadline/forced-termination tests.
+      - name: Measure normally exiting child processes
+        env:
+          MPLCONFIGDIR: ${{ runner.temp }}/matplotlib
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage.children.${{ matrix.partition }}
+        run: >-
+          python -m pytest -o pythonpath=
+          --cov=qplot --cov-config=.github/coverage-subprocess.toml --cov-report=
+          @.github/pytest-subprocess-coverage.txt
+
+      - name: Add child measurements to this partition
+        run: python -m coverage combine --append .coverage.children.${{ matrix.partition }}
+
       - name: Upload coverage partition
         uses: actions/upload-artifact@v4
         with:

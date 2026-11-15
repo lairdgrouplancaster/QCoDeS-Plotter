@@ -8,10 +8,10 @@ import pytest
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _no_callback_errors,
 )
-from tests.windows.test_numeric_sample_preservation import array_plot
+from tests.support.windows.numeric_sample_preservation import array_plot
 
 no_callback_errors = _no_callback_errors
 

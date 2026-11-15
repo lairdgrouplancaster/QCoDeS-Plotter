@@ -19,7 +19,7 @@ from qplot.datahandling.trusted_live_supervisor import (
     TrustedLiveReaderSupervisor,
     _HelperIncarnation,
 )
-from tests.datahandling.test_trusted_live_supervisor import (
+from tests.support.datahandling.trusted_live_supervisor import (
     _ApswWalWriter,
     _protected_artifact_contents,
 )

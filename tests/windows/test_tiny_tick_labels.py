@@ -12,7 +12,7 @@ from qcodes.parameters import ManualParameter
 
 from qplot.windows import main as main_window
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.plot_integration import configure_temp_qplot, wait_for
 
 
 def rendered_labels(axis):

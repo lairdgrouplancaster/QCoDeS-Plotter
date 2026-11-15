@@ -7,7 +7,7 @@ from PyQt6 import QtCore, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._widgets.details_tables import CopyableTableWidget
-from tests.windows.test_details_copy_menu_refresh import (
+from tests.support.windows.details_copy_menu_refresh import (
     details_window as details_window,
 )
 

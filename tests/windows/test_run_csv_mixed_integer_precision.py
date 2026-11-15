@@ -17,8 +17,8 @@ from qcodes.dataset import (
 from qplot.windows import main as main_window
 from qplot.windows._database_detail_state import detail_channel
 from tests._window_lifecycle import close_main_window, wait_for_exports
-from tests.windows.test_complex_line_data import database_state
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.complex_line_data import database_state
+from tests.support.windows.plot_integration import configure_temp_qplot, wait_for
 
 
 def _create_mixed_run(path, layout, lengths, second_dtype):

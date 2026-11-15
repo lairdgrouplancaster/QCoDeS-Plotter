@@ -9,8 +9,8 @@ import pyqtgraph as pg
 import pytest
 from PyQt6 import QtCore, QtTest, sip
 
-from tests.windows.test_axis_limit_precision import AxisLimitWindow
-from tests.windows.test_color_scale_locale import heatmap as _heatmap_fixture
+from tests.support.windows.axis_limit_precision import AxisLimitWindow
+from tests.support.windows.color_scale_locale import heatmap as _heatmap_fixture
 
 heatmap_source = _heatmap_fixture
 

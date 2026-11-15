@@ -26,7 +26,7 @@ from qplot.windows._export_names import ExportSuffixPolicy, normalize_export_pat
     ("measurement.", "Tab-separated (*.tsv)", True, "measurement..tsv"),
     ("folder.csv/measurement", "", True, "folder.csv/measurement.csv"),
 ])
-def test_resolve_export_name(filename, selected_filter, enforce_filter, expected):
+def test_export_suffix_respects_selected_filter_and_existing_extension(filename, selected_filter, enforce_filter, expected):
     policy = ExportSuffixPolicy(("CSV", ".TSV"), "Csv")
     assert policy.resolve(
         filename, selected_filter, match_selected_filter=enforce_filter,

@@ -8,32 +8,15 @@ from pathlib import Path
 import pytest
 from PyQt6 import QtCore, QtGui, QtTest, QtWidgets, sip
 
-from qplot.diagnostics import configure_logging
 from qplot.windows._error_dialog import ErrorDialog
 from qplot.windows._export_paths import (
     UnsafeExportDestinationError,
     prepare_export_destination,
 )
-from qplot.windows.main import MainWindow
-from tests._window_lifecycle import close_main_window
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
-
-
-@pytest.fixture
-def export_window(tmp_path, monkeypatch):
-    configure_temp_qplot(monkeypatch, tmp_path)
-    configure_logging(tmp_path / "qplot.log", force=True)
-    window = MainWindow()
-    window.startupDatabaseTimer.stop()
-    window.monitor.stop()
-    window.config.config["user_preference"]["confirm_close"] = False
-    window.config.config["user_preference"]["confirm_close_all"] = False
-    errors = []
-    monkeypatch.setattr(window, "show_error", lambda *args: errors.append(args))
-    try:
-        yield window, errors
-    finally:
-        close_main_window(window)
+from tests.support.windows.export_tasks import (
+    export_window as export_window,
+)
+from tests.support.windows.plot_integration import wait_for
 
 
 def _start(window, target, writer, **kwargs):

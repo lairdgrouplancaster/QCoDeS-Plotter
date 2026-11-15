@@ -1,103 +1,32 @@
 """High-dimensional setpoint counts reach the run table and selected info."""
 
 import itertools
-import sqlite3
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pytest
-from qcodes.dataset import (
-    Measurement,
-    initialise_or_create_database_at,
-    load_or_create_experiment,
-)
 
 from qplot.datahandling import _trusted_result_layout as layout_queries
 from qplot.datahandling import trusted_live_queries as queries
 from qplot.datahandling.file_identity import database_instance
-from qplot.datahandling.trusted_live import TrustedQueryResult
-
-
-class _ReadOnlySqliteExecutor:
-    incarnation = 1
-
-    def __init__(self, path):
-        self.connection = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
-        self.queries = []
-
-    def query(self, sql, bindings=None, **kwargs):
-        self.queries.append(sql)
-        cursor = self.connection.execute(sql, bindings or ())
-        return TrustedQueryResult(
-            tuple(c[0] for c in cursor.description), tuple(cursor.fetchall()),
-        )
-
-    def query_batch(self, statements, **kwargs):
-        self.connection.execute("BEGIN")
-        try:
-            return tuple(self.query(q.sql, q.bindings) for q in statements)
-        finally:
-            self.connection.rollback()
-
-    def data_version(self, **kwargs):
-        return self.connection.execute("PRAGMA data_version").fetchone()[0]
-
-    def close(self):
-        self.connection.close()
+from tests.support.datahandling.high_dimensional_setpoints import (
+    _Axis as _Axis,
+)
+from tests.support.datahandling.high_dimensional_setpoints import (
+    _database as _database,
+)
+from tests.support.datahandling.high_dimensional_setpoints import (
+    _load_basic_runs as _load_basic_runs,
+)
+from tests.support.datahandling.high_dimensional_setpoints import (
+    _ReadOnlySqliteExecutor as _ReadOnlySqliteExecutor,
+)
 
 
 def _protected_artifact_state(path):
     return {suffix: (p.stat().st_ino, p.stat().st_mtime_ns, p.read_bytes())
             for suffix in ("", "-wal", "-journal")
             if (p := Path(str(path) + suffix)).exists()}
-
-
-def _load_basic_runs(adapter):
-    bootstrap = adapter.bootstrap()
-    adapter.basic_run_page(0, bootstrap.run_id_watermark)
-
-
-@dataclass
-class _Axis:
-    name: str
-    points: int
-
-
-def _database(tmp_path, dimensions, mixed=False, descending=False, planned=False,
-              acquired=None):
-    axes = tuple(_Axis(f"a{i}", i + 2) for i in range(dimensions))
-    path = tmp_path / "nd.db"
-    initialise_or_create_database_at(str(path), journal_mode="DELETE")
-    experiment = load_or_create_experiment("nD counts", "test")
-    measurement = Measurement(exp=experiment)
-    for axis in axes:
-        measurement.register_custom_parameter(axis.name)
-    sizes = range(1, dimensions + 1) if mixed else (dimensions,)
-    for n in sizes:
-        measurement.register_custom_parameter(
-            f"signal_{n}", setpoints=tuple(a.name for a in axes[:n]),
-        )
-    if planned:
-        measurement.set_shapes({f"signal_{n}": tuple(a.points for a in axes[:n])
-                                for n in sizes})
-    try:
-        with measurement.run(write_in_background=False) as saver:
-            for n in sizes:
-                grid = np.array(list(itertools.product(*(
-                    np.linspace(1 if descending else 0, 0 if descending else 1, a.points)
-                    for a in axes[:n]
-                ))))
-                if acquired is not None:
-                    grid = grid[:acquired]
-                saver.add_result(
-                    *((axis.name, grid[:, i]) for i, axis in enumerate(axes[:n])),
-                    (f"signal_{n}", np.arange(len(grid), dtype=float)),
-                )
-    finally:
-        saver.dataset.conn.close()
-        experiment.conn.close()
-    return path, axes
 
 
 @pytest.mark.parametrize("dimensions,mixed,descending,planned", [

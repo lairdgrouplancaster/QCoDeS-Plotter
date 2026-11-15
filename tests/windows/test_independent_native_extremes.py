@@ -5,14 +5,14 @@ from fractions import Fraction
 import numpy as np
 import pytest
 
-from tests.windows.test_native_transform_labels import click_control
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.native_transform_labels import click_control
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _no_callback_errors_fixture,
 )
-from tests.windows.test_numerical_stability import (
+from tests.support.windows.numerical_stability import (
     measured_plots as _measured_plots_fixture,
 )
-from tests.windows.test_plot_integration import wait_for
+from tests.support.windows.plot_integration import wait_for
 
 measured_plots = _measured_plots_fixture
 no_callback_errors = _no_callback_errors_fixture

@@ -9,6 +9,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
+# Shared assertions need the same detailed failure output as collected tests.
+pytest.register_assert_rewrite("tests.support")
+
 pytest_plugins = ["tests._ci_scheduling"]
 
 

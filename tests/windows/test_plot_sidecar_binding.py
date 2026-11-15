@@ -728,7 +728,7 @@ def test_first_sidecars_are_promoted_into_plot_and_holder_key(tmp_path):
 def csv_sidecar_window(tmp_path, monkeypatch):
     from qplot.windows.main import MainWindow
     from tests._window_lifecycle import close_main_window
-    from tests.windows.test_plot_integration import configure_temp_qplot
+    from tests.support.windows.plot_integration import configure_temp_qplot
 
     configure_temp_qplot(monkeypatch, tmp_path)
     window = MainWindow()
@@ -791,7 +791,7 @@ def test_preview_csv_rejects_swap_after_materialisation_before_publish(
         tmp_path, monkeypatch, csv_sidecar_window,
         ):
     from qplot.windows import _run_csv_export as raw_export
-    from tests.windows.test_plot_integration import wait_for
+    from tests.support.windows.plot_integration import wait_for
 
     database_path = tmp_path / "preview-csv.db"
     database_path.write_bytes(b"main database identity")

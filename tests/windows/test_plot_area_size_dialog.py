@@ -5,7 +5,7 @@ from PyQt6 import QtCore, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._plotWin import _PlotAreaSizeDialog, plotWidget
-from tests.windows.test_plot_dialog_lifecycle import dialog_plot as dialog_plot
+from tests.support.windows.plot_dialog_lifecycle import dialog_plot as dialog_plot
 
 
 @pytest.fixture

@@ -18,13 +18,13 @@ from qcodes.parameters import ManualParameter
 from qplot.windows import main as main_window
 from qplot.windows.plot2d import plot2d
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_heatmap_layer_integration import (
+from tests.support.windows.heatmap_layer_integration import (
     _assert_reader_artifact_invariant,
     _configure_temp_qplot,
     _database_artifact_state,
     _wait_for,
 )
-from tests.windows.test_mixed_plot_drops import _added, _drop
+from tests.support.windows.mixed_plot_drops import _added, _drop
 
 
 @pytest.fixture(params=[False, True], ids=["uniform", "nonuniform"])

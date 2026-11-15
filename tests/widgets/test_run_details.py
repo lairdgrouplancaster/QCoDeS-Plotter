@@ -1908,8 +1908,11 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             100,
         )
 
+        events = []
+
         class DeletedFinishedSignal:
             def emit(self, *args):
+                events.append("finished-signal")
                 raise RuntimeError(
                     "wrapped C/C++ object of type PreviewSignals has been deleted"
                 )
@@ -1921,6 +1924,7 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         )()
 
         def interrupt_preview(*args, **kwargs):
+            events.append("preview-cancelled")
             worker.cancel()
             raise sqlite3.OperationalError("interrupted")
 
@@ -1930,6 +1934,9 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             side_effect=interrupt_preview,
         ):
             worker.run()
+
+        self.assertTrue(worker.is_cancelled())
+        self.assertEqual(events, ["preview-cancelled", "finished-signal"])
 
     def test_preview_worker_cancel_interrupts_its_active_sql_connection(self):
         worker = preview_module.PreviewWorker(

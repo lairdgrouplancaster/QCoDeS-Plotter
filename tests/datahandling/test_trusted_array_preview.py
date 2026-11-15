@@ -23,21 +23,18 @@ from qplot.datahandling.trusted_query_types import (
     TrustedSourceRevisionNamespace,
 )
 from qplot.datahandling.trusted_work_scheduler import RenderingOptions, TrustedWorkKind
-from tests.datahandling.test_stage5c_real_qcodes import (
+from tests.support.datahandling.qcodes_measurement_layouts import (
     _load_basic_runs,
     _ReadOnlySqliteExecutor,
 )
-from tests.datahandling.test_trusted_derived_rendering import (
+from tests.support.datahandling.trusted_array_preview import (
+    _blob as _blob,
+)
+from tests.support.datahandling.trusted_derived_rendering import (
     _decode_png_rgba,
     _observation,
 )
-from tests.datahandling.test_trusted_plot import make_run, protected_state, work
-
-
-def _blob(values, version=(3, 0)):
-    stream = io.BytesIO()
-    np.lib.format.write_array(stream, np.asarray(values), version=version)
-    return stream.getvalue()
+from tests.support.datahandling.trusted_plot import make_run, protected_state, work
 
 
 def test_plot_initializes_converters_without_a_writer(tmp_path, monkeypatch):

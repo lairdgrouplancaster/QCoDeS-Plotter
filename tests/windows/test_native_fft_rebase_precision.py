@@ -12,12 +12,12 @@ from pyqtgraph.exporters import CSVExporter
 from qplot.tools import native_transform_math as transforms
 from qplot.tools.native_transform_math import _resample_fft_samples
 from qplot.windows._native_transforms import NativePlotDataItem
-from tests.windows.test_native_fft_coordinates import fft_plots as _fft_plots_fixture
-from tests.windows.test_native_transform_labels import click_control
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.native_fft_coordinates import fft_plots as _fft_plots_fixture
+from tests.support.windows.native_transform_labels import click_control
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _no_callback_errors_fixture,
 )
-from tests.windows.test_plot_integration import wait_for
+from tests.support.windows.plot_integration import wait_for
 
 fft_plots = _fft_plots_fixture
 no_callback_errors = _no_callback_errors_fixture

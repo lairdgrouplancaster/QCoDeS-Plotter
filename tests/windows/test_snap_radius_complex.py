@@ -6,8 +6,8 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._complex_plots import format_complex_cursor
 from qplot.windows._plot1d_snap import SNAP_RADIUS_PIXELS
-from tests.windows.test_complex_plots import complex_window as complex_window
-from tests.windows.test_complex_plots import open_plot
+from tests.support.windows.complex_plots import complex_window as complex_window
+from tests.support.windows.complex_plots import open_plot
 
 
 @pytest.mark.parametrize("snapping", [False, True])

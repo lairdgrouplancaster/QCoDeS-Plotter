@@ -9,22 +9,14 @@ from PyQt6 import QtWidgets
 from qplot.configuration.config import config
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
-from tests.datahandling.test_trusted_plot import (
+from tests.support.datahandling.trusted_plot import (
     make_run,
     prohibit_snapshots,
     protected_state,
 )
-
-
-def wait_for(predicate, timeout=20):
-    app = QtWidgets.QApplication.instance()
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        app.processEvents()
-        if predicate():
-            return
-        time.sleep(0.005)
-    raise AssertionError("Timed out waiting for trusted plot display")
+from tests.support.windows.trusted_plot_launch import (
+    wait_for as wait_for,
+)
 
 
 @pytest.fixture
@@ -360,7 +352,7 @@ def test_trusted_launch_and_refresh_never_copy_database(tmp_path, monkeypatch, a
 def test_small_plot_and_refresh_progress_during_another_capture(tmp_path, monkeypatch, arrays, live):
     """Even a one-thread plot pool must not queue behind broker capture waits."""
     from qplot.datahandling import trusted_plot
-    from tests.datahandling.test_trusted_plot import protected_state
+    from tests.support.datahandling.trusted_plot import protected_state
 
     path = tmp_path / "parallel.db"
     large_id, large_guid, _ = make_run(path, arrays=arrays is True)

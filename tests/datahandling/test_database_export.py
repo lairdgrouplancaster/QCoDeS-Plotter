@@ -1,18 +1,35 @@
 """Standalone backup visibility and source preservation."""
 
 import hashlib
+import multiprocessing
 import sqlite3
+import tempfile
+import time
 from contextlib import closing
+from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from qplot.datahandling import database_export
 from qplot.datahandling.database_export import export_database_copy
 from qplot.datahandling.file_identity import database_instance
+from tests.support.datahandling.database_export import blocked_backup
 
 
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+@pytest.fixture
+def export_scratch(tmp_path, monkeypatch):
+    folder = tmp_path / "private-exports"
+    folder.mkdir()
+    monkeypatch.setattr(database_export, "tempfile", SimpleNamespace(
+        TemporaryDirectory=partial(tempfile.TemporaryDirectory, dir=folder),
+    ))
+    return folder
 
 
 @pytest.mark.parametrize("live", [False, True])
@@ -84,17 +101,48 @@ def test_replaced_source_is_rejected(tmp_path):
     assert source.read_bytes() == b"different database"
 
 
-def test_total_deadline_stops_child(tmp_path):
+@pytest.mark.parametrize("abort, error", [
+    pytest.param("cancel", InterruptedError, id="cancel"),
+    pytest.param("deadline", TimeoutError, id="deadline"),
+])
+def test_aborting_started_export_reaps_child_and_removes_private_files(
+    tmp_path, monkeypatch, export_scratch, abort, error,
+):
     source = tmp_path / "source.db"
     with closing(sqlite3.connect(source)) as writer, writer:
         writer.execute("CREATE TABLE runs(run_id INTEGER)")
     stage = tmp_path / "stage.db"
     stage.touch()
-    with pytest.raises(TimeoutError):
+    before = source.read_bytes()
+    clock = [time.monotonic()]
+    cancelled = False
+    observed_pids = set()
+    prior_pids = {child.pid for child in multiprocessing.active_children()}
+    monkeypatch.setattr(database_export, "_backup_child", blocked_backup)
+    monkeypatch.setattr(database_export, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    def progress(phase, *_args):
+        nonlocal cancelled
+        if phase != "Copying committed data":
+            return
+        children = [child for child in multiprocessing.active_children()
+                    if child.pid not in prior_pids and child.name == "qplot-database-export"]
+        assert len(children) == 1
+        assert children[0].is_alive()
+        observed_pids.add(children[0].pid)
+        assert list(export_scratch.iterdir())
+        cancelled = abort == "cancel"
+        if abort == "deadline":
+            clock[0] += 61
+
+    with pytest.raises(error):
         export_database_copy(stage, instance=database_instance(source), live=True,
-                             cancelled=lambda: False, progress=lambda *_: None,
-                             timeout=0.001)
+                             cancelled=lambda: cancelled, progress=progress, timeout=60)
+    assert observed_pids
+    assert not observed_pids & {child.pid for child in multiprocessing.active_children()}
+    assert not list(export_scratch.iterdir())
     assert stage.read_bytes() == b""
+    assert source.read_bytes() == before
 
 
 def test_existing_staging_contents_are_not_overwritten(tmp_path):
@@ -108,8 +156,7 @@ def test_existing_staging_contents_are_not_overwritten(tmp_path):
     assert source.read_bytes() == before
 
 
-def test_real_qcodes_copy_preserves_metadata_and_measurements(tmp_path):
-    from qplot.datahandling.readonly import load_by_id_read_only
+def _measurement_database(tmp_path):
     from qplot.testdata import (
         AxisSpecification,
         MeasurementSpecification,
@@ -121,6 +168,13 @@ def test_real_qcodes_copy_preserves_metadata_and_measurements(tmp_path):
     generate_database((RunSpecification((MeasurementSpecification(
         "current", "Current", "A", (AxisSpecification("voltage", "Voltage", "V", 0, 1, 5),),
     ),)),), source)
+    return source
+
+
+def test_real_qcodes_copy_preserves_metadata_and_measurements(tmp_path):
+    from qplot.datahandling.readonly import load_by_id_read_only
+
+    source = _measurement_database(tmp_path)
     target = tmp_path / "stage.db"
     target.touch()
     export_database_copy(target, instance=database_instance(source), live=True,
@@ -138,6 +192,22 @@ def test_real_qcodes_copy_preserves_metadata_and_measurements(tmp_path):
         assert dataset.get_parameter_data()["current"]["current"].size == 5
     finally:
         dataset.conn.close()
+
+
+@pytest.mark.parametrize("live", [False, True], ids=["snapshot", "live"])
+def test_missing_selected_run_leaves_source_and_stage_unchanged(tmp_path, export_scratch, live):
+    source = _measurement_database(tmp_path)
+    before = source.read_bytes()
+    stage = tmp_path / "selected.db"
+    stage.touch()
+
+    with pytest.raises(RuntimeError, match="selected runs are no longer present"):
+        export_database_copy(stage, instance=database_instance(source), live=live,
+                             cancelled=lambda: False, progress=lambda *_: None, run_ids=[1, 999])
+
+    assert stage.read_bytes() == b""
+    assert source.read_bytes() == before
+    assert not list(export_scratch.iterdir())
 
 
 def test_external_results_are_not_misrepresented_as_standalone(tmp_path):

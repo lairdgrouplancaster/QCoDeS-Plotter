@@ -18,10 +18,10 @@ from qplot.tools.native_transform_math import (
 from qplot.windows import main as main_window
 from qplot.windows._native_transforms import NativePlotDataItem
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_complex_line_data import database_state
-from tests.windows.test_native_transform_labels import click_control
-from tests.windows.test_native_transform_snapping import assert_full_snap_data
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.complex_line_data import database_state
+from tests.support.windows.native_transform_labels import click_control
+from tests.support.windows.native_transform_snapping import assert_full_snap_data
+from tests.support.windows.plot_integration import configure_temp_qplot, wait_for
 
 
 def _quarter_spectrum(values):

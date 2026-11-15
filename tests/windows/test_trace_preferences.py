@@ -11,9 +11,9 @@ from PyQt6 import QtWidgets as qtw
 from qplot.configuration.config import config
 from qplot.configuration.trace import TRACE_COLOUR_KEY, TRACE_STYLE_KEY, TRACE_WIDTH_KEY
 from qplot.windows._preferences import PreferencesDialog
-from tests.windows.test_mixed_plot_drops import _added, _drop, _wait_for
-from tests.windows.test_mixed_plot_drops import mixed_plot as _mixed_plot
-from tests.windows.test_preferences_value_preservation import (
+from tests.support.windows.mixed_plot_drops import _added, _drop, _wait_for
+from tests.support.windows.mixed_plot_drops import mixed_plot as _mixed_plot
+from tests.support.windows.preferences_value_preservation import (
     precise_config as _precise_config,
 )
 

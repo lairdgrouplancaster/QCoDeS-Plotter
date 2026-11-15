@@ -9,12 +9,12 @@ from qplot.datahandling.trusted_live import (
 from qplot.datahandling.trusted_live_queries import (
     TrustedMetadataQueryAdapter,
 )
-from tests.datahandling.test_trusted_live import (
+from tests.support.datahandling.trusted_live import (
     _artifact_state,
     _assert_protected_artifacts_unchanged,
     _assert_safe_audit,
 )
-from tests.datahandling.test_trusted_live import (
+from tests.support.datahandling.trusted_live import (
     live_writer as live_writer,
 )
 

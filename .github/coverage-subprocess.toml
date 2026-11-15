@@ -1,0 +1,17 @@
+# Opt-in measurement of normally exiting Python children. Keep ordinary
+# lifecycle/deadline tests uninstrumented; do not patch signals or os._exit.
+[tool.coverage.run]
+branch = true
+source = ["qplot"]
+parallel = true
+patch = ["subprocess"]
+concurrency = ["multiprocessing", "thread"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+show_missing = true
+skip_covered = true

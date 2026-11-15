@@ -18,17 +18,9 @@ from qplot.windows._widgets.preview import (
 )
 from qplot.windows._widgets.run_list_items import RunPreviewCell
 from qplot.windows._widgets.treeWidgets import RunList
-
-
-def _white_preview(parameter, *, axes=("x",)):
-    image = QtGui.QImage(22, 22, QtGui.QImage.Format.Format_RGB32)
-    image.fill(QtCore.Qt.GlobalColor.white)
-    return {
-        "parameter": parameter,
-        "axes": list(axes),
-        "title": f"{parameter} preview",
-        "image": image,
-    }
+from tests.support.widgets.preview_placeholders import (
+    _white_preview as _white_preview,
+)
 
 
 def _preview_widgets(cell):

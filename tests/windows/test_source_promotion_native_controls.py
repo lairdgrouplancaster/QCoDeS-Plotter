@@ -7,16 +7,19 @@ import pytest
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter
 
-from tests.windows.test_merged_trace_metadata import merge
-from tests.windows.test_merged_trace_metadata import (
+from tests.support.windows.merged_trace_metadata import merge
+from tests.support.windows.merged_trace_metadata import (
     merged_plots as _merged_plots,
 )
-from tests.windows.test_native_averaging import click_average
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.native_averaging import click_average
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _no_callback_errors,
 )
-from tests.windows.test_plot_csv_precision import _export_from_dialog, _open_csv_dialog
-from tests.windows.test_plot_integration import wait_for
+from tests.support.windows.plot_csv_precision import (
+    _export_from_dialog,
+    _open_csv_dialog,
+)
+from tests.support.windows.plot_integration import wait_for
 
 merged_plots = _merged_plots
 no_callback_errors = _no_callback_errors
