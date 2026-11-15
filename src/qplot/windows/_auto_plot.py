@@ -14,6 +14,7 @@ from qplot.datahandling.trusted_plot import TrustedPlotDataset
 from qplot.diagnostics import log_exception
 
 from ._dataset_handle import DatasetKey
+from ._window_controls import sync_close_all_plots_actions
 
 RETRY_DELAYS = (1, 2, 4, 8, 16, 30, 30)
 
@@ -95,6 +96,7 @@ class AutoPlotQueue(QtCore.QObject):
             self.active = None
         self.runs.clear()
         self.finished.clear()
+        sync_close_all_plots_actions(self.window)
 
     def discard_pending(self):
         """Close queued plots without replaying them or disabling Auto-plot."""
@@ -104,6 +106,7 @@ class AutoPlotQueue(QtCore.QObject):
             self.active = None
         self.finished.update(self.runs)
         self.runs.clear()
+        sync_close_all_plots_actions(self.window)
 
     def enqueue(self, guids):
         metadata = {
@@ -119,6 +122,7 @@ class AutoPlotQueue(QtCore.QObject):
             )
         if self.runs:
             self.timer.start()
+        sync_close_all_plots_actions(self.window)
 
     def update(self, runs):
         for run_id, metadata in runs.items():
@@ -187,9 +191,12 @@ class AutoPlotQueue(QtCore.QObject):
                 # Retire before opening: nested Qt events must not replay it.
                 del self.runs[guid]
                 self.finished.add(guid)
-                self.window._resume_trusted_plot_action(
-                    run.key, dataset, lambda: self.window.openPlot(guid),
-                )
+                try:
+                    self.window._resume_trusted_plot_action(
+                        run.key, dataset, lambda: self.window.openPlot(guid),
+                    )
+                finally:
+                    sync_close_all_plots_actions(self.window)
             return
         now = monotonic()
         for guid, run in self.runs.items():

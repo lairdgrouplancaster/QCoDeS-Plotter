@@ -62,6 +62,9 @@ _STYLESHEET_TEMPLATE = Template(
     QLabel {
         color: $text;
     }
+    QLabel:disabled {
+        color: $disabled_text;
+    }
     QLabel#mainEmptyStateTitle {
         color: $text_strong;
         font-weight: 600;
@@ -339,6 +342,11 @@ _STYLESHEET_TEMPLATE = Template(
         border: 1px solid $accent_hover;
         padding: 3px 10px;
     }
+    QTabBar::tab:disabled {
+        background-color: $tab_bg;
+        color: $disabled_text;
+        border-color: $border_strong;
+    }
     QTabWidget#runDetailsTabs QTabBar::tab {
         min-height: 18px;
         min-width: 74px;
@@ -400,6 +408,9 @@ _STYLESHEET_TEMPLATE = Template(
         border: none;
         border-right: 1px solid $border_strong;
         border-bottom: 1px solid $border_strong;
+    }
+    QHeaderView::section:disabled {
+        color: $disabled_text;
     }
     QTableWidget#detailsTable::item {
         padding: 0px 6px;

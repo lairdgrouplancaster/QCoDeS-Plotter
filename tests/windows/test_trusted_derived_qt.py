@@ -600,10 +600,12 @@ class _RunList(QtWidgets.QTreeWidget):
         self.preview_updates: list[tuple[str, list[dict[str, object]], int]] = []
         self.generating_updates: list[tuple[str, bool, int]] = []
         self.metadata_updates: list[tuple[int, dict[str, object], int]] = []
+        self.metadata_loading: set[str] = set()
 
     def set_runs(self, runs: dict[int, dict[str, object]]) -> None:
         self.clear()
         self._items = {}
+        self.metadata_loading.clear()
         for run_id, metadata in runs.items():
             item = QtWidgets.QTreeWidgetItem(
                 (str(run_id), str(metadata.get("name", "")))
@@ -622,6 +624,12 @@ class _RunList(QtWidgets.QTreeWidget):
 
     def _item_for_guid(self, guid):
         return self._items.get(str(guid))
+
+    def set_metadata_loading(self, guids, *, loading=True):
+        if loading:
+            self.metadata_loading.update(guids)
+        else:
+            self.metadata_loading.difference_update(guids)
 
     @staticmethod
     def _item_run_id(item):
@@ -1989,6 +1997,42 @@ def test_worker_wakeups_are_coalesced_and_all_ui_mutation_is_on_gui_thread(
     mutation_threads += window.infoBox.preview.threads
     mutation_threads += [entry[1] for entry in window.infoBox.metadata]
     assert mutation_threads and set(mutation_threads) == {owner}
+
+
+def test_metadata_loading_tracks_current_publications_and_terminal_failures(bound_bridge):
+    window, bridge, coordinator, runs = bound_bridge
+    assert window.RunList.metadata_loading == {run["guid"] for run in runs.values()}
+    first = _publication(bridge, coordinator, "guid-1", TrustedWorkKind.METADATA)
+    bridge._publish(first)
+    assert "guid-1" not in window.RunList.metadata_loading
+
+    bridge.suspend_publications()
+    window.RunList.set_runs(runs)
+    bridge.resume_publications()
+    assert window.RunList.metadata_loading == {f"guid-{index}" for index in range(2, 13)}
+
+    bridge.source_changed((1,))
+    assert "guid-1" in window.RunList.metadata_loading
+    bridge._publish(first)
+    assert "guid-1" in window.RunList.metadata_loading
+    bridge._publish(_publication(bridge, coordinator, "guid-1", TrustedWorkKind.METADATA,
+                                status="error", description="Unavailable metadata"))
+    assert "guid-1" not in window.RunList.metadata_loading
+
+    bridge.helper_restarted()
+    assert window.RunList.metadata_loading == {run["guid"] for run in runs.values()}
+    bridge.clear_database()
+    assert window.RunList.metadata_loading == set()
+
+
+def test_appended_rows_start_loading_without_resetting_existing_rows(bound_bridge):
+    window, bridge, coordinator, runs = bound_bridge
+    extended = {**runs, 13: {"guid": "guid-13", "name": "new"}}
+    window.RunList.set_runs(extended)
+    bridge.reconcile_runs(extended)
+    assert window.RunList.metadata_loading == {"guid-13"}
+    bridge._publish(_publication(bridge, coordinator, "guid-13", TrustedWorkKind.METADATA))
+    assert window.RunList.metadata_loading == set()
 
 
 def test_selection_sort_scroll_and_resize_feed_stable_priority_without_rebuild(

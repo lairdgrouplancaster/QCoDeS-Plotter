@@ -9,6 +9,7 @@ from ._run_formatting import (
     run_tooltip_text,
 )
 from .preview import (
+    UNLOADED_PREVIEW_STYLE,
     DraggablePreviewImageLabel,
     PreviewImageLabel,
     preview_placeholder_dimensions,
@@ -17,6 +18,7 @@ from .preview import (
 
 MEASUREMENT_PREVIEW_SIZE = 22
 MEASUREMENT_PREVIEW_SPACING = 3
+METADATA_LOADING_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
 MEASUREMENT_PREVIEW_GENERATING_COLORS = (
     "#e9f4ff",
     "#edf7f1",
@@ -173,20 +175,12 @@ class RunPreviewCell(qtw.QWidget):
 
 
     def set_generating(self, generating):
-        generating = bool(generating)
-        if generating:
-            if self._generating:
-                return
-            if self._has_rendered_previews:
-                self._generating = True
-                return
-            self.show_placeholders(generating=True)
-            return
-
-        self._generating = False
-        for label in self.findChildren(qtw.QLabel, "measurementPreviewPlaceholder"):
-            label.setStyleSheet("")
-            label.setToolTip("")
+        self._generating = bool(generating)
+        for index in range(self.content_layout.count()):
+            item = self.content_layout.itemAt(index)
+            label = item.widget() if item is not None else None
+            if label is not None and label.objectName() == "measurementPreviewPlaceholder":
+                self._style_placeholder(label, index, self._generating)
 
 
     def update_placeholder_metadata(self, metadata):
@@ -226,16 +220,24 @@ class RunPreviewCell(qtw.QWidget):
         label.setFrameShape(qtw.QFrame.Shape.Box)
         label.setFrameShadow(qtw.QFrame.Shadow.Plain)
         label.setLineWidth(1)
+        label.setProperty("unloadedPreview", dimension in (1, 2))
+        self._style_placeholder(label, index, generating)
+        return label
+
+
+    def _style_placeholder(self, label, index, generating):
         if generating:
             color, border = self._generating_placeholder_colors(index)
             label.setStyleSheet(
                 "QLabel#measurementPreviewPlaceholder {"
+                "color: #526173;"
                 f"background-color: {color};"
                 f"border: 1px solid {border};"
                 "}"
                 )
-            label.setToolTip("Generating preview")
-        return label
+        else:
+            label.setStyleSheet(UNLOADED_PREVIEW_STYLE if label.property("unloadedPreview") else "")
+        label.setToolTip("Generating preview" if generating else "")
 
 
     def _defer_display_during_drag(self, display):
@@ -315,7 +317,41 @@ class RunPreviewCell(qtw.QWidget):
             label.set_selected(label.parameter in parameters)
 
 
-class EqualsAlignedDelegate(qtw.QStyledItemDelegate):
+class RunMetadataDelegate(qtw.QStyledItemDelegate):
+    """Keep pending text muted even when a theme overrides item colours."""
+
+    def paint(self, painter, option, index):
+        if not index.data(METADATA_LOADING_ROLE):
+            super().paint(painter, option, index)
+            return
+
+        opt = qtw.QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        text, opt.text = opt.text, ""
+        widget = opt.widget
+        style = widget.style() if widget is not None else qtw.QApplication.style()
+        if style is None:
+            super().paint(painter, option, index)
+            return
+        style.drawControl(qtw.QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+        text_rect = style.subElementRect(qtw.QStyle.SubElement.SE_ItemViewItemText, opt, widget)
+        selected = bool(opt.state & qtw.QStyle.StateFlag.State_Selected)
+        colour = opt.palette.color(
+            QtGui.QPalette.ColorRole.HighlightedText if selected else QtGui.QPalette.ColorRole.Text,
+        )
+        if not selected:
+            colour.setAlpha(170)
+        painter.save()
+        painter.setFont(opt.font)
+        painter.setPen(colour)
+        painter.drawText(
+            text_rect, opt.displayAlignment,
+            opt.fontMetrics.elidedText(text, opt.textElideMode, text_rect.width()),
+        )
+        painter.restore()
+
+
+class EqualsAlignedDelegate(RunMetadataDelegate):
     """
     Paints setpoint counts with equals signs aligned.
     """
@@ -488,6 +524,7 @@ class SortableTreeWidgetItem(qtw.QTreeWidgetItem):
     def __init__(self, strings):
         super().__init__(strings)
         self.run_metadata = {}
+        self.loading_columns: set[str] = set()
         self._guid = ""
 
     def __lt__(self, other: qtw.QTreeWidgetItem) -> bool:

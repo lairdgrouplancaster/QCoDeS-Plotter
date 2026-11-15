@@ -52,7 +52,12 @@ from qplot.testdata import (
     instruction_collection_contents,
     read_specifications,
 )
-from qplot.windows._database_detail_state import detail_channel
+from qplot.windows._database_detail_state import (
+    BASIC_METADATA_COLUMNS,
+    EXPENSIVE_METADATA_COLUMNS,
+    detail_channel,
+    set_run_metadata_loading,
+)
 
 from ._auto_plot import cancel_auto_plot, enqueue_auto_plot, update_auto_plot
 from ._config_persistence import persist_config_value
@@ -584,23 +589,20 @@ class DatabaseActionsMixin:
         """Keep read-producing controls aligned with the path transaction."""
         blocked = DatabaseActionsMixin._database_generation_transaction_blocks_path(self)
         load_active = bool(getattr(self, "_database_load_active", False))
-        enabled = not blocked and not load_active
-        for attr in (
-            "refreshDatabaseButton",
-            "databaseInfoButton",
-            "emptyStateRefreshButton",
-            "plotRunButton",
-            "exportCsvButton",
-            "run_idBox",
-            "measurementBox",
-            "RunList",
-            "infoBox",
-            "autoPlotBox",
-        ):
-            widget = getattr(self, attr, None)
-            set_enabled = getattr(widget, "setEnabled", None)
-            if callable(set_enabled):
-                set_enabled(enabled)
+        enabled = not blocked and not load_active and not getattr(self, "_shutdown_started", False)
+        sync_available = getattr(self, "_sync_available_actions", None)
+        if callable(sync_available):
+            sync_available(enabled)
+        else:
+            for attr in (
+                "refreshDatabaseButton", "databaseInfoButton", "emptyStateRefreshButton",
+                "plotRunButton", "exportCsvButton", "run_idBox", "measurementBox",
+                "RunList", "infoBox", "autoPlotBox",
+            ):
+                widget = getattr(self, attr, None)
+                set_enabled = getattr(widget, "setEnabled", None)
+                if callable(set_enabled):
+                    set_enabled(enabled)
 
         generation_action = getattr(self, "generateTestDatabaseAction", None)
         set_generation_enabled = getattr(generation_action, "setEnabled", None)
@@ -3488,6 +3490,7 @@ class DatabaseActionsMixin:
             channel.cancel_worker()
         for channel in channels:
             channel.invalidate()
+        set_run_metadata_loading(self, loading=False)
 
 
     def _start_database_detail_load(self, abspath, runs):
@@ -3594,6 +3597,9 @@ class DatabaseActionsMixin:
         pool = getattr(self, "databaseDetailThreadPool", self.databaseLoadThreadPool)
         if expensive:
             pool = getattr(self, "databaseExpensiveDetailThreadPool", pool)
+        columns = EXPENSIVE_METADATA_COLUMNS if expensive else BASIC_METADATA_COLUMNS
+        set_run_metadata_loading(self, columns=columns, loading=False)
+        set_run_metadata_loading(self, run_ids=run_ids, columns=columns)
         pool.start(worker)
 
 
@@ -3703,9 +3709,23 @@ class DatabaseActionsMixin:
             return
         detail_instance = channel.instance
         self._apply_database_detail_batch(runs)
-        DatabaseActionsMixin._reload_if_worker_database_instance_changed(
+        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
             self, abspath, detail_instance, discard_stale_publication=True,
-        )
+        ) or not channel.accepts(generation):
+            return
+        if expensive:
+            # Shape and size arrive in separate batches from this worker.
+            for name, fields in (
+                ("Setpoints", {"setpoint_shape", "point_shape", "setpoint_count", "expected_results"}),
+                ("Size", {"storage_bytes"}),
+            ):
+                guids = [run.get("guid") for run in runs.values() if fields.intersection(run)]
+                set_run_metadata_loading(self, guids, columns=(name,), loading=False)
+        else:
+            set_run_metadata_loading(
+                self, [run.get("guid") for run in runs.values()],
+                columns=BASIC_METADATA_COLUMNS, loading=False,
+            )
 
 
     def _apply_database_detail_batch(self, runs):
@@ -3752,6 +3772,8 @@ class DatabaseActionsMixin:
         if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
                 self, abspath, detail_instance):
             return
+        columns = EXPENSIVE_METADATA_COLUMNS if expensive else BASIC_METADATA_COLUMNS
+        set_run_metadata_loading(self, columns=columns, loading=False)
         if error is not None:
             diagnostic = "Expensive database detail load failed" if expensive else "Database detail load failed"
             message = "Setpoint and size loading failed" if expensive else "Run detail loading failed"
@@ -3925,6 +3947,9 @@ class DatabaseActionsMixin:
             self.run_idBox.setText(str(run_id))
         finally:
             self.run_idBox.blockSignals(blocked)
+        sync_controls = getattr(self, "_sync_database_generation_controls", None)
+        if callable(sync_controls):
+            sync_controls()
         return _SelectedRunState(generation, metadata)
 
 

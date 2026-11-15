@@ -1,8 +1,11 @@
 from types import SimpleNamespace
 
+import pytest
+
 from qplot.windows._database_actions import DatabaseActionsMixin
 from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._shutdown_coordinator import ShutdownCoordinator
+from qplot.windows._widgets.treeWidgets import RunList
 
 
 def test_shutdown_invalidates_both_channels_before_late_callbacks():
@@ -23,3 +26,66 @@ def test_shutdown_invalidates_both_channels_before_late_callbacks():
     assert basic.worker is None and expensive.worker is None
     DatabaseActionsMixin.database_detail_status(window, 3, "late basic")
     DatabaseActionsMixin.database_expensive_detail_status(window, 7, "late expensive")
+
+
+@pytest.mark.parametrize("error", [None, RuntimeError("Metadata unavailable")])
+def test_metadata_loading_tracks_independent_snapshot_stages(tmp_path, monkeypatch, error):
+    run_list = RunList()
+    run_list.addRuns({1: {"guid": "pending"}})
+    item = run_list._item_for_guid("pending")
+    path = str(tmp_path / "snapshot.db")
+    workers = []
+    window = SimpleNamespace(
+        RunList=run_list,
+        fileTextbox=SimpleNamespace(text=lambda: path),
+        databaseLoadThreadPool=SimpleNamespace(start=workers.append),
+        _database_detail_priority_run_ids=lambda: [1],
+        _apply_database_detail_batch=run_list.updateRuns,
+        show_status=lambda *_args: None,
+    )
+    for prefix in ("database_detail", "database_expensive_detail"):
+        for name in ("status", "batch_ready", "finished"):
+            setattr(window, f"{prefix}_{name}", lambda *_args: None)
+    monkeypatch.setattr(DatabaseActionsMixin, "_reload_if_worker_database_instance_changed",
+                        lambda *_args, **_kwargs: False)
+
+    def text(column):
+        return item.text(run_list.cols.index(column))
+
+    try:
+        for expensive in (False, True):
+            DatabaseActionsMixin._start_database_detail_worker(
+                window, path, [1], None, {}, expensive=expensive,
+            )
+        assert len(workers) == 2
+        assert all(text(name) == "Loading…" for name in ("Status", "Setpoints", "Size"))
+
+        DatabaseActionsMixin._detail_batch_ready(
+            window, 1, path, {1: {"guid": "pending", "is_completed": True}}, expensive=False,
+        )
+        assert text("Status") == "Completed"
+        assert text("Duration") == "Unknown"
+        assert text("Setpoints") == text("Size") == "Loading…"
+        DatabaseActionsMixin._detail_finished(window, 1, path, None, expensive=False)
+        assert text("Size") == "Loading…"
+
+        DatabaseActionsMixin._detail_batch_ready(
+            window, 1, path, {1: {"guid": "pending", "setpoint_count": 12}}, expensive=True,
+        )
+        assert text("Setpoints") == "12"
+        assert text("Size") == "Loading…"
+        DatabaseActionsMixin._detail_finished(window, 1, path, error, expensive=True)
+        assert text("Size") == "Unknown"
+        assert not item.loading_columns
+
+        DatabaseActionsMixin._start_database_detail_worker(
+            window, path, [1], None, {}, expensive=True,
+        )
+        DatabaseActionsMixin._detail_finished(window, 1, path, error, expensive=True)
+        assert text("Size") == "Loading…"  # Old completion cannot clear a newer load.
+        DatabaseActionsMixin._cancel_database_detail_load(window)
+        assert text("Size") == "Unknown"
+        assert not item.loading_columns
+    finally:
+        DatabaseActionsMixin._cancel_database_detail_load(window)
+        run_list.deleteLater()

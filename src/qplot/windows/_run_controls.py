@@ -67,6 +67,10 @@ class RunControlsMixin:
         self.spinBox = RefreshIntervalSpinBox(
             refresh_description="How often the run list and live plots check for new data.",
         )
+        # Stack the step buttons instead of reserving a wide native button pair.
+        self.spinBox.setStyleSheet(
+            "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 18px; }"
+        )
         set_refresh_interval(
             self.spinBox, self.config.get("user_preference.default_refresh_rate"),
         )
@@ -109,9 +113,14 @@ class RunControlsMixin:
         self.closeAllPlotsButton.setIcon(
             self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_TitleBarCloseButton)
             )
+        self.closeAllPlotsButton.setText("Close all plots")
+        self.closeAllPlotsButton.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+            )
         self.closeAllPlotsButton.setToolTip("Close all plot windows (Ctrl+Shift+W)")
         self.closeAllPlotsButton.setAccessibleName("Close all plot windows")
-        self.closeAllPlotsButton.setFixedSize(28, 26)
+        self.closeAllPlotsButton.setFixedHeight(26)
+        self.closeAllPlotsButton.setEnabled(False)
         self.closeAllPlotsButton.clicked.connect(self.closeAll)
 
     def initRunDisplay(self):
@@ -119,7 +128,8 @@ class RunControlsMixin:
         sublayout.setContentsMargins(8, 0, 8, 2)
         sublayout.setSpacing(6)
 
-        sublayout.addWidget(qtw.QLabel("Run:"))
+        self.runIdLabel = qtw.QLabel("Run:")
+        sublayout.addWidget(self.runIdLabel)
 
         self.selected_run_id = None
 
@@ -134,7 +144,8 @@ class RunControlsMixin:
         self.run_idBox.returnPressed.connect(self._open_entered_run)
         sublayout.addWidget(self.run_idBox)
 
-        sublayout.addWidget(qtw.QLabel("Measurement:"))
+        self.measurementLabel = qtw.QLabel("Measurement:")
+        sublayout.addWidget(self.measurementLabel)
 
         self.measurementBox = qtw.QLineEdit()
         self.measurementBox.setMaximumWidth(46)
@@ -180,7 +191,6 @@ class RunControlsMixin:
             description = f"Export {scope} from run {run} as CSV (raw values)."
             self.exportCsvButton.setToolTip(description)
             self.exportCsvButton.setAccessibleDescription(description)
-            self.exportCsvButton.setEnabled(bool(run and measurement))
         self.run_idBox.textChanged.connect(update_export_scope)
         self.measurementBox.textChanged.connect(update_export_scope)
         update_export_scope()
@@ -189,16 +199,19 @@ class RunControlsMixin:
         self.exportCsvButton.clicked.connect(self.exportRunCsv)
         sublayout.addWidget(self.exportCsvButton)
 
-        sublayout.addStretch()
-
+        sublayout.addSpacing(6)
         sublayout.addWidget(self.autoPlotBox)
 
-        sublayout.addSpacing(12)
-        refresh_label = qtw.QLabel("Refresh every")
-        refresh_label.setBuddy(self.spinBox)
-        sublayout.addWidget(refresh_label)
-        sublayout.addWidget(self.spinBox)
-        sublayout.addWidget(self.refreshDatabaseButton)
+        sublayout.addStretch()
+
+        sublayout.addWidget(self.closeAllPlotsButton)
+
+        self.targetLayout.addSpacing(60)
+        self.refreshIntervalLabel = qtw.QLabel("Refresh every")
+        self.refreshIntervalLabel.setBuddy(self.spinBox)
+        self.targetLayout.addWidget(self.refreshIntervalLabel)
+        self.targetLayout.addWidget(self.spinBox)
+        self.targetLayout.addWidget(self.refreshDatabaseButton)
 
         self.l.addLayout(self.targetLayout)
         self.l.addWidget(self.databaseLoadFrame)
@@ -207,6 +220,9 @@ class RunControlsMixin:
         self.RunList = RunList(config=self.config)
         self.RunList.selected.connect(self.updateSelected)
         self.RunList.nonSingleSelection.connect(self.clear_non_single_run_selection)
+        self.RunList.itemSelectionChanged.connect(self._sync_database_generation_controls)
+        self.run_idBox.textChanged.connect(self._sync_database_generation_controls)
+        self.measurementBox.textChanged.connect(self._sync_database_generation_controls)
         self.RunList.plot.connect(self.openPlot)
         self.RunList.previewPlotRequested.connect(self.open_run_preview_plot)
         self.RunList.previewExportRequested.connect(self.export_run_preview_csv)
@@ -254,6 +270,65 @@ class RunControlsMixin:
         self.l.addWidget(self.runInfoSplitter, 1)
         self._sync_empty_state()
 
+    def _match_run_action_button_widths(self):
+        """Size the run actions after they inherit the current font and theme."""
+        buttons = (self.plotRunButton, self.exportCsvButton)
+        for button in buttons:
+            button.ensurePolished()
+        width = max(button.sizeHint().width() for button in buttons)
+        for button in buttons:
+            button.setFixedWidth(width)
+
+    def _sync_available_actions(self, reads_enabled):
+        """Enable commands only when their database or run target is available."""
+        instance = getattr(self, "_loaded_database_instance", None)
+        has_database = getattr(instance, "identity", None) is not None
+        database_ready = reads_enabled and has_database
+        run_list = getattr(self, "RunList", None)
+        has_runs = bool(database_ready and run_list is not None and run_list.topLevelItemCount())
+        selected_ids = run_list.selected_run_ids() if has_runs else []
+
+        target_available = False
+        if has_runs:
+            try:
+                run_id = int(self.run_idBox.text())
+            except ValueError:
+                pass
+            else:
+                target_available = bool(run_list.findItems(
+                    str(run_id), QtCore.Qt.MatchFlag.MatchExactly, 0,
+                ))
+        measurement = self.measurementBox.text().strip()
+        try:
+            valid_measurement = measurement in ("", "*") or int(measurement) > 0
+        except ValueError:
+            valid_measurement = False
+        can_plot = target_available and valid_measurement
+        can_refresh = reads_enabled and (has_database or bool(getattr(self, "windows", ())))
+
+        def enable(names, enabled):
+            for name in names:
+                control = getattr(self, name, None)
+                if isinstance(control, qtw.QLineEdit):
+                    # Losing focus during source retirement must not commit a
+                    # typed selection against the reader that just closed.
+                    set_widget_value_without_signals(control, control.setEnabled, bool(enabled))
+                elif control is not None:
+                    control.setEnabled(bool(enabled))
+
+        enable(("copyDatabasePathButton", "databaseInfoButton", "openDatabaseFolderButton",
+                "openDatabaseFolderAction", "exportDatabaseAction", "autoPlotBox"), database_ready)
+        enable(("closeDatabaseAction",), has_database)
+        enable(("refreshIntervalLabel", "spinBox", "refreshDatabaseButton", "refreshAction",
+                "emptyStateRefreshButton"), can_refresh)
+        enable(("runIdLabel", "run_idBox", "measurementLabel", "measurementBox"), has_runs)
+        enable(("RunList",), database_ready)
+        enable(("infoBox", "plotSelectedRunAction", "plotTableSelectionAction"), len(selected_ids) == 1)
+        enable(("plotRunButton", "exportCsvButton", "plotEnteredRunAction"), can_plot)
+        enable(("exportSelectedRunsAction", "exportSelectedDatabaseAction"), bool(selected_ids))
+        for action in getattr(self, "open_param_actions", ()):
+            action.setEnabled(target_available)
+
     def initShortcuts(self):
         """
         Register keyboard shortcuts for common run actions.
@@ -262,15 +337,18 @@ class RunControlsMixin:
         plot_entered = create_action("run.plot_entered", self)
         plot_entered.triggered.connect(lambda _: self.plotRunButton.click())
         self.addAction(plot_entered)
+        self.plotEnteredRunAction = plot_entered
 
         plot_selected_all = create_action("run.plot_selected_all", self)
         plot_selected_all.triggered.connect(self.open_selected_run_all)
         self.addAction(plot_selected_all)
+        self.plotSelectedRunAction = plot_selected_all
         table_enter = QtGui.QAction("Plot Selected Run", self.RunList)
         table_enter.setShortcuts([QtGui.QKeySequence("Return"), QtGui.QKeySequence("Enter")])
         table_enter.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
         table_enter.triggered.connect(self.open_selected_run_all)
         self.RunList.addAction(table_enter)
+        self.plotTableSelectionAction = table_enter
 
         self.open_param_actions = []
         for itr in range(9):
@@ -278,6 +356,7 @@ class RunControlsMixin:
             action.triggered.connect(lambda _, index=itr: self.open_param_by_index(index))
             self.addAction(action)
             self.open_param_actions.append(action)
+        self._sync_database_generation_controls()
 
     def _init_empty_state(self):
         """
@@ -307,24 +386,13 @@ class RunControlsMixin:
         self.emptyStateTitle = title
 
         detail = qtw.QLabel(
-            "Drop a QCoDeS .db file onto the database field, or load one now."
+            "Use Load database… above, or drop a QCoDeS .db file onto the database field."
             )
         detail.setObjectName("mainEmptyStateDetail")
         detail.setWordWrap(True)
         text_layout.addWidget(detail)
         self.emptyStateDetail = detail
         layout.addLayout(text_layout, 1)
-
-        load_button = qtw.QToolButton()
-        load_button.setObjectName("databaseIconButton")
-        load_button.setIcon(self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_DialogOpenButton))
-        load_button.setText("Load Database...")
-        load_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        load_button.setToolTip("Load a QCoDeS .db database")
-        load_button.setAccessibleName("Load database")
-        load_button.clicked.connect(self.getfile)
-        layout.addWidget(load_button)
-        self.emptyStateLoadButton = load_button
 
         refresh_button = qtw.QToolButton()
         refresh_button.setObjectName("databaseIconButton")
@@ -353,6 +421,9 @@ class RunControlsMixin:
         Show the empty prompt while no runs are available.
 
         """
+        sync_controls = getattr(self, "_sync_database_generation_controls", None)
+        if callable(sync_controls):
+            sync_controls()
         frame = getattr(self, "emptyStateFrame", None)
         if frame is None:
             return
@@ -390,10 +461,9 @@ class RunControlsMixin:
         detail = getattr(self, "emptyStateDetail", None)
         if detail is not None:
             detail.setText(
-                "Drop a QCoDeS .db file onto the database field, or load one now."
+                "Use Load database… above, or drop a QCoDeS .db file onto the database field."
                 )
 
-        self._set_empty_state_button_visible("emptyStateLoadButton", True)
         self._set_empty_state_button_visible("emptyStateRefreshButton", False)
         self._set_empty_state_button_visible("emptyStateHelpButton", True)
 
@@ -406,7 +476,6 @@ class RunControlsMixin:
         if detail is not None:
             detail.setText(self._loaded_empty_database_detail(database_path))
 
-        self._set_empty_state_button_visible("emptyStateLoadButton", True)
         self._set_empty_state_button_visible("emptyStateRefreshButton", True)
         self._set_empty_state_button_visible("emptyStateHelpButton", False)
 
@@ -593,7 +662,10 @@ class RunControlsMixin:
         label = getattr(self, "refreshStateLabel", None)
         if label is None:
             return
-        if self.monitor.isActive():
+        if RunControlsMixin._committed_refresh_database_instance(self) is None:
+            state = "unavailable"
+            explanation = "Load a database to enable automatic refresh."
+        elif self.monitor.isActive():
             state = "on"
             explanation = "The run list is checked automatically at the selected interval."
         elif RunControlsMixin._current_refresh_interval(self) <= 0:

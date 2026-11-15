@@ -279,7 +279,7 @@ class RefreshTimerLifecycleTestCase(unittest.TestCase):
         self.assertFalse(self.window.monitor.isActive())
 
     def test_load_pause_failure_cancel_and_unload_follow_committed_state(self):
-        self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: paused")
+        self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: unavailable")
         with TemporaryDirectory() as directory:
             source = Path(directory) / "source.db"
             source.write_bytes(b"source")
@@ -304,9 +304,9 @@ class RefreshTimerLifecycleTestCase(unittest.TestCase):
             self.window._update_automatic_refresh_timer()
 
         self.assertFalse(self.window.monitor.isActive())
-        self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: paused")
+        self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: unavailable")
         self.window.spinBox.setValue(0)
-        self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: off")
+        self.assertEqual(self.window.refreshStateLabel.text(), "Auto-refresh: unavailable")
 
     def test_repeated_setting_changes_do_not_multiply_timeout_callbacks_or_touch_source(self):
         with TemporaryDirectory() as directory:
