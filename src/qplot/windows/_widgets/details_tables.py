@@ -24,6 +24,12 @@ from qplot.datahandling.trusted_snapshot import (
 )
 
 from .._commands import command_spec
+from .._small_dialogs import (
+    close_default,
+    dialog_layout,
+    equal_button_widths,
+    resize_dialog,
+)
 
 COPY_SELECTION_SHORTCUTS = command_spec("copy.selection").resolved_shortcuts()
 COPY_CELL_SHORTCUTS = command_spec("copy.cell").resolved_shortcuts()
@@ -150,9 +156,12 @@ class TrustedFullValueDialog(qtw.QDialog):
         self._exact_text: str | None = None
         self.setObjectName("trustedFullValueDialog")
         self.setWindowTitle("Complete metadata value")
-        self.resize(760, 520)
 
         self.path_label = qtw.QLabel(self)
+        self.path_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.path_label.setWordWrap(True)
+        self.path_label.setMinimumWidth(0)
+        self.path_label.setSizePolicy(qtw.QSizePolicy.Policy.Ignored, qtw.QSizePolicy.Policy.Preferred)
         self.path_label.setTextInteractionFlags(
             QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -160,25 +169,29 @@ class TrustedFullValueDialog(qtw.QDialog):
         self.text_edit.setToolTip("Complete metadata value. Select text and use the copy shortcut to copy just that selection.")
         self.text_edit.setObjectName("trustedFullValueText")
         self.text_edit.setReadOnly(True)
+        self.text_edit.setTabChangesFocus(True)
         self.text_edit.setLineWrapMode(qtw.QPlainTextEdit.LineWrapMode.NoWrap)
 
-        self.select_all_button = qtw.QPushButton("Select All", self)
+        self.select_all_button = qtw.QPushButton("Select all", self)
         self.copy_button = qtw.QPushButton("Copy", self)
         self.copy_button.setToolTip("Copy the complete metadata value, regardless of the text selection.")
-        self.close_button = qtw.QPushButton("Close", self)
+        buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
+        close_button = buttons.button(qtw.QDialogButtonBox.StandardButton.Close)
+        assert close_button is not None
+        self.close_button = close_button
         self.select_all_button.clicked.connect(self.text_edit.selectAll)
         self.copy_button.clicked.connect(self.copy_value)
-        self.close_button.clicked.connect(self.close)
+        buttons.rejected.connect(self.close)
 
-        buttons = qtw.QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(self.select_all_button)
-        buttons.addWidget(self.copy_button)
-        buttons.addWidget(self.close_button)
-        layout = qtw.QVBoxLayout(self)
+        buttons.addButton(self.select_all_button, qtw.QDialogButtonBox.ButtonRole.ActionRole)
+        buttons.addButton(self.copy_button, qtw.QDialogButtonBox.ButtonRole.ActionRole)
+        layout = dialog_layout(self)
         layout.addWidget(self.path_label)
         layout.addWidget(self.text_edit, 1)
-        layout.addLayout(buttons)
+        layout.addWidget(buttons)
+        equal_button_widths(self.select_all_button, self.copy_button, self.close_button)
+        close_default(buttons)
+        resize_dialog(self, 760, 520)
 
     def show_value(self, *, path: str, text: str, utf8_bytes: int) -> None:
         self._exact_text = text
@@ -187,6 +200,7 @@ class TrustedFullValueDialog(qtw.QDialog):
         cursor = self.text_edit.textCursor()
         cursor.movePosition(QtGui.QTextCursor.MoveOperation.Start)
         self.text_edit.setTextCursor(cursor)
+        self.close_button.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
         self.show()
         self.raise_()
         self.activateWindow()

@@ -72,6 +72,12 @@ def _tree_item(tree, key):
 
 
 class RunDetailsTabsTestCase(unittest.TestCase):
+    def setUp(self):
+        # These synchronous tests share one QApplication without app.exec().
+        # Service native clipboard/OLE messages left by the preceding test
+        # before another test replaces its clipboard data (notably on Windows).
+        qtw.QApplication.processEvents()
+
     @staticmethod
     def _trusted_detail():
         return TrustedSelectedRunDetail(
@@ -693,6 +699,8 @@ class RunDetailsTabsTestCase(unittest.TestCase):
 
         clipboard = qtw.QApplication.clipboard()
         clipboard.setText("clipboard-sentinel")
+        # Establish the precondition before publishing details or opening UI.
+        self.assertEqual(clipboard.text(), "clipboard-sentinel")
         widget.set_snapshot_run_detail(detail)
 
         description_item = _tree_item(widget.raw, "run_description")
@@ -706,11 +714,17 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertTrue(dialog.text_edit.isReadOnly())
         self.assertEqual(dialog.text_edit.toPlainText(), run_description)
         self.assertEqual(clipboard.text(), "clipboard-sentinel")
+        qtw.QApplication.processEvents()
+        self.assertEqual(clipboard.text(), "clipboard-sentinel")
 
         dialog.select_all_button.click()
         self.assertTrue(dialog.text_edit.textCursor().hasSelection())
         self.assertEqual(clipboard.text(), "clipboard-sentinel")
+        qtw.QApplication.processEvents()
+        self.assertEqual(clipboard.text(), "clipboard-sentinel")
         dialog.copy_button.click()
+        self.assertEqual(clipboard.text(), run_description)
+        qtw.QApplication.processEvents()
         self.assertEqual(clipboard.text(), run_description)
 
         widget.metadata.itemActivated.emit(exception_item, 1)
@@ -718,8 +732,61 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(dialog._exact_text, measurement_exception)
         self.assertTrue(dialog.text_edit.toPlainText().endswith("KeyboardInterrupt"))
         clipboard.setText("second-clipboard-sentinel")
+        self.assertEqual(clipboard.text(), "second-clipboard-sentinel")
         dialog.copy_button.click()
         self.assertEqual(clipboard.text(), measurement_exception)
+        qtw.QApplication.processEvents()
+        self.assertEqual(clipboard.text(), measurement_exception)
+
+        # Closing and deleting the viewer must also preserve copied text after
+        # deferred Qt destruction and native clipboard notifications run.
+        dialog.close()
+        widget.deleteLater()
+        qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+        qtw.QApplication.processEvents()
+        self.assertEqual(clipboard.text(), measurement_exception)
+
+    def test_full_value_viewer_preserves_external_windows_clipboard(self):
+        if qtw.QApplication.platformName() != "windows":
+            self.skipTest("Requires the native Windows clipboard")
+
+        # Let a separate Qt process publish and flush text on exit so this
+        # process reads real external clipboard data, not its own QMimeData.
+        subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                textwrap.dedent("""
+                    from PyQt6 import QtWidgets
+                    app = QtWidgets.QApplication([])
+                    app.clipboard().setText('external-clipboard-sentinel')
+                    app.processEvents()
+                    assert app.clipboard().text() == 'external-clipboard-sentinel'
+                """),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        qtw.QApplication.processEvents()
+        clipboard = qtw.QApplication.clipboard()
+        self.assertFalse(clipboard.ownsClipboard())
+        self.assertEqual(clipboard.text(), "external-clipboard-sentinel")
+
+        dialog = treeWidgets.TrustedFullValueDialog()
+        dialog.show_value(path="synthetic metadata", text="full value", utf8_bytes=10)
+        qtw.QApplication.processEvents()
+        self.assertEqual(clipboard.text(), "external-clipboard-sentinel")
+        dialog.select_all_button.click()
+        qtw.QApplication.processEvents()
+        self.assertEqual(clipboard.text(), "external-clipboard-sentinel")
+        dialog.close()
+        dialog.deleteLater()
+        qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+        qtw.QApplication.processEvents()
+        self.assertFalse(clipboard.ownsClipboard())
+        self.assertEqual(clipboard.text(), "external-clipboard-sentinel")
 
     def test_full_value_ownership_invalidates_and_does_not_accumulate_dialogs(self):
         widget = treeWidgets.moreInfo()

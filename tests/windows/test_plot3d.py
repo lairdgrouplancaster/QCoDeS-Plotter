@@ -722,6 +722,15 @@ def test_snapshot_fallback_array_volume_and_region_coverage(tmp_path, main, monk
     np.testing.assert_array_equal(cut._coverage_counts, [2, 2, 2])
     np.testing.assert_allclose(cut.axis_data["y"], [102, 252, 402])
     cut.show_coverage()
+    coverage = next(dialog for dialog in cut.findChildren(qtw.QDialog)
+                    if dialog.windowTitle() == "Mean-cut coverage by depth")
+    table = coverage.findChild(qtw.QTableWidget)
+    assert [table.item(row, 1).text() for row in range(3)] == ["2", "2", "2"]
+    buttons = coverage.findChild(qtw.QDialogButtonBox)
+    close = buttons.button(qtw.QDialogButtonBox.StandardButton.Close)
+    assert close.isDefault()
+    QtTest.QTest.keyClick(close, QtCore.Qt.Key.Key_Return)
+    assert not coverage.isVisible()
     capture = cut._capture_line_csv(CSVExporter(cut.plot))
     assert "finite_cells" in capture.headers
     np.testing.assert_array_equal(capture.columns[-1], [2, 2, 2])

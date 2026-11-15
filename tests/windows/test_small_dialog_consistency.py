@@ -11,11 +11,12 @@ from qplot.windows._desktop_integration import DesktopIntegrationDialog
 from qplot.windows._error_dialog import ErrorDialog
 from qplot.windows._plot_marquee import new_statistics_dialog
 from qplot.windows._updates import UpdateChecker
+from qplot.windows._widgets.details_tables import TrustedFullValueDialog
 
 
 @pytest.mark.parametrize("key", [QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Escape])
 @pytest.mark.parametrize("points", [10, 18])
-@pytest.mark.parametrize("kind", ["database", "statistics", "error", "desktop", "quick", "controls", "about", "updates"])
+@pytest.mark.parametrize("kind", ["database", "statistics", "error", "desktop", "quick", "controls", "about", "updates", "metadata"])
 def test_information_dialog_layout_and_keyboard(qapplication, monkeypatch, points, kind, key):
     original = qapplication.font()
     font = QtGui.QFont(original)
@@ -38,6 +39,7 @@ def test_information_dialog_layout_and_keyboard(qapplication, monkeypatch, point
         "controls": lambda: _help.show_keyboard_shortcuts(parent),
         "about": lambda: _help.show_about(parent),
         "updates": lambda: checker._new_dialog(parent, CHECKING_MESSAGE),
+        "metadata": lambda: TrustedFullValueDialog(parent),
     }
     dialog = None
     try:
@@ -115,5 +117,31 @@ def test_return_on_focused_copy_keeps_dialog_open(qapplication):
         QtTest.QTest.keyClick(copy, QtCore.Qt.Key.Key_Return)
         assert dialog.isVisible()
         assert qapplication.clipboard().text() == text
+    finally:
+        sip.delete(dialog)
+
+
+def test_metadata_keyboard_copy_and_reopening_preserve_exact_text(qapplication):
+    dialog = TrustedFullValueDialog()
+    value = '<tag>\n  exact value\t\u03bcV\n'
+    try:
+        dialog.show_value(path="metadata.<b>literal</b>", text=value, utf8_bytes=len(value.encode()))
+        qapplication.processEvents()
+        assert dialog.path_label.textFormat() == QtCore.Qt.TextFormat.PlainText
+        assert dialog.focusWidget() is dialog.close_button
+        dialog.text_edit.setFocus()
+        QtTest.QTest.keyClick(dialog.text_edit, QtCore.Qt.Key.Key_Tab)
+        assert dialog.focusWidget() is not dialog.text_edit
+        dialog.copy_button.setFocus()
+        QtTest.QTest.keyClick(dialog.copy_button, QtCore.Qt.Key.Key_Return)
+        assert qapplication.clipboard().text() == value
+        assert dialog.isVisible()
+        QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_Escape)
+        assert not dialog.isVisible()
+        dialog.show_value(path="next", text="replacement", utf8_bytes=11)
+        qapplication.processEvents()
+        assert dialog.focusWidget() is dialog.close_button
+        QtTest.QTest.keyClick(dialog.close_button, QtCore.Qt.Key.Key_Return)
+        assert not dialog.isVisible()
     finally:
         sip.delete(dialog)
