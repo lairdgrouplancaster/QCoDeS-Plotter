@@ -237,15 +237,22 @@ ordinary PR CI selects routine desktop validation. No release workflow or
 application/native source is changed. Follow-up logs, collection comparisons and
 coverage JSON are retained under `.recovery/test-review-next/` locally.
 
-The hosted Python 3.13 Windows run exposed a portability error in the independent
-statistics oracle: `longdouble.item()` can remain a NumPy scalar, which older
-Python `Fraction` constructors reject. The oracle now constructs each rational
-from its exact integer ratio. It does not narrow extended values to Python floats
-or change numerical tolerances. A named `numpy-longdouble` case makes this input
-explicit, and the other numerical cases now have descriptive IDs. The statistics
-and marquee-action checks pass locally (19 cases); collection increases to
-**8,304 cases**. See [PR #141](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/141)
-for validation runs against the latest candidate.
+The hosted Python 3.12/3.13 Windows runs exposed portability errors in the
+independent statistics and native-average oracles: NumPy's finite limit can be
+a `longdouble`, and `longdouble.item()` remains a NumPy scalar, which older
+Python `Fraction` constructors reject. Both oracles now construct rationals from
+exact integer ratios. They do not narrow extended values to Python floats or
+change numerical tolerances. Named longdouble cases make these inputs explicit,
+and the other cases in those parameter sets now have descriptive IDs.
+
+The statistics and marquee-action checks pass locally (19 cases). A broader
+diagnostic runs 53 numerical test modules with older `Fraction` scalar acceptance
+enforced and NumPy's Windows limit cache initialised through `longdouble`:
+**1,235 passed, 94 platform skips**. This focused diagnostic uses the local
+Python 3.14 interpreter; the hosted matrix supplies actual Python 3.12/3.13
+validation. Collection increases to **8,305 cases**. See
+[PR #141](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/141) for
+validation runs against the latest candidate.
 
 ## Practical limits
 

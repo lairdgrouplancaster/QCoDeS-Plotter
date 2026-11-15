@@ -187,9 +187,10 @@ def test_nonuniform_complex_gradient_retains_imaginary_samples():
 @pytest.mark.parametrize(
     "values",
     [
-        [np.finfo(float).max] * 4,
-        [1e308, 1e308, -1e308],
-        [np.inf, np.inf, 1.0],
+        pytest.param([np.finfo(float).max] * 4, id="maximum-finite-floats"),
+        pytest.param([np.longdouble(np.finfo(float).max)] * 4, id="maximum-numpy-longdouble"),
+        pytest.param([1e308, 1e308, -1e308], id="overflowing-total"),
+        pytest.param([np.inf, np.inf, 1.0], id="positive-infinities"),
     ],
 )
 def test_native_average_wide_and_nonfinite_cells(values, no_callback_errors):
@@ -201,7 +202,7 @@ def test_native_average_wide_and_nonfinite_cells(values, no_callback_errors):
         plot.ctrl.averageGroup.setChecked(True)
         _count, average = next(iter(plot.avgCurves.values()))
         if np.isfinite(values).all():
-            expected = float(sum(Fraction(value) for value in values) / len(values))
+            expected = float(sum(Fraction(*value.as_integer_ratio()) for value in values) / len(values))
         else:
             expected = np.mean(values)
         np.testing.assert_allclose(
