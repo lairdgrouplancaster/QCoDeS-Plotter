@@ -1,4 +1,4 @@
-﻿"""Finite opposite-sign ranges must retain the Qt sparkline geometry."""
+"""Finite opposite-sign ranges must retain the Qt sparkline geometry."""
 
 import warnings
 
@@ -16,7 +16,7 @@ from qplot.windows._widgets.preview import (
     render_heatmap_grid_preview,
     render_sparkline_preview,
 )
-from tests.datahandling.test_array_record_metadata import (
+from tests.support.datahandling.array_record_metadata import (
     _artifact_state,
     _protect_source,
 )

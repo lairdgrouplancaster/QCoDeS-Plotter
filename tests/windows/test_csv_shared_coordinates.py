@@ -3,11 +3,11 @@ import numpy as np
 import pytest
 from PyQt6 import QtWidgets as qtw
 
-from tests.windows.test_plot_csv_precision import _open_csv_dialog
-from tests.windows.test_plot_csv_precision import (
+from tests.support.windows.plot_csv_precision import _open_csv_dialog
+from tests.support.windows.plot_csv_precision import (
     precision_plot as _precision_plot_fixture,
 )
-from tests.windows.test_plot_integration import wait_for
+from tests.support.windows.plot_integration import wait_for
 
 precision_plot = _precision_plot_fixture
 

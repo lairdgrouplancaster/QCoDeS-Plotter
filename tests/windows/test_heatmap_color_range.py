@@ -14,16 +14,19 @@ from qcodes.dataset.sqlite.database import connect
 from qplot.testdata import enable_generation_provenance_for_writer
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_complex_line_data import database_state
-from tests.windows.test_differentiation_integration import (
+from tests.support.windows.complex_line_data import database_state
+from tests.support.windows.differentiation_integration import (
     apply_operations,
     operation_option,
 )
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _no_callback_errors_fixture,
 )
-from tests.windows.test_plot_csv_precision import _export_from_dialog, _open_csv_dialog
-from tests.windows.test_plot_integration import (
+from tests.support.windows.plot_csv_precision import (
+    _export_from_dialog,
+    _open_csv_dialog,
+)
+from tests.support.windows.plot_integration import (
     configure_temp_qplot,
     prepare_generated_database_for_live_writes,
     trusted_database_artifact_state,

@@ -18,7 +18,7 @@ from qplot.datahandling.trusted_derived_cache import TrustedDerivedDiskCache
 from qplot.windows import _database_actions as database_actions
 from qplot.windows import main as main_window
 from tests._window_lifecycle import close_main_window
-from tests.datahandling.test_trusted_live import (
+from tests.support.datahandling.trusted_live import (
     _assert_protected_artifacts_unchanged,
     _stable_artifact_state,
 )

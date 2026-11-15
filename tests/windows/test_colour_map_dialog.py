@@ -7,10 +7,10 @@ from PyQt6 import QtCore, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._colour_map_picker import ColourMapDialog, ColourMapPicker
-from tests.windows.test_color_scale_locale import heatmap
-from tests.windows.test_mixed_plot_drops import _added, _drop
-from tests.windows.test_mixed_plot_drops import mixed_plot as _mixed_plot
-from tests.windows.test_plot_dialog_lifecycle import dialog_plot
+from tests.support.windows.color_scale_locale import heatmap
+from tests.support.windows.mixed_plot_drops import _added, _drop
+from tests.support.windows.mixed_plot_drops import mixed_plot as _mixed_plot
+from tests.support.windows.plot_dialog_lifecycle import dialog_plot
 
 mixed_plot = _mixed_plot
 

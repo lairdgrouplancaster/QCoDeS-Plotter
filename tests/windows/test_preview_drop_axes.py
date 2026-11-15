@@ -20,7 +20,7 @@ from qplot.windows._plot_drop_axes import DropAxisPlan, plan_drop_axes
 from qplot.windows._preferences import PreferencesDialog
 from qplot.windows._window_controls import CONFIRM_INCOMPATIBLE_AXES_KEY
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_heatmap_layer_integration import (
+from tests.support.windows.heatmap_layer_integration import (
     _assert_reader_artifact_invariant,
     _configure_temp_qplot,
     _database_artifact_state,

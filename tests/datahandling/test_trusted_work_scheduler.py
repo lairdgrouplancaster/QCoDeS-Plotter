@@ -669,7 +669,7 @@ def test_revision_and_format_changes_invalidate_only_their_namespace() -> None:
     assert replacement.key.source_revision == _revision(99)
 
 
-def test_stage5a_does_not_create_cache_files_or_render(
+def test_draining_scheduler_does_not_create_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -704,7 +704,7 @@ def test_stage5a_does_not_create_cache_files_or_render(
         ),
     ],
 )
-def test_future_cache_namespace_is_in_application_cache_without_writes(
+def test_cache_namespace_resolution_does_not_create_files(
     tmp_path: Path,
     platform: str,
     environment: dict[str, str],

@@ -18,7 +18,7 @@ from qplot.datahandling.readSQL import (
 from qplot.datahandling.trusted_live_service import TrustedLiveReadService
 from qplot.windows._trusted_derived_qt import TrustedDerivedQtBridge
 from qplot.windows._widgets.treeWidgets import RunList, moreInfo, time_taken_seconds
-from tests.datahandling.test_trusted_live import (
+from tests.support.datahandling.trusted_live import (
     _assert_protected_artifacts_unchanged,
     _stable_artifact_state,
 )

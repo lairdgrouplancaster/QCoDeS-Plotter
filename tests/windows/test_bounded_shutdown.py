@@ -1,4 +1,4 @@
-"""Qt regressions for bounded Stage 4 retirement and application shutdown."""
+"""Qt regressions for bounded reader retirement and application shutdown."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from PyQt6 import QtWidgets as qtw
 from qplot import _process_shutdown as process_shutdown
 from qplot.windows import main as main_window
 from tests._shutdown_harness import attach_shutdown
-from tests.test_shutdown_supervisor import _process_is_running
+from tests.support.lifecycle.shutdown_supervisor import _process_is_running
 
 
 def _offscreen_subprocess_environment() -> dict[str, str]:

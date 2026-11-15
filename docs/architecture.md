@@ -1152,8 +1152,12 @@ Tests are grouped by area:
 * `tests/datahandling` covers database metadata helpers.
 * `tests/widgets` covers main-window widgets and preview behaviour.
 * `tests/windows` covers main-window and plot-window behaviour.
-* `tests/test_config.py` and `tests/test_tools.py` cover configuration and
+* `tests/configuration/test_config.py` and `tests/tools/test_tools.py` cover configuration and
   general helper behaviour.
+
+The [testing guide](testing.md) describes the feature directories and shared
+support. Reusable fixtures and assertions live in `tests/support`; tests do not
+import other test modules.
 
 Shared pytest and Qt setup lives in `tests/conftest.py`.
 Integration isolation is the default: Qt initialisation, QCoDeS location

@@ -5,43 +5,19 @@ import pytest
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from tests.windows.test_mixed_plot_drops import (
+from tests.support.windows.hover_axis_hit_testing import (
+    _viewport_move as _viewport_move,
+)
+from tests.support.windows.mixed_plot_drops import (
     mixed_plot as mixed_plot,
 )
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as no_callback_errors,
 )
-from tests.windows.test_plot_overlay_integration import _assign_trace_axes
-from tests.windows.test_plot_overlay_integration import (
+from tests.support.windows.plot_overlay_integration import _assign_trace_axes
+from tests.support.windows.plot_overlay_integration import (
     loaded_plot as loaded_plot,
 )
-
-
-def _viewport_move(window, scene_point, *, expect_scene_signal=True):
-    pixel = window.widget.mapFromScene(scene_point)
-    viewport = window.widget.viewport()
-    assert viewport.rect().contains(pixel)
-    delivered = []
-    scene = window.plot.scene()
-    scene.sigMouseMoved.connect(delivered.append)
-    try:
-        event = QtGui.QMouseEvent(
-            QtCore.QEvent.Type.MouseMove,
-            QtCore.QPointF(pixel),
-            QtCore.QPointF(viewport.mapToGlobal(pixel)),
-            QtCore.Qt.MouseButton.NoButton,
-            QtCore.Qt.MouseButton.NoButton,
-            QtCore.Qt.KeyboardModifier.NoModifier,
-        )
-        qtw.QApplication.sendEvent(viewport, event)
-        qtw.QApplication.processEvents()
-    finally:
-        scene.sigMouseMoved.disconnect(delivered.append)
-    if expect_scene_signal:
-        assert delivered, "The viewport event must reach the plot's actual mouse handler"
-        return delivered[-1]
-    assert not delivered, "The scene must discard this event to exercise unthrottled clearing"
-    return window.widget.mapToScene(pixel)
 
 
 def _axis_points(axis):

@@ -25,39 +25,19 @@ from qplot.datahandling.trusted_work_scheduler import (
     TrustedWorkKind,
     trusted_derived_cache_root,
 )
-
-_DEFAULT_OPTIONS = RenderingOptions()
+from tests.support.datahandling.trusted_derived_cache import (
+    _DEFAULT_OPTIONS as _DEFAULT_OPTIONS,
+)
+from tests.support.datahandling.trusted_derived_cache import (
+    _key as _key,
+)
+from tests.support.datahandling.trusted_derived_cache import (
+    _payload as _payload,
+)
 
 
 def test_scientifically_corrected_renderer_uses_cache_format_after_v2() -> None:
     assert cache_module.TRUSTED_DERIVED_CACHE_FORMAT_VERSION > 2
-
-
-def _key(
-    value: int = 1,
-    *,
-    options: RenderingOptions = _DEFAULT_OPTIONS,
-) -> TrustedCacheWorkKey:
-    instance = DatabaseInstance("/data/test.db", "/data/test.db", (7, 11))
-    return TrustedCacheWorkKey(
-        instance,
-        "guid-1",
-        TrustedWorkKind.PREVIEW,
-        TrustedSourceRevision(f"revision-{value}".encode()),
-        "renderer-v1",
-        options,
-    )
-
-
-def _payload(value: str = "ok"):
-    return {
-        "format": "qplot-trusted-derived-payload-v1",
-        "kind": "preview",
-        "status": "ok",
-        "description": value,
-        "source": (("revision", value.encode()),),
-        "images": (),
-    }
 
 
 def _image_payload(

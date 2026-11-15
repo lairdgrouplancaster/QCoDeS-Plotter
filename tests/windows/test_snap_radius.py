@@ -6,15 +6,15 @@ import pytest
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
-from tests.windows.test_mixed_plot_drops import _added, _drop
-from tests.windows.test_mixed_plot_drops import (
+from tests.support.windows.mixed_plot_drops import _added, _drop
+from tests.support.windows.mixed_plot_drops import (
     mixed_plot as mixed_plot,
 )
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as no_callback_errors,
 )
-from tests.windows.test_plot_overlay_integration import _assign_trace_axes
-from tests.windows.test_plot_overlay_integration import (
+from tests.support.windows.plot_overlay_integration import _assign_trace_axes
+from tests.support.windows.plot_overlay_integration import (
     loaded_plot as loaded_plot,
 )
 

@@ -8,15 +8,15 @@ import pytest
 from PyQt6 import QtCore, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 
-from tests.windows.test_custom_color_dialog_lifecycle import color_cut as _color_cut
-from tests.windows.test_heatmap_layer_integration import (
+from tests.support.windows.custom_color_dialog_lifecycle import color_cut as _color_cut
+from tests.support.windows.heatmap_layer_integration import (
     _build_two_heatmap_database,
     _database_artifact_state,
 )
-from tests.windows.test_merged_trace_metadata import merge
-from tests.windows.test_merged_trace_metadata import merged_plots as _merged_plots
-from tests.windows.test_plot_integration import wait_for
-from tests.windows.test_typed_run_keyboard_launch import (
+from tests.support.windows.merged_trace_metadata import merge
+from tests.support.windows.merged_trace_metadata import merged_plots as _merged_plots
+from tests.support.windows.plot_integration import wait_for
+from tests.support.windows.typed_run_keyboard_launch import (
     typed_run_window as _typed_run_window,
 )
 

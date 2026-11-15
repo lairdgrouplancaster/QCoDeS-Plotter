@@ -18,7 +18,7 @@ from qplot.testdata import (
     generate_database,
     read_specifications,
 )
-from tests.datahandling.test_stage5c_real_qcodes import (
+from tests.support.datahandling.qcodes_measurement_layouts import (
     _load_basic_runs,
     _protected_artifact_state,
     _ReadOnlySqliteExecutor,

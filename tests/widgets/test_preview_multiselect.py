@@ -12,7 +12,7 @@ from qplot.windows._widgets._preview_selection import (
 )
 from qplot.windows._widgets.preview import PreviewTab
 from qplot.windows._widgets.treeWidgets import RunList
-from tests.widgets.test_preview_placeholders import _white_preview
+from tests.support.widgets.preview_placeholders import _white_preview
 
 
 @pytest.fixture

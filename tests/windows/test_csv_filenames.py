@@ -6,7 +6,7 @@ import pytest
 from qplot.windows._csv_filenames import CSV_FILENAME_FORMAT_KEY, csv_filename
 from qplot.windows._dataset_handle import DatasetKey
 from qplot.windows._plot_actions import PlotActionsMixin
-from tests.windows.test_preferences import FakeConfig
+from tests.support.windows.preferences import FakeConfig
 
 
 @pytest.mark.parametrize("style", ["current", "qcodes"])

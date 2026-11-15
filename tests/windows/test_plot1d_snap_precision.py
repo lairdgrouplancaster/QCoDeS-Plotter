@@ -16,8 +16,8 @@ from qplot.windows import main as main_window
 from qplot.windows._plot1d_snap import Plot1DSnapMixin
 from qplot.windows.plot1d import plot1d
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
-from tests.windows.test_plot_overlay_integration import _assign_trace_axes
+from tests.support.windows.plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.plot_overlay_integration import _assign_trace_axes
 
 
 @pytest.mark.parametrize("offset", [0.0, 5e9, -5e9, 1e12])

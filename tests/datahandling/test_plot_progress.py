@@ -9,8 +9,8 @@ from qplot.datahandling.trusted_live_service import (
     TrustedLiveReadService,
     _BrokerQueryExecutor,
 )
-from tests.datahandling.test_trusted_heatmap import plan
-from tests.datahandling.test_trusted_plot import (
+from tests.support.datahandling.trusted_heatmap import plan
+from tests.support.datahandling.trusted_plot import (
     make_run,
     prohibit_snapshots,
     protected_state,

@@ -20,7 +20,7 @@ from qplot.diagnostics import configure_logging
 from qplot.windows._database_detail_state import detail_channel
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.plot_integration import configure_temp_qplot, wait_for
 
 
 def _protected_artifacts(database):

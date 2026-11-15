@@ -6,115 +6,38 @@ import numpy as np
 import pytest
 from PyQt6 import QtCore
 from pyqtgraph.exporters import CSVExporter
-from qcodes.dataset import (
-    Measurement,
-    initialise_or_create_database_at,
-    load_or_create_experiment,
-)
 
-from qplot.windows import main as main_window
 from qplot.windows._native_transforms import NativePlotDataItem
-from tests._window_lifecycle import close_main_window
-from tests.windows.test_complex_line_data import database_state
-from tests.windows.test_differentiation_integration import (
+from tests.support.windows.differentiation_integration import (
     apply_operations,
     operation_option,
 )
-from tests.windows.test_merged_trace_metadata import assert_axis, assert_samples, merge
-from tests.windows.test_native_transform_labels import assert_display, click_control
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.merged_trace_metadata import (
+    assert_axis,
+    assert_samples,
+    merge,
+)
+from tests.support.windows.native_fft_coordinates import (
+    assert_spectrum as assert_spectrum,
+)
+from tests.support.windows.native_fft_coordinates import (
+    fft_plots as fft_plots,
+)
+from tests.support.windows.native_transform_labels import assert_display, click_control
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _no_callback_errors_fixture,
 )
-from tests.windows.test_native_transform_snapping import (
+from tests.support.windows.native_transform_snapping import (
     assert_full_snap_data,
     assert_snap,
     set_sample_range,
 )
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.plot_integration import wait_for
 
 no_callback_errors = _no_callback_errors_fixture
 
 NONUNIFORM = np.array([0., 4., 7., 9.])
 UNIFORM = np.array([0., 3., 6., 9.])
-
-
-@pytest.fixture
-def fft_plots(tmp_path, monkeypatch, request):
-    configure_temp_qplot(monkeypatch, tmp_path)
-    options = request.param if isinstance(request.param, dict) else {"x": request.param}
-    heatmap = options.get("heatmap", False)
-    scalar = options.get("scalar", False)
-    coordinates = np.asarray(options["x"])
-    values = np.asarray(options.get("y", [1., 17., 50., 82.]))[:len(coordinates)]
-    path = tmp_path / "fft.db"
-    initialise_or_create_database_at(str(path), journal_mode="DELETE")
-    experiment = load_or_create_experiment("native FFT", sample_name="test")
-    guids = []
-    try:
-        traces = (
-            (coordinates, values),
-            (np.asarray(options.get("other_x", coordinates[::-1])),
-             np.asarray(options.get("other_y", values[::-1]))),
-        )
-        for x, y in traces:
-            measurement = Measurement(exp=experiment)
-            paramtype = "numeric" if scalar else "array"
-            measurement.register_custom_parameter("x", paramtype=paramtype, label="Coordinate", unit="V")
-            if heatmap:
-                measurement.register_custom_parameter("slow", paramtype="array")
-            measurement.register_custom_parameter(
-                "signal", paramtype=paramtype, setpoints=("slow", "x") if heatmap else ("x",),
-                label="Signal", unit="A",
-            )
-            with measurement.run(write_in_background=False) as saver:
-                if heatmap:
-                    saver.add_result(
-                        ("x", np.tile(x, (2, 1))),
-                        ("slow", np.repeat(np.arange(2)[:, None], len(x), axis=1)),
-                        ("signal", np.tile(y, (2, 1))),
-                    )
-                elif scalar:
-                    for coordinate, value in zip(x, y, strict=True):
-                        saver.add_result(("x", coordinate), ("signal", value))
-                else:
-                    saver.add_result(("x", x), ("signal", y))
-            guids.append(saver.dataset.guid)
-    finally:
-        experiment.conn.close()
-    protected = database_state(path)
-    window = main_window.MainWindow()
-    try:
-        window.startupDatabaseTimer.stop()
-        window.monitor.stop()
-        window.config.config["user_preference"]["confirm_close"] = False
-        window.config.config["user_preference"]["confirm_close_all"] = False
-        window.close_database(status=False)
-        assert window.load_file(str(path))
-        wait_for(lambda: not window._database_load_active)
-        plots = []
-        for guid in guids:
-            prior_count = len(window.windows)
-            window.openPlot(guid=guid, show=True)
-            wait_for(lambda prior_count=prior_count: len(window.windows) > prior_count)
-            plot = window.windows[-1]
-            wait_for(lambda plot=plot: hasattr(plot, "axis_data") and not plot.worker.running)
-            plot.monitor.stop()
-            if heatmap:
-                plot.z_index = [0, 0]
-                plot.openSweep("h")
-                plot = window.windows[-1]
-                wait_for(lambda plot=plot: hasattr(plot, "axis_data") and not plot.worker.running)
-                plot.monitor.stop()
-            plots.append(plot)
-        yield window, plots, coordinates, values
-    finally:
-        close_main_window(window)
-        assert database_state(path) == protected
-
-
-def assert_spectrum(line, frequencies, magnitudes):
-    assert_display(line, frequencies, magnitudes)
-    assert_display(line.curve, frequencies, magnitudes)
 
 
 @pytest.mark.parametrize("fft_plots", [

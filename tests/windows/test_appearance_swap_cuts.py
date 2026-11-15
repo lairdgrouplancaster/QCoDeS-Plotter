@@ -15,7 +15,7 @@ from qcodes.parameters import ManualParameter
 
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_plot_integration import (
+from tests.support.windows.plot_integration import (
     configure_temp_qplot,
     database_artifact_state,
     wait_for,

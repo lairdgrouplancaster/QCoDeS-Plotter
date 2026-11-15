@@ -17,7 +17,7 @@ from qcodes.dataset.sqlite.database import connect
 from qplot.datahandling import csv_export, readonly, trusted_plot
 from qplot.datahandling.csv_export import CsvExportCancelled, export_raw_csv
 from qplot.datahandling.trusted_live_service import TrustedLiveReadService
-from tests.datahandling.test_trusted_plot import protected_state
+from tests.support.datahandling.trusted_plot import protected_state
 
 
 @contextmanager

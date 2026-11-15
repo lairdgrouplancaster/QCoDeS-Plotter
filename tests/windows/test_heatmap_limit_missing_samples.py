@@ -7,13 +7,13 @@ import pytest
 
 from qplot.tools.plot_tools import differentiate, pass_filter
 from qplot.windows._native_transforms import NativePlotDataItem
-from tests.windows.test_differentiation_integration import (
+from tests.support.windows.differentiation_integration import (
     apply_operations,
     operation_option,
 )
-from tests.windows.test_native_transform_labels import click_control
-from tests.windows.test_numeric_sample_preservation import array_plot
-from tests.windows.test_plot_integration import wait_for
+from tests.support.windows.native_transform_labels import click_control
+from tests.support.windows.numeric_sample_preservation import array_plot
+from tests.support.windows.plot_integration import wait_for
 
 
 @pytest.mark.parametrize("shaped", [False, True])

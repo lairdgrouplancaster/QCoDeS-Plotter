@@ -157,7 +157,7 @@ When adding or changing a config key:
 
 1. Update `src/qplot/configuration/config_schema.json`.
 2. Update the relevant code that reads or writes the key.
-3. Add or update tests in `tests/test_config.py` and any affected window tests.
+3. Add or update tests in `tests/configuration/test_config.py` and any affected window tests.
 4. Update this document.
 
 Keep config nesting to the existing two-level structure unless the config

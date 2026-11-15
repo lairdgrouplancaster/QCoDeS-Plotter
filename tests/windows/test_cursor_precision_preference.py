@@ -12,7 +12,7 @@ from qplot.configuration.config import config
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._preferences import CURSOR_SIGNIFICANT_FIGURES_KEY, PreferencesDialog
 from qplot.windows.plot2d import plot2d
-from tests.windows.test_plot_overlay_integration import loaded_plot as loaded_plot
+from tests.support.windows.plot_overlay_integration import loaded_plot as loaded_plot
 
 
 @pytest.fixture

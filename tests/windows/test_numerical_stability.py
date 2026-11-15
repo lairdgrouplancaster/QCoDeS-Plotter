@@ -6,100 +6,25 @@ import numpy as np
 import pyqtgraph as pg
 import pytest
 from pyqtgraph.exporters import CSVExporter
-from qcodes.dataset import (
-    Measurement,
-    initialise_or_create_database_at,
-    load_or_create_experiment,
-)
 
 from qplot.tools.plot_tools import _center_float_samples, differentiate, subtract_mean
-from qplot.windows import main as main_window
 from qplot.windows._native_averaging import NativePlotItem
 from qplot.windows._native_transforms import NativePlotDataItem
-from tests._window_lifecycle import close_main_window
-from tests.windows.test_complex_line_data import database_state
-from tests.windows.test_differentiation_integration import (
+from tests.support.windows.differentiation_integration import (
     apply_operations,
     operation_option,
 )
-from tests.windows.test_merged_trace_metadata import merge
-from tests.windows.test_native_averaging import click_average
-from tests.windows.test_native_transform_labels import click_control
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.merged_trace_metadata import merge
+from tests.support.windows.native_averaging import click_average
+from tests.support.windows.native_transform_labels import click_control
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _no_callback_errors_fixture,
 )
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.numerical_stability import (
+    measured_plots as measured_plots,
+)
 
 no_callback_errors = _no_callback_errors_fixture
-
-
-@pytest.fixture
-def measured_plots(tmp_path, monkeypatch, request):
-    configure_temp_qplot(monkeypatch, tmp_path)
-    x, y, count = request.param
-    heatmap = y.ndim == 2
-    path = tmp_path / "numerical.db"
-    initialise_or_create_database_at(str(path), journal_mode="DELETE")
-    experiment = load_or_create_experiment("numerical audit", sample_name="test")
-    guids = []
-    try:
-        for _ in range(count):
-            measurement = Measurement(exp=experiment)
-            measurement.register_custom_parameter(
-                "x", paramtype="array", label="Coordinate", unit="V"
-            )
-            if heatmap:
-                measurement.register_custom_parameter("slow", paramtype="array")
-                measurement.set_shapes({"signal": y.shape})
-            measurement.register_custom_parameter(
-                "signal",
-                paramtype="array",
-                setpoints=("slow", "x") if heatmap else ("x",),
-                label="Signal",
-                unit="A",
-            )
-            with measurement.run(write_in_background=False) as saver:
-                if heatmap:
-                    saver.add_result(
-                        ("x", np.tile(x, (len(y), 1))),
-                        ("slow", np.repeat(np.arange(len(y))[:, None], len(x), axis=1)),
-                        ("signal", y),
-                    )
-                else:
-                    saver.add_result(("x", x), ("signal", y))
-            guids.append(saver.dataset.guid)
-    finally:
-        experiment.conn.close()
-    protected = database_state(path)
-    window = main_window.MainWindow()
-    try:
-        window.startupDatabaseTimer.stop()
-        window.monitor.stop()
-        window.config.config["user_preference"]["confirm_close"] = False
-        window.config.config["user_preference"]["confirm_close_all"] = False
-        window.close_database(status=False)
-        assert window.load_file(str(path))
-        wait_for(lambda: not window._database_load_active)
-        plots = []
-        for guid in guids:
-            prior_plot_count = len(window.windows)
-            window.openPlot(guid=guid, show=True)
-            wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
-            host = window.windows[-1]
-            wait_for(
-                lambda host=host: hasattr(host, "axis_data") and not host.worker.running
-            )
-            host.monitor.stop()
-            if heatmap:
-                np.testing.assert_array_equal(host.dataGrid, y)
-            else:
-                host.line.setDynamicRangeLimit(None)
-                np.testing.assert_array_equal(host.axis_data["y"], y)
-            plots.append(host)
-        yield window, plots, x, y
-    finally:
-        close_main_window(window)
-        assert database_state(path) == protected
 
 
 @pytest.mark.parametrize(
@@ -262,9 +187,10 @@ def test_nonuniform_complex_gradient_retains_imaginary_samples():
 @pytest.mark.parametrize(
     "values",
     [
-        [np.finfo(float).max] * 4,
-        [1e308, 1e308, -1e308],
-        [np.inf, np.inf, 1.0],
+        pytest.param([np.finfo(float).max] * 4, id="maximum-finite-floats"),
+        pytest.param([np.longdouble(np.finfo(float).max)] * 4, id="maximum-numpy-longdouble"),
+        pytest.param([1e308, 1e308, -1e308], id="overflowing-total"),
+        pytest.param([np.inf, np.inf, 1.0], id="positive-infinities"),
     ],
 )
 def test_native_average_wide_and_nonfinite_cells(values, no_callback_errors):
@@ -276,7 +202,7 @@ def test_native_average_wide_and_nonfinite_cells(values, no_callback_errors):
         plot.ctrl.averageGroup.setChecked(True)
         _count, average = next(iter(plot.avgCurves.values()))
         if np.isfinite(values).all():
-            expected = float(sum(Fraction(value) for value in values) / len(values))
+            expected = float(sum(Fraction(*value.as_integer_ratio()) for value in values) / len(values))
         else:
             expected = np.mean(values)
         np.testing.assert_allclose(

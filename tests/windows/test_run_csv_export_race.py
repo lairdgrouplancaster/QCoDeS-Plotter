@@ -26,7 +26,10 @@ from qplot.windows._dataset_handle import close_dataset_connection
 from qplot.windows._export_paths import StagedExport, prepare_export_destination
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.run_csv_export_race import (
+    _create_run as _create_run,
+)
 
 
 class _RunCsvWindow(MainWindow):
@@ -102,34 +105,6 @@ def isolated_export_windows(monkeypatch, tmp_path):
     for window in _RunCsvWindow.instances:
         close_main_window(window)
     _RunCsvWindow.instances = []
-
-
-def _create_run(database_path: Path, row_count: int):
-    initialise_or_create_database_at(
-        str(database_path),
-        journal_mode="DELETE",
-    )
-    experiment = load_or_create_experiment(
-        f"csv_export_{database_path.stem}",
-        sample_name="sample",
-    )
-    x = ManualParameter("x")
-    signal = ManualParameter("signal")
-    measurement = Measurement(exp=experiment, name="csv_export")
-    measurement.register_parameter(x)
-    measurement.register_parameter(signal, setpoints=(x,))
-    with measurement.run(write_in_background=False) as datasaver:
-        for index in range(row_count):
-            datasaver.add_result((x, index), (signal, 10 + index))
-        dataset = datasaver.dataset
-        run_id = dataset.run_id
-        guid = dataset.guid
-    dataset.conn.close()
-    # Measurement retains the experiment's independent connection.  Closing
-    # only the dataset connection leaves the source database locked on
-    # Windows, preventing the replacement race this test is meant to model.
-    experiment.conn.close()
-    return run_id, guid
 
 
 def _create_measurement_run(database_path, kind):
@@ -359,7 +334,6 @@ def test_run_csv_preserves_exact_array_integers(
                 for index in range(max(len(z1_values), len(z2_values)))
             ],
         ]
-
 
 
 @pytest.mark.parametrize("export_path", ("run", "selected_preview", "run_preview"))

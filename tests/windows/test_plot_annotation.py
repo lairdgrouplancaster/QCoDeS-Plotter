@@ -7,12 +7,12 @@ from PyQt6 import QtCore, QtGui, QtTest, QtWidgets
 from qplot.configuration.config import config
 from qplot.windows._plot_annotation import PlotSourceLabel, format_plot_sources
 from qplot.windows._preferences import PreferencesDialog
-from tests.windows.test_mixed_plot_drops import _added, _drop
-from tests.windows.test_mixed_plot_drops import mixed_plot as mixed_plot
-from tests.windows.test_svg_export_integration import real_plot as real_plot
+from tests.support.windows.mixed_plot_drops import _added, _drop
+from tests.support.windows.mixed_plot_drops import mixed_plot as mixed_plot
+from tests.support.windows.svg_export_integration import real_plot as real_plot
 
 
-def test_screenshot_format():
+def test_source_annotation_groups_parameters_and_compacts_run_ranges():
     sources = [("/data/Databasename.db", 9, "Signal")]
     sources += [("/data/Databasename.db", run, "Current") for run in (12, 10, 11)]
     sources += [("/data/Databasename.db", run, "Voltage") for run in (12, 8, 6, 11, 7, 8)]

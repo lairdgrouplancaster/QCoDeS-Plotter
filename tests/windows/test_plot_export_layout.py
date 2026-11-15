@@ -8,8 +8,8 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter, ImageExporter, SVGExporter
 
-from tests.windows.test_plot_integration import wait_for
-from tests.windows.test_svg_export_integration import real_plot as real_plot
+from tests.support.windows.plot_integration import wait_for
+from tests.support.windows.svg_export_integration import real_plot as real_plot
 
 
 def _format(dialog, kind):

@@ -7,11 +7,11 @@ from PyQt6 import QtCore, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._preferences import PreferencesDialog
-from tests.windows.test_mixed_plot_drops import _added, _wait_for
-from tests.windows.test_mixed_plot_drops import mixed_plot as _mixed_plot
-from tests.windows.test_plot3d import build_mixed_volume, loaded
-from tests.windows.test_plot3d import main as _volume_main
-from tests.windows.test_preferences_value_preservation import (
+from tests.support.windows.mixed_plot_drops import _added, _wait_for
+from tests.support.windows.mixed_plot_drops import mixed_plot as _mixed_plot
+from tests.support.windows.plot3d import build_mixed_volume, loaded
+from tests.support.windows.plot3d import main as _volume_main
+from tests.support.windows.preferences_value_preservation import (
     precise_config as _precise_config,
 )
 

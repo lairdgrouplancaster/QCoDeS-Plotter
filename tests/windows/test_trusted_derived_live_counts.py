@@ -18,9 +18,11 @@ from qplot.datahandling.trusted_query_types import (
 from qplot.datahandling.trusted_work_scheduler import TrustedWorkKind
 from qplot.windows import _trusted_derived_qt as bridge_module
 from qplot.windows._widgets.treeWidgets import RunList, moreInfo
-from tests.datahandling.test_live_acquired_point_counts import _open_reader
-from tests.datahandling.test_stage5c_real_qcodes import _protected_artifact_state
-from tests.windows.test_trusted_derived_qt import (
+from tests.support.datahandling.live_acquired_point_counts import _open_reader
+from tests.support.datahandling.qcodes_measurement_layouts import (
+    _protected_artifact_state,
+)
+from tests.support.windows.trusted_derived_qt import (
     _FakeCoordinator,
     _publication,
     _Window,

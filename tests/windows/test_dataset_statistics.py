@@ -122,7 +122,7 @@ def test_inferred_statistics_use_declared_setpoints(
 
     from qplot.datahandling.readonly import load_by_id_read_only
     from qplot.windows import _plot_actions, _plot_marquee
-    from tests.windows.test_complex_line_data import database_state
+    from tests.support.windows.complex_line_data import database_state
 
     path = (tmp_path / 'inferred-statistics.db').resolve()
     initialise_or_create_database_at(str(path), journal_mode='DELETE')
@@ -217,7 +217,7 @@ def recorded_statistics_columns(tmp_path):
     from qplot.datahandling.export_data import csv_scalar_columns
     from qplot.datahandling.parameter_data import parameter_data_for_export
     from qplot.datahandling.readonly import load_by_id_read_only
-    from tests.windows.test_complex_line_data import database_state
+    from tests.support.windows.complex_line_data import database_state
 
     @contextmanager
     def recorded(records, parameter_types):

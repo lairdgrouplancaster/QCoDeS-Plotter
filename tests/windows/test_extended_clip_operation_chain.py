@@ -9,15 +9,18 @@ import pytest
 from qcodes.dataset.measurements import DataSaver
 
 from qplot.tools.plot_tools import pass_filter
-from tests.windows.test_differentiation_integration import (
+from tests.support.windows.differentiation_integration import (
     apply_operations,
     operation_option,
 )
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _no_callback_errors,
 )
-from tests.windows.test_numeric_sample_preservation import array_plot
-from tests.windows.test_plot_csv_precision import _export_from_dialog, _open_csv_dialog
+from tests.support.windows.numeric_sample_preservation import array_plot
+from tests.support.windows.plot_csv_precision import (
+    _export_from_dialog,
+    _open_csv_dialog,
+)
 
 no_callback_errors = _no_callback_errors
 

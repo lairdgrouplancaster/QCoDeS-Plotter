@@ -24,7 +24,7 @@ from qplot.datahandling.trusted_live import (
     TrustedQuery,
 )
 from qplot.datahandling.trusted_live_supervisor import TrustedLiveReaderSupervisor
-from tests.datahandling.test_trusted_live_supervisor import (
+from tests.support.datahandling.trusted_live_supervisor import (
     _ApswWalWriter,
     _assert_helper_stopped,
     _protected_artifact_contents,

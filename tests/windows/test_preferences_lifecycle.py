@@ -10,7 +10,7 @@ from qplot.windows._preferences import PreferencesDialog
 from qplot.windows.main import MainWindow
 from qplot.windows.plot2d import plot2d
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_plot_integration import configure_temp_qplot
+from tests.support.windows.plot_integration import configure_temp_qplot
 
 
 class DialogOwner(PlotWindowFeedbackMixin, qtw.QMainWindow):

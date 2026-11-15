@@ -8,7 +8,7 @@ import pytest
 
 from qplot.windows._native_averaging import NativePlotItem
 from qplot.windows._native_transforms import NativePlotDataItem
-from tests.windows.test_native_averaging import click_average
+from tests.support.windows.native_averaging import click_average
 
 
 @pytest.mark.parametrize('samples', [

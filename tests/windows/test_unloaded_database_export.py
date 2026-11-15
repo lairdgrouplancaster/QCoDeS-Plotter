@@ -16,13 +16,13 @@ from qplot.updates import CHECK_ON_LAUNCH_KEY
 from qplot.windows import _database_actions, _export_paths
 from qplot.windows import main as main_window
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_export_paths import _database_artifact_state
-from tests.windows.test_export_paths import (
+from tests.support.windows.export_paths import _database_artifact_state
+from tests.support.windows.export_paths import (
     windows_stat_timestamps as windows_stat_timestamps,
 )
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
-from tests.windows.test_run_csv_export_race import _create_run
-from tests.windows.test_svg_export_integration import select_exporter
+from tests.support.windows.plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.run_csv_export_race import _create_run
+from tests.support.windows.svg_export_integration import select_exporter
 
 
 @pytest.fixture

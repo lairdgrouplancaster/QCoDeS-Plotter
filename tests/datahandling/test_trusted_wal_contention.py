@@ -11,8 +11,8 @@ import apsw
 import pytest
 
 from qplot.datahandling.trusted_live import TrustedLiveReader
-from tests.datahandling.test_trusted_live import _assert_safe_audit
-from tests.datahandling.test_trusted_plot import make_run
+from tests.support.datahandling.trusted_live import _assert_safe_audit
+from tests.support.datahandling.trusted_plot import make_run
 
 pytestmark = pytest.mark.timeout(120)
 

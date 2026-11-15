@@ -15,7 +15,7 @@ from qplot.windows.main import MainWindow
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot2d import plot2d
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_plot_integration import (
+from tests.support.windows.plot_integration import (
     assert_database_artifacts_unchanged_except_trusted_shm,
     build_line_database,
     configure_temp_qplot,

@@ -156,6 +156,9 @@ Linux:
 
 ## Checks
 
+See [Testing qPlot](docs/testing.md) for feature ownership, shared fixtures and
+how to distinguish obsolete expectations from application defects.
+
 Run the lightweight static check before committing:
 
 ```console
@@ -177,13 +180,13 @@ the project environment directly:
 Windows:
 
 ```console
-.\.venv\Scripts\python.exe -m pytest tests/test_config.py
+.\.venv\Scripts\python.exe -m pytest tests/configuration/test_config.py
 ```
 
 macOS:
 
 ```console
-MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-mac/bin/python -m pytest tests/test_config.py
+MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-mac/bin/python -m pytest tests/configuration/test_config.py
 ```
 
 Replace the example path with the affected test files. Run the full automated

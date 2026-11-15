@@ -1,40 +1,26 @@
 """Automatic padding rejects unsupported geometry through real Qt actions."""
 
-import sys
 from copy import deepcopy
 
 import numpy as np
 import pytest
 from PyQt6 import QtCore, QtTest
 
-from qplot.windows._plot_feedback import PlotWindowFeedbackMixin
-from tests.windows.test_merged_trace_metadata import merge
-from tests.windows.test_native_fft_coordinates import fft_plots as _fft_plots_fixture
+from tests.support.windows.axis_auto_padding_overflow import (
+    _axis_ranges as _axis_ranges,
+)
+from tests.support.windows.axis_auto_padding_overflow import (
+    axis_messages as axis_messages,
+)
+from tests.support.windows.axis_auto_padding_overflow import (
+    callback_errors as callback_errors,
+)
+from tests.support.windows.merged_trace_metadata import merge
+from tests.support.windows.native_fft_coordinates import fft_plots as _fft_plots_fixture
 
 fft_plots = _fft_plots_fixture
 
 _MAXIMUM = np.finfo(float).max
-
-
-@pytest.fixture(autouse=True)
-def callback_errors(monkeypatch):
-    errors = []
-    monkeypatch.setattr(sys, "excepthook", lambda *error: errors.append(error))
-    yield
-    assert errors == []
-
-
-@pytest.fixture(autouse=True)
-def axis_messages(monkeypatch):
-    messages = []
-    original = PlotWindowFeedbackMixin.show_status
-
-    def record(window, message, *args):
-        messages.append((window, message))
-        original(window, message, *args)
-
-    monkeypatch.setattr(PlotWindowFeedbackMixin, "show_status", record)
-    return messages
 
 
 def _controls(fft_plots, axis):
@@ -49,17 +35,6 @@ def _controls(fft_plots, axis):
 def _click(radio):
     QtTest.QTest.mouseClick(radio, QtCore.Qt.MouseButton.LeftButton,
                           pos=QtCore.QPoint(8, radio.height() // 2))
-
-
-def _axis_ranges(plot, *, target=False):
-    # Compare the ViewBox dimension that owns each semantic axis. Its linked
-    # perpendicular dimension can shift by a pixel when Qt adjusts the layout.
-    ranges = {}
-    for axis in ("x", "y", "x2", "y2"):
-        viewbox = plot._axis_scale_viewbox(axis)
-        bounds = viewbox.getState()["targetRange"] if target else viewbox.viewRange()
-        ranges[axis] = bounds[plot._axis_scale_axis_number(axis)][:]
-    return ranges
 
 
 @pytest.mark.parametrize("axis,fft_plots", [

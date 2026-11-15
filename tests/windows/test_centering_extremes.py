@@ -12,13 +12,13 @@ from qcodes.dataset import (
 from qplot.tools.plot_tools import subtract_mean
 from qplot.windows import main as main_window
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_complex_line_data import database_state
-from tests.windows.test_native_fft_coordinates import fft_plots as _fft_plots_fixture
-from tests.windows.test_native_transform_labels import click_control
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.complex_line_data import database_state
+from tests.support.windows.native_fft_coordinates import fft_plots as _fft_plots_fixture
+from tests.support.windows.native_transform_labels import click_control
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _errors_fixture,
 )
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.plot_integration import configure_temp_qplot, wait_for
 
 fft_plots = _fft_plots_fixture
 no_callback_errors = _errors_fixture

@@ -82,7 +82,7 @@ the working directory and `PYTHONPATH` from import discovery. Recreate launchers
 after moving an installation. Generated applets are ad-hoc signed locally;
 these are user-created launchers, not notarized standalone distributions.
 
-`tests/test_desktop.py` covers generated artifacts, exact argument forwarding,
+`tests/desktop/test_desktop.py` covers generated artefacts, exact argument forwarding,
 isolated startup outside the checkout, setup/removal guards, and native macOS
 compilation/signature checks. The existing platform test matrix discovers these
 tests from the same application artifacts as the rest of the suite.

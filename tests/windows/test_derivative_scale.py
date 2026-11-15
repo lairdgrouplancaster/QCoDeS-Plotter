@@ -6,12 +6,12 @@ import numpy as np
 import pytest
 
 from qplot.tools.plot_tools import differentiate
-from tests.windows.test_differentiation_integration import (
+from tests.support.windows.differentiation_integration import (
     apply_operations,
     exact_gradient,
     operation_option,
 )
-from tests.windows.test_differentiation_integration import (
+from tests.support.windows.differentiation_integration import (
     integer_array_plot as _integer_array_plot_fixture,
 )
 

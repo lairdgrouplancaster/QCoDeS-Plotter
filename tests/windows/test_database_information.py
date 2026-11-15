@@ -26,12 +26,12 @@ from qplot.diagnostics import configure_logging
 from qplot.windows import _database_actions as actions
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
-from tests.datahandling.test_trusted_live import (
+from tests.support.datahandling.trusted_live import (
     _artifact_state,
     _assert_protected_artifacts_unchanged,
     _stable_artifact_state,
 )
-from tests.windows.test_plot_integration import (
+from tests.support.windows.plot_integration import (
     configure_temp_qplot,
     force_snapshot_fallback,
     wait_for,

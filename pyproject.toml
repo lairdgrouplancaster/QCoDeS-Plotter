@@ -40,10 +40,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "build>=1.2",
+    "coverage>=7.12",
     "mypy>=1.14,<2.0",
     "pillow>=11.0",
     "pytest>=8.2",
-    "pytest-cov>=6.0",
+    "pytest-cov>=7.0",
     "pytest-timeout>=2.3",
     "pytest-xdist>=3.8",
     "ruff>=0.8",

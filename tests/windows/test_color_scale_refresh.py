@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from tests.windows.test_color_scale_locale import heatmap as heatmap
+from tests.support.windows.color_scale_locale import heatmap as heatmap
 
 
 def test_refresh_autoscale_defaults_on_in_colour_dialog(heatmap):

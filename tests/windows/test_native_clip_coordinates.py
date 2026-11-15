@@ -6,13 +6,16 @@ from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._plot1d_snap import _line_snap_data
-from tests.windows.test_native_transform_labels import click_control
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.native_transform_labels import click_control
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _no_callback_errors,
 )
-from tests.windows.test_numeric_sample_preservation import array_plot
-from tests.windows.test_plot_csv_precision import _export_from_dialog, _open_csv_dialog
-from tests.windows.test_plot_overlay_integration import _assign_trace_axes
+from tests.support.windows.numeric_sample_preservation import array_plot
+from tests.support.windows.plot_csv_precision import (
+    _export_from_dialog,
+    _open_csv_dialog,
+)
+from tests.support.windows.plot_overlay_integration import _assign_trace_axes
 
 no_callback_errors = _no_callback_errors
 

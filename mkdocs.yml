@@ -15,6 +15,7 @@ nav:
   - Troubleshooting: troubleshooting.md
   - Development:
       - Architecture: architecture.md
+      - Testing: testing.md
       - Trusted live reader: trusted-live-reader.md
       - Distribution and releases: distribution.md
       - Documentation releases: documentation-releases.md

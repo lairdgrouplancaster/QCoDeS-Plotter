@@ -11,8 +11,8 @@ from qplot.datahandling import csv_export
 from qplot.windows import _run_csv_export as batch
 from qplot.windows._widgets.preview import PreviewImageLabel
 from tests._window_lifecycle import wait_for_exports
-from tests.windows.test_plot_integration import build_synthetic_database, wait_for
-from tests.windows.test_typed_run_keyboard_launch import (
+from tests.support.windows.plot_integration import build_synthetic_database, wait_for
+from tests.support.windows.typed_run_keyboard_launch import (
     typed_run_window as _typed_run_window,
 )
 

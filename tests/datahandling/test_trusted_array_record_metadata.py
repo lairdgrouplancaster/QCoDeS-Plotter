@@ -19,12 +19,12 @@ from qplot.datahandling.trusted_live_queries import (
 from qplot.datahandling.trusted_query_types import (
     TrustedSourceRevisionNamespace,
 )
-from tests.datahandling.test_stage5c_real_qcodes import (
+from tests.support.datahandling.qcodes_measurement_layouts import (
     _load_basic_runs,
     _protected_artifact_state,
     _ReadOnlySqliteExecutor,
 )
-from tests.datahandling.test_trusted_live import _assert_safe_audit
+from tests.support.datahandling.trusted_live import _assert_safe_audit
 
 
 def _measurement(path, *, array_x, planned, mixed, dimensions, journal_mode="DELETE"):

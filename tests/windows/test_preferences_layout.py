@@ -7,7 +7,7 @@ from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._preferences import PreferencesDialog
-from tests.windows.test_preferences import FakeConfig
+from tests.support.windows.preferences import FakeConfig
 
 
 @pytest.fixture(autouse=True)

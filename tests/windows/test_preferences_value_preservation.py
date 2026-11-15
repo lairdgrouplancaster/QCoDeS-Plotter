@@ -7,27 +7,15 @@ import pytest
 from PyQt6 import QtCore, QtTest
 from PyQt6 import QtWidgets as qtw
 
-from qplot.configuration.config import config
 from qplot.windows._preferences import PreferencesDialog
 from qplot.windows._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_INCOMPATIBLE_AXES_KEY,
     CONFIRM_QUIT_KEY,
 )
-
-
-@pytest.fixture
-def precise_config(tmp_path, monkeypatch):
-    monkeypatch.setattr(config, "default_path", str(tmp_path))
-    monkeypatch.setattr(config, "default_file", str(tmp_path / "config.json"))
-    cfg = config()
-    cfg.update_many({
-        "user_preference.axis_tick_width": 1.25,
-        "user_preference.default_refresh_rate": 0.049,
-        "runtime_settings.del_grace_period": 10.125,
-        "runtime_settings.cloud_sync_timeout": 120.125,
-    })
-    return cfg
+from tests.support.windows.preferences_value_preservation import (
+    precise_config as precise_config,
+)
 
 
 @pytest.mark.parametrize("control_name, key", [

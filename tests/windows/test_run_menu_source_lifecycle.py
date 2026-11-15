@@ -8,61 +8,21 @@ import pytest
 from PyQt6 import QtCore, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 
-from tests.windows.test_custom_color_dialog_lifecycle import color_cut as _color_cut
-from tests.windows.test_heatmap_layer_integration import (
+from tests.support.windows.custom_color_dialog_lifecycle import color_cut as _color_cut
+from tests.support.windows.heatmap_layer_integration import (
     _build_two_heatmap_database,
     _database_artifact_state,
 )
-from tests.windows.test_plot_integration import wait_for
-from tests.windows.test_typed_run_keyboard_launch import (
+from tests.support.windows.plot_integration import wait_for
+from tests.support.windows.run_menu_source_lifecycle import (
+    _run_menu as _run_menu,
+)
+from tests.support.windows.typed_run_keyboard_launch import (
     typed_run_window as _typed_run_window,
 )
 
 color_cut = _color_cut
 typed_run_window = _typed_run_window
-
-
-def _run_menu(main, guid, callback):
-    state = {}
-    poll = QtCore.QTimer()
-    poll.setInterval(10)
-    watchdog = QtCore.QTimer()
-    watchdog.setSingleShot(True)
-
-    def progress():
-        menu = qtw.QApplication.activePopupWidget()
-        if not isinstance(menu, qtw.QMenu):
-            return
-        state["menu"] = menu
-        try:
-            callback(menu, state)
-        except Exception as error:
-            state["error"] = error
-            poll.stop()
-            menu.close()
-
-    def abort():
-        state["timed_out"] = True
-        menu = qtw.QApplication.activePopupWidget()
-        if menu is not None:
-            menu.close()
-
-    poll.timeout.connect(progress)
-    watchdog.timeout.connect(abort)
-    poll.start()
-    watchdog.start(15_000)
-    try:
-        item = main.RunList._item_for_guid(guid)
-        main.RunList.scrollToItem(item)
-        main.RunList.prepareMenu(main.RunList.visualItemRect(item).center())
-    finally:
-        poll.stop()
-        watchdog.stop()
-    assert not state.get("timed_out")
-    if "error" in state:
-        raise state["error"]
-    assert "menu" in state
-    return state
 
 
 def _choose(menu, parameter, keyboard):

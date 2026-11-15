@@ -9,7 +9,7 @@ from qplot.windows._shared_refresh import (
     iter_plot_sources,
     refresh_plot_sources,
 )
-from tests.windows.test_refresh_interval_precision import (
+from tests.support.windows.refresh_interval_precision import (
     assert_interval,
     live_view,
 )

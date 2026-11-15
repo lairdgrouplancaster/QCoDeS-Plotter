@@ -28,7 +28,7 @@ _OWNERSHIP_PROBE = textwrap.dedent(
     from qplot.windows._database_detail_state import detail_channel
     from qplot.windows._plotWin import plotWidget
     from qplot.windows.main import MainWindow
-    from tests.windows.test_plot_integration import wait_for
+    from tests.support.windows.plot_integration import wait_for
 
     directory = Path(sys.argv[1])
     close_before_quit = sys.argv[2] == "closed"

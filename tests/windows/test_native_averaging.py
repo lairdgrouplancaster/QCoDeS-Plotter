@@ -3,21 +3,30 @@
 import numpy as np
 import pyqtgraph as pg
 import pytest
-from PyQt6 import QtCore, QtTest, QtWidgets
+from PyQt6 import QtCore
 
 from qplot.windows._native_averaging import NativePlotItem
-from tests.windows.test_merged_trace_metadata import assert_samples, merge
-from tests.windows.test_native_fft_coordinates import (
+from tests.support.windows.merged_trace_metadata import assert_samples, merge
+from tests.support.windows.native_averaging import (
+    assert_average as assert_average,
+)
+from tests.support.windows.native_averaging import (
+    click_average as click_average,
+)
+from tests.support.windows.native_fft_coordinates import (
     assert_spectrum,
 )
-from tests.windows.test_native_fft_coordinates import (
+from tests.support.windows.native_fft_coordinates import (
     fft_plots as _fft_plots_fixture,
 )
-from tests.windows.test_native_transform_labels import click_control, expected_mapping
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.native_transform_labels import (
+    click_control,
+    expected_mapping,
+)
+from tests.support.windows.native_transform_labels import (
     no_callback_errors as _no_callback_errors_fixture,
 )
-from tests.windows.test_plot_integration import wait_for
+from tests.support.windows.plot_integration import wait_for
 
 fft_plots = _fft_plots_fixture
 no_callback_errors = _no_callback_errors_fixture
@@ -25,29 +34,6 @@ no_callback_errors = _no_callback_errors_fixture
 X = np.arange(16, dtype=float)
 Y = X ** 2 + 1
 RUNS = {"x": X, "y": Y, "other_x": X, "other_y": 2 * Y + 3, "scalar": True}
-
-
-def click_average(host):
-    control = host.plot.ctrl.averageGroup
-    control.show()
-    option = QtWidgets.QStyleOptionGroupBox()
-    control.initStyleOption(option)
-    rect = control.style().subControlRect(
-        QtWidgets.QStyle.ComplexControl.CC_GroupBox, option,
-        QtWidgets.QStyle.SubControl.SC_GroupBoxCheckBox, control,
-    )
-    QtTest.QTest.mouseClick(control, QtCore.Qt.MouseButton.LeftButton, pos=rect.center())
-
-
-def assert_average(host, expected_x, expected_y, count):
-    assert len(host.plot.avgCurves) == 1
-    actual_count, average = next(iter(host.plot.avgCurves.values()))
-    assert actual_count == count
-    assert average not in host.lines.values()
-    assert_spectrum(average, expected_x, expected_y)
-    for key in ("fftMode", "derivativeMode", "phasemapMode", "subtractMeanMode"):
-        assert not average.opts[key]
-    return average
 
 
 @pytest.mark.parametrize("fft_plots", [RUNS], indirect=True)

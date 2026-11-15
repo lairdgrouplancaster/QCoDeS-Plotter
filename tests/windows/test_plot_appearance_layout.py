@@ -7,7 +7,7 @@ import pytest
 from PyQt6 import QtCore
 
 from qplot.windows import _appearance_layout
-from tests.windows.test_mixed_plot_drops import _added, _drop, _wait_for, mixed_plot
+from tests.support.windows.mixed_plot_drops import _added, _drop, _wait_for, mixed_plot
 
 __all__ = ["mixed_plot"]
 

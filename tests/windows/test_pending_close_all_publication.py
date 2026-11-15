@@ -1,16 +1,13 @@
 """Accepted Close All also retires plot requests awaiting GUI publication."""
 
-import hashlib
 import sys
 from contextlib import closing
-from pathlib import Path
 
 import numpy as np
 import pytest
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 from qcodes.dataset import (
-    Measurement,
     initialise_or_create_database_at,
     load_or_create_experiment,
 )
@@ -21,36 +18,13 @@ from qplot.windows._auto_plot import enqueue_auto_plot
 from qplot.windows._database_detail_state import detail_channel
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_plot_integration import configure_temp_qplot, wait_for
-
-
-def _protected_artifacts(database):
-    result = {}
-    for suffix in ("", "-wal", "-journal"):
-        path = Path(f"{database}{suffix}")
-        if not path.exists():
-            result[suffix] = None
-            continue
-        metadata = path.stat()
-        result[suffix] = (
-            metadata.st_dev, metadata.st_ino, metadata.st_size,
-            metadata.st_mtime_ns, hashlib.sha256(path.read_bytes()).hexdigest(),
-        )
-    return result
-
-
-def _record_run(writer, experiment, database, offset):
-    assert Path(writer.execute("PRAGMA database_list").fetchone()[2]).resolve() == database
-    measurement = Measurement(exp=experiment)
-    measurement.register_custom_parameter("bias")
-    measurement.register_custom_parameter("signal", setpoints=("bias",))
-    with measurement.run(write_in_background=False) as saver:
-        assert Path(
-            saver.dataset.conn.execute("PRAGMA database_list").fetchone()[2]
-        ).resolve() == database
-        for bias in (-4., -1., 0., 3., 8.):
-            saver.add_result(("bias", bias), ("signal", offset + bias * bias))
-    return saver.dataset.guid
+from tests.support.windows.pending_close_all_publication import (
+    _protected_artifacts as _protected_artifacts,
+)
+from tests.support.windows.pending_close_all_publication import (
+    _record_run as _record_run,
+)
+from tests.support.windows.plot_integration import configure_temp_qplot, wait_for
 
 
 @pytest.fixture

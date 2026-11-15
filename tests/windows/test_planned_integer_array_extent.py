@@ -17,8 +17,8 @@ from qplot.tools.worker import loader
 from qplot.windows import main as main_window
 from qplot.windows._database_detail_state import detail_channel
 from tests._window_lifecycle import close_main_window
-from tests.windows.test_complex_line_data import database_state
-from tests.windows.test_plot_integration import (
+from tests.support.windows.complex_line_data import database_state
+from tests.support.windows.plot_integration import (
     configure_temp_qplot,
     force_snapshot_fallback,
     wait_for,

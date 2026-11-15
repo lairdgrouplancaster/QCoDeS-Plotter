@@ -6,7 +6,7 @@ from qplot.datahandling.trusted_live_queries import (
     TrustedMetadataQueryAdapter,
 )
 from qplot.windows._widgets.treeWidgets import RunList, moreInfo
-from tests.datahandling.test_high_dimensional_setpoints import (
+from tests.support.datahandling.high_dimensional_setpoints import (
     _database,
     _load_basic_runs,
     _ReadOnlySqliteExecutor,

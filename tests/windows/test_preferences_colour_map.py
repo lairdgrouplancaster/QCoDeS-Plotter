@@ -8,7 +8,7 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._colour_map_picker import ColourMapButton, ColourMapChooser
 from qplot.windows._preferences import PreferencesDialog
-from tests.windows.test_preferences import FakeConfig
+from tests.support.windows.preferences import FakeConfig
 
 MAP_KEY = "user_preference.bar_colour"
 

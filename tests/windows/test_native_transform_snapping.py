@@ -8,15 +8,23 @@ import pytest
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from qplot.windows._plot1d_snap import _line_snap_data
 from qplot.windows._plot_data_viewbox import coordinate_viewbox
-from tests.windows.test_native_transform_labels import (
+from tests.support.windows.native_transform_labels import (
     SUPPORTED_CONTROLS,
     click_control,
     set_controls,
 )
-from tests.windows.test_plot_overlay_integration import _assign_trace_axes
-from tests.windows.test_plot_overlay_integration import (
+from tests.support.windows.native_transform_snapping import (
+    assert_full_snap_data as assert_full_snap_data,
+)
+from tests.support.windows.native_transform_snapping import (
+    assert_snap as assert_snap,
+)
+from tests.support.windows.native_transform_snapping import (
+    set_sample_range as set_sample_range,
+)
+from tests.support.windows.plot_overlay_integration import _assign_trace_axes
+from tests.support.windows.plot_overlay_integration import (
     loaded_plot as _loaded_plot_fixture,
 )
 
@@ -30,28 +38,6 @@ def no_callback_errors(monkeypatch, qapplication):
     yield
     qapplication.processEvents()
     assert not errors, ["".join(traceback.format_exception(*error)) for error in errors]
-
-
-def assert_snap(window, owner, key, physical_x, physical_y, view_x, view_y, index):
-    point = QtCore.QPointF(float(view_x[index]), float(view_y[index]))
-    scene_pos = owner.mapViewToScene(point)
-    assert window.plot.sceneBoundingRect().contains(scene_pos)
-    window.plot.scene().sigMouseMoved.emit(scene_pos)
-    assert window.pos_labels["x"].text() == f"{window.format_cursor_number(physical_x[index])}"
-    assert window.pos_labels["y"].text() == f"{window.format_cursor_number(physical_y[index])}"
-    assert window.pos_labels["index"].text().replace(" ", "") == f"[{index}]"
-    assert "snapped to point" not in window.trace_label.text()
-    nearest = window._nearest_trace_point(scene_pos)
-    assert nearest.label == key
-    assert coordinate_viewbox(nearest.viewbox) is coordinate_viewbox(owner)
-    assert nearest.point_number == index + 1
-    assert nearest.x_value == pytest.approx(physical_x[index])
-    assert nearest.y_value == pytest.approx(physical_y[index])
-    assert nearest.x_view_value == pytest.approx(view_x[index])
-    assert nearest.y_view_value == pytest.approx(view_y[index])
-    assert coordinate_viewbox(window._snap_marker_view) is coordinate_viewbox(owner)
-    assert window.snap_marker.parentItem() is window._snap_marker_view.childGroup
-    np.testing.assert_allclose(window.snap_marker.getData(), [[view_x[index]], [view_y[index]]])
 
 
 def test_phase_fft_log_x_keeps_first_sample_and_cursor_values(loaded_plot, no_callback_errors):
@@ -125,24 +111,6 @@ def logarithmic(values, enabled):
         result = np.log10(values)
     result[~np.isfinite(result)] = np.nan
     return result
-
-
-def assert_full_snap_data(line, physical_x, physical_y, view_x, view_y):
-    data = _line_snap_data(line)
-    assert data is not None
-    for actual, expected in zip((data.x_raw, data.y_raw, data.x_view, data.y_view),
-                                (physical_x, physical_y, view_x, view_y), strict=True):
-        assert len(actual) == len(physical_x)
-        np.testing.assert_allclose(actual, expected, equal_nan=True, atol=1e-14)
-
-
-def set_sample_range(owner, view_x, view_y, start, stop):
-    x_span = view_x[stop] - view_x[start]
-    y_low, y_high = np.nanmin(view_y), np.nanmax(view_y)
-    y_margin = max((y_high - y_low) * 0.05, 0.1)
-    owner.setRange(xRange=[view_x[start] - x_span * 0.01, view_x[stop] + x_span * 0.01],
-                   yRange=[y_low - y_margin, y_high + y_margin], padding=0)
-    qtw.QApplication.processEvents()
 
 
 @pytest.mark.parametrize("loaded_plot", [True], indirect=True)

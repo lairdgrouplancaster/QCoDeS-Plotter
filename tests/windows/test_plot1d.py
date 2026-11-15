@@ -39,7 +39,7 @@ class SnapToTraceTestCase(unittest.TestCase):
     def setUp(self):
         # These focused axis/style tests use partial window hosts without the
         # plot-state overlay. Real precision status is covered by integration
-        # tests in test_bug_hunt_measurement_lines.py.
+        # tests in test_integer_line_display_precision.py.
         for host in (Plot1DTraceMixin, plotWidget):
             self.enterContext(patch.object(
                 host, "_update_native_precision_status", return_value=None, create=True,

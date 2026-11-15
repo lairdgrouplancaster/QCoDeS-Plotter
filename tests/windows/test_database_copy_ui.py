@@ -8,8 +8,8 @@ from PyQt6 import QtGui, QtWidgets
 
 from qplot.datahandling.file_identity import database_instance
 from qplot.windows import _database_export
-from tests.windows.test_export_tasks import export_window as export_window
-from tests.windows.test_plot_integration import wait_for
+from tests.support.windows.export_tasks import export_window as export_window
+from tests.support.windows.plot_integration import wait_for
 
 
 def prepare(window, tmp_path, monkeypatch):
