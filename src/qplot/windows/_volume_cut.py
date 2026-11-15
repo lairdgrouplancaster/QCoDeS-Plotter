@@ -18,6 +18,7 @@ from qplot.tools.plot_result import capture_plot_result
 from qplot.tools.volume_cuts import extract_cut
 from qplot.tools.worker import loader
 
+from ._small_dialogs import close_default, dialog_layout, resize_dialog
 from ._source_consumer import SourceConsumerRegistration
 from ._widgets import CopyableTableWidget
 from .plot1d import plot1d
@@ -386,15 +387,24 @@ class VolumeCut(plot1d):
         dialog = qtw.QDialog(self)
         dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.setWindowTitle("Mean-cut coverage by depth")
-        layout = qtw.QVBoxLayout(dialog)
+        layout = dialog_layout(dialog)
         table = CopyableTableWidget(len(self._coverage_counts), 2)
+        table.setAccessibleName("Mean-cut coverage by depth")
         table.setHorizontalHeaderLabels([self.selection.depth, "Finite cells"])
+        horizontal_header, vertical_header = table.horizontalHeader(), table.verticalHeader()
+        assert horizontal_header is not None and vertical_header is not None
+        horizontal_header.setSectionResizeMode(qtw.QHeaderView.ResizeMode.Stretch)
+        vertical_header.setSectionResizeMode(qtw.QHeaderView.ResizeMode.ResizeToContents)
         table.setEditTriggers(qtw.QAbstractItemView.EditTrigger.NoEditTriggers)
         for row, (depth, count) in enumerate(zip(self._coverage_depths, self._coverage_counts, strict=True)):
             table.setItem(row, 0, qtw.QTableWidgetItem(str(depth)))
             table.setItem(row, 1, qtw.QTableWidgetItem(str(count)))
         layout.addWidget(table)
-        dialog.resize(400, 360)
+        buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dialog.close)
+        layout.addWidget(buttons)
+        close_default(buttons)
+        resize_dialog(dialog, 400, 360)
         dialog.show()
 
     def _native_transform_labels_changed(self, _value=None):
