@@ -11,7 +11,13 @@ __all__ = [
 
 
 def summary_oracle(values):
-    exact = [Fraction(v.item() if isinstance(v, np.generic) else v) for v in values.flat]
+    exact = []
+    for value in values.flat:
+        if isinstance(value, np.generic):
+            value = value.item()
+        # longdouble.item() remains a NumPy scalar. Passing its exact ratio
+        # also works before Python 3.14, without narrowing it to a float.
+        exact.append(Fraction(*value.as_integer_ratio()))
     mean = sum(exact) / len(exact)
     variance = sum((v - mean) ** 2 for v in exact) / len(exact)
     with localcontext() as context:

@@ -218,7 +218,7 @@ child failure path is tested. Forced termination can prevent a child from saving
 coverage; native C execution remains outside this measurement. The CI merge
 regression verifies that adding child data retains the parent's branches.
 
-Final collection is **8,303 cases**, with no duplicates. Relative to the first
+Collection after this follow-up is **8,303 cases**, with no duplicates. Relative to the first
 pass, the old deadline case is replaced by two cases; two selected-run cases and
 five coverage-infrastructure cases are added. Local follow-up validation:
 
@@ -231,12 +231,21 @@ five coverage-infrastructure cases are added. Local follow-up validation:
 | Same focused process cases, parent measurement | 10 | 0 |
 | Same focused process cases, child measurement | 10 | 0 |
 
-These focused runs overlap. A second complete Windows run was not performed.
-The full hosted matrix still needs to run on the published candidate branch:
-ordinary PR CI selects routine desktop validation, so full validation must also
-be explicitly requested. No release workflow or application/native source is
-changed. Follow-up logs, collection comparisons and coverage JSON are retained
-under `.recovery/test-review-next/` locally.
+These focused runs overlap. A second complete local Windows run was not performed.
+Full hosted validation was explicitly requested on the published candidate:
+ordinary PR CI selects routine desktop validation. No release workflow or
+application/native source is changed. Follow-up logs, collection comparisons and
+coverage JSON are retained under `.recovery/test-review-next/` locally.
+
+The hosted Python 3.13 Windows run exposed a portability error in the independent
+statistics oracle: `longdouble.item()` can remain a NumPy scalar, which older
+Python `Fraction` constructors reject. The oracle now constructs each rational
+from its exact integer ratio. It does not narrow extended values to Python floats
+or change numerical tolerances. A named `numpy-longdouble` case makes this input
+explicit, and the other numerical cases now have descriptive IDs. The statistics
+and marquee-action checks pass locally (19 cases); collection increases to
+**8,304 cases**. See [PR #141](https://github.com/lairdgrouplancaster/QCoDeS-Plotter/pull/141)
+for validation runs against the latest candidate.
 
 ## Practical limits
 
