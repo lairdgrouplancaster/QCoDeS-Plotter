@@ -198,8 +198,9 @@ def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
         '<style>p { margin-top: 6px; margin-bottom: 6px; }</style>'
         + heading
         + "".join(rows)
-        + '<p><a href="https://github.com/lairdgrouplancaster/QCoDeS-Plotter">'
-        "Project on GitHub</a></p>"
+        + '<p><a href="https://github.com/lairdgrouplancaster/QCoDeS-Plotter" '
+        'title="https://github.com/lairdgrouplancaster/QCoDeS-Plotter">'
+        "View project on GitHub</a></p>"
         + "<hr>"
         + "".join(location_rows)
     )
