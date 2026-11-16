@@ -15,6 +15,11 @@ class WindowsAssociationRollbackError(OSError):
 
 
 def _windows_command(destination: Path) -> str:
+    return subprocess.list2cmdline([str(destination / "qPlot.exe")]) + ' "%1"'
+
+
+def _previous_windows_command(destination: Path) -> str:
+    """Recognise ownership when removing a launcher installed before qPlot.exe."""
     return subprocess.list2cmdline([
         str(Path(os.environ["SystemRoot"]) / "System32/wscript.exe"),
         "//nologo", str(destination / "launch.vbs"),
@@ -33,7 +38,9 @@ def _windows_associations(destination: Path, *, remove: bool = False) -> None:
     if remove:
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, command_key) as key:
-                if winreg.QueryValueEx(key, "")[0] != _windows_command(destination):
+                if winreg.QueryValueEx(key, "")[0] not in (
+                    _windows_command(destination), _previous_windows_command(destination),
+                ):
                     return  # A different launcher owns this registration now.
         except FileNotFoundError:
             return
@@ -57,7 +64,9 @@ def _windows_associations(destination: Path, *, remove: bool = False) -> None:
     else:
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, command_key) as key:
-                if winreg.QueryValueEx(key, "")[0] != _windows_command(destination):
+                if winreg.QueryValueEx(key, "")[0] not in (
+                    _windows_command(destination), _previous_windows_command(destination),
+                ):
                     raise ValueError("Another qPlot launcher owns Open With. Remove it before registering this one.")
         except FileNotFoundError:
             # No existing registry command means this launcher can create its own

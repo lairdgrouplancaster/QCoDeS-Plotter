@@ -14,10 +14,15 @@ _SIDECAR_SUFFIXES = ("-wal", "-journal", "-shm")
 
 
 def _signature(file_stat):
-    return tuple(int(getattr(file_stat, field)) for field in (
+    values = [int(getattr(file_stat, field)) for field in (
         "st_dev", "st_ino", "st_mode", "st_nlink", "st_size",
         "st_mtime_ns", "st_ctime_ns",
-    ))
+    )]
+    if os.name == "nt":
+        # Windows lstat infers execute bits from .exe/.bat filenames; fstat
+        # cannot. These are not permissions. Retain type and read/write bits.
+        values[2] &= ~(stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return tuple(values)
 
 
 def _read_header(filename):

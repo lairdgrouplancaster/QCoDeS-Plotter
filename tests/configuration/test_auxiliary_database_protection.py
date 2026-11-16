@@ -204,6 +204,17 @@ def test_empty_sidecar_reserved_by_real_database_is_protected(
     assert sidecar.read_bytes() == b""
 
 
+def test_executable_named_auxiliary_file_is_inspected(tmp_path):
+    destination = tmp_path / "qPlot.exe"
+    destination.write_bytes(b"MZ" + b"\0" * 30)
+    _auxiliary_paths.ensure_safe_auxiliary_path(destination)
+    database = b"SQLite format 3\0" + b"\0" * 100
+    destination.write_bytes(database)
+    with pytest.raises(OSError, match="SQLite database"):
+        _auxiliary_paths.ensure_safe_auxiliary_path(destination)
+    assert destination.read_bytes() == database
+
+
 def test_unreadable_existing_auxiliary_file_fails_closed(tmp_path, monkeypatch):
     destination = tmp_path / "qplot.log"
     destination.write_text("old diagnostics")

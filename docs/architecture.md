@@ -46,6 +46,12 @@ isolated interpreter mode (`-I`). No compiler is required during setup.
 persisted JSON backups into named validated records before registry mutation;
 installation rollback and removal share restoration of those records.
 
+`_windows_launcher.py` builds a windowed `qPlot.exe` using the pinned distlib
+launcher and embeds qPlot's icon before appending the Python payload. Windows
+file properties can therefore extract the application icon from the executable.
+It starts the existing bootstrap in the selected Python environment with isolated
+interpreter mode (`-I`). No compiler is required during setup.
+
 `_macos_identity.py` shares one bounded interpreter-identity preflight between
 desktop installation and runtime-bundle creation. Each caller keeps its own
 signing and publication sequence.

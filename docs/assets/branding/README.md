@@ -6,6 +6,11 @@ ICNS files are generated from those masters by
 [`scripts/render_icons.py`](../../../scripts/render_icons.py).
 Normal desktop setup copies the prebuilt assets.
 
+Windows ICO files use uncompressed 32-bit bitmap frames at every size, with
+alpha transparency. This avoids garbled icons in Windows consumers that do
+not correctly decode PNG-compressed ICO frames, such as older .NET icon
+conversion paths.
+
 ## Visual hierarchy
 
 | Icon | Appearance | Role |
