@@ -20,14 +20,18 @@ from ._display_precision import (
     float_display_loses_distinctions,
     heatmap_display_range_is_finite,
 )
+from ._heatmap_viewport import (
+    AxisRanges,
+    HeatmapViewportController,
+    HeatmapViewportState,
+)
+from ._heatmap_viewport_ui import HeatmapViewportUi
 from ._mixed_plots import MixedPlotMixin
 from ._plot1d_snap import Plot1DSnapMixin
 from ._plot2d_sweeps import Plot2DSweepMixin
 from ._plot_axis_scaling import _install_flush_axis_draw_specs
+from ._plot_publication import PublicationOutcome
 from ._plotWin import plotWidget
-
-_HEATMAP_VIEW_RELOAD_DEBOUNCE_MS = 450
-_HEATMAP_VIEW_RELOAD_MIN_FRACTION = 0.95
 
 
 class plot2d(
@@ -47,6 +51,7 @@ class plot2d(
         
     """
     operation_kind = "plot2d"
+    _uses_heatmap_viewport = True
     _initial_load_message = "Heatmap ready; loading data..."
     get_mergables = QtCore.pyqtSignal()
     open_subplot = QtCore.pyqtSignal([object, object, tuple])
@@ -90,17 +95,9 @@ class plot2d(
 
         """
         self.vb.set_shift_pan_axis_constraint(True)
-        self._large_heatmap_sql_mode = False
-        self._heatmap_full_axis_ranges: dict[str, tuple[float, float]] | None = None
-        self._heatmap_full_view_ranges: dict[str, tuple[float, float]] | None = None
-        self._heatmap_last_view_ranges: dict[str, tuple[float, float]] | None = None
+        self._viewport_controller()
         self._heatmap_worker_downsample_info: dict[str, Any] | None = None
         self._heatmap_downsample_info: dict[str, Any] | None = None
-        self._heatmap_view_reload_timer = QtCore.QTimer(self)
-        self._heatmap_view_reload_timer.setSingleShot(True)
-        self._heatmap_view_reload_timer.timeout.connect(
-            self._reload_visible_heatmap_data
-            )
         self._connect_heatmap_range_controls()
         self._install_plot_control_view_range_preserver()
 
@@ -124,6 +121,48 @@ class plot2d(
         self.hover_pixel_outline.hide()
         self._add_plot_overlay(self.hover_pixel_outline)
         self._init_heatmap_layers()
+
+    def _viewport_controller(self) -> HeatmapViewportController:
+        controller = self.__dict__.get("_heatmap_viewport_controller")
+        if controller is None:
+            ui = HeatmapViewportUi(self)
+            self.__dict__["_heatmap_viewport_ui"] = ui
+            controller = self.__dict__["_heatmap_viewport_controller"] = HeatmapViewportController(ui)
+        return controller
+
+    @property
+    def _viewport_state(self) -> HeatmapViewportState:
+        controller = self.__dict__.get("_heatmap_viewport_controller")
+        return controller.accepted if controller is not None else HeatmapViewportState()
+
+    @property
+    def _large_heatmap_sql_mode(self) -> bool:
+        return self._viewport_state.enabled
+
+    @property
+    def _heatmap_full_axis_ranges(self) -> dict[str, tuple[float, float]] | None:
+        ranges = self._viewport_state.full
+        return ranges.as_dict() if ranges is not None else None
+
+    @property
+    def _heatmap_full_view_ranges(self) -> dict[str, tuple[float, float]] | None:
+        ranges = self._viewport_state.full_view
+        return ranges.as_dict() if ranges is not None else None
+
+    @property
+    def _heatmap_last_view_ranges(self) -> dict[str, tuple[float, float]] | None:
+        ranges = self._viewport_state.displayed
+        return ranges.as_dict() if ranges is not None else None
+
+    @property
+    def _heatmap_view_reload_timer(self) -> QtCore.QTimer:
+        return self.__dict__["_heatmap_viewport_ui"].timer
+
+    def _cancel_plot_refresh(self) -> None:
+        controller = self.__dict__.get("_heatmap_viewport_controller")
+        if controller is not None:
+            controller.reset()
+        super()._cancel_plot_refresh()
 
     def _connect_heatmap_range_controls(self) -> None:
         self.plot.sigRangeChangedManually.connect(
@@ -357,6 +396,7 @@ class plot2d(
             plot_worker.result.loaded_from_sql_heatmap
             and plot_worker.result.heatmap_axis_ranges is None
         )
+        publication = self._refresh_publication_for(plot_worker)
 
         def clear_display():
             self._invalidate_heatmap_geometry()
@@ -442,7 +482,7 @@ class plot2d(
 
                 viewbox = self._primary_heatmap_viewbox()
                 if not heatmap_display_range_is_finite(geometry, (viewbox.width(), viewbox.height())):
-                    self._heatmap_view_reload_timer.stop()
+                    self._viewport_controller().cancel_pending()
                     self._reject_heatmap_color_range(
                         message=HEATMAP_DISPLAY_RANGE_MESSAGE,
                         title="Unsupported heatmap coordinate range",
@@ -572,34 +612,33 @@ class plot2d(
                     return
                 self._commit_refresh_publication(plot_worker, preview_ready=True, clear_display=clear_display)
         finally:
-            if full_sql_refresh and not self.__dict__.get("_heatmap_color_range_rejected", False):
+            viewport = self.__dict__.get("_heatmap_viewport_controller")
+            if viewport is not None:
+                viewport.finish(publication)
+            if (publication is not None and publication.outcome is PublicationOutcome.COMMITTED
+                    and self._qplot_publication_generation == publication.generation
+                    and (viewport is None or not viewport.pending)
+                    and full_sql_refresh and not self.__dict__.get("_heatmap_color_range_rejected", False)):
                 self._schedule_visible_heatmap_reload()
 
 
     def _update_large_heatmap_state(self, worker: Any) -> None:
+        publication = self._refresh_publication
         self._update_heatmap_downsample_state(worker)
-        if not getattr(worker, "loaded_from_sql_heatmap", False):
-            self._large_heatmap_sql_mode = False
-            self._heatmap_full_axis_ranges = None
-            self._heatmap_full_view_ranges = None
-            self._heatmap_last_view_ranges = None
-            timer = self.__dict__.get("_heatmap_view_reload_timer")
-            if timer is not None:
-                timer.stop()
+        if publication is None or self._refresh_publication is not publication:
             return
-
-        self._large_heatmap_sql_mode = True
-        worker_ranges = getattr(worker, "heatmap_axis_ranges", None)
-        if worker_ranges is None or self._heatmap_full_axis_ranges is None:
-            source_ranges = self._normalise_axis_ranges(
-                getattr(worker, "heatmap_source_axis_ranges", None)
-                )
-            self._heatmap_full_axis_ranges = (
-                source_ranges or self._axis_ranges_from_data()
-                )
-            self._heatmap_full_view_ranges = self._axis_view_ranges_from_data()
-
-        self._heatmap_last_view_ranges = self._normalise_axis_ranges(worker_ranges)
+        controller = self._viewport_controller()
+        state = HeatmapViewportState()
+        if self._uses_heatmap_viewport and getattr(worker, "loaded_from_sql_heatmap", False):
+            displayed = AxisRanges.normalise(getattr(worker, "heatmap_axis_ranges", None))
+            accepted = controller.accepted
+            full, full_view = accepted.full, accepted.full_view
+            if displayed is None or full is None:
+                full = (AxisRanges.normalise(getattr(worker, "heatmap_source_axis_ranges", None))
+                        or AxisRanges.normalise(self._axis_ranges_from_data()))
+                full_view = AxisRanges.normalise(self._axis_view_ranges_from_data())
+            state = HeatmapViewportState(True, full, full_view, displayed)
+        controller.stage(publication, state)
 
 
     def _init_heatmap_downsample_warning_button(self) -> None:
@@ -1305,7 +1344,7 @@ class plot2d(
             self._sync_secondary_heatmap_view_ranges()
             return
 
-        self._heatmap_view_reload_timer.stop()
+        self._viewport_controller().cancel_pending()
         view_ranges = self._heatmap_full_view_ranges or full_axis_ranges
         self._primary_heatmap_viewbox().setRange(
             xRange=view_ranges["x"],
@@ -1318,57 +1357,18 @@ class plot2d(
 
 
     def _reload_full_heatmap_data(self) -> bool:
-        full_axis_ranges = self._heatmap_full_axis_ranges
-        if full_axis_ranges is None or self._heatmap_last_view_ranges is None:
-            return False
-        if getattr(getattr(self, "worker", None), "running", False):
-            self._heatmap_view_reload_timer.start(
-                _HEATMAP_VIEW_RELOAD_DEBOUNCE_MS
-                )
-            return False
-
-        return self.load_data(
-            force_sql_heatmap=True,
-            heatmap_axis_ranges=None,
-            heatmap_full_axis_ranges=full_axis_ranges,
-            status_message=f"Loading full heatmap for {self.param.name}...",
-            )
+        return self._viewport_controller().reload(full=True)
 
 
     def _schedule_visible_heatmap_reload(self, *_args: Any) -> None:
         if not self.__dict__.get("_heatmap_layer_view_sync_active", False):
             self._sync_secondary_heatmap_view_ranges()
-
-        if not self._large_heatmap_sql_mode:
-            return
-
-        if not self._has_plottable_heatmap_data():
-            return
-
-        self._heatmap_view_reload_timer.start(_HEATMAP_VIEW_RELOAD_DEBOUNCE_MS)
+        if self._large_heatmap_sql_mode and self._has_plottable_heatmap_data():
+            self._viewport_controller().schedule_visible()
 
 
     def _reload_visible_heatmap_data(self) -> None:
-        if not self._large_heatmap_sql_mode:
-            return
-
-        if getattr(getattr(self, "worker", None), "running", False):
-            self._heatmap_view_reload_timer.start(_HEATMAP_VIEW_RELOAD_DEBOUNCE_MS)
-            return
-
-        ranges = self._visible_heatmap_axis_ranges()
-        if ranges is None:
-            self._reload_full_heatmap_data()
-            return
-        if self._axis_ranges_match(ranges, self._heatmap_last_view_ranges):
-            return
-
-        self.load_data(
-            force_sql_heatmap=True,
-            heatmap_axis_ranges=ranges,
-            heatmap_full_axis_ranges=self._heatmap_full_axis_ranges,
-            status_message=f"Loading visible data for {self.param.name}...",
-            )
+        self._viewport_controller().reload()
 
 
     def _visible_heatmap_axis_ranges(self) -> dict[str, tuple[float, float]] | None:
@@ -1387,91 +1387,10 @@ class plot2d(
         except Exception:
             return None
 
-        ranges = self._normalise_axis_ranges({
-            "x": tuple(view_x),
-            "y": tuple(view_y),
-            })
-        if ranges is None:
-            return None
-
-        clamped = {}
-        is_zoomed = False
-        for axis in ("x", "y"):
-            full_low, full_high = full_ranges[axis]
-            low, high = ranges[axis]
-            full_width = full_high - full_low
-            if full_width <= 0:
-                return None
-
-            low = max(full_low, min(full_high, low))
-            high = max(full_low, min(full_high, high))
-            if high <= low:
-                return None
-
-            if (high - low) < full_width * _HEATMAP_VIEW_RELOAD_MIN_FRACTION:
-                is_zoomed = True
-
-            clamped[axis] = (low, high)
-
-        return clamped if is_zoomed else None
-
-
-    def _normalise_axis_ranges(
-            self,
-            ranges: dict[str, tuple[float, float]] | None,
-            ) -> dict[str, tuple[float, float]] | None:
-        if ranges is None:
-            return None
-
-        normalised = {}
-        for axis in ("x", "y"):
-            axis_range = ranges.get(axis)
-            if axis_range is None:
-                return None
-
-            try:
-                low, high = sorted(float(value) for value in axis_range)
-            except (TypeError, ValueError):
-                return None
-
-            if not (np.isfinite(low) and np.isfinite(high)) or low == high:
-                return None
-
-            normalised[axis] = (low, high)
-
-        return normalised
-
-
-    def _axis_ranges_match(
-            self,
-            left: dict[str, tuple[float, float]],
-            right: dict[str, tuple[float, float]] | None,
-            ) -> bool:
-        if right is None:
-            return False
-
-        for axis in ("x", "y"):
-            left_low, left_high = left[axis]
-            right_low, right_high = right[axis]
-            width = max(abs(left_high - left_low), abs(right_high - right_low))
-            coordinate_scale = max(
-                abs(left_low),
-                abs(left_high),
-                abs(right_low),
-                abs(right_high),
-                1.0,
-                )
-            tolerance = max(
-                width * 0.01,
-                np.finfo(float).eps * coordinate_scale * 16,
-                )
-            if (
-                    abs(left_low - right_low) > tolerance
-                    or abs(left_high - right_high) > tolerance
-                    ):
-                return False
-
-        return True
+        ranges = AxisRanges.normalise({"x": tuple(view_x), "y": tuple(view_y)})
+        full = AxisRanges.normalise(full_ranges)
+        visible = ranges.visible_within(full) if ranges is not None and full is not None else None
+        return visible.as_dict() if visible is not None else None
 
 
     def _has_plottable_heatmap_data(self) -> bool:

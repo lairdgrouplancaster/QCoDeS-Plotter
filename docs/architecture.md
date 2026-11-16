@@ -266,6 +266,19 @@ Source and worker checks surround callbacks that can replace or cancel a job,
 including preparation, labels and final dependent-view updates. Worker result
 data and completion signals remain separate from publication ownership.
 
+`windows/_heatmap_viewport.py` owns SQL heatmap viewport state and delayed
+detail-reload decisions. Immutable ranges distinguish full source extents,
+full-image view bounds, the last accepted image range and the requested range.
+A staged viewport follows its `RefreshPublication` outcome: only a committed
+image advances accepted ranges; a failed render remains retryable at the same
+range. Nested newer publications retain ownership through outer finalisation.
+`_heatmap_viewport_ui.py` supplies Qt range observations, window lifetime checks
+and parented debounce timers. Each timer retains its own request token, so
+cancelled callbacks cannot load a later source or consume a newer zoom request.
+Busy publications retain pending intent, including an explicit return to the
+full view. Hidden overlay sources remain usable until their final consumer
+releases them. Window observations of viewport state are read-only.
+
 `src/qplot/windows/_dataset_handle.py` defines the small `DatasetHandle`
 structure used by the main window and plot windows to track an open dataset,
 its active plot-window user count, and any delayed-release timer.
