@@ -242,8 +242,9 @@ class DatabaseActionsMixin:
     _database_refresher: DatabaseRefreshController
 
     def _init_database_refresher(self) -> None:
+        ui = DatabaseRefreshUi(self)
         self._database_refresher = DatabaseRefreshController(
-            DatabaseRefreshUi(self), schedule=lambda callback: QtCore.QTimer.singleShot(0, callback),
+            ui, schedule=ui.schedule,
         )
 
     @property

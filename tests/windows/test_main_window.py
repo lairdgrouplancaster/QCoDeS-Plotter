@@ -3915,9 +3915,9 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
             harness.refreshMain()
 
         harness.show_error = show_error
-        with patch(
-            "qplot.windows._database_actions.QtCore.QTimer.singleShot",
-            side_effect=lambda _delay, callback: callback(),
+        with patch.object(
+            harness._database_refresher, "schedule",
+            side_effect=lambda callback: callback(),
         ):
             harness.database_refresh_finished(
                 harness._database_refresh_generation,
@@ -3953,8 +3953,8 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
             os.replace(replacement_path, database_path)
 
             with patch.object(
-                database_actions.QtCore.QTimer,
-                "singleShot",
+                harness._database_refresher,
+                "schedule",
             ) as single_shot:
                 harness.database_refresh_finished(
                     harness._database_refresh_generation,
@@ -3971,6 +3971,19 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
             self.assertFalse(harness._database_refresh_pending)
             self.assertEqual(len(harness.databaseRefreshThreadPool.workers), 1)
             single_shot.assert_not_called()
+
+    def test_window_destruction_discards_queued_coalesced_refresh(self):
+        harness = self.Harness()
+        harness.refreshMain()
+        harness.refreshMain()
+        harness.database_refresh_finished(
+            harness._database_refresh_generation, "empty.db", {}, {}, None,
+        )
+        pool = harness.databaseRefreshThreadPool
+        assert len(pool.workers) == 1
+        sip.delete(harness)
+        QtCore.QCoreApplication.processEvents()
+        assert len(pool.workers) == 1
 
 
 class RefreshMainPreviewUpdateTestCase(unittest.TestCase):

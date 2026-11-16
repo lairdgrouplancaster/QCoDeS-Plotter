@@ -89,6 +89,8 @@ A completion received during page publication waits until that transaction
 unwinds. Finalisation only clears the session it started with, and queued
 refresh callbacks are fenced by generation and selected path. Cancelling,
 closing or replacing a session therefore invalidates its queued refresh too.
+Queued callbacks use single-shot timers parented to the window, so deleting its
+Qt object also discards callbacks that have not run yet.
 
 `windows/_test_database.py` owns the explicit synthetic-data commands: CSV
 templates, destination selection, overwrite confirmation, background generation

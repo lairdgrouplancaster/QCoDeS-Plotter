@@ -191,6 +191,8 @@ that the accepted reader, selection and source artefacts survive and that a
 subsequent refresh succeeds. Existing source checks and basic-page rollback
 assertions remain in the UI tests, including Qt receiver disconnection on
 window destruction.
+The coalesced-refresh regression also destroys the QObject before its queued
+timer fires and checks that no further worker is submitted.
 
 Consolidate tests that protect the same behaviour with the same setup into
 clearly named parametrised cases. Keep independent expected values and oracles.

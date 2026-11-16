@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from PyQt6 import QtCore
+
 from qplot.datahandling.database import DatabaseRefreshWorker
 from qplot.datahandling.trusted_live_service import TRUSTED_LIVE_MODE
 
@@ -123,6 +125,15 @@ class DatabaseRefreshUi:
 
     def submit_worker(self, worker: DatabaseRefreshWorker) -> None:
         self.window.databaseRefreshThreadPool.start(worker)
+
+    def schedule(self, callback: Callable[[], None]) -> None:
+        # A plain singleShot closure can outlive the QObject it captures.
+        # Parenting the timer makes window destruction discard the callback.
+        timer = QtCore.QTimer(self.window)
+        timer.setSingleShot(True)
+        timer.timeout.connect(timer.deleteLater)
+        timer.timeout.connect(callback)
+        timer.start(0)
 
     def show_status(self, message: str, timeout: int) -> None:
         self.window.show_status(message, timeout)
