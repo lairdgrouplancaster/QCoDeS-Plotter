@@ -14,7 +14,6 @@ from PyQt6 import QtWidgets as qtw
 from qplot.datahandling.qcodes_cache import cache_parameter_is_synchronized
 from qplot.tools.heatmap_geometry import HeatmapGeometry
 from qplot.tools.operation_registry import OperationValidationError
-from qplot.tools.plot_result import capture_plot_result
 from qplot.windows import _plot_axis_scaling as axis_scaling_module
 from qplot.windows._colorbar import (
     _colorbar_colormaps,
@@ -26,6 +25,7 @@ from qplot.windows._plot_status import PlotStatusWidget
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import plot2d
+from tests._plot_results import capture_fake_plot_result
 
 
 @pytest.mark.parametrize("metadata, expected, absent", [
@@ -506,7 +506,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         window = plot2d.__new__(plot2d)
         qtw.QMainWindow.__init__(window)
         worker = Worker()
-        worker.result = capture_plot_result(worker)
+        worker.result = capture_fake_plot_result(worker)
         window.__dict__["axis_data"] = {
             "x": np.array([0.0, 1.0]),
             "y": np.array([0.0, 1.0]),
@@ -679,7 +679,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         worker.read_data = False
         worker.axis_data = {}
         worker.axis_param = {}
-        worker.result = capture_plot_result(worker)
+        worker.result = capture_fake_plot_result(worker)
         window = plot2d.__new__(plot2d)
         window.param = type("Param", (), {"name": "signal"})()
         window._update_large_heatmap_state = lambda _worker: None
@@ -795,7 +795,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             )
 
         failed_worker = Worker()
-        failed_worker.result = capture_plot_result(failed_worker)
+        failed_worker.result = capture_fake_plot_result(failed_worker)
         window.worker = failed_worker
         window._render_heatmap = lambda: (_ for _ in ()).throw(
             RuntimeError("injected direct-SQL display failure")
@@ -819,7 +819,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         self.assertTrue(window.monitor.active)
 
         successful_worker = Worker()
-        successful_worker.result = capture_plot_result(successful_worker)
+        successful_worker.result = capture_fake_plot_result(successful_worker)
         window.worker = successful_worker
         window._render_heatmap = lambda: None
         plot2d.refreshPlot(window, True, worker=successful_worker)
