@@ -1,7 +1,11 @@
+from __future__ import annotations
+
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from time import monotonic, perf_counter
+from typing import TYPE_CHECKING
 
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
@@ -12,7 +16,6 @@ from qplot.datahandling.database import (
     DatabaseDetailWorker,
     DatabaseExpensiveDetailWorker,
     DatabaseInfoWorker,
-    DatabaseLoadWorker,
     DatabaseRefreshWorker,
 )
 from qplot.datahandling.file_identity import (
@@ -42,8 +45,10 @@ from qplot.windows._database_detail_state import (
 
 from ._auto_plot import cancel_auto_plot, enqueue_auto_plot, update_auto_plot
 from ._config_persistence import persist_config_value
+from ._database_load_controller import DatabaseLoadController
 from ._database_load_publication import DatabaseLoadPublication
 from ._database_load_state import DatabaseLoadSession, DatabaseViewSnapshot
+from ._database_load_ui import DatabaseLoadUi
 from ._database_observation import (
     database_instances_or_sidecars_differ as _database_instances_or_sidecars_differ,
 )
@@ -59,6 +64,10 @@ from ._widgets.details_tables import (
     copy_to_clipboard,
     format_value,
 )
+
+if TYPE_CHECKING:
+    from qplot.datahandling.database import DatabaseLoadWorker
+    from qplot.datahandling.trusted_live_service import TrustedLiveReadService
 
 
 class _DatabaseRefreshPublicationAborted(RuntimeError):
@@ -194,6 +203,41 @@ class DatabaseActionsMixin:
     by MainWindow, plus show_status(), show_error(), and openPlot().
     """
 
+    _database_loader: DatabaseLoadController
+
+    def _init_database_loader(self) -> None:
+        self._database_loader = DatabaseLoadController(
+            DatabaseLoadUi(self),
+            observe_instance=lambda path: database_instance(path),
+            schedule=lambda callback: QtCore.QTimer.singleShot(0, callback),
+        )
+
+    # Read-only observations for the neighbouring refresh, export and selection
+    # components. Pending ownership and all mutations belong to the controller.
+    @property
+    def _database_load_generation(self) -> int:
+        return self._database_loader.generation
+
+    @property
+    def _database_load_active(self) -> bool:
+        return self._database_loader.active
+
+    @property
+    def _database_load_state(self) -> DatabaseLoadSession | None:
+        return self._database_loader.session
+
+    @property
+    def _database_load_worker(self) -> DatabaseLoadWorker | None:
+        return self._database_loader.worker
+
+    @property
+    def _database_load_publication_active(self) -> bool:
+        return self._database_loader.publication_active
+
+    @property
+    def _pending_trusted_read_services(self) -> Mapping[int, TrustedLiveReadService]:
+        return self._database_loader.pending_services
+
     _database_refresh_worker: DatabaseRefreshWorker | None
     _database_refresh_instance: DatabaseInstance | None
     _database_info_worker: DatabaseInfoWorker | None
@@ -272,9 +316,8 @@ class DatabaseActionsMixin:
         """Invalidate active and pending sessions without blocking Qt."""
         active = getattr(self, "_trusted_read_service", None)
         self._trusted_read_service = None
-        pending = getattr(self, "_pending_trusted_read_services", {})
-        self._pending_trusted_read_services = {}
-        for service in {active, *pending.values()}:
+        pending = self._database_loader.take_pending_services()
+        for service in {active, *pending}:
             if service is not None:
                 DatabaseActionsMixin._retire_trusted_read_service(
                     self,
@@ -600,9 +643,7 @@ class DatabaseActionsMixin:
 
         cancel_owner_exports(self)
         cancel_auto_plot(self)
-        worker = getattr(self, "_database_load_worker", None)
-        if worker is not None:
-            worker.cancel()
+        self._database_loader.invalidate()
         derived_bridge = getattr(self, "_trusted_derived_bridge", None)
         if derived_bridge is not None:
             derived_bridge.clear_database()
@@ -614,10 +655,6 @@ class DatabaseActionsMixin:
         DatabaseActionsMixin._cancel_database_info(self)
         DatabaseActionsMixin._retire_all_trusted_read_services(self)
 
-        self._database_load_generation = getattr(self, "_database_load_generation", 0) + 1
-        self._database_load_active = False
-        self._database_load_state = None
-        self._database_load_worker = None
         self._loaded_database_identity = None
         self._loaded_database_instance = None
         if getattr(self, "_test_database_replacement_state", None) is None:
@@ -1433,42 +1470,6 @@ class DatabaseActionsMixin:
         )
 
 
-    def _retry_replaced_database_if_current(
-            self,
-            retry_generation,
-            database_path,
-            *,
-            generation_recovery=False,
-            load_started_at=None,
-            ):
-        """Run a queued replacement retry only for its still-current generation."""
-        if (
-                retry_generation != getattr(self, "_database_load_generation", 0)
-                or getattr(self, "_shutdown_started", False)
-                or getattr(self, "_shutdown_ready", False)
-                ):
-            return False
-        reload_replaced_database = getattr(
-            self,
-            "_reload_replaced_database",
-            None,
-        )
-        if not callable(reload_replaced_database):
-            reload_replaced_database = (
-                lambda path, **kwargs:
-                DatabaseActionsMixin._reload_replaced_database(
-                    self,
-                    path,
-                    **kwargs,
-                )
-            )
-        return reload_replaced_database(
-            database_path,
-            generation_recovery=generation_recovery,
-            load_started_at=load_started_at,
-        )
-
-
     def _reload_if_database_instance_changed(
             self,
             database_path,
@@ -1978,10 +1979,7 @@ class DatabaseActionsMixin:
         else:
             load_message = f"Loading database {os.path.basename(abspath)}..."
 
-        self._database_load_generation += 1
-        generation = self._database_load_generation
-        self._database_load_active = True
-        self._database_load_state = DatabaseLoadSession(
+        session = DatabaseLoadSession(
             abspath=abspath,
             load_started_at=load_started_at,
             reload_same_path=force or same_loaded_database,
@@ -1989,63 +1987,7 @@ class DatabaseActionsMixin:
             replacement_reload=replacement,
             generation_recovery=generation_recovery,
         )
-        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
-        if callable(apply_refresh_interval):
-            apply_refresh_interval(self._main_refresh_interval())
-
-        self._set_database_load_controls_enabled(False)
-        self._show_database_load_panel(load_message)
-
-        cloud_sync_timeout = self.config.get(
-            "runtime_settings.cloud_sync_timeout"
-            )
-
-        # Bootstrap resets the adapter's schema cache and pagination cursors.
-        # A reload therefore needs an isolated pending service: borrowing the
-        # committed service would mutate A before the replacement view has
-        # successfully published.  The unchanged-instance fast path above is
-        # the only load path that may continue using the active service.
-        worker_kwargs = {
-            "expected_database_instance": current_instance,
-        }
-        worker = DatabaseLoadWorker(
-            generation,
-            abspath,
-            cloud_sync_timeout,
-            **worker_kwargs,
-        )
-        self._database_load_worker = worker
-        pending_service = getattr(worker, "trusted_service", None)
-        owns_pending_service = bool(
-            pending_service is not None
-            and pending_service is not getattr(self, "_trusted_read_service", None)
-        )
-        if owns_pending_service:
-            pending_services = getattr(
-                self,
-                "_pending_trusted_read_services",
-                None,
-            )
-            if pending_services is None:
-                pending_services = {}
-                self._pending_trusted_read_services = pending_services
-            pending_services[generation] = pending_service
-        self._database_load_state.worker = worker
-        self._database_load_state.trusted_service = pending_service
-        self._database_load_state.owns_trusted_service = owns_pending_service
-        worker.signals.status.connect(self.database_load_status)
-        worker.signals.finished.connect(
-            lambda callback_generation, callback_path, runs, error,
-            load_worker=worker: self.database_load_finished(
-                callback_generation,
-                callback_path,
-                runs,
-                error,
-                load_worker,
-            )
-        )
-        self.databaseLoadThreadPool.start(worker)
-        return True
+        return self._database_loader.start(session, load_message)
 
 
     def _prepare_test_database_replacement(self, abspath):
@@ -2381,211 +2323,20 @@ class DatabaseActionsMixin:
 
     @QtCore.pyqtSlot()
     def cancel_database_load(self):
-        """
-        Cancels the pending database load without changing the current view.
-
-        """
-        if not getattr(self, "_database_load_active", False):
-            self._hide_database_load_panel()
-            return
-
-        worker = getattr(self, "_database_load_worker", None)
-        if worker is not None:
-            worker.cancel()
-
-        cancelled_generation = getattr(self, "_database_load_generation", 0)
-        pending_service = getattr(
-            self,
-            "_pending_trusted_read_services",
-            {},
-        ).pop(cancelled_generation, None)
-        DatabaseActionsMixin._retire_trusted_read_service(
-            self,
-            pending_service,
-        )
-
-        self._database_load_generation += 1
-        self._database_load_active = False
-        self._database_load_state = None
-        self._database_load_worker = None
-        self._set_database_load_controls_enabled(True)
-
-        self._hide_database_load_panel()
-        self.show_status("Database load cancelled.", 3000)
-        DatabaseActionsMixin._resume_test_database_generation_recovery(self)
-        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
-        if callable(apply_refresh_interval):
-            apply_refresh_interval(self._main_refresh_interval())
+        """Cancel pending work while preserving the committed database view."""
+        self._database_loader.cancel()
 
 
     @QtCore.pyqtSlot(int, str)
     def database_load_status(self, generation, message):
-        """
-        Shows progress from the active database load.
-
-        """
-        if generation != self._database_load_generation or not self._database_load_active:
-            return
-
-        self._show_database_load_panel(message)
+        """Deliver worker progress to the controller on the GUI thread."""
+        self._database_loader.progress(generation, message)
 
 
     @QtCore.pyqtSlot(int, str, object, object)
-    def database_load_finished(
-            self,
-            generation,
-            abspath,
-            runs,
-            error,
-            load_worker=None,
-            ):
-        """
-        Applies the background database load result on the GUI thread.
-
-        """
-        pending_service = getattr(
-            self,
-            "_pending_trusted_read_services",
-            {},
-        ).pop(generation, None)
-        if generation != self._database_load_generation:
-            DatabaseActionsMixin._retire_trusted_read_service(
-                self,
-                pending_service,
-            )
-            return
-        if not getattr(self, "_database_load_active", False):
-            DatabaseActionsMixin._retire_trusted_read_service(
-                self,
-                pending_service,
-            )
-            return
-
-        state = self._database_load_state
-        if state is None or state.abspath != abspath:
-            DatabaseActionsMixin._retire_trusted_read_service(
-                self,
-                pending_service,
-            )
-            return
-        if load_worker is None:
-            load_worker = state.worker
-        if pending_service is None:
-            pending_service = state.trusted_service
-        access_mode = getattr(
-            load_worker,
-            "access_mode",
-            SNAPSHOT_FALLBACK_MODE,
-        ) or SNAPSHOT_FALLBACK_MODE
-        fallback_reason = getattr(load_worker, "fallback_reason", None)
-
-        self._database_load_active = False
-        self._database_load_state = None
-        self._database_load_worker = None
-        self._set_database_load_controls_enabled(True)
-        self._hide_database_load_panel()
-        current_instance = database_instance(abspath)
-
-        if not DatabaseActionsMixin._accept_database_load_result(
-                self, state, current_instance, pending_service, access_mode, error,
-                ):
-            return
-
-        publication = DatabaseLoadPublication(
-            self, generation, state, current_instance, runs or {},
-            pending_service, access_mode, fallback_reason,
-            observe_instance=database_instance,
-        )
-        publication.run()
-        if DatabaseActionsMixin._recover_database_load_publication(self, publication):
-            DatabaseActionsMixin._complete_database_load_publication(self, publication)
-
-
-    def _queue_database_load_retry(self, state: DatabaseLoadSession):
-        """Retry a changed source only if no intervening action supersedes it."""
-        self._database_load_generation += 1
-        retry_generation = self._database_load_generation
-        self.show_status("Database changed while loading; retrying...", 0)
-        QtCore.QTimer.singleShot(
-            0,
-            lambda: DatabaseActionsMixin._retry_replaced_database_if_current(
-                self,
-                retry_generation,
-                state.abspath,
-                generation_recovery=state.generation_recovery,
-                load_started_at=state.load_started_at,
-            ),
-        )
-
-
-    def _accept_database_load_result(
-            self, state: DatabaseLoadSession, current_instance: DatabaseInstance,
-            pending_service, access_mode, error,
-            ) -> bool:
-        """Validate the worker's source and mode while the old view stays committed."""
-        if (
-                isinstance(error, DatabaseInstanceChangedError)
-                or _database_instances_or_sidecars_differ(
-                    state.load_instance, current_instance,
-                )
-                ):
-            if state.owns_trusted_service:
-                DatabaseActionsMixin._retire_trusted_read_service(self, pending_service)
-            DatabaseActionsMixin._queue_database_load_retry(self, state)
-            return False
-
-        failure = None
-        if isinstance(error, UnverifiableDatabaseWalError):
-            failure = (
-                "Unverifiable Database WAL",
-                "qPlot refused to load this database because its WAL "
-                "cannot be verified. Close every owning QCoDeS/SQLite "
-                "connection cleanly, or checkpoint with the owning writer, "
-                "then retry loading the database.",
-                str(error),
-            )
-        elif error is not None:
-            failure = (
-                "Database Load Failed",
-                f"Could not load database {state.abspath}.",
-                str(error),
-            )
-        elif access_mode == TRUSTED_LIVE_MODE:
-            # SQLite may create the permitted exact SHM after the helper accepts
-            # its source. Accept first appearance, never removal or replacement.
-            if (
-                    pending_service is None
-                    or not pending_service.accepted
-                    or _database_instances_or_sidecars_differ(
-                        pending_service.database_instance, current_instance,
-                    )
-                    ):
-                failure = (
-                    "Trusted Database Load Failed",
-                    "The trusted reader did not remain bound to the accepted "
-                    "database instance.",
-                    "The pending session was retired without changing the "
-                    "currently displayed database.",
-                )
-        elif access_mode != SNAPSHOT_FALLBACK_MODE:
-            failure = (
-                "Database Load Failed",
-                "The database worker returned an unknown access mode.",
-                str(access_mode),
-            )
-
-        if failure is None:
-            return True
-        if state.owns_trusted_service:
-            DatabaseActionsMixin._retire_trusted_read_service(self, pending_service)
-        if error is not None:
-            log_exception("Database load failed", error, __name__)
-        self.show_error(*failure)
-        DatabaseActionsMixin._resume_test_database_generation_recovery(self)
-        apply_refresh_interval = getattr(self, "_apply_refresh_interval", None)
-        if callable(apply_refresh_interval):
-            apply_refresh_interval(self._main_refresh_interval())
-        return False
+    def database_load_finished(self, generation, abspath, runs, error, load_worker=None):
+        """Deliver worker completion to the controller on the GUI thread."""
+        self._database_loader.finish(generation, abspath, runs, error, load_worker)
 
 
     def _recover_database_load_publication(self, publication: DatabaseLoadPublication) -> bool:
@@ -2613,27 +2364,15 @@ class DatabaseActionsMixin:
                     str(publication.rollback_error),
                 )
                 if publication.rollback_source_changed:
-                    retry_generation = getattr(
-                        self,
-                        "_database_load_generation",
-                        0,
-                    )
                     rollback_path = publication_snapshot.database_path
-                    self.show_status(
-                        "Previously displayed database changed; retrying...",
-                        0,
-                    )
-                    QtCore.QTimer.singleShot(
-                        0,
-                        lambda: (
-                            DatabaseActionsMixin
-                            ._retry_replaced_database_if_current(
-                                self,
-                                retry_generation,
-                                rollback_path,
-                                load_started_at=load_started_at,
-                            )
+                    self._database_loader.queue_retry(
+                        DatabaseLoadSession(
+                            abspath=rollback_path,
+                            load_instance=(publication_snapshot.database_instance
+                                           or database_instance(rollback_path)),
+                            load_started_at=load_started_at,
                         ),
+                        message="Previously displayed database changed; retrying...",
                     )
             return False
 
@@ -2662,7 +2401,7 @@ class DatabaseActionsMixin:
                     pending_service,
                 )
             if publication.source_changed:
-                DatabaseActionsMixin._queue_database_load_retry(self, state)
+                self._database_loader.queue_retry(state)
                 return False
             log_exception(
                 "Database view publication failed",

@@ -304,3 +304,39 @@ changing the installed GUI runtime or disabling application diagnostics.
 CI had exposed a missing optional-worker declaration in the extracted mixin;
 that declaration is restored, and all 35 focused generation tests passed again.
 Windows-local results do not establish macOS validation.
+
+## Database-loading ownership follow-up
+
+The next bounded extraction implements the loading portion of priority 4.
+`DatabaseLoadController` now owns the pending session, worker, readers,
+generation counter, publication lifetime and scheduled retries. Its typed
+`DatabaseLoadHost` interface is implemented by `DatabaseLoadUi`; the controller
+does not access widgets or call back into a large window object. Both new modules
+are included in the configured mypy check.
+
+The window retains path admission, the already-loaded fast path, display updates
+and the existing staging/commit/rollback transaction. Neighbouring refresh,
+selection and export components observe controller state through read-only
+window properties. Shutdown registers the controller's cancellation callback
+and invalidates publication through its API. Pending readers remain visible to
+the existing bounded retirement owner throughout publication.
+
+The extraction also makes loading failures recoverable at worker construction,
+signal connection and pool submission. Wrong-path or wrong-worker completions
+cannot consume the current pending reader; duplicate completion cannot retire a
+reader during publication. Cancelling a queued source-replacement retry prevents
+it from reopening the database, including after failed rollback. Completion
+exceptions use the normal error UI, while a completed reader transfer remains
+committed if later selection handling fails.
+
+Controller regressions exercise these transitions without widgets or threads.
+Real-window startup-failure cases check initial loads and database switches,
+preserve source artefacts and selection, wait for reader closure, and then load
+successfully. The existing rollback, replacement, refresh, export and shutdown
+regressions remain in place. Their state arrangements now target the controller;
+the post-commit exception case asserts error presentation and unchanged reader
+ownership instead of requiring an exception to escape the Qt callback.
+
+Refresh ownership, package-wide type-check coverage and numerical plot-worker
+separation remain follow-up work. No reader permissions, SQLite operations,
+native VFS implementation or release publishing behaviour change here.

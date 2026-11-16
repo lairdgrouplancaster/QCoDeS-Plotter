@@ -167,6 +167,21 @@ boundary and are not a promise to support old QCoDeS schemas.
 
 ## Simplifying coverage
 
+Database-loading lifecycle tests have two boundaries:
+
+* `test_database_load_controller.py` supplies a small host with no widgets or
+  background threads. It checks ownership, startup and completion failures,
+  stale callbacks, cancellation, retry supersession and publication cleanup.
+* `test_database_worker_errors.py` exercises the real main window, Qt error
+  presentation and workers against temporary QCoDeS databases. Its startup
+  failure cases preserve the prior view and database artefacts, check reader
+  closure, and then perform a successful retry.
+
+Focused window doubles use `seed_load` from `tests/_database_load_fakes.py` to
+arrange controller state. Production window observations remain read-only.
+Existing publication rollback, source replacement, shutdown, refresh and export
+tests continue to exercise their separate boundaries.
+
 Consolidate tests that protect the same behaviour with the same setup into
 clearly named parametrised cases. Keep independent expected values and oracles.
 In particular, numerical expectations must not be obtained by calling the

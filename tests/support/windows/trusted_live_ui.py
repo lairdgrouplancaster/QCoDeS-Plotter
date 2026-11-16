@@ -11,6 +11,7 @@ from qplot.datahandling.file_identity import (
     logical_database_path,
 )
 from qplot.windows import _database_actions as database_actions
+from tests._database_load_fakes import seed_load
 
 __all__ = [
     '_FakeLoadWorker',
@@ -213,17 +214,17 @@ class _LifecycleHarness(database_actions.DatabaseActionsMixin):
         service: _FakeService,
     ) -> None:
         runs = {1: {"guid": "guid-a", "run_timestamp": 1.0}}
-        self._database_load_generation = 4
-        self._database_load_active = False
-        self._database_load_state = None
-        self._database_load_worker = None
+        seed_load(self, generation=4)
+        seed_load(self, active=False)
+        seed_load(self, state=None)
+        seed_load(self, worker=None)
         self._database_refresh_generation = 1
         self._database_refresh_active = False
         self._database_refresh_pending = False
         self._database_refresh_worker = None
         self._database_selected_run_generation = 2
         self._trusted_read_service = service
-        self._pending_trusted_read_services = {}
+        seed_load(self, pending_services={})
         self._retired_trusted_read_services = set()
         self._database_access_mode = database_actions.TRUSTED_LIVE_MODE
         self._database_fallback_reason = None

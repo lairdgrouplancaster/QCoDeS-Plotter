@@ -162,6 +162,68 @@ def _wait_idle(window):
 
 
 @pytest.mark.parametrize("prior_loaded", [False, True], ids=["initial", "switch"])
+@pytest.mark.parametrize("boundary", ["create_worker", "connect_worker", "submit_worker"])
+def test_load_startup_failure_preserves_view_and_allows_retry(
+    tmp_path, error_window, monkeypatch, prior_loaded, boundary,
+):
+    window, errors, uncaught = error_window
+    target = tmp_path / "target.db"
+    _create_database(target, "target_signal")
+    previous = tmp_path / "previous.db"
+    if prior_loaded:
+        _create_database(previous, "previous_signal")
+        assert window.load_file(str(previous))
+        _wait_published_metadata(window)
+    before = _artifacts(target)
+    previous_before = _artifacts(previous)
+    accepted_instance = window._loaded_database_instance
+    accepted_runs = window.RunList.all_run_metadata()
+    accepted_selection = window._selected_run_guid
+    accepted_preview = window.infoBox.preview.database_path
+    created_workers = []
+    create_worker = window._database_loader.host.create_worker
+
+    def record_worker(*args):
+        worker = create_worker(*args)
+        created_workers.append(worker)
+        return worker
+
+    def fail(*_args):
+        raise RuntimeError(f"injected {boundary} failure")
+
+    with monkeypatch.context() as failure:
+        failure.setattr(window._database_loader.host, "create_worker", record_worker)
+        failure.setattr(window._database_loader.host, boundary, fail)
+        assert not window.load_file(str(target))
+    _wait_idle(window)
+    assert not uncaught
+    assert errors == [(
+        "Database Load Failed", f"Could not load database {target}.",
+        f"injected {boundary} failure",
+    )]
+    assert window._loaded_database_instance == accepted_instance
+    assert window.RunList.all_run_metadata() == accepted_runs
+    assert window._selected_run_guid == accepted_selection
+    assert window.infoBox.preview.database_path == accepted_preview
+    assert window.loadDatabaseButton.isEnabled()
+    assert not window.databaseLoadFrame.isVisible()
+    assert window._database_load_worker is None
+    assert not window._pending_trusted_read_services
+    assert _artifacts(target) == before
+    assert _artifacts(previous) == previous_before
+    for worker in created_workers:
+        _process_until(lambda worker=worker: worker.trusted_service.wait_closed(0))
+        assert worker.trusted_service.liveness().closed
+
+    errors.clear()
+    assert window.load_file(str(target))
+    _wait_published_metadata(window)
+    assert not errors and not uncaught
+    assert window.fileTextbox.text() == str(target)
+    assert _artifacts(target) == before
+
+
+@pytest.mark.parametrize("prior_loaded", [False, True], ids=["initial", "switch"])
 def test_public_load_exclusive_lock_reports_error_and_allows_retry(
     tmp_path, error_window, prior_loaded,
 ):

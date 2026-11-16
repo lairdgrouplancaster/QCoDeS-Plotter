@@ -56,6 +56,7 @@ from qplot.windows import main as main_window
 from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._database_load_state import DatabaseLoadSession
 from qplot.windows._dataset_handle import database_file_identity
+from tests._database_load_fakes import seed_load
 from tests._window_lifecycle import close_main_window
 from tests.support.windows.plot_integration import (
     _UnavailableTrustedRequest as _UnavailableTrustedRequest,
@@ -1565,13 +1566,13 @@ def test_main_window_close_completes_promptly_while_snapshot_copy_is_cancelled(
         window.startupDatabaseTimer.stop()
         window.monitor.stop()
         window.config.config["user_preference"]["confirm_close"] = False
-        window._database_load_generation = 1
-        window._database_load_active = True
-        window._database_load_state = DatabaseLoadSession(
+        seed_load(window, generation=1)
+        seed_load(window, active=True)
+        seed_load(window, state=DatabaseLoadSession(
             abspath=str(database_path),
             load_instance=accepted_instance,
-        )
-        window._database_load_worker = worker
+        ))
+        seed_load(window, worker=worker)
         window.databaseLoadThreadPool.start(worker)
         assert copy_checkpoint.wait(2), "Load never reached a partial snapshot copy"
 

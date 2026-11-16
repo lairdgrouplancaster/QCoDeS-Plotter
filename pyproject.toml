@@ -196,6 +196,8 @@ files = [
     "src/qplot/windows/_signal_blocking.py",
     "src/qplot/windows/_refresh_interval.py",
     "src/qplot/windows/_database_load_state.py",
+    "src/qplot/windows/_database_load_controller.py",
+    "src/qplot/windows/_database_load_ui.py",
     "src/qplot/windows/_database_detail_state.py",
     "src/qplot/windows/_database_load_publication.py",
     "src/qplot/windows/_database_observation.py",

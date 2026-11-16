@@ -8,6 +8,7 @@ from PyQt6 import QtWidgets as qtw
 from qplot.windows._shutdown_coordinator import ShutdownCoordinator
 from qplot.windows._shutdown_resources import ShutdownResources
 from qplot.windows.main import MainWindow
+from tests._database_load_fakes import seed_load
 
 
 class Pool:
@@ -72,6 +73,7 @@ def shutdown(monkeypatch):
         close_plot_windows=lambda **_kwargs: None,
         close_database=lambda **_kwargs: None,
     )
+    seed_load(window, generation=7)
     window._shutdown = ShutdownCoordinator(
         window,
         timeout_seconds=15.0,

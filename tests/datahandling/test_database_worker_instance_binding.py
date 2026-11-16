@@ -32,6 +32,7 @@ from qplot.testdata import (
 from qplot.windows import _database_actions as database_actions
 from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._database_load_state import DatabaseLoadSession
+from tests._database_load_fakes import LoadObservations, seed_load
 
 _SQLITE_ARTIFACT_SUFFIXES = ("", "-wal", "-shm", "-journal")
 
@@ -1028,21 +1029,21 @@ def test_load_instance_error_invalidates_generation_and_uses_replacement_reload(
     _build_qcodes_database(database_path, (2,), seed=18)
     accepted_instance = database_instance(database_path)
 
-    class Harness:
+    class Harness(LoadObservations):
         database_load_finished = (
             database_actions.DatabaseActionsMixin.database_load_finished
         )
 
         def __init__(self):
-            self._database_load_generation = 90
-            self._database_load_active = True
-            self._database_load_state = DatabaseLoadSession(
+            seed_load(self, generation=90)
+            seed_load(self, active=True)
+            seed_load(self, state=DatabaseLoadSession(
                 abspath=str(database_path),
                 load_instance=accepted_instance,
                 load_started_at=123.0,
                 generation_recovery=False,
-            )
-            self._database_load_worker = object()
+            ))
+            seed_load(self, worker=object())
             self.reloads = []
             self.statuses = []
 

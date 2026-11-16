@@ -53,6 +53,7 @@ from qplot.windows._window_controls import (
 )
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot3d import plot3d
+from tests._database_load_fakes import LoadObservations, seed_load
 from tests._shutdown_harness import attach_shutdown
 from tests.support.windows.plot_integration import wait_for
 
@@ -2116,19 +2117,19 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             def ignore(self):
                 self.ignored = True
 
-        class Harness:
+        class Harness(LoadObservations):
             closeEvent = main_window.MainWindow.closeEvent
 
             def __init__(self):
                 self.config = FakeConfig()
                 self.startupDatabaseTimer = Timer()
-                self._database_load_worker = Worker()
-                self._database_load_generation = 0
-                self._database_load_active = True
-                self._database_load_state = DatabaseLoadSession(
+                seed_load(self, worker=Worker())
+                seed_load(self, generation=0)
+                seed_load(self, active=True)
+                seed_load(self, state=DatabaseLoadSession(
                     abspath="pending.db",
                     load_instance=database_instance("pending.db"),
-                )
+                ))
                 self.monitor = Timer()
                 self.infoBox = type("InfoBox", (), {"preview": Preview()})()
 
@@ -2203,7 +2204,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             def ignore(self):
                 self.ignored = True
 
-        class Harness:
+        class Harness(LoadObservations):
             closeEvent = main_window.MainWindow.closeEvent
 
             def __init__(self):
@@ -2672,6 +2673,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         harness = Harness()
         del_timer = harness.dataset_handle.delete_timer
+        seed_load(harness)
 
         harness.close_database(status=False)
 
@@ -2922,10 +2924,10 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
         def __init__(self):
             super().__init__()
-            self._database_load_generation = 2
-            self._database_load_active = False
-            self._database_load_state = None
-            self._database_load_worker = None
+            seed_load(self, generation=2)
+            seed_load(self, active=False)
+            seed_load(self, state=None)
+            seed_load(self, worker=None)
             detail_channel(self).generation = 4
             detail_channel(self).active = False
             detail_channel(self).worker = None
@@ -3540,9 +3542,9 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         try:
             harness = self._active_database_harness()
             previous_view = self._database_view(harness)
-            harness._database_load_generation = 20
-            harness._database_load_active = False
-            harness._database_load_state = None
+            seed_load(harness, generation=20)
+            seed_load(harness, active=False)
+            seed_load(harness, state=None)
 
             harness.database_load_finished(
                 20,
@@ -3560,7 +3562,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
 
     def test_database_load_status_shows_inline_progress(self):
         harness = self.Harness()
-        harness._database_load_active = True
+        seed_load(harness, active=True)
 
         harness.database_load_status(2, "Waiting for OneDrive sync...")
 
@@ -3728,12 +3730,12 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         harness.fileTextbox.setText("old.db")
         harness.RunList.runs = previous_runs
         harness.infoBox.preview.set_database_runs("old.db", previous_runs)
-        harness._database_load_active = True
-        harness._database_load_worker = worker
-        harness._database_load_state = DatabaseLoadSession(
+        seed_load(harness, active=True)
+        seed_load(harness, worker=worker)
+        seed_load(harness, state=DatabaseLoadSession(
             abspath="pending.db",
             load_instance=database_instance("pending.db"),
-        )
+        ))
 
         harness.cancel_database_load()
 
@@ -3784,7 +3786,7 @@ class DatabaseLoadUiTestCase(unittest.TestCase):
         self.assertFalse(harness.emptyStateFrame.visible)
 
         harness.RunList.clear()
-        harness._database_load_active = True
+        seed_load(harness, active=True)
         harness._sync_empty_state()
         self.assertFalse(harness.emptyStateFrame.visible)
 
@@ -4802,7 +4804,7 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         database_module.get_runs_basic_via_sql = lambda _path, **_kwargs: {}
         try:
             harness = DatabaseLoadUiTestCase.Harness()
-            harness._database_load_generation = 13
+            seed_load(harness, generation=13)
             worker = main_window.DatabaseLoadWorker(12, "stale.db")
             worker.signals.finished.connect(
                 lambda *args: harness.database_load_finished(*args)
@@ -4827,12 +4829,12 @@ class DatabaseLoadWorkerTestCase(unittest.TestCase):
         database_module.get_runs_basic_via_sql = lambda _path, **_kwargs: runs
         try:
             harness = DatabaseLoadUiTestCase.Harness()
-            harness._database_load_generation = 14
-            harness._database_load_active = True
-            harness._database_load_state = DatabaseLoadSession(
+            seed_load(harness, generation=14)
+            seed_load(harness, active=True)
+            seed_load(harness, state=DatabaseLoadSession(
                 abspath="committed.db",
                 load_instance=database_instance("committed.db"),
-            )
+            ))
             harness.fileTextbox.setText("active.db")
             worker = main_window.DatabaseLoadWorker(14, "committed.db")
             worker.signals.finished.connect(
