@@ -10,12 +10,14 @@ from qplot.windows._shutdown_coordinator import (
     ShutdownState,
 )
 from tests._database_load_fakes import seed_load
+from tests._database_refresh_fakes import seed_refresh
 
 
 def attach_shutdown(window, *, waiting=False):
     """Register only the pools/workers supplied by this test's window double."""
     if "_database_loader" not in window.__dict__:
         seed_load(window, generation=getattr(window, "_database_load_generation", 0))
+    seed_refresh(window)
     if not hasattr(window, "_shutdown"):
         window._shutdown = ShutdownCoordinator(
             window,

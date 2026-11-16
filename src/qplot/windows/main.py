@@ -158,6 +158,7 @@ class MainWindow(
         self.dataset_holder: dict[DatasetKey, DatasetHandle] = {}
         self.monitor = QtCore.QTimer()
         self._init_database_loader()
+        self._init_database_refresher()
         # The process entry point installs and owns the fail-safe. Embedded
         # windows remain inert at the process boundary.
         self._shutdown_process_fail_safe = None
@@ -188,8 +189,8 @@ class MainWindow(
         resources.watch_worker("expensive details", cancel=detail_channel(self, True).cancel_worker)
         self.databaseRefreshThreadPool = resources.create_pool(
             "databaseRefreshThreadPool", parent=self,
-            worker_attribute="_database_refresh_worker",
         )
+        resources.watch_worker("database refresh", cancel=self._database_refresher.cancel_worker)
         # Information jobs share the detail pool but have a separate cancellation
         # hook that invalidates their own generation before later work is closed.
         resources.watch_worker(
@@ -205,14 +206,6 @@ class MainWindow(
         self._database_info_active = False
         self._loaded_database_identity = None
         self._loaded_database_instance = None  # type: ignore[assignment]
-        self._database_refresh_generation = 0
-        self._database_refresh_active = False
-        self._database_refresh_pending = False
-        self._database_refresh_worker: DatabaseRefreshWorker | None = None
-        self._database_refresh_identity = None
-        self._database_refresh_instance = None
-        self._database_refresh_staged_new_runs = {}
-        self._database_refresh_publication_active = False
         self._database_selected_run_generation = 0
         self._restoring_selected_run_publication = False
         self._selected_run_restore_pending = False

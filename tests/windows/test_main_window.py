@@ -54,6 +54,7 @@ from qplot.windows._window_controls import (
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot3d import plot3d
 from tests._database_load_fakes import LoadObservations, seed_load
+from tests._database_refresh_fakes import RefreshObservations, seed_refresh
 from tests._shutdown_harness import attach_shutdown
 from tests.support.windows.plot_integration import wait_for
 
@@ -3826,7 +3827,7 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
         def topLevelItemCount(self):
             return 0
 
-    class Harness(QtCore.QObject):
+    class Harness(QtCore.QObject, RefreshObservations):
         refreshMain = main_window.MainWindow.refreshMain
         database_refresh_finished = main_window.MainWindow.database_refresh_finished
         _apply_database_refresh_result = (
@@ -3840,6 +3841,7 @@ class RefreshMainEmptyDatabaseTestCase(unittest.TestCase):
 
         def __init__(self):
             super().__init__()
+            seed_refresh(self)
             self.fileTextbox = DatabaseLoadUiTestCase.Field("empty.db")
             self.RunList = RefreshMainEmptyDatabaseTestCase.RunList()
             self.spinBox = DatabaseLoadUiTestCase.SpinBox(1.5)
@@ -3995,7 +3997,7 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
         def __init__(self):
             self.preview = RefreshMainPreviewUpdateTestCase.Preview()
 
-    class Harness(QtCore.QObject):
+    class Harness(QtCore.QObject, RefreshObservations):
         refreshMain = main_window.MainWindow.refreshMain
         database_refresh_finished = main_window.MainWindow.database_refresh_finished
         _apply_database_refresh_result = (
@@ -4007,6 +4009,7 @@ class RefreshMainPreviewUpdateTestCase(unittest.TestCase):
 
         def __init__(self, updated_runs):
             super().__init__()
+            seed_refresh(self)
             self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
             self.RunList = RefreshMainPreviewUpdateTestCase.RunList(updated_runs)
             self.infoBox = RefreshMainPreviewUpdateTestCase.InfoBox()
@@ -4108,7 +4111,7 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
             self.live_updates.append(dict(metadata))
             self.details.update_live_run_details(metadata)
 
-    class Harness:
+    class Harness(RefreshObservations):
         database_refresh_finished = main_window.MainWindow.database_refresh_finished
         _apply_database_refresh_result = (
             main_window.MainWindow._apply_database_refresh_result
@@ -4125,8 +4128,8 @@ class RefreshMainLiveDetailsTestCase(unittest.TestCase):
             self._selected_dataset_key = SimpleNamespace(guid=self.ds.guid)
             self.status_messages = []
             self.sync_count = 0
-            self._database_refresh_generation = 4
-            self._database_refresh_active = True
+            seed_refresh(self, generation=4)
+            seed_refresh(self, active=True)
 
             initial_metadata = {
                 "guid": self.ds.guid,
@@ -4324,7 +4327,7 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
         def isChecked(self):
             return self.checked
 
-    class Harness(QtCore.QObject):
+    class Harness(QtCore.QObject, RefreshObservations):
         refreshMain = main_window.MainWindow.refreshMain
         database_refresh_finished = main_window.MainWindow.database_refresh_finished
         _apply_database_refresh_result = (
@@ -4333,6 +4336,7 @@ class RefreshMainAutoPlotTestCase(unittest.TestCase):
 
         def __init__(self, auto_plot_checked):
             super().__init__()
+            seed_refresh(self)
             self.fileTextbox = DatabaseLoadUiTestCase.Field("loaded.db")
             self.RunList = RefreshMainAutoPlotTestCase.RunList()
             self.infoBox = RefreshMainAutoPlotTestCase.InfoBox()

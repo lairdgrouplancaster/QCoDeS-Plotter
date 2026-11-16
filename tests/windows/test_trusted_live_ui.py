@@ -38,6 +38,7 @@ from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._database_load_state import DatabaseLoadSession
 from qplot.windows._widgets import treeWidgets
 from tests._database_load_fakes import seed_load
+from tests._database_refresh_fakes import seed_refresh
 from tests.support.windows.trusted_live_ui import (
     _Button as _Button,
 )
@@ -99,11 +100,11 @@ class _RefreshPublicationSource:
 
 class _RefreshPublicationHarness(database_actions.DatabaseActionsMixin):
     def __init__(self) -> None:
-        self._database_refresh_generation = 7
-        self._database_refresh_active = True
-        self._database_refresh_publication_active = False
-        self._database_refresh_instance = None
-        self._database_refresh_staged_new_runs = {}
+        seed_refresh(self, generation=7)
+        seed_refresh(self, active=True)
+        seed_refresh(self, publication_active=False)
+        seed_refresh(self, instance=None)
+        seed_refresh(self, staged_new_runs={})
         seed_load(self, active=False)
         seed_load(self, publication_active=False)
         self._test_database_replacement_state = None
@@ -115,7 +116,7 @@ class _RefreshPublicationHarness(database_actions.DatabaseActionsMixin):
         self.selected_run_id = 1
         self.fileTextbox = _Field("refresh.db")
         accepted_instance = database_instance(self.fileTextbox.text())
-        self._database_refresh_instance = accepted_instance
+        seed_refresh(self, instance=accepted_instance)
         self._loaded_database_identity = accepted_instance.identity
         self._loaded_database_instance = accepted_instance
         self.RunList = treeWidgets.RunList()
@@ -180,6 +181,7 @@ class _RefreshPublicationHarness(database_actions.DatabaseActionsMixin):
 def test_refresh_publication_replays_selection_changed_during_qt_yield():
     harness = _RefreshPublicationHarness()
     source = _RefreshPublicationSource()
+    seed_refresh(harness, worker=source)
     first = harness.RunList._item_for_guid("guid-1")
     second = harness.RunList._item_for_guid("guid-2")
     assert first is not None
@@ -238,6 +240,7 @@ def test_refresh_publication_replays_selection_changed_during_qt_yield():
 def test_refresh_publication_abort_rolls_back_partial_page_and_cursor():
     harness = _RefreshPublicationHarness()
     source = _RefreshPublicationSource()
+    seed_refresh(harness, worker=source)
     original_add_runs = harness.RunList.addRuns
     page = {
         run_id: {
@@ -255,7 +258,7 @@ def test_refresh_publication_abort_rolls_back_partial_page_and_cursor():
         harness.RunList.clearSelection()
         staged_item.setSelected(True)
         harness.RunList.setCurrentItem(staged_item)
-        harness._database_refresh_active = False
+        seed_refresh(harness, active=False)
 
     def add_runs_then_clear_removed_selection(runs, **kwargs):
         result = original_add_runs(runs, **kwargs)
@@ -291,7 +294,7 @@ def test_refresh_publication_abort_rolls_back_partial_page_and_cursor():
         assert len(source.rejections) == 1
         assert isinstance(
             source.rejections[0],
-            database_actions._DatabaseRefreshPublicationAborted,
+            database_actions.RefreshPublicationAborted,
         )
         assert harness.RunList.maxRunId == 2
         assert harness.RunList.topLevelItemCount() == 2
@@ -319,6 +322,7 @@ def test_refresh_page_source_change_during_qt_yield_rolls_back_before_ack(
 ):
     harness = _RefreshPublicationHarness()
     source = _RefreshPublicationSource()
+    seed_refresh(harness, worker=source)
     path = logical_database_path("refresh-source-change.db")
     accepted = DatabaseInstance(
         path,
@@ -333,7 +337,7 @@ def test_refresh_page_source_change_during_qt_yield_rolls_back_before_ack(
         sidecar_identities=changed_sidecars,
     )
     harness.fileTextbox.setText(path)
-    harness._database_refresh_instance = accepted
+    seed_refresh(harness, instance=accepted)
     harness._loaded_database_identity = accepted.identity
     harness._loaded_database_instance = accepted
     observed = [accepted]
@@ -402,6 +406,7 @@ def test_refresh_commit_uses_sidecar_baseline_promoted_by_preflight(
 ):
     harness = _RefreshPublicationHarness()
     source = _RefreshPublicationSource()
+    seed_refresh(harness, worker=source)
     path = logical_database_path("refresh-promoted-sidecar.db")
     initially_empty = DatabaseInstance(path, path, (1, 2))
     appeared = DatabaseInstance(
@@ -417,7 +422,7 @@ def test_refresh_commit_uses_sidecar_baseline_promoted_by_preflight(
         sidecar_identities=changed_sidecars,
     )
     harness.fileTextbox.setText(path)
-    harness._database_refresh_instance = initially_empty
+    seed_refresh(harness, instance=initially_empty)
     harness._loaded_database_identity = initially_empty.identity
     harness._loaded_database_instance = initially_empty
     observed = [appeared]
@@ -486,7 +491,7 @@ def test_trusted_refresh_updates_selected_completed_row_and_reloads_detail():
     class Harness(database_actions.DatabaseActionsMixin):
         def __init__(self) -> None:
             seed_load(self, publication_active=False)
-            self._database_refresh_publication_active = False
+            seed_refresh(self, publication_active=False)
             self._test_database_replacement_state = None
             self._database_access_mode = database_actions.TRUSTED_LIVE_MODE
             self._selected_run_guid = "selected-guid"
@@ -1396,13 +1401,12 @@ def test_trusted_refresh_callback_rechecks_after_final_view_publication(tmp_path
             self._loaded_database_instance = accepted
             self._loaded_database_identity = accepted.identity
             self._snapshot_setpoint_summary_cache = {"old": object()}
-            self._database_refresh_generation = 23
-            self._database_refresh_active = True
-            self._database_refresh_pending = False
-            self._database_refresh_worker = object()
-            self._database_refresh_identity = accepted.identity
-            self._database_refresh_instance = accepted
-            self._database_refresh_staged_new_runs = {}
+            seed_refresh(self, generation=23)
+            seed_refresh(self, active=True)
+            seed_refresh(self, pending=False)
+            seed_refresh(self, worker=object())
+            seed_refresh(self, instance=accepted)
+            seed_refresh(self, staged_new_runs={})
             self.RunList = _DiscardableRunList()
             self.applied = []
             self.reloads = []

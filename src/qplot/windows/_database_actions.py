@@ -52,6 +52,11 @@ from ._database_load_ui import DatabaseLoadUi
 from ._database_observation import (
     database_instances_or_sidecars_differ as _database_instances_or_sidecars_differ,
 )
+from ._database_refresh_controller import (
+    DatabaseRefreshController,
+    RefreshPublicationAborted,
+)
+from ._database_refresh_ui import DatabaseRefreshUi
 from ._dataset_handle import canonical_database_path
 from ._small_dialogs import (
     close_default,
@@ -68,10 +73,6 @@ from ._widgets.details_tables import (
 if TYPE_CHECKING:
     from qplot.datahandling.database import DatabaseLoadWorker
     from qplot.datahandling.trusted_live_service import TrustedLiveReadService
-
-
-class _DatabaseRefreshPublicationAborted(RuntimeError):
-    """A nested Qt event invalidated an in-progress refresh publication."""
 
 
 @dataclass(frozen=True)
@@ -238,8 +239,41 @@ class DatabaseActionsMixin:
     def _pending_trusted_read_services(self) -> Mapping[int, TrustedLiveReadService]:
         return self._database_loader.pending_services
 
-    _database_refresh_worker: DatabaseRefreshWorker | None
-    _database_refresh_instance: DatabaseInstance | None
+    _database_refresher: DatabaseRefreshController
+
+    def _init_database_refresher(self) -> None:
+        self._database_refresher = DatabaseRefreshController(
+            DatabaseRefreshUi(self), schedule=lambda callback: QtCore.QTimer.singleShot(0, callback),
+        )
+
+    @property
+    def _database_refresh_generation(self) -> int:
+        return self._database_refresher.generation
+
+    @property
+    def _database_refresh_active(self) -> bool:
+        return self._database_refresher.active
+
+    @property
+    def _database_refresh_worker(self) -> DatabaseRefreshWorker | None:
+        return self._database_refresher.worker
+
+    @property
+    def _database_refresh_pending(self) -> bool:
+        return self._database_refresher.pending
+
+    @property
+    def _database_refresh_instance(self) -> DatabaseInstance | None:
+        return self._database_refresher.instance
+
+    @property
+    def _database_refresh_staged_new_runs(self):
+        return self._database_refresher.staged_runs
+
+    @property
+    def _database_refresh_publication_active(self) -> bool:
+        return self._database_refresher.publication_active
+
     _database_info_worker: DatabaseInfoWorker | None
     _database_info_instance: DatabaseInstance | None
 
@@ -864,173 +898,25 @@ class DatabaseActionsMixin:
             return
 
         current_instance = database_instance(database_path)
-        current_identity = current_instance.identity
-
-        if getattr(self, "_database_refresh_active", False):
-            self._database_refresh_pending = True
-            self.show_status("Database refresh queued.", 3000)
-            return
-
-        self.show_status("Checking for new runs...", 0)
-        self._database_refresh_generation = (
-            getattr(self, "_database_refresh_generation", 0) + 1
-            )
-        generation = self._database_refresh_generation
-        self._database_refresh_active = True
-        self._database_refresh_pending = False
-        self._database_refresh_identity = current_identity
-        self._database_refresh_instance = current_instance
-        self._database_refresh_staged_new_runs = {}
-        watched_pairs = []
-        watched_guids = []
-        item_run_id = getattr(self.RunList, "_item_run_id", None)
-        for run in list(self.RunList.watching):
-            guid = getattr(run, "guid", None)
-            if not guid:
-                continue
-            run_id = item_run_id(run) if callable(item_run_id) else None
-            if run_id is None:
-                continue
-            try:
-                run_id = int(run_id)
-            except (TypeError, ValueError):
-                continue
-            watched_pairs.append((run_id, str(guid)))
-            watched_guids.append(str(guid))
-
-        watched_by_run_id = dict(watched_pairs)
-        watched_runs = []
-        scheduled_run_ids = set()
-
-        def schedule_watched(run_id, guid, category):
-            try:
-                run_id = int(run_id)
-            except (TypeError, ValueError):
-                return
-            if run_id in scheduled_run_ids or not guid:
-                return
-            scheduled_run_ids.add(run_id)
-            watched_runs.append((run_id, str(guid), category))
-
-        selected_guid = getattr(self, "_selected_run_guid", None)
-        if selected_guid:
-            run_id_for_guid = getattr(self.RunList, "run_id_for_guid", None)
-            selected_run_id = (
-                run_id_for_guid(selected_guid)
-                if callable(run_id_for_guid)
-                else None
-            )
-            if selected_run_id is not None:
-                schedule_watched(selected_run_id, selected_guid, "selected")
-
-        visible_run_ids = getattr(self.RunList, "visible_run_ids", None)
-        if callable(visible_run_ids):
-            for run_id in visible_run_ids():
-                try:
-                    numeric_run_id = int(run_id)
-                except (TypeError, ValueError):
-                    continue
-                guid = watched_by_run_id.get(numeric_run_id)
-                if guid is not None:
-                    schedule_watched(numeric_run_id, guid, "visible")
-
-        for run_id, guid in watched_pairs:
-            schedule_watched(run_id, guid, "remaining")
-
-        refresh_kwargs = {
-            "expected_database_instance": current_instance,
-        }
-        trusted_service = DatabaseActionsMixin._active_trusted_service_for_instance(
-            self,
-            current_instance,
-        )
-        if (
-                getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE
-                and trusted_service is None
-                ):
-            self._database_refresh_active = False
-            self._database_refresh_worker = None
-            self._database_refresh_identity = None
-            self._database_refresh_instance = None
-            self.show_error(
-                "Trusted Refresh Unavailable",
-                "The accepted trusted live-reader session is no longer usable.",
-                "Reload the database to start a new trusted session. qPlot did "
-                "not fall back to a snapshot after the accepted-session failure.",
-            )
-            return
-        if trusted_service is not None:
-            refresh_kwargs["trusted_service"] = trusted_service
-            refresh_kwargs["derived_coordinator_owned"] = bool(
-                getattr(self, "_trusted_derived_bridge", None)
-            )
-        worker = DatabaseRefreshWorker(
-            generation,
-            database_path,
-            self.RunList.maxRunId,
-            watched_runs if trusted_service is not None else watched_guids,
-            require_publication_ack=trusted_service is not None,
-            **refresh_kwargs,
-        )
-        self._database_refresh_worker = worker
-        new_runs_ready = getattr(worker.signals, "new_runs_ready", None)
-        if new_runs_ready is not None:
-            new_runs_ready.connect(
-                lambda *args, refresh_worker=worker:
-                DatabaseActionsMixin.database_refresh_new_runs_ready(
-                    self,
-                    *args,
-                    refresh_worker,
-                )
-            )
-        worker.signals.finished.connect(self.database_refresh_finished)
-        self.databaseRefreshThreadPool.start(worker)
+        self._database_refresher.start(database_path, current_instance)
 
 
     @QtCore.pyqtSlot(int, str, object)
     def database_refresh_new_runs_ready(
-            self,
-            generation,
-            database_path,
-            new_runs,
-        source_worker=None,
-            ):
-        """Publish trusted basic rows before any follow-up status/detail work."""
-        if getattr(self, "_database_refresh_publication_active", False):
-            error = _DatabaseRefreshPublicationAborted(
-                "A second trusted refresh page arrived during UI publication."
-            )
-            reject = getattr(source_worker, "reject_new_runs_publication", None)
-            if callable(reject):
-                reject(error)
-            return
+        self, generation, database_path, new_runs, source_worker=None,
+    ):
+        self._database_refresher.publish_page(generation, database_path, new_runs, source_worker)
 
-        publication_error = None
+    def _publish_database_refresh_page(self, session, new_runs, publication_is_current):
+        """Apply a basic-row transaction inside the controller's publication gate."""
         publication_source_changed = False
-        staged = None
-        staged_before_publication = None
-        refresh_instance = getattr(self, "_database_refresh_instance", None)
+        refresh_instance = session.instance
+        database_path = session.path
         publication_baseline_instance = getattr(
             self,
             "_loaded_database_instance",
             None,
         )
-        accepted_selected_guid = str(
-            getattr(self, "_selected_run_guid", "") or ""
-        )
-        self._database_refresh_publication_active = True
-        DatabaseActionsMixin._sync_database_generation_controls(self)
-
-        def publication_is_current():
-            return bool(
-                getattr(self, "_database_refresh_publication_active", False)
-                and generation == getattr(self, "_database_refresh_generation", 0)
-                and getattr(self, "_database_refresh_active", False)
-                and _database_paths_equal(database_path, self.fileTextbox.text())
-                and not getattr(self, "_shutdown_started", False)
-                and not getattr(self, "_shutdown_ready", False)
-            )
-
         def publication_source_is_current():
             """Perform the final source check inside RunList's rollback scope."""
 
@@ -1058,140 +944,80 @@ class DatabaseActionsMixin:
                 return False
             return True
 
-        try:
-            if generation != getattr(self, "_database_refresh_generation", 0):
-                raise _DatabaseRefreshPublicationAborted(
-                    "The trusted refresh generation changed before publication."
-                )
-            if not getattr(self, "_database_refresh_active", False):
-                raise _DatabaseRefreshPublicationAborted(
-                    "The trusted refresh ended before publication."
-                )
-            if not _database_paths_equal(database_path, self.fileTextbox.text()):
-                raise _DatabaseRefreshPublicationAborted(
-                    "The selected database changed before refresh publication."
-                )
-            if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-                    self,
-                    database_path,
-                    refresh_instance,
-                    ):
-                raise _DatabaseRefreshPublicationAborted(
-                    "The database instance changed before refresh publication."
-                )
-            # The preflight may legitimately bind a newly appeared WAL/SHM.
-            # Freeze that promoted observation for the nested-event commit
-            # guard so removal/replacement cannot look like another addition.
-            publication_baseline_instance = getattr(
+        if not publication_is_current():
+            raise RefreshPublicationAborted("The trusted refresh ended before publication.")
+        if not _database_paths_equal(database_path, self.fileTextbox.text()):
+            raise RefreshPublicationAborted(
+                "The selected database changed before refresh publication."
+            )
+        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
                 self,
-                "_loaded_database_instance",
-                publication_baseline_instance,
+                database_path,
+                refresh_instance,
+                ):
+            raise RefreshPublicationAborted(
+                "The database instance changed before refresh publication."
             )
-            staged = getattr(self, "_database_refresh_staged_new_runs", None)
-            if staged is None:
-                staged = {}
-                self._database_refresh_staged_new_runs = staged
-            staged_before_publication = dict(staged)
-            staged.update(new_runs or {})
-            published = DatabaseActionsMixin._apply_basic_new_runs(
-                self,
-                new_runs or {},
-                continue_loading=publication_is_current,
-                commit_check=publication_source_is_current,
-            )
-            if published is False:
-                if publication_source_changed:
-                    raise DatabaseInstanceChangedError(
-                        "The database changed during trusted refresh publication."
-                    )
-                raise _DatabaseRefreshPublicationAborted(
-                    "Trusted refresh basic-row publication was invalidated."
-                )
-            sync_empty_state = getattr(self, "_sync_empty_state", None)
-            if callable(sync_empty_state):
-                sync_empty_state()
-        except Exception as error:
-            publication_error = error
-            if (
-                    staged is not None
-                    and staged_before_publication is not None
-                    and getattr(self, "_database_refresh_staged_new_runs", None)
-                    is staged
-                    ):
-                staged.clear()
-                staged.update(staged_before_publication)
-            log_exception(
-                "Trusted refresh basic-row publication failed",
-                error,
-                __name__,
-            )
-        finally:
-            self._database_refresh_publication_active = False
-            DatabaseActionsMixin._sync_database_generation_controls(self)
-            try:
-                selected_items = getattr(self.RunList, "selectedItems", None)
-                if callable(selected_items):
-                    items = selected_items()
-                    selected_guid = ""
-                    if len(items) == 1:
-                        selected_guid = str(
-                            getattr(items[0], "guid", "") or ""
-                        )
-                    if selected_guid != accepted_selected_guid:
-                        if selected_guid:
-                            update_selected = getattr(self, "updateSelected", None)
-                            if callable(update_selected):
-                                update_selected(selected_guid)
-                        else:
-                            clear_selection = getattr(
-                                self,
-                                "clear_non_single_run_selection",
-                                None,
-                            )
-                            if callable(clear_selection):
-                                clear_selection()
-            except Exception as selection_error:
-                # Selection replay is controller repair after the basic-row
-                # transaction.  It must never suppress the worker's page
-                # acknowledgement or rejection.
-                log_exception(
-                    "Refresh selection reconciliation failed",
-                    selection_error,
-                    __name__,
-                )
-            if publication_error is None:
-                acknowledge = getattr(
-                    source_worker,
-                    "acknowledge_new_runs_published",
-                    None,
-                )
-                if callable(acknowledge):
-                    acknowledge()
-            else:
-                reject = getattr(
-                    source_worker,
-                    "reject_new_runs_publication",
-                    None,
-                )
-                if callable(reject):
-                    reject(publication_error)
+        # The preflight may legitimately bind a newly appeared WAL/SHM.
+        # Freeze that promoted observation for the nested-event commit
+        # guard so removal/replacement cannot look like another addition.
+        publication_baseline_instance = getattr(
+            self,
+            "_loaded_database_instance",
+            publication_baseline_instance,
+        )
+        published = DatabaseActionsMixin._apply_basic_new_runs(
+            self,
+            new_runs or {},
+            continue_loading=publication_is_current,
+            commit_check=publication_source_is_current,
+        )
+        if published is False:
             if publication_source_changed:
-                self._reload_replaced_database(database_path)
+                raise DatabaseInstanceChangedError(
+                    "The database changed during trusted refresh publication."
+                )
+            raise RefreshPublicationAborted(
+                "Trusted refresh basic-row publication was invalidated."
+            )
+        sync_empty_state = getattr(self, "_sync_empty_state", None)
+        if callable(sync_empty_state):
+            sync_empty_state()
+
+    def _reconcile_refresh_selection(self, accepted_selected_guid):
+        selected_items = getattr(self.RunList, "selectedItems", None)
+        if callable(selected_items):
+            items = selected_items()
+            selected_guid = ""
+            if len(items) == 1:
+                selected_guid = str(
+                    getattr(items[0], "guid", "") or ""
+                )
+            if selected_guid != accepted_selected_guid:
+                if selected_guid:
+                    update_selected = getattr(self, "updateSelected", None)
+                    if callable(update_selected):
+                        update_selected(selected_guid)
+                else:
+                    clear_selection = getattr(
+                        self,
+                        "clear_non_single_run_selection",
+                        None,
+                    )
+                    if callable(clear_selection):
+                        clear_selection()
 
 
     @QtCore.pyqtSlot(int, str, object, object, object)
     def database_refresh_finished(
-            self,
-            generation,
-            database_path,
-            new_runs,
-            statuses,
-            error,
-            ):
-        if generation != getattr(self, "_database_refresh_generation", 0):
-            return
-        if not getattr(self, "_database_refresh_active", False):
-            return
+        self, generation, database_path, new_runs, statuses, error, source_worker=None,
+    ):
+        self._database_refresher.finish(
+            generation, database_path, new_runs, statuses, error, source_worker,
+        )
+
+    def _complete_database_refresh(self, session, new_runs, statuses, error, is_current):
+        database_path = session.path
         if DatabaseActionsMixin._database_generation_transaction_blocks_path(
                 self,
                 database_path,
@@ -1199,75 +1025,63 @@ class DatabaseActionsMixin:
             DatabaseActionsMixin._cancel_database_refresh(self)
             return
 
-        try:
-            if not _database_paths_equal(database_path, self.fileTextbox.text()):
-                return
-            if isinstance(error, DatabaseInstanceChangedError):
-                DatabaseActionsMixin._cancel_database_refresh(self)
-                self._reload_replaced_database(database_path)
-                return
-            refresh_instance = getattr(self, "_database_refresh_instance", None)
-            current_instance = database_instance(database_path)
-            loaded_instance = getattr(self, "_loaded_database_instance", None)
-            if (
-                    _database_instances_or_sidecars_differ(
-                        refresh_instance,
-                        current_instance,
-                    )
-                    or _database_instances_or_sidecars_differ(
-                        loaded_instance,
-                        current_instance,
-                    )
-                    ):
-                self._reload_replaced_database(database_path)
-                return
-            DatabaseActionsMixin._advance_loaded_database_sidecar_baseline(
-                self,
-                current_instance,
-            )
-            if error is not None:
-                log_exception("Main-window refresh failed", error, __name__)
-                if isinstance(error, UnverifiableDatabaseWalError):
-                    self.show_error(
-                        "Unverifiable Database WAL",
-                        "qPlot cannot verify this database's WAL. Close every "
-                        "owning QCoDeS/SQLite connection cleanly, or checkpoint "
-                        "with the owning writer, then refresh.",
-                        str(error),
-                        )
-                    return
+        if not _database_paths_equal(database_path, self.fileTextbox.text()):
+            return
+        if isinstance(error, DatabaseInstanceChangedError):
+            DatabaseActionsMixin._cancel_database_refresh(self)
+            self._reload_replaced_database(database_path)
+            return
+        refresh_instance = session.instance
+        current_instance = database_instance(database_path)
+        loaded_instance = getattr(self, "_loaded_database_instance", None)
+        if (
+                _database_instances_or_sidecars_differ(
+                    refresh_instance,
+                    current_instance,
+                )
+                or _database_instances_or_sidecars_differ(
+                    loaded_instance,
+                    current_instance,
+                )
+                ):
+            self._reload_replaced_database(database_path)
+            return
+        DatabaseActionsMixin._advance_loaded_database_sidecar_baseline(
+            self,
+            current_instance,
+        )
+        if not is_current():
+            return
+        if error is not None:
+            log_exception("Main-window refresh failed", error, __name__)
+            if isinstance(error, UnverifiableDatabaseWalError):
                 self.show_error(
-                    "Refresh Failed",
-                    "Could not refresh the run list.",
+                    "Unverifiable Database WAL",
+                    "qPlot cannot verify this database's WAL. Close every "
+                    "owning QCoDeS/SQLite connection cleanly, or checkpoint "
+                    "with the owning writer, then refresh.",
                     str(error),
                     )
                 return
+            self.show_error(
+                "Refresh Failed",
+                "Could not refresh the run list.",
+                str(error),
+                )
+            return
 
-            effective_new_runs = dict(
-                getattr(self, "_database_refresh_staged_new_runs", {})
-            )
-            effective_new_runs.update(new_runs or {})
-            self._apply_database_refresh_result(effective_new_runs, statuses or {})
-            if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-                    self,
-                    database_path,
-                    refresh_instance,
-                    discard_stale_publication=True,
-                    ):
-                return
-        finally:
-            self._database_refresh_active = False
-            self._database_refresh_worker = None
-            self._database_refresh_identity = None
-            self._database_refresh_instance = None
-            self._database_refresh_staged_new_runs = {}
-            pending = bool(getattr(self, "_database_refresh_pending", False))
-            self._database_refresh_pending = False
-            if pending and _database_paths_equal(
-                    database_path,
-                    self.fileTextbox.text(),
-                    ):
-                QtCore.QTimer.singleShot(0, self.refreshMain)
+        if not is_current():
+            return
+        self._apply_database_refresh_result(new_runs, statuses)
+        if not is_current():
+            return
+        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
+                self,
+                database_path,
+                refresh_instance,
+                discard_stale_publication=True,
+                ):
+            return
 
 
     def _apply_database_refresh_result(self, new_runs, statuses):
@@ -1432,18 +1246,7 @@ class DatabaseActionsMixin:
 
 
     def _cancel_database_refresh(self):
-        worker = getattr(self, "_database_refresh_worker", None)
-        if worker is not None:
-            worker.cancel()
-        self._database_refresh_generation = (
-            getattr(self, "_database_refresh_generation", 0) + 1
-            )
-        self._database_refresh_active = False
-        self._database_refresh_pending = False
-        self._database_refresh_worker = None
-        self._database_refresh_identity = None
-        self._database_refresh_instance = None
-        self._database_refresh_staged_new_runs = {}
+        self._database_refresher.invalidate()
 
 
     def _reload_replaced_database(

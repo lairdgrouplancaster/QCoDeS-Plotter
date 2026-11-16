@@ -340,3 +340,31 @@ ownership instead of requiring an exception to escape the Qt callback.
 Refresh ownership, package-wide type-check coverage and numerical plot-worker
 separation remain follow-up work. No reader permissions, SQLite operations,
 native VFS implementation or release publishing behaviour change here.
+
+## Database-refresh ownership follow-up
+
+The refresh portion of priority 4 now has an explicit owner too.
+`DatabaseRefreshController` owns each pending refresh, worker, generation,
+coalesced request, staged basic rows and publication gate. A typed
+`DatabaseRefreshHost` interface separates these lifetimes from widget access
+and Qt connections in `DatabaseRefreshUi`. Both modules are type-checked.
+The window retains admission, source validation and the existing basic-row
+transaction, including its final source check inside the RunList rollback scope.
+
+Worker construction, signal wiring and submission failures now restore idle
+ownership and permit retry without replacing the accepted reader. Stale or
+unrelated callbacks cannot consume the active session. A completion nested
+inside page publication waits until the page transaction unwinds; an old
+completion cannot clear a newer session. Cancellation and shutdown fence the
+zero-delay callback for a coalesced refresh, including after the worker finished.
+
+Controller tests cover these transitions independently of Qt and threads.
+Real-window failure injection preserves the displayed rows, selection, accepted
+reader and source artefacts before a successful retry. Existing GUI rollback,
+source replacement, export, shutdown and signal-disconnection tests remain.
+Their fixture arrangements target the controller's state; the production window
+observations are read-only. Database permissions, native SQLite operations,
+refresh intervals and release publishing are unchanged.
+
+The next priorities are the static-checking coverage inventory and reproducible
+analysis dependencies, followed by the numerical plot-worker boundary.
