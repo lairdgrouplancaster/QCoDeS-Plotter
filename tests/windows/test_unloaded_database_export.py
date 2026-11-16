@@ -13,7 +13,7 @@ from pyqtgraph.exporters import CSVExporter, ImageExporter, SVGExporter
 from qplot.configuration.config import config
 from qplot.testdata import instruction_collection_contents
 from qplot.updates import CHECK_ON_LAUNCH_KEY
-from qplot.windows import _database_actions, _export_paths
+from qplot.windows import _export_paths, _test_database
 from qplot.windows import main as main_window
 from tests._window_lifecycle import close_main_window
 from tests.support.windows.export_paths import _database_artifact_state
@@ -105,7 +105,7 @@ def export_action(source_plot, route, target, monkeypatch):
     elif route == "run_preview":
         main.export_run_preview_csv(guid, "signal")
     else:
-        monkeypatch.setattr(_database_actions, "reveal_file_in_file_manager", lambda *_: True)
+        monkeypatch.setattr(_test_database, "reveal_file_in_file_manager", lambda *_: True)
         name = ("createTestDatabaseCsvAction" if route == "example_csv"
                 else "exportTestDatabaseCsvCollectionAction")
         action = main.findChild(QtGui.QAction, name)
