@@ -618,7 +618,39 @@ def assert_same_path_generation_consumers_released(window):
     assert not window.monitor.isActive()
 
 
-def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
+@pytest.fixture
+def checked_plot_wait(monkeypatch):
+    """Surface GUI errors in pytest instead of blocking inside a modal dialog."""
+    from qplot.windows._error_dialog import ErrorDialog
+
+    errors = []
+
+    def capture_error(dialog):
+        errors.append(dialog._copy_text)
+        dialog.accept()
+        return qtw.QDialog.DialogCode.Accepted
+
+    def check_errors():
+        assert not errors, "Unexpected GUI errors:\n\n" + "\n\n".join(errors)
+
+    def checked_wait(predicate, timeout=12):
+        def checked_predicate():
+            check_errors()
+            return predicate()
+
+        wait_for(checked_predicate, timeout=timeout)
+        check_errors()
+
+    monkeypatch.setattr(ErrorDialog, "exec", capture_error)
+    yield checked_wait
+    check_errors()
+
+
+@pytest.mark.timeout(90, method="thread")
+def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch, checked_plot_wait):
+    # Thread-mode timeout prints every thread's stack even if Qt blocks while
+    # draining events, where the predicate timeout cannot regain control.
+    wait_for = checked_plot_wait
     configure_temp_qplot(monkeypatch, tmp_path)
     database_path = Path(tmp_path) / "qplot-integration.db"
     line_run_id, heatmap_run_id = build_synthetic_database(database_path)

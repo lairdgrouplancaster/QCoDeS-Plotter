@@ -97,7 +97,7 @@ def test_real_qcodes_coordinate_validity_agrees_across_loading_paths(
             assert_result(sql_worker, raw_expected)
 
             worker = make_worker(operations=operations)
-            with patch.object(worker, "for_unshaped_2d", wraps=worker.for_unshaped_2d) as unshaped:
+            with patch.object(worker.processing, "for_unshaped_2d", wraps=worker.processing.for_unshaped_2d) as unshaped:
                 run_worker(worker)
                 if shaped:
                     # Missing coordinates must not disable the shaped fast path.
@@ -137,7 +137,7 @@ def test_shaped_coordinate_masking_is_cancellable_without_modifying_source(phase
         "signal": np.array([[0, 999, 2], [10, 11, 12]], dtype=float),
     }
     original = {name: values.copy() for name, values in data.items()}
-    shaped_grid = worker._shaped_data_grid
+    shaped_grid = worker.processing._shaped_data_grid
 
     def cancel_during_grid(*args):
         calls = 0
@@ -156,8 +156,8 @@ def test_shaped_coordinate_masking_is_cancellable_without_modifying_source(phase
                           side_effect=cancel_after_call):
             return shaped_grid(*args)
 
-    with patch.object(worker, "_shaped_data_grid", side_effect=cancel_during_grid):
+    with patch.object(worker.processing, "_shaped_data_grid", side_effect=cancel_during_grid):
         with pytest.raises(PlotWorkCancelled):
-            worker.for_shaped_2d(data, data["signal"])
+            worker.processing.for_shaped_2d(data, data["signal"])
     for name, values in data.items():
         np.testing.assert_array_equal(values, original[name])

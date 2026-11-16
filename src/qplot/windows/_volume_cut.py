@@ -63,10 +63,10 @@ class CutLoader(loader):
                     )
             self.axis_param = {"x": self.source_params[self.selection.varying], "y": copy(value_param)}
             self.display_param = copy(value_param)
-            operated = self.do_operations()
+            operated = self.processing.do_operations()
             if operated is not None:
                 self.axis_data = {"x": operated[0], "y": operated[1]}
-                self._apply_operation_metadata()
+                self.processing._apply_operation_metadata()
             self.dataset_completed = self.volume.completed
             self.loaded_from_sql_heatmap = True
             self.dataset_length_at_start = self.volume.revision
@@ -470,12 +470,12 @@ class FrozenLoader(loader):
                 )
             if original.dataGrid is not None:
                 self.dataGrid = (original.dataGrid.T if transposed else original.dataGrid).copy()
-            operated = self.do_operations()
+            operated = self.processing.do_operations()
             if operated is not None:
                 self.axis_data = {"x": operated[0], "y": operated[1]}
                 if original.dataGrid is not None:
                     self.dataGrid = operated[2]
-                self._apply_operation_metadata()
+                self.processing._apply_operation_metadata()
             if self.complex_samples is not None and original.dataGrid is not None:
                 self.complex_samples = self.complex_samples.bind_grid(
                     self.axis_data["x"], self.axis_data["y"], check=self._check_cancelled,

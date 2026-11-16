@@ -1,0 +1,1662 @@
+"""Array normalisation, plot geometry and transforms without Qt or database access.
+
+The worker supplies captured arrays/metadata and cooperative cancellation. This
+component owns numerical working state; only completed records leave it.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Callable, Mapping
+from copy import copy
+from dataclasses import dataclass
+from typing import Any
+
+import numpy as np
+
+from qplot.datahandling.complex_data import (
+    ComplexSamples,
+    complex_parameter,
+    complex_values,
+    contains_complex,
+    project_complex,
+)
+from qplot.datahandling.numeric_samples import (
+    concatenate_record_samples,
+    integer_preserving_dtype,
+    numeric_isfinite,
+    numeric_isnan,
+)
+from qplot.tools.finite_means import FiniteBinMeans
+from qplot.tools.general import data2matrix
+from qplot.tools.heatmap_geometry import (
+    MAX_AGGREGATED_HEATMAP_CELLS,
+    bounded_grid_shape,
+    canonicalize_heatmap_data,
+)
+from qplot.tools.operation_registry import OperationCall, OperationExecutionError
+
+MAX_FULL_HEATMAP_POINTS = 2_000_000
+MAX_SQL_HEATMAP_GRID_SIDE = None
+MAX_SQL_HEATMAP_GRID_CELLS = 250_000
+SQL_HEATMAP_SAMPLES_PER_CELL = 4
+CANCELLATION_CHUNK_SIZE = 65_536
+MAX_TRUSTED_FULL_PLOT_DECODE_BYTES = 1024 * 1024 * 1024
+
+
+class PlotWorkCancelled(InterruptedError):
+    """Unwind numerical work without publishing a partial result."""
+
+
+@dataclass(frozen=True)
+class PlotProcessingSpec:
+    """Captured parameter metadata and numerical policy, with no live source."""
+
+    param: Any
+    parameters: dict[str, Any]
+    axes: dict[str, str]
+    operations: list
+    complex_mode: str = "magnitude"
+    max_full_heatmap_points: int = MAX_FULL_HEATMAP_POINTS
+    max_heatmap_grid_cells: int = MAX_SQL_HEATMAP_GRID_CELLS
+    max_heatmap_grid_side: int | None = MAX_SQL_HEATMAP_GRID_SIDE
+    heatmap_axis_ranges: dict | None = None
+    heatmap_full_axis_ranges: dict | None = None
+    chunk_size: int = CANCELLATION_CHUNK_SIZE
+    max_decode_bytes: int = MAX_TRUSTED_FULL_PLOT_DECODE_BYTES
+
+
+@dataclass(frozen=True)
+class PlotProcessingInput:
+    """One acquired parameter tree and its captured extent."""
+
+    data: Mapping[str, np.ndarray]
+    write_status: Mapping[str, int | None]
+    planned_shape: tuple[int, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PlotProcessingResult:
+    """Complete numerical output. Mapping snapshots retain existing array buffers."""
+
+    axis_data: dict[str, np.ndarray]
+    axis_param: dict[str, Any]
+    dataGrid: np.ndarray | None
+    display_param: Any
+    loaded_point_count: int | None
+    sampled_heatmap_source: bool
+    aggregated_heatmap_source: bool
+    heatmap_full_resolution: bool
+    heatmap_downsample_info: dict[str, Any] | None
+    heatmap_source_grid_shape: tuple[int, int] | None
+    heatmap_source_axis_ranges: dict | None
+    complex_samples: ComplexSamples | None
+
+
+class PlotProcessor:
+    """Own a single plot's cancellable numerical calculations and geometry."""
+
+    axis_data: dict[str, np.ndarray]
+    axis_param: dict[str, Any]
+    dataGrid: np.ndarray
+    _spatial_heatmap_axes: tuple[np.ndarray, np.ndarray]
+    _spatial_heatmap_indices: tuple[np.ndarray, np.ndarray]
+    _spatial_heatmap_source_unique_counts: tuple[int, int]
+
+    def __init__(
+        self, spec: PlotProcessingSpec, *, cancelled: Callable[[], bool]
+    ) -> None:
+        self.param = spec.param
+        self.param_dict = dict(spec.parameters)
+        self.axes_dict = dict(spec.axes)
+        self.operations = list(spec.operations)
+        self.complex_mode = spec.complex_mode
+        self.display_param = copy(spec.param)
+        self.max_full_heatmap_points = max(1, int(spec.max_full_heatmap_points))
+        self.max_heatmap_grid_cells = max(1, int(spec.max_heatmap_grid_cells))
+        self.max_heatmap_grid_side = (
+            self.max_heatmap_grid_cells
+            if spec.max_heatmap_grid_side is None
+            else max(1, int(spec.max_heatmap_grid_side))
+        )
+        self.heatmap_axis_ranges = spec.heatmap_axis_ranges
+        self.heatmap_full_axis_ranges = spec.heatmap_full_axis_ranges
+        self.chunk_size = spec.chunk_size
+        self.max_decode_bytes = spec.max_decode_bytes
+        self.is_cancelled = cancelled
+        self.planned_shape: tuple[int, ...] | None = None
+        self.complex_samples: ComplexSamples | None = None
+        self._complex_parts: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
+        self._complex_parts_bytes = 0
+        self.sampled_heatmap_source = False
+        self.aggregated_heatmap_source = False
+        self.loaded_point_count: int | None = None
+        self.heatmap_downsample_info: dict[str, Any] | None = None
+        self.heatmap_full_resolution = False
+        self.heatmap_source_grid_shape: tuple[int, int] | None = None
+        self.heatmap_source_axis_ranges: dict | None = None
+        self._heatmap_aggregated_source_rows: int | None = None
+        self._heatmap_source_info: dict[str, Any] = {}
+        self._heatmap_grid_info: dict[str, Any] = {}
+        self._array_heatmap_cardinality_exact: tuple[bool, bool] = (True, True)
+
+    def _check_cancelled(self) -> None:
+        if self.is_cancelled():
+            raise PlotWorkCancelled("Plot load cancelled.")
+
+    def prepare(self, acquired_input: PlotProcessingInput) -> None:
+        """Build private plot geometry from captured measurement arrays."""
+        self.planned_shape = acquired_input.planned_shape
+        data = self._normalise_array_records(acquired_input.data)
+        values = data[self.param.name]
+        acquired = self._acquired_sample_mask(values, acquired_input.write_status)
+        if len(self.param.depends_on_) == 2 and contains_complex(
+            values, check=self._check_cancelled
+        ):
+            data, values = self._project_heatmap_data(data, values, acquired)
+        self.loaded_point_count = int(np.count_nonzero(acquired))
+        if len(self.param.depends_on_) == 1:
+            self.axis_data, self.axis_param = self.for_1d(
+                data, acquired & ~numeric_isnan(values)
+            )
+        elif len(values.shape) == 2:
+            self.axis_data, self.axis_param, self.dataGrid = self.for_shaped_2d(
+                data, values, acquired=acquired
+            )
+        else:
+            self.axis_data, self.axis_param, self.dataGrid = self.for_unshaped_2d(
+                data,
+                acquired & ~numeric_isnan(values),
+                values,
+            )
+
+    def process(self, acquired_input: PlotProcessingInput) -> PlotProcessingResult:
+        """Process captured arrays without constructing a worker, Qt or a reader."""
+        self.prepare(acquired_input)
+        return self.finish()
+
+    def finish(self) -> PlotProcessingResult:
+        """Transform prepared geometry, validate it and return a complete result."""
+        self._check_cancelled()
+        # Operations are an ordered, atomic pipeline. Large heatmaps are
+        # reduced for display only after this pipeline has completed.
+        # Normalize heatmap geometry first so coordinate-dependent
+        # operations see spatial order rather than acquisition order.
+        if self.operations:
+            self._canonicalize_heatmap()
+            self._check_cancelled()
+        results = self.do_operations()
+        if results is not None:
+            (self.axis_data["x"], self.axis_data["y"]) = results[:2]
+            if hasattr(self, "dataGrid"):
+                self.dataGrid = results[2]
+            self._apply_operation_metadata()
+
+        self._check_cancelled()
+        if len(self.param.depends_on_) == 1:
+            # Operations can replace either axis. Validate their output
+            # before finished(True) permits any GUI/cache publication.
+            for axis in ("x", "y"):
+                self._real_line_values(
+                    self.axis_data[axis],
+                    self.axis_param[axis].name,
+                )
+                self._check_cancelled()
+        self._aggregate_operated_heatmap_if_needed()
+        self._check_cancelled()
+        # Operations may return replacement coordinates or grids, so keep
+        # the final geometry validation and normalization as well.
+        self._canonicalize_heatmap()
+        self._check_cancelled()
+        self.heatmap_full_resolution = bool(
+            len(self.param.depends_on_) == 2
+            and self.heatmap_downsample_info is None
+            and not self.sampled_heatmap_source
+            and not self.aggregated_heatmap_source
+        )
+        parts = getattr(self, "_complex_parts", None)
+        if parts:
+            xs, ys, values = (
+                concatenate_record_samples([part[i] for part in parts])
+                for i in range(3)
+            )
+            self.complex_samples = ComplexSamples(
+                (xs, ys),
+                tuple(self.param_dict[self.axes_dict[axis]] for axis in ("x", "y")),
+                values,
+                self.complex_mode,
+            )
+            self._complex_parts = []
+        if (
+            self.complex_samples is not None
+            and len(self.complex_samples.coordinates) == 2
+        ):
+            self.complex_samples = self.complex_samples.bind_grid(
+                self.axis_data["x"],
+                self.axis_data["y"],
+                check=self._check_cancelled,
+            )
+        return self.snapshot()
+
+    def snapshot(self) -> PlotProcessingResult:
+        """Capture numerical output without copying samples or changing writeability."""
+        return PlotProcessingResult(
+            axis_data=dict(self.axis_data),
+            axis_param=dict(self.axis_param),
+            dataGrid=getattr(self, "dataGrid", None),
+            display_param=self.display_param,
+            loaded_point_count=self.loaded_point_count,
+            sampled_heatmap_source=self.sampled_heatmap_source,
+            aggregated_heatmap_source=self.aggregated_heatmap_source,
+            heatmap_full_resolution=self.heatmap_full_resolution,
+            heatmap_downsample_info=(
+                dict(self.heatmap_downsample_info)
+                if self.heatmap_downsample_info is not None
+                else None
+            ),
+            heatmap_source_grid_shape=self.heatmap_source_grid_shape,
+            heatmap_source_axis_ranges=(
+                dict(self.heatmap_source_axis_ranges)
+                if self.heatmap_source_axis_ranges is not None
+                else None
+            ),
+            complex_samples=self.complex_samples,
+        )
+
+    def _acquired_sample_mask(self, values, write_status):
+        """Separate acquired samples from dtype-dependent planned padding."""
+        self._check_cancelled()
+        if self.planned_shape is None:
+            # Unshaped caches have no planned padding; their write status
+            # does not count all acquired samples.
+            acquired = np.ones(values.shape, dtype=bool)
+        else:
+            acquired = np.zeros(values.shape, dtype=bool)
+            count = write_status.get(self.param.name)
+            if count is not None:
+                acquired.ravel()[:count] = True
+        self._check_cancelled()
+        return acquired
+
+    def _any_object_sample(self, values, predicate):
+        """Inspect exact object cells without delaying a cancelled load."""
+        for index, value in enumerate(values.flat):
+            if index % 1024 == 0:
+                self._check_cancelled()
+            if predicate(value):
+                return True
+        self._check_cancelled()
+        return False
+
+    def _normalise_array_records(self, data):
+        """Flatten ragged QCoDeS records together, without touching the cache."""
+
+        heatmap = len(self.param.depends_on_) > 1
+        setpoints = (
+            [self.axes_dict[axis] for axis in ("x", "y")]
+            if heatmap
+            else self.param.depends_on_
+        )
+        names = list(dict.fromkeys((self.param.name, *setpoints)))
+        columns = [np.asarray(data[name]) for name in names]
+        if not any(
+            column.dtype.kind == "O" and self._any_object_sample(column, np.ndim)
+            for column in columns
+        ):
+            return data
+
+        # Nested object cells represent acquisition records. Dense numeric
+        # object cells instead preserve mixed signed/unsigned sample values.
+        # Other columns may still hold one scalar or a dense array per record.
+        record_count = len(columns[0])
+        if any(column.ndim == 0 or len(column) != record_count for column in columns):
+            raise ValueError("Setpoint and measurement record counts do not match.")
+
+        def records():
+            for index in range(record_count):
+                self._check_cancelled()
+                values = [np.asarray(column[index]) for column in columns]
+                size = values[0].size
+                for name, value in zip(names, values, strict=True):
+                    if name == self.param.name:
+                        pass  # Measurement components are selected after record normalisation.
+                    elif heatmap:
+                        self._real_heatmap_values(
+                            value,
+                            name,
+                            coordinate=name != self.param.name,
+                        )
+                    else:
+                        self._real_line_values(value, name)
+                    if value.dtype.kind not in "biufcO":
+                        raise ValueError("Array records must contain numeric values.")
+                    if value.size not in (1, size):
+                        raise ValueError(
+                            "Setpoint and measurement shapes do not match."
+                        )
+                yield values, size
+
+        # Count actual samples first: padding to the longest record can grow
+        # quadratically. Reject complex records above before allocating or
+        # converting any numeric output; the raw cache remains untouched.
+        total = 0
+        dtypes: list[np.dtype | None] = [None for _ in names]
+        for values, size in records():
+            total += size
+            dtypes = [
+                value.dtype
+                if dtype is None
+                else integer_preserving_dtype((dtype, value.dtype))
+                for dtype, value in zip(dtypes, values, strict=True)
+            ]
+        self._check_cancelled()
+        if heatmap:
+            self._requires_bounded_heatmap(total)
+        normalised = {
+            name: np.empty(total, dtype=dtype)
+            for name, dtype in zip(names, dtypes, strict=True)
+        }
+        offset = 0
+        chunk_size = max(1, self.chunk_size)
+        for values, size in records():
+            for start in range(0, size, chunk_size):
+                stop = min(size, start + chunk_size)
+                for name, value in zip(names, values, strict=True):
+                    self._check_cancelled()
+                    # flat slices use logical C order and copy at most one
+                    # chunk, even when a record has Fortran storage order.
+                    normalised[name][offset + start : offset + stop] = (
+                        value.item() if value.size == 1 else value.flat[start:stop]
+                    )
+            offset += size
+        self._check_cancelled()
+        return normalised
+
+    def _canonicalize_heatmap(self) -> None:
+        """Keep worker indices consistent with increasing heatmap axes."""
+
+        self._check_cancelled()
+        if not hasattr(self, "dataGrid"):
+            return
+        x_data = np.asarray(self.axis_data.get("x", []))
+        self._check_cancelled()
+        y_data = np.asarray(self.axis_data.get("y", []))
+        self._check_cancelled()
+        data_grid = np.asarray(self.dataGrid)
+        if x_data.size == 0 or y_data.size == 0 or data_grid.size == 0:
+            return
+
+        x_data, y_data, data_grid = canonicalize_heatmap_data(
+            x_data,
+            y_data,
+            data_grid,
+        )
+        self._check_cancelled()
+        self.axis_data["x"] = x_data
+        self.axis_data["y"] = y_data
+        self.dataGrid = data_grid
+
+    def _requires_bounded_heatmap(self, point_count):
+        """Reject full-resolution operations before allocating a large grid."""
+
+        self._check_cancelled()
+        limit = max(
+            1,
+            int(
+                getattr(
+                    self,
+                    "max_full_heatmap_points",
+                    MAX_FULL_HEATMAP_POINTS,
+                )
+            ),
+        )
+        requires_bounded_load = point_count > limit
+        if requires_bounded_load and getattr(self, "operations", None):
+            raise OperationExecutionError(
+                f"This heatmap requires {point_count:,} full-resolution points, "
+                f"which exceeds the full-resolution operation limit of {limit:,}. "
+                "Disable operations or increase max_full_heatmap_points."
+            )
+        return requires_bounded_load
+
+    def _reject_complex_heatmap(self, parameter_name=None, *, coordinate=False):
+        if parameter_name is None:
+            parameter_name = getattr(self.param, "name", "measurement")
+        detail = "a coordinate" if coordinate else "measurement data"
+        raise ValueError(
+            "Complex-valued heatmaps are not supported: "
+            f"parameter '{parameter_name}' contains {detail}."
+        )
+
+    def _validate_heatmap_parameter_types(self):
+        """Reject declared complex columns before any SQLite arithmetic."""
+
+        for axis in ("x", "y"):
+            name = self.axes_dict[axis]
+            if getattr(self.param_dict[name], "type", None) == "complex":
+                self._reject_complex_heatmap(name, coordinate=True)
+
+    def _real_heatmap_values(self, values, parameter_name, *, coordinate=False):
+        """Return an array only when conversion to float cannot lose phase."""
+
+        result = np.asarray(values)
+        if np.iscomplexobj(result) or (
+            result.dtype.kind == "O"
+            and self._any_object_sample(result, np.iscomplexobj)
+        ):
+            self._reject_complex_heatmap(
+                parameter_name,
+                coordinate=coordinate,
+            )
+        if coordinate and result.dtype.kind == "O":
+            # Mixed record dtypes need Python's exact int/float comparisons;
+            # NumPy scalar comparisons may promote a large integer to float.
+            result = np.frompyfunc(
+                lambda value: value.item() if isinstance(value, np.generic) else value,
+                1,
+                1,
+            )(result)
+        return result
+
+    def _arrays_from_values(self, x_values, y_values, z_values):
+        self._check_cancelled()
+        x_values = self._real_heatmap_values(
+            x_values,
+            self.axes_dict["x"],
+            coordinate=True,
+        )
+        self._check_cancelled()
+        y_values = self._real_heatmap_values(
+            y_values,
+            self.axes_dict["y"],
+            coordinate=True,
+        )
+        self._check_cancelled()
+        complex_measurement = contains_complex(z_values, check=self._check_cancelled)
+        z_values = (
+            complex_values(z_values)
+            if complex_measurement
+            else self._real_heatmap_values(
+                z_values,
+                getattr(self.param, "name", "measurement"),
+            )
+        )
+        # Broadcast within a decoded record/chunk, before flattening or
+        # masking, so a scalar slow setpoint accompanies every array sample.
+        x_values, y_values, z_values = np.broadcast_arrays(x_values, y_values, z_values)
+        # Keep source coordinates exact until complete records are assembled
+        # and their float representation can be checked for merged positions.
+        x_data = np.asarray(x_values).reshape(-1)
+        self._check_cancelled()
+        y_data = np.asarray(y_values).reshape(-1)
+        self._check_cancelled()
+        z_data = np.asarray(z_values).reshape(-1)
+        self._check_cancelled()
+        finite = (
+            numeric_isfinite(x_data)
+            & numeric_isfinite(y_data)
+            & numeric_isfinite(z_data)
+        )
+        self._check_cancelled()
+
+        xs, ys, zs = x_data[finite], y_data[finite], z_data[finite]
+        if complex_measurement:
+            mode = getattr(self, "complex_mode", "magnitude")
+            parts = self._complex_parts
+            size = self._complex_parts_bytes + xs.nbytes + ys.nbytes + zs.nbytes
+            if size > self.max_decode_bytes:
+                raise ValueError(
+                    "Recorded complex cursor samples exceed the 1 GiB decoding budget."
+                )
+            self._complex_parts_bytes = size
+            parts.append((xs.copy(), ys.copy(), zs.copy()))
+            self.display_param = complex_parameter(self.param, mode)
+            return xs, ys, project_complex(zs, mode)
+        return xs, ys, zs
+
+    @staticmethod
+    def _coordinate_conversion_may_round(values):
+        if values.dtype.kind == "O" or values.dtype.itemsize > 8:
+            return True
+        if values.dtype.kind in "iu" and values.dtype.itemsize == 8:
+            return bool(
+                np.any(values > 2**53)
+                or (values.dtype.kind == "i" and np.any(values < -(2**53)))
+            )
+        return False
+
+    def _float_heatmap_coordinates(self, values, parameter_name):
+        """Reject loss of recorded coordinates before grouping or operations."""
+        self._check_cancelled()
+        values = np.asarray(values)
+        if values.dtype.kind == "O":
+            # Exact per-sample conversion also proves that distinct recorded
+            # positions cannot collapse. Avoid sorting the entire object array
+            # before cancellation can be observed on mixed QCoDeS records.
+            converted = np.empty(values.shape, dtype=float)
+            for index, original in enumerate(values.flat):
+                if index % 1024 == 0:
+                    self._check_cancelled()
+                original = (
+                    original.item() if isinstance(original, np.generic) else original
+                )
+                display = float(original)
+                if np.isfinite(display) and original != display:
+                    raise ValueError(
+                        f"Heatmap coordinate precision is insufficient: parameter "
+                        f"'{parameter_name}' cannot be represented exactly as "
+                        "heatmap coordinates without rounding or merging distinct values."
+                    )
+                converted.flat[index] = display
+            self._check_cancelled()
+            return converted
+        converted = np.asarray(values, dtype=float)
+        if self._coordinate_conversion_may_round(values):
+            unique = np.unique(values[numeric_isfinite(values)])
+            self._check_cancelled()
+            displayed = np.asarray(unique, dtype=float)
+            if displayed.size > 1 and np.any(displayed[1:] == displayed[:-1]):
+                raise ValueError(
+                    f"Heatmap coordinate precision is insufficient: distinct values "
+                    f"of parameter '{parameter_name}' collapse at floating-point precision."
+                )
+            # Distinct cells can remain distinct while every centre rounds.
+            # That would silently change operations, cursor values and CSV.
+            # Require lossless conversion even before streaming sets saturate.
+            for index, (original, display) in enumerate(
+                zip(unique, displayed, strict=True)
+            ):
+                if index % 1024 == 0:
+                    self._check_cancelled()
+                original = (
+                    original.item() if isinstance(original, np.generic) else original
+                )
+                if original != float(display):
+                    raise ValueError(
+                        f"Heatmap coordinate precision is insufficient: parameter "
+                        f"'{parameter_name}' cannot be represented exactly as "
+                        "heatmap coordinates."
+                    )
+        self._check_cancelled()
+        return converted
+
+    def _heatmap_grid_from_arrays(
+        self,
+        x_data,
+        y_data,
+        z_data,
+        *,
+        max_cells=None,
+    ):
+        self._check_cancelled()
+        axes = getattr(self, "axes_dict", {})
+        x_data = self._float_heatmap_coordinates(x_data, axes.get("x", "x"))
+        y_data = self._float_heatmap_coordinates(y_data, axes.get("y", "y"))
+        # Keep recorded values through accumulation and any exact replay.
+        # The bounded display means become floats only after division.
+        z_data = np.asarray(z_data)
+        display_limit = max(
+            1,
+            int(
+                getattr(
+                    self,
+                    "max_heatmap_grid_cells",
+                    MAX_SQL_HEATMAP_GRID_CELLS,
+                )
+            ),
+        )
+        max_cells = (
+            display_limit
+            if max_cells is None
+            else max(1, min(int(max_cells), display_limit))
+        )
+        if z_data.size == 0:
+            self._heatmap_grid_info = {
+                "unique_x_count": 0,
+                "unique_y_count": 0,
+                "exact_cell_count": 0,
+                "grid_columns": 0,
+                "grid_rows": 0,
+                "grid_cell_count": 0,
+                "grid_binned": False,
+                "grid_cell_limit": max_cells,
+                "empty_bins_filled": False,
+            }
+            return (
+                np.array([], dtype=float),
+                np.array([], dtype=float),
+                np.empty((0, 0), dtype=float),
+            )
+
+        unique_x = np.unique(x_data)
+        self._check_cancelled()
+        unique_y = np.unique(y_data)
+        self._check_cancelled()
+        exact_cells = unique_x.size * unique_y.size
+        source_grid_shape = getattr(self, "heatmap_source_grid_shape", None)
+        if source_grid_shape is None:
+            if getattr(self, "aggregated_heatmap_source", False):
+                source_x_count, source_y_count = (
+                    self._spatial_heatmap_source_unique_counts
+                )
+                source_grid_rows = int(source_y_count)
+                source_grid_columns = int(source_x_count)
+            else:
+                source_grid_rows = int(unique_y.size)
+                source_grid_columns = int(unique_x.size)
+        else:
+            source_grid_rows, source_grid_columns = source_grid_shape
+        source_grid_cell_count = int(source_grid_rows * source_grid_columns)
+        if getattr(self, "aggregated_heatmap_source", False):
+            return self._spatial_aggregation_grid(
+                z_data,
+                source_grid_rows,
+                source_grid_columns,
+            )
+
+        if not getattr(
+            self, "sampled_heatmap_source", False
+        ) and self._bounded_grid_shape(
+            unique_x.size,
+            unique_y.size,
+            max_cells=max_cells,
+        ) == (unique_x.size, unique_y.size):
+            x_axis, y_axis, data_grid = self._unique_heatmap_grid(
+                x_data,
+                y_data,
+                z_data,
+                unique_x,
+                unique_y,
+            )
+            self._heatmap_grid_info = {
+                "unique_x_count": int(unique_x.size),
+                "unique_y_count": int(unique_y.size),
+                "exact_cell_count": int(exact_cells),
+                "source_grid_columns": int(source_grid_columns),
+                "source_grid_rows": int(source_grid_rows),
+                "source_grid_cell_count": int(source_grid_cell_count),
+                "grid_columns": int(unique_x.size),
+                "grid_rows": int(unique_y.size),
+                "grid_cell_count": int(exact_cells),
+                "grid_binned": False,
+                "grid_cell_limit": max_cells,
+                "empty_bins_filled": False,
+            }
+            return x_axis, y_axis, data_grid
+
+        if getattr(self, "sampled_heatmap_source", False):
+            max_cells = min(
+                max_cells,
+                max(1, int(z_data.size) // SQL_HEATMAP_SAMPLES_PER_CELL),
+            )
+            (
+                x_axis,
+                y_axis,
+                data_grid,
+                empty_bins_filled,
+            ) = self._sampled_overview_grid(
+                x_data,
+                y_data,
+                z_data,
+                unique_x,
+                unique_y,
+                max_cells=max_cells,
+            )
+        else:
+            x_axis, y_axis, data_grid = self._binned_heatmap_grid(
+                x_data,
+                y_data,
+                z_data,
+                unique_x,
+                unique_y,
+                max_cells=max_cells,
+            )
+            empty_bins_filled = False
+        self._heatmap_grid_info = {
+            "unique_x_count": int(unique_x.size),
+            "unique_y_count": int(unique_y.size),
+            "exact_cell_count": int(exact_cells),
+            "source_grid_columns": int(source_grid_columns),
+            "source_grid_rows": int(source_grid_rows),
+            "source_grid_cell_count": int(source_grid_cell_count),
+            "grid_columns": int(x_axis.size),
+            "grid_rows": int(y_axis.size),
+            "grid_cell_count": int(data_grid.size),
+            "grid_binned": True,
+            "grid_cell_limit": int(max_cells),
+            "empty_bins_filled": empty_bins_filled,
+        }
+        return x_axis, y_axis, data_grid
+
+    def _spatial_aggregation_grid(
+        self,
+        z_data,
+        source_grid_rows,
+        source_grid_columns,
+    ):
+        self._check_cancelled()
+        x_axis, y_axis = self._spatial_heatmap_axes
+        x_indices, y_indices = self._spatial_heatmap_indices
+        data_grid = np.full(
+            (y_axis.size, x_axis.size),
+            np.nan,
+            dtype=float,
+        )
+        data_grid[y_indices, x_indices] = z_data
+        self._check_cancelled()
+
+        source_x_count, source_y_count = self._spatial_heatmap_source_unique_counts
+        source_grid_cell_count = int(source_grid_rows * source_grid_columns)
+        self._heatmap_grid_info = {
+            "unique_x_count": int(source_x_count),
+            "unique_y_count": int(source_y_count),
+            "exact_cell_count": int(source_x_count * source_y_count),
+            "source_grid_columns": int(source_grid_columns),
+            "source_grid_rows": int(source_grid_rows),
+            "source_grid_cell_count": source_grid_cell_count,
+            "grid_columns": int(x_axis.size),
+            "grid_rows": int(y_axis.size),
+            "grid_cell_count": int(data_grid.size),
+            "grid_binned": (
+                x_axis.size < source_x_count or y_axis.size < source_y_count
+            ),
+            "grid_cell_limit": getattr(
+                self,
+                "max_heatmap_grid_cells",
+                MAX_SQL_HEATMAP_GRID_CELLS,
+            ),
+            # Spatial aggregation averages only observations assigned to each
+            # cell.  Empty cells represent coordinate pairs that were never
+            # measured and must remain missing.
+            "empty_bins_filled": False,
+        }
+        # Saturated array axes carry only a lower cardinality bound for
+        # choosing bins. Do not present that bound as an exact source size.
+        cardinality_exact = getattr(
+            self, "_array_heatmap_cardinality_exact", (True, True)
+        )
+        for axis, dimension, is_exact in zip(
+            ("x", "y"), ("columns", "rows"), cardinality_exact, strict=True
+        ):
+            if not is_exact:
+                self._heatmap_grid_info[f"unique_{axis}_count"] = None
+                self._heatmap_grid_info["exact_cell_count"] = None
+                if self.heatmap_source_grid_shape is None:
+                    self._heatmap_grid_info[f"source_grid_{dimension}"] = None
+                    self._heatmap_grid_info["source_grid_cell_count"] = None
+        return x_axis, y_axis, data_grid
+
+    def _heatmap_downsample_info(self):
+        source_info = getattr(self, "_heatmap_source_info", None) or {}
+        grid_info = getattr(self, "_heatmap_grid_info", None) or {}
+        source_sampled = bool(source_info.get("sampled", False))
+        source_aggregated = bool(source_info.get("aggregated", False))
+        grid_reduced = bool(grid_info.get("grid_binned", False))
+        source_grid_columns = grid_info.get("source_grid_columns")
+        source_grid_rows = grid_info.get("source_grid_rows")
+        grid_columns = grid_info.get("grid_columns")
+        grid_rows = grid_info.get("grid_rows")
+        if (
+            source_grid_columns is not None
+            and source_grid_rows is not None
+            and grid_columns is not None
+            and grid_rows is not None
+        ):
+            grid_reduced = grid_reduced or (
+                int(grid_columns) < int(source_grid_columns)
+                or int(grid_rows) < int(source_grid_rows)
+            )
+        if not source_sampled and not source_aggregated and not grid_reduced:
+            return None
+
+        return {
+            "source_row_count": source_info.get("row_count"),
+            "estimated_range_rows": source_info.get("estimated_range_rows"),
+            "loaded_point_count": getattr(self, "loaded_point_count", None),
+            "source_sampled": source_sampled,
+            "source_aggregated": source_aggregated,
+            "aggregated_source_row_count": getattr(
+                self,
+                "_heatmap_aggregated_source_rows",
+                None,
+            ),
+            "source_sample_limit": source_info.get("sample_limit"),
+            "source_sample_stride": source_info.get("sample_stride"),
+            "source_sample_strategy": (
+                source_info.get("strategy") if source_sampled else None
+            ),
+            "source_aggregation_strategy": (
+                source_info.get("strategy") if source_aggregated else None
+            ),
+            "axis_ranges": source_info.get("axis_ranges"),
+            "unique_x_count": grid_info.get("unique_x_count"),
+            "unique_y_count": grid_info.get("unique_y_count"),
+            "exact_cell_count": grid_info.get("exact_cell_count"),
+            "source_grid_columns": source_grid_columns,
+            "source_grid_rows": source_grid_rows,
+            "source_grid_cell_count": grid_info.get("source_grid_cell_count"),
+            "source_dimensions_limited": (
+                not all(getattr(self, "_array_heatmap_cardinality_exact", (True, True)))
+                and (source_grid_columns is None or source_grid_rows is None)
+            ),
+            "grid_columns": grid_info.get("grid_columns"),
+            "grid_rows": grid_info.get("grid_rows"),
+            "grid_cell_count": grid_info.get("grid_cell_count"),
+            "grid_binned": grid_reduced,
+            "grid_cell_limit": grid_info.get("grid_cell_limit"),
+            "full_resolution_point_limit": getattr(
+                self,
+                "max_full_heatmap_points",
+                MAX_FULL_HEATMAP_POINTS,
+            ),
+            "empty_bins_filled": bool(grid_info.get("empty_bins_filled", False)),
+        }
+
+    def _heatmap_source_grid_shape_from_metadata(self):
+        try:
+            shape = self.planned_shape
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+        if shape is None:
+            return None
+
+        try:
+            dimensions = [int(dimension) for dimension in shape]
+        except (TypeError, ValueError):
+            return None
+
+        depends_on = list(getattr(self.param, "depends_on_", ()))
+        if len(dimensions) != len(depends_on):
+            return None
+
+        try:
+            x_dimension = depends_on.index(self.axes_dict["x"])
+            y_dimension = depends_on.index(self.axes_dict["y"])
+        except (KeyError, ValueError):
+            return None
+
+        if (
+            x_dimension >= len(dimensions)
+            or y_dimension >= len(dimensions)
+            or dimensions[x_dimension] <= 0
+            or dimensions[y_dimension] <= 0
+        ):
+            return None
+
+        return dimensions[y_dimension], dimensions[x_dimension]
+
+    def _unique_heatmap_grid(self, x_data, y_data, z_data, unique_x, unique_y):
+        self._check_cancelled()
+        x_index = np.searchsorted(unique_x, x_data)
+        self._check_cancelled()
+        y_index = np.searchsorted(unique_y, y_data)
+        means = FiniteBinMeans((unique_y.size, unique_x.size), self._check_cancelled)
+        for start in range(0, z_data.size, self.chunk_size):
+            self._check_cancelled()
+            stop = start + self.chunk_size
+            indices = (y_index[start:stop], x_index[start:stop])
+            means.add(indices, z_data[start:stop])
+        if means.begin_exact_replay():
+            for start in range(0, z_data.size, self.chunk_size):
+                self._check_cancelled()
+                stop = start + self.chunk_size
+                means.replay(
+                    (y_index[start:stop], x_index[start:stop]), z_data[start:stop]
+                )
+        data_grid = means.means()
+
+        return unique_x, unique_y, data_grid
+
+    def _binned_heatmap_grid(
+        self,
+        x_data,
+        y_data,
+        z_data,
+        unique_x,
+        unique_y,
+        max_cells=None,
+    ):
+        self._check_cancelled()
+        x_bins, y_bins = self._bounded_grid_shape(
+            unique_x.size,
+            unique_y.size,
+            max_cells=max_cells,
+        )
+        x_centres, x_index = self._heatmap_axis_indices(
+            x_data,
+            unique_x,
+            x_bins,
+            self._grid_axis_bounds("x"),
+        )
+        y_centres, y_index = self._heatmap_axis_indices(
+            y_data,
+            unique_y,
+            y_bins,
+            self._grid_axis_bounds("y"),
+        )
+        self._check_cancelled()
+
+        means = FiniteBinMeans((y_centres.size, x_centres.size), self._check_cancelled)
+        for start in range(0, z_data.size, self.chunk_size):
+            self._check_cancelled()
+            stop = start + self.chunk_size
+            indices = (y_index[start:stop], x_index[start:stop])
+            means.add(indices, z_data[start:stop])
+
+        if means.begin_exact_replay():
+            for start in range(0, z_data.size, self.chunk_size):
+                self._check_cancelled()
+                stop = start + self.chunk_size
+                means.replay(
+                    (y_index[start:stop], x_index[start:stop]), z_data[start:stop]
+                )
+
+        self._check_cancelled()
+        data_grid = means.means()
+
+        return x_centres, y_centres, data_grid
+
+    def _heatmap_axis_indices(self, values, unique_values, bin_count, bounds=None):
+        """Preserve an axis exactly unless its own cardinality needs binning."""
+
+        self._check_cancelled()
+        if unique_values.size <= bin_count:
+            indices = np.searchsorted(unique_values, values)
+            self._check_cancelled()
+            return unique_values, indices
+
+        return self._scaled_axis_indices(values, bin_count, bounds)
+
+    def _sampled_overview_grid(
+        self,
+        x_data,
+        y_data,
+        z_data,
+        unique_x,
+        unique_y,
+        *,
+        max_cells,
+    ):
+        """Build a sampled overview whose display-only gaps are interpolated."""
+
+        x_axis, y_axis, data_grid = self._binned_heatmap_grid(
+            x_data,
+            y_data,
+            z_data,
+            unique_x,
+            unique_y,
+            max_cells=max_cells,
+        )
+        empty_bins_filled = bool(
+            np.any(~np.isfinite(data_grid)) and np.any(np.isfinite(data_grid))
+        )
+        if empty_bins_filled:
+            data_grid = self._fill_empty_heatmap_bins(data_grid)
+
+        return x_axis, y_axis, data_grid, empty_bins_filled
+
+    def _fill_empty_heatmap_bins(self, data_grid):
+        self._check_cancelled()
+        if data_grid.size == 0 or np.all(np.isfinite(data_grid)):
+            return data_grid
+        if not np.any(np.isfinite(data_grid)):
+            return data_grid
+
+        filled = np.array(data_grid, dtype=float, copy=True)
+        row_positions = np.arange(filled.shape[0], dtype=float)
+        column_positions = np.arange(filled.shape[1], dtype=float)
+
+        for column in range(filled.shape[1]):
+            self._check_cancelled()
+            values = filled[:, column]
+            finite = np.isfinite(values)
+            if np.any(finite) and not np.all(finite):
+                values[~finite] = np.interp(
+                    row_positions[~finite],
+                    row_positions[finite],
+                    values[finite],
+                )
+
+        for row in range(filled.shape[0]):
+            self._check_cancelled()
+            values = filled[row, :]
+            finite = np.isfinite(values)
+            if np.any(finite) and not np.all(finite):
+                values[~finite] = np.interp(
+                    column_positions[~finite],
+                    column_positions[finite],
+                    values[finite],
+                )
+
+        return filled
+
+    def _grid_axis_bounds(self, axis):
+        ranges = getattr(self, "heatmap_axis_ranges", None) or {}
+        axis_range = ranges.get(axis)
+        if axis_range is None:
+            return None
+
+        try:
+            low, high = sorted(float(value) for value in axis_range)
+        except (TypeError, ValueError):
+            return None
+
+        if not (np.isfinite(low) and np.isfinite(high)) or low == high:
+            return None
+
+        return low, high
+
+    def _bounded_grid_shape(self, x_count, y_count, max_cells=None):
+        max_cells = (
+            getattr(self, "max_heatmap_grid_cells", MAX_SQL_HEATMAP_GRID_CELLS)
+            if max_cells is None
+            else int(max_cells)
+        )
+        max_side = getattr(
+            self,
+            "max_heatmap_grid_side",
+            MAX_SQL_HEATMAP_GRID_SIDE,
+        )
+        shape = bounded_grid_shape(
+            x_count, y_count, max_cells=max_cells, max_side=max_side
+        )
+        if shape[0] * shape[1] > MAX_AGGREGATED_HEATMAP_CELLS:
+            raise OperationExecutionError(
+                "The heatmap exceeds its bounded aggregation memory budget. "
+                "Reduce Maximum heatmap grid cells to at most 2,000,000."
+            )
+        return shape
+
+    def _scaled_axis_indices(self, values, bin_count, bounds=None):
+        self._check_cancelled()
+        if bounds is None:
+            lower = float(np.nanmin(values))
+            upper = float(np.nanmax(values))
+        else:
+            lower, upper = bounds
+
+        if not np.isfinite(lower) or not np.isfinite(upper):
+            return np.array([], dtype=float), np.array([], dtype=np.int64)
+
+        if lower == upper or bin_count <= 1:
+            return (
+                np.array([lower], dtype=float),
+                np.zeros(values.size, dtype=np.int64),
+            )
+
+        # Rebase in binary-scaled units: a sweep spanning both finite float
+        # extremes can overflow its raw span before the ratio is formed.
+        # Power-of-two scaling retains ordinary coordinates exactly and also
+        # keeps subnormal coordinate spans usable without reciprocal widths.
+        magnitude = max(abs(lower), abs(upper))
+        exponent = math.frexp(magnitude)[1] - 1
+        coordinate_scale = math.ldexp(1.0, max(-1022, min(1023, exponent)))
+        scaled_lower, scaled_upper = lower / coordinate_scale, upper / coordinate_scale
+        span = scaled_upper - scaled_lower
+        scaled = (values / coordinate_scale - scaled_lower) / span
+        self._check_cancelled()
+        indices = np.floor(scaled * bin_count).astype(np.int64)
+        self._check_cancelled()
+        indices = np.clip(indices, 0, bin_count - 1)
+        step = span / bin_count
+        centres = (
+            scaled_lower + (np.arange(bin_count, dtype=float) + 0.5) * step
+        ) * coordinate_scale
+
+        return centres, indices
+
+    def _reject_complex_line(self, parameter_name):
+        detail = (
+            "measurement data" if parameter_name == self.param.name else "a coordinate"
+        )
+        raise ValueError(
+            "Complex-valued 1D plots are not supported: "
+            f"parameter '{parameter_name}' contains {detail}."
+        )
+
+    def _real_line_values(self, values, parameter_name):
+        """Reject complex samples without converting or changing raw data."""
+
+        result = np.asarray(values)
+        if np.iscomplexobj(result) or (
+            result.dtype.kind == "O"
+            and self._any_object_sample(result, np.iscomplexobj)
+        ):
+            self._reject_complex_line(parameter_name)
+        return result
+
+    def for_1d(self, data, valid_rows):
+        self._check_cancelled()
+        axis_data = {}
+        axis_param = {}
+        x_name = self.axes_dict["x"]
+        y_name = (
+            self.param.name if x_name != self.param.name else self.param.depends_on_[0]
+        )
+        if contains_complex(data[self.param.name], check=self._check_cancelled):
+            setpoint_name = self.param.depends_on_[0]
+            setpoints = self._real_line_values(data[setpoint_name], setpoint_name)
+            values = complex_values(data[self.param.name])
+            if setpoints.shape != values.shape:
+                raise ValueError("1D setpoint and measurement shapes do not match")
+            valid = (
+                np.asarray(valid_rows)
+                & numeric_isfinite(setpoints)
+                & np.isfinite(values)
+            )
+            setpoints, values = setpoints[valid].ravel(), values[valid].ravel()
+            mode = getattr(self, "complex_mode", "magnitude")
+            self.complex_samples = ComplexSamples(
+                (setpoints,),
+                (self.param_dict[setpoint_name],),
+                values,
+                mode,
+            )
+            if mode == "imag_vs_real":
+                axis_data = {"x": values.real.copy(), "y": values.imag.copy()}
+                axis_param = {
+                    "x": complex_parameter(self.param, "real"),
+                    "y": complex_parameter(self.param, "imag"),
+                }
+            else:
+                projected = project_complex(values, mode)
+                measurement = complex_parameter(self.param, mode)
+                if x_name == self.param.name:
+                    axis_data = {"x": projected, "y": setpoints}
+                    axis_param = {"x": measurement, "y": self.param_dict[setpoint_name]}
+                else:
+                    axis_data = {"x": setpoints, "y": projected}
+                    axis_param = {"x": self.param_dict[setpoint_name], "y": measurement}
+            self.display_param = axis_param["y"]
+            return axis_data, axis_param
+        # Flatten both arrays with the same mask in QCoDeS record order.
+        # Sorting or uniquing either axis would break sample alignment.
+        x_values = self._real_line_values(data[x_name], x_name)
+        y_values = self._real_line_values(data[y_name], y_name)
+        if x_values.shape != y_values.shape:
+            raise ValueError("1D setpoint and measurement shapes do not match")
+        valid_rows = (
+            np.asarray(valid_rows) & ~numeric_isnan(x_values) & ~numeric_isnan(y_values)
+        )
+        axis_data["x"] = x_values[valid_rows].reshape(-1)
+        self._check_cancelled()
+        axis_param["x"] = self.param_dict[x_name]
+        axis_data["y"] = y_values[valid_rows].reshape(-1)
+        self._check_cancelled()
+        axis_param["y"] = self.param_dict[y_name]
+
+        return axis_data, axis_param
+
+    def _project_heatmap_data(self, data, values, acquired):
+        """Project private display data while retaining acquired source samples."""
+        values = complex_values(values)
+        names = tuple(self.axes_dict[axis] for axis in ("x", "y"))
+        coordinates = tuple(
+            self._real_heatmap_values(data[name], name, coordinate=True)
+            for name in names
+        )
+        xs, ys, values = np.broadcast_arrays(*coordinates, values)
+        valid = (
+            acquired & np.isfinite(values) & numeric_isfinite(xs) & numeric_isfinite(ys)
+        )
+        mode = getattr(self, "complex_mode", "magnitude")
+        self.complex_samples = ComplexSamples(
+            (xs[valid].ravel(), ys[valid].ravel()),
+            tuple(self.param_dict[name] for name in names),
+            values[valid].ravel(),
+            mode,
+        )
+        self.display_param = complex_parameter(self.param, mode)
+        projected = project_complex(values, mode)
+        return {**data, self.param.name: projected}, projected
+
+    def for_shaped_2d(self, data, depvarData, *, acquired=None):
+        self._check_cancelled()
+        axis_data = {}
+        axis_param = {}
+        axis_dimension = {}
+        valid = {}
+        shaped_axes_are_rectilinear = True
+        depvarData = self._real_heatmap_values(
+            depvarData,
+            getattr(self.param, "name", "measurement"),
+        )
+        if acquired is not None and not np.all(acquired):
+            # Plotting-only missing values preserve the planned shape and
+            # source dtypes. Boolean values fit exactly in float cells, while
+            # integers need object cells to preserve their precision with NaN.
+            # Never infer acquisition from zeros or completion.
+            missing_dtype = depvarData.dtype
+            if missing_dtype.kind in "iuO":
+                missing_dtype = object
+            elif missing_dtype.kind == "b":
+                missing_dtype = float
+            depvarData = depvarData.astype(
+                missing_dtype,
+                copy=True,
+            )
+            depvarData[~acquired] = np.nan
+        self._check_cancelled()
+
+        # Find correct data for each axis
+        for axis in ["x", "y"]:
+            self._check_cancelled()
+            name = self.axes_dict[axis]
+            param = self.param_dict[name]
+
+            param_data = self._real_heatmap_values(
+                data[name],
+                name,
+                coordinate=True,
+            )
+            if acquired is not None and not np.all(acquired):
+                # Unwritten coordinates must not choose axis representatives
+                # or make a rectilinear acquired prefix appear serpentine.
+                if param_data.dtype.kind in "iuO":
+                    param_data = param_data.astype(object)
+                param_data = np.where(acquired, param_data, np.nan)
+            param_data = self._float_heatmap_coordinates(param_data, name)
+            dimension = self._shaped_axis_dimension(name, param_data, depvarData)
+            shaped_axes_are_rectilinear &= self._shaped_axis_is_rectilinear(
+                param_data,
+                dimension,
+            )
+            param_data = self._shaped_axis_values(param_data, dimension)
+
+            valid[axis] = np.isfinite(param_data)
+            axis_data[axis] = param_data[valid[axis]]
+            axis_param[axis] = param
+            axis_dimension[axis] = dimension
+
+        # Snake scans and repeated setpoints need coordinate-based assembly.
+        # In particular, repeated cells must retain the unshaped path's mean.
+        if (
+            not shaped_axes_are_rectilinear
+            or axis_dimension["x"] == axis_dimension["y"]
+            or self._requires_bounded_heatmap(
+                int(axis_data["x"].size) * int(axis_data["y"].size)
+            )
+            or any(
+                np.unique(axis_data[axis]).size != axis_data[axis].size
+                for axis in ("x", "y")
+            )
+        ):
+            valid_rows = numeric_isfinite(depvarData)
+            for axis in ("x", "y"):
+                name = self.axes_dict[axis]
+                valid_rows &= np.isfinite(np.asarray(data[name], dtype=float))
+            return self.for_unshaped_2d(data, valid_rows, depvarData)
+
+        dataGrid = self._shaped_data_grid(
+            data,
+            depvarData,
+            axis_dimension,
+            valid,
+        )
+
+        return axis_data, axis_param, dataGrid
+
+    def _shaped_axis_dimension(self, name, param_data, depvarData):
+        depends_on = list(getattr(self.param, "depends_on_", ()))
+        if (
+            param_data.shape == depvarData.shape
+            and len(depends_on) == depvarData.ndim
+            and name in depends_on
+        ):
+            return depends_on.index(name)
+
+        residuals = [
+            self._shaped_axis_residual(param_data, dimension)
+            for dimension in range(depvarData.ndim)
+        ]
+        return int(np.nanargmin(residuals))
+
+    def _shaped_axis_values(self, param_data, dimension):
+        """Choose axis representatives without implying validity of samples."""
+        self._check_cancelled()
+        moved = np.moveaxis(param_data, dimension, 0)
+        rows = moved.reshape(moved.shape[0], -1)
+        values = np.full(rows.shape[0], np.nan, dtype=float)
+
+        for index, row in enumerate(rows):
+            if index % 1024 == 0:
+                self._check_cancelled()
+            finite = np.flatnonzero(np.isfinite(row))
+            if finite.size:
+                values[index] = row[finite[0]]
+
+        return values
+
+    def _shaped_axis_residual(self, param_data, dimension):
+        self._check_cancelled()
+        values = self._shaped_axis_values(param_data, dimension)
+        shape = [1] * param_data.ndim
+        shape[dimension] = values.size
+        expected = np.broadcast_to(values.reshape(shape), param_data.shape)
+        valid = np.isfinite(param_data) & np.isfinite(expected)
+        if not np.any(valid):
+            return np.inf
+
+        return float(np.nanmax(np.abs(param_data[valid] - expected[valid])))
+
+    def _shaped_axis_is_rectilinear(self, param_data, dimension):
+        """Check finite coordinates; missing samples can still be rectilinear."""
+        self._check_cancelled()
+        values = self._shaped_axis_values(param_data, dimension)
+        shape = [1] * param_data.ndim
+        shape[dimension] = values.size
+        expected = np.broadcast_to(values.reshape(shape), param_data.shape)
+        valid = np.isfinite(param_data) & np.isfinite(expected)
+        if not np.any(valid):
+            return True
+
+        # Compare positions relative to the sweep itself.  Using a relative
+        # tolerance on the raw coordinates makes the tolerance grow with an
+        # arbitrary offset (for example, a GHz carrier), and can therefore
+        # hide a genuine sub-Hz serpentine reversal.
+        finite_values = values[np.isfinite(values)]
+        # Normalize before subtraction: opposite finite extremes otherwise
+        # become inf, and isclose(inf, inf) can hide different coordinates.
+        magnitude = float(np.max(np.abs(finite_values)))
+        exponent = math.frexp(magnitude)[1] - 1 if magnitude else 0
+        coordinate_scale = math.ldexp(1.0, max(-1022, min(1023, exponent)))
+        normalized_values = finite_values / coordinate_scale
+        origin = normalized_values[0]
+        centred_values = normalized_values - origin
+        span = float(np.max(np.abs(centred_values)))
+        if span == 0:
+            # The old zero-span fallback compares differences in original
+            # units. Do not make its absolute tolerance grow with the offset.
+            with np.errstate(over="ignore", invalid="ignore"):
+                return bool(
+                    np.all(
+                        np.isclose(
+                            param_data[valid],
+                            expected[valid],
+                            rtol=0.0,
+                            atol=1e-12,
+                        )
+                    )
+                )
+
+        # A wildly different actual sample can overflow division by a tiny
+        # representative scale; it then correctly fails this finite reference.
+        with np.errstate(over="ignore", invalid="ignore"):
+            return bool(
+                np.all(
+                    np.isclose(
+                        (param_data[valid] / coordinate_scale - origin) / span,
+                        (expected[valid] / coordinate_scale - origin) / span,
+                        rtol=1e-10,
+                        atol=1e-12,
+                    )
+                )
+            )
+
+    def _shaped_data_grid(self, data, depvarData, axis_dimension, valid):
+        self._check_cancelled()
+        x_dimension = axis_dimension["x"]
+        y_dimension = axis_dimension["y"]
+
+        # Axis representatives may come from another row or column. Retain
+        # each sample's recorded coordinate validity before using those axes
+        # to publish the grid or pass it to operations.
+        valid_rows = numeric_isfinite(depvarData)
+        for axis in ["x", "y"]:
+            self._check_cancelled()
+            name = self.axes_dict[axis]
+            valid_rows &= np.isfinite(np.asarray(data[name], dtype=float))
+        self._check_cancelled()
+
+        if {x_dimension, y_dimension} == {0, 1}:
+            selection = (
+                np.ix_(valid["y"], valid["x"])
+                if x_dimension == 1
+                else np.ix_(valid["x"], valid["y"])
+            )
+            # Advanced indexing creates a private grid, leaving the QCoDeS
+            # cache intact for later loads and different axis selections.
+            data_grid = depvarData[selection]
+            self._check_cancelled()
+            invalid = ~valid_rows[selection]
+            if np.any(invalid):
+                if data_grid.dtype.kind in "iu":
+                    data_grid = data_grid.astype(object)
+                elif data_grid.dtype.kind == "b":
+                    data_grid = data_grid.astype(float)
+                data_grid[invalid] = np.nan
+            self._check_cancelled()
+            return data_grid if x_dimension == 1 else data_grid.transpose()
+
+        return self.for_unshaped_2d(data, valid_rows, depvarData)[2]
+
+    def for_unshaped_2d(self, data, valid_rows, depvarData):
+        self._check_cancelled()
+        axis_data = {}
+        axis_param = {}
+        for axis in ["x", "y"]:
+            self._check_cancelled()
+            # Get specific parameter
+            name = self.axes_dict[axis]
+            param = self.param_dict[name]
+
+            # Update data
+            axis_data[axis] = data[name][valid_rows]
+            axis_param[axis] = param
+
+        x_data, y_data, z_data = self._arrays_from_values(
+            axis_data["x"],
+            axis_data["y"],
+            depvarData[valid_rows],
+        )
+        x_data = self._float_heatmap_coordinates(x_data, self.axes_dict["x"])
+        y_data = self._float_heatmap_coordinates(y_data, self.axes_dict["y"])
+        # Source rows and planned shapes do not bound a pivot: even a short
+        # diagonal scan creates unique-X * unique-Y cells. Count only paired,
+        # valid samples, including when a shaped scan falls back to this path.
+        x_count = int(np.unique(x_data).size)
+        self._check_cancelled()
+        y_count = int(np.unique(y_data).size)
+        self._check_cancelled()
+        if self._requires_bounded_heatmap(x_count * y_count):
+            self.heatmap_source_grid_shape = (y_count, x_count)
+            self.heatmap_source_axis_ranges = {
+                "x": (float(np.min(x_data)), float(np.max(x_data))),
+                "y": (float(np.min(y_data)), float(np.max(y_data))),
+            }
+            self.sampled_heatmap_source = False
+            self.aggregated_heatmap_source = False
+            x_axis, y_axis, data_grid = self._heatmap_grid_from_arrays(
+                x_data,
+                y_data,
+                z_data,
+                max_cells=getattr(
+                    self,
+                    "max_full_heatmap_points",
+                    MAX_FULL_HEATMAP_POINTS,
+                ),
+            )
+            self.loaded_point_count = int(z_data.size)
+            self._heatmap_aggregated_source_rows = int(z_data.size)
+            self._heatmap_source_info = {
+                "row_count": int(z_data.size),
+                "estimated_range_rows": int(z_data.size),
+                "sampled": False,
+                "aggregated": True,
+                "strategy": "spatial mean",
+                "axis_ranges": None,
+            }
+            self.heatmap_downsample_info = self._heatmap_downsample_info()
+            return {"x": x_axis, "y": y_axis}, axis_param, data_grid
+
+        dataGrid = data2matrix(
+            y_data,
+            x_data,
+            z_data,
+            check_cancelled=self._check_cancelled,
+        )
+        self._check_cancelled()
+
+        # remove duplicates
+        axis_data["y"] = dataGrid.index.to_numpy(float)
+        axis_data["x"] = dataGrid.columns.to_numpy(float)
+
+        dataGrid = dataGrid.to_numpy()
+
+        return axis_data, axis_param, dataGrid
+
+    def do_operations(self):
+        """
+        Runs through all functions in self.operations and performs those on the
+        data.
+        Work is performed on copies so a failure cannot return partial output.
+
+        Returns
+        -------
+        data_dict["x"], data_dict["y"], data_dict["z"] : np.ndarray
+            The updated data after all operations have been performed
+        None : NoneType
+            No operations to perform.
+
+        """
+        operations = self.operations
+        if len(operations) == 0:
+            return None
+
+        self._check_cancelled()
+        data_dict = {
+            "x": self.axis_data["x"].copy(),
+            "y": None,
+            "z": None,
+        }
+        self._check_cancelled()
+        data_dict["y"] = self.axis_data["y"].copy()
+        self._check_cancelled()
+        if hasattr(self, "dataGrid"):
+            data_dict["z"] = self.dataGrid.copy()
+        self._check_cancelled()
+
+        for operation in operations:
+            self._check_cancelled()
+            try:
+                if isinstance(operation, OperationCall):
+                    results = operation.execute(data_dict, self.is_cancelled)
+                else:
+                    # Backwards compatibility: arbitrary operations continue
+                    # to receive exactly one data dictionary argument. Such a
+                    # call can only be cancelled after it returns.
+                    results = operation(data_dict)
+                self._check_cancelled()
+                for key in results.keys():
+                    data_dict[key] = results[key]
+            except Exception as err:
+                if self.is_cancelled():
+                    raise PlotWorkCancelled("Plot load cancelled.") from err
+                name = getattr(operation, "name", None)
+                description = f' "{name}"' if name else ""
+                raise OperationExecutionError(
+                    f"Operation{description} failed: {err}"
+                ) from err
+
+        return data_dict["x"], data_dict["y"], data_dict["z"]
+
+    def _apply_operation_metadata(self):
+        """Update the dependent-variable label and unit after derivatives."""
+
+        is_line_plot = len(getattr(self.param, "depends_on_", ())) == 1
+        if is_line_plot:
+            self.display_param = copy(self.axis_param["y"])
+
+        for operation in self.operations:
+            axis_name = getattr(operation, "derivative_axis", None)
+            if axis_name not in ("x", "y"):
+                continue
+
+            axis_param = self.axis_param[axis_name]
+            value_label = getattr(self.display_param, "label", "") or getattr(
+                self.display_param, "name", ""
+            )
+            axis_label = getattr(axis_param, "label", "") or getattr(
+                axis_param, "name", axis_name
+            )
+            self.display_param.label = f"d({value_label})/d({axis_label})"
+
+            value_unit = getattr(self.display_param, "unit", "")
+            axis_unit = getattr(axis_param, "unit", "")
+            if value_unit and axis_unit:
+                self.display_param.unit = f"{value_unit}/{axis_unit}"
+            elif axis_unit:
+                self.display_param.unit = f"1/{axis_unit}"
+
+        if is_line_plot:
+            self.axis_param["y"] = self.display_param
+
+    def _aggregate_operated_heatmap_if_needed(self):
+        """Reduce an operated raw heatmap to the configured display limit."""
+
+        self._check_cancelled()
+        if not self.operations or not hasattr(self, "dataGrid"):
+            return
+
+        data_grid = np.asarray(self.dataGrid, dtype=float)
+        self._check_cancelled()
+        if data_grid.size <= self.max_full_heatmap_points:
+            return
+
+        x_axis = np.asarray(self.axis_data["x"], dtype=float)
+        self._check_cancelled()
+        y_axis = np.asarray(self.axis_data["y"], dtype=float)
+        if data_grid.shape != (y_axis.size, x_axis.size):
+            raise ValueError(
+                "Operated heatmap dimensions do not match its coordinate axes."
+            )
+
+        source_rows, source_columns = data_grid.shape
+        self.heatmap_source_grid_shape = (source_rows, source_columns)
+        self.heatmap_source_axis_ranges = {
+            "x": (float(np.nanmin(x_axis)), float(np.nanmax(x_axis))),
+            "y": (float(np.nanmin(y_axis)), float(np.nanmax(y_axis))),
+        }
+        x_data = np.tile(x_axis, y_axis.size)
+        self._check_cancelled()
+        y_data = np.repeat(y_axis, x_axis.size)
+        self._check_cancelled()
+        z_data = data_grid.reshape(-1)
+        finite = np.isfinite(x_data) & np.isfinite(y_data) & np.isfinite(z_data)
+        self._check_cancelled()
+        x_data = x_data[finite]
+        y_data = y_data[finite]
+        z_data = z_data[finite]
+
+        max_cells = min(
+            self.max_full_heatmap_points,
+            getattr(
+                self,
+                "max_heatmap_grid_cells",
+                MAX_SQL_HEATMAP_GRID_CELLS,
+            ),
+        )
+        x_axis, y_axis, data_grid = self._heatmap_grid_from_arrays(
+            x_data,
+            y_data,
+            z_data,
+            max_cells=max_cells,
+        )
+        source_count = int(source_rows * source_columns)
+        self._heatmap_aggregated_source_rows = int(z_data.size)
+        self._heatmap_source_info = {
+            "row_count": source_count,
+            "estimated_range_rows": source_count,
+            "sampled": False,
+            "aggregated": True,
+            "sample_limit": None,
+            "sample_stride": None,
+            "strategy": "operations, then spatial mean",
+            "axis_ranges": self.heatmap_source_axis_ranges,
+        }
+        self.axis_data["x"] = x_axis
+        self.axis_data["y"] = y_axis
+        self.dataGrid = data_grid
+        self.loaded_point_count = int(data_grid.size)
+        self.heatmap_downsample_info = self._heatmap_downsample_info()

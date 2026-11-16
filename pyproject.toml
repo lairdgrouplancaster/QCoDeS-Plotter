@@ -189,6 +189,7 @@ files = [
     "src/qplot/tools/plot_tools.py",
     "src/qplot/tools/plot_csv.py",
     "src/qplot/tools/plot_result.py",
+    "src/qplot/tools/plot_processing.py",
     "src/qplot/tools/worker.py",
     "src/qplot/testdata.py",
     "src/qplot/_testdata_specifications.py",

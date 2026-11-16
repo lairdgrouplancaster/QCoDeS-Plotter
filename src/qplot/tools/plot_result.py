@@ -7,6 +7,7 @@ import numpy as np
 
 from qplot.datahandling.complex_data import ComplexSamples
 from qplot.datahandling.file_identity import DatabaseFileIdentity
+from qplot.tools.plot_processing import PlotProcessingResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,8 +61,10 @@ class PlotLoadResult:
     complex_samples: ComplexSamples | None = None
 
 
-def capture_plot_result(worker: Any) -> PlotLoadResult:
+def capture_plot_result(worker: Any, *, processed: PlotProcessingResult | None = None) -> PlotLoadResult:
     """Snapshot output only after successful loading and final transforms."""
+    if processed is None:
+        processed = worker.processing.snapshot()
     cache_update = None
     if worker.read_data:
         cache_update = PlotCacheUpdate(
@@ -75,29 +78,29 @@ def capture_plot_result(worker: Any) -> PlotLoadResult:
         getattr(worker, "database_identity", None),
         getattr(worker, "expected_sidecar_identities", None),
     )
-    shape = getattr(worker, "heatmap_source_grid_shape", None)
+    shape = processed.heatmap_source_grid_shape
     if shape is None and hasattr(worker, "_heatmap_source_grid_shape_from_metadata"):
         try:
             shape = worker._heatmap_source_grid_shape_from_metadata()
         except (AttributeError, TypeError, ValueError):
             pass
-    info = getattr(worker, "heatmap_downsample_info", None)
+    info = processed.heatmap_downsample_info
     axis_ranges = getattr(worker, "heatmap_axis_ranges", None)
-    source_axis_ranges = getattr(worker, "heatmap_source_axis_ranges", None)
+    source_axis_ranges = processed.heatmap_source_axis_ranges
     return PlotLoadResult(
-        axis_data=dict(worker.axis_data),
-        axis_param=dict(worker.axis_param),
+        axis_data=processed.axis_data,
+        axis_param=processed.axis_param,
         source=source,
         cache_update=cache_update,
-        dataGrid=getattr(worker, "dataGrid", None),
-        display_param=getattr(worker, "display_param", None),
+        dataGrid=processed.dataGrid,
+        display_param=processed.display_param,
         dataset_completed=getattr(worker, "dataset_completed", None),
         dataset_length_at_start=getattr(worker, "dataset_length_at_start", None),
-        loaded_point_count=getattr(worker, "loaded_point_count", None),
+        loaded_point_count=processed.loaded_point_count,
         loaded_from_sql_heatmap=getattr(worker, "loaded_from_sql_heatmap", False),
-        aggregated_heatmap_source=getattr(worker, "aggregated_heatmap_source", False),
-        sampled_heatmap_source=getattr(worker, "sampled_heatmap_source", False),
-        heatmap_full_resolution=getattr(worker, "heatmap_full_resolution", False),
+        aggregated_heatmap_source=processed.aggregated_heatmap_source,
+        sampled_heatmap_source=processed.sampled_heatmap_source,
+        heatmap_full_resolution=processed.heatmap_full_resolution,
         heatmap_downsample_info=dict(info) if info is not None else None,
         heatmap_axis_ranges=dict(axis_ranges) if axis_ranges is not None else None,
         heatmap_source_axis_ranges=dict(source_axis_ranges) if source_axis_ranges is not None else None,
@@ -107,5 +110,5 @@ def capture_plot_result(worker: Any) -> PlotLoadResult:
         _heatmap_estimated_range_rows=getattr(worker, "_heatmap_estimated_range_rows", None),
         _heatmap_aggregated_source_rows=getattr(worker, "_heatmap_aggregated_source_rows", None),
         _heatmap_source_sample_stride=getattr(worker, "_heatmap_source_sample_stride", None),
-        complex_samples=getattr(worker, "complex_samples", None),
+        complex_samples=processed.complex_samples,
     )

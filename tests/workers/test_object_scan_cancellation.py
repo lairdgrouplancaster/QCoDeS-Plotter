@@ -25,7 +25,7 @@ def test_real_mixed_records_cancel_during_classification(
                        "coordinates": "_float_heatmap_coordinates"}[phase]
         predicate_name = {"normalise": "ndim", "heatmap": "iscomplexobj",
                           "coordinates": "isfinite"}[phase]
-        original_method = getattr(worker, method_name)
+        original_method = getattr(worker.processing, method_name)
         original_predicate = getattr(np, predicate_name)
         active = False
         consumed = 0
@@ -52,7 +52,7 @@ def test_real_mixed_records_cancel_during_classification(
             finally:
                 active = False
 
-        monkeypatch.setattr(worker, method_name, classify)
+        monkeypatch.setattr(worker.processing, method_name, classify)
         monkeypatch.setattr(worker_module.np, predicate_name, predicate)
         finished, errors = [], []
         worker.emitter.finished.connect(finished.append)
@@ -89,10 +89,10 @@ def test_object_complex_validation_cancels_and_retains_late_rejection(monkeypatc
     with monkeypatch.context() as patch:
         patch.setattr(worker_module.np, "iscomplexobj", observe)
         with pytest.raises(worker_module.PlotWorkCancelled):
-            getattr(worker, method_name)(values, "signal")
+            getattr(worker.processing, method_name)(values, "signal")
     assert consumed == 1024
     np.testing.assert_array_equal(values, original)
     worker._cancelled.clear()
     with pytest.raises(ValueError, match="Complex"):
-        getattr(worker, method_name)(values, "signal")
+        getattr(worker.processing, method_name)(values, "signal")
     np.testing.assert_array_equal(values, original)

@@ -48,7 +48,7 @@ def test_arrays_from_values_rejects_the_named_complex_coordinate(complex_axis):
     coordinates["slow" if complex_axis == "fast" else "fast"] = np.arange(3)
 
     with pytest.raises(ValueError, match=complex_axis):
-        worker._arrays_from_values(
+        worker.processing._arrays_from_values(
             coordinates["fast"],
             coordinates["slow"],
             np.arange(3),
@@ -66,7 +66,7 @@ def test_shaped_loader_rejects_the_named_complex_coordinate(complex_axis):
         fast = fast + 10j * (fast + 1)
 
     with pytest.raises(ValueError, match=complex_axis):
-        worker.for_shaped_2d(
+        worker.processing.for_shaped_2d(
             {"slow": slow, "fast": fast},
             np.arange(6).reshape(2, 3),
         )

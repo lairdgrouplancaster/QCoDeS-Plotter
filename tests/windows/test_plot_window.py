@@ -25,7 +25,6 @@ from qplot.datahandling.file_identity import (
     database_file_identity,
 )
 from qplot.tools.operation_registry import OperationValidationError
-from qplot.tools.plot_result import capture_plot_result
 from qplot.windows import _plot_export as plot_export_module
 from qplot.windows import _plot_refresh as plot_refresh_module
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
@@ -41,6 +40,7 @@ from qplot.windows._range_entry import RangeEntry
 from qplot.windows._widgets import treeWidgets
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot2d import plot2d
+from tests._plot_results import capture_fake_plot_result
 
 _PRINT_DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
 
@@ -1150,7 +1150,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window = plot1d.__new__(plot1d)
         qtw.QMainWindow.__init__(window)
         worker = Worker()
-        worker.result = capture_plot_result(worker)
+        worker.result = capture_fake_plot_result(worker)
         line = Line()
         states = []
         statuses = []
@@ -1221,7 +1221,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window = plot1d.__new__(plot1d)
         qtw.QMainWindow.__init__(window)
         worker = Worker()
-        worker.result = capture_plot_result(worker)
+        worker.result = capture_fake_plot_result(worker)
         window.worker = worker
         window.line = Line()
         window.marquee = None
