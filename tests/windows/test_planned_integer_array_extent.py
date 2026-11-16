@@ -40,8 +40,8 @@ def wait_for_plot_refresh(plot):
     # request to publish too before checking the cache or stopping its monitor.
     wait_for(lambda: (
         not plot.worker.running
-        and not plot.__dict__.get("_refresh_pending", False)
-        and not plot.__dict__.get("_refresh_pending_scheduled", False)
+        and not getattr(plot, "_refresh_pending", False)
+        and not getattr(plot, "_refresh_pending_scheduled", False)
     ))
 
 

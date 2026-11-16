@@ -225,10 +225,27 @@ widths without importing Qt. Statistics use it directly; plot windows keep
 their existing formatting methods as delegates and supply the current cursor
 precision preference.
 
-`src/qplot/windows/_plot_refresh.py` contains shared worker-backed plot refresh
-orchestration: deciding whether to read from the database or cached data,
-starting workers, applying worker results back to plot-window state, and
-surfacing worker failures.
+`windows/_plot_refresh_controller.py` owns plot-refresh sessions, worker startup,
+cancellation and coalesced refresh requests. Its typed `PlotRefreshHost` interface
+is implemented by `_plot_refresh_ui.py`, which constructs workers, binds Qt
+signals to GUI-thread receivers and manages status feedback. Worker and pending
+request observations on the window are read-only. Construction, configuration,
+signal connection, loading feedback and submission failures retire the failed
+job and allow retry without replacing the displayed data.
+
+The controller retains ownership through the entire concrete rendering callback,
+including volume and cut publication. Duplicate, cancelled and superseded
+callbacks cannot publish or consume newer requests. Queued refresh timers are
+parented to the window and fenced by generation; completion schedules retained
+requests without repeatedly posting while a worker is busy. Closing a plot keeps
+refresh usable while overlays retain it; final consumer release and shutdown
+cancel through the controller. Pool-registration cleanup also survives window
+destruction.
+
+`windows/_plot_refresh.py` retains refresh admission, source identity checks,
+cache publication and the existing rendering rollback transaction. Numerical
+processing remains in `tools/plot_processing.py` and database acquisition stays
+in the worker.
 
 The plot window owns one typed `RefreshPublication` rollback record for the
 latest callback. It captures the prior cache parameter and plot fields, records

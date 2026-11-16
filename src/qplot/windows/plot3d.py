@@ -312,9 +312,6 @@ class plot3d(plot2d):
     def _navigate(self):
         if self._closed or not self._plot_setup_complete:
             return
-        worker = self.__dict__.get("worker")
-        if worker is not None and worker.running:
-            worker.cancel()
         self._navigation_only = True
         try:
             self.load_data()
@@ -446,8 +443,8 @@ class plot3d(plot2d):
             self._update_navigator()
 
     def refreshPlot(self, finished=True, worker=None):
-        worker = worker if worker is not None else self.__dict__.get("worker")
-        if worker is not self.__dict__.get("worker"):
+        worker = worker if worker is not None else getattr(self, "worker", None)
+        if worker is not getattr(self, "worker", None):
             if worker is not None:
                 worker.running = False
             return

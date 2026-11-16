@@ -18,18 +18,19 @@ from qplot.datahandling.qcodes_cache import (
 )
 from qplot.datahandling.readonly import quarantine_wal_for_replaced_database
 from qplot.diagnostics import log_exception
-from qplot.tools import loader
 from qplot.tools.operation_registry import OperationValidationError
 from qplot.tools.plot_result import PlotLoadResult
 
 from ._complex_plots import configured_complex_mode, sync_complex_axes
 from ._dataset_handle import DatasetKey, dataset_key_matches_current_source
 from ._plot_host import PlotHost
+from ._plot_refresh_controller import PlotRefreshController, PlotRefreshRequest
 from ._refresh_interval import refresh_interval_value
 
 if TYPE_CHECKING:
     class _PlotRefreshBase(PlotHost, qtw.QMainWindow):
         _last_error_text: str | None
+        _requested_complex_mode: Any
         _live: bool
         axis_data: dict[str, Any]
         axis_param: dict[str, Any]
@@ -46,7 +47,6 @@ if TYPE_CHECKING:
         param_dict: dict[str, Any]
         spinBox: qtw.QDoubleSpinBox
         threadPool: QtCore.QThreadPool
-        worker: Any
 
         @property
         def axis_options(self) -> dict[str, str]: ...
@@ -115,6 +115,44 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
     _refresh_publication: RefreshPublication | None = None
 
+    def _refresh_controller(self) -> PlotRefreshController:
+        controller = self.__dict__.get("_plot_refresh_controller")
+        if controller is None:
+            from ._plot_refresh_ui import PlotRefreshUi
+
+            controller = PlotRefreshController(PlotRefreshUi(self))
+            self._plot_refresh_controller = controller
+        return controller
+
+    @property
+    def worker(self) -> Any:
+        worker = self._refresh_controller().worker
+        if worker is None:
+            raise AttributeError("This plot has no refresh worker.")
+        return worker
+
+    @property
+    def _refresh_pending(self) -> bool:
+        return self._refresh_controller().pending is not None
+
+    @property
+    def _refresh_pending_force(self) -> bool:
+        return self._refresh_controller().pending is True
+
+    @property
+    def _refresh_pending_scheduled(self) -> bool:
+        return self._refresh_controller().scheduled
+
+    def _cancel_plot_refresh(self) -> None:
+        monitor = self.__dict__.get("monitor")
+        if monitor is not None:
+            monitor.stop()
+        worker = getattr(self, "worker", None)
+        self._refresh_controller().cancel()
+        if worker is not None:
+            self._rollback_refresh_publication(worker)
+
+
     def _refresh_publication_for(self, worker: Any) -> RefreshPublication | None:
         publication = self._refresh_publication
         if publication is not None and publication.worker is worker:
@@ -166,11 +204,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
             return True
 
         quarantine_wal_for_replaced_database(database_path)
-        worker = self.__dict__.get("worker")
-        if worker is not None and getattr(worker, "running", False):
-            cancel = getattr(worker, "cancel", None)
-            if callable(cancel):
-                cancel()
+        self._cancel_plot_refresh()
         monitor = self.__dict__.get("monitor")
         if monitor is not None:
             monitor.stop()
@@ -251,7 +285,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
         if publication is None:
             return
         if publication.owns(
-                self.__dict__.get("worker"), self._qplot_publication_generation,
+                getattr(self, "worker", None), self._qplot_publication_generation,
                 ):
             publication.rollback(self.__dict__)
         worker._qplot_display_commit_ready = False
@@ -267,10 +301,15 @@ class PlotRefreshMixin(_PlotRefreshBase):
             ) -> bool:
         """Guard one cache/display publication boundary and fail closed."""
 
+        if (not self._refresh_controller().current_worker(worker)
+                or getattr(worker, "is_cancelled", lambda: False)()):
+            worker._qplot_display_commit_ready = False
+            self._rollback_refresh_publication(worker)
+            return False
         publication = self._refresh_publication_for(worker)
         if publication is not None:
             if not publication.owns(
-                    self.__dict__.get("worker"), self._qplot_publication_generation,
+                    getattr(self, "worker", None), self._qplot_publication_generation,
                     ):
                 # A nested same-source callback already owns the plot.  The
                 # older callback must stop harmlessly: rollback or renderer
@@ -278,7 +317,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 worker._qplot_display_commit_ready = False
                 self._discard_refresh_publication(worker)
                 return False
-        elif worker is not self.__dict__.get("worker"):
+        elif worker is not getattr(self, "worker", None):
             worker._qplot_display_commit_ready = False
             return False
 
@@ -347,8 +386,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
         if not self._refresh_monitor_required(dataset):
             return
 
-        worker = getattr(self, "worker", None)
-        if worker is not None and getattr(worker, "running", False):
+        if self._refresh_controller().busy:
             self._queue_pending_refresh()
             return
 
@@ -379,7 +417,7 @@ class PlotRefreshMixin(_PlotRefreshBase):
     def _mark_display_synchronized(self, worker: Any) -> bool:
         """Publish terminal plot state after the concrete display commit."""
 
-        if worker is None or worker is not self.__dict__.get("worker"):
+        if worker is None or worker is not getattr(self, "worker", None):
             return False
         if getattr(worker, "is_cancelled", lambda: False)():
             return False
@@ -443,116 +481,26 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 )
             return False
 
-        loader_kwargs = {
-            "read_data": True,
-            "operations": operations,
-            "force_sql_heatmap": force_sql_heatmap,
-            "max_full_heatmap_points": self.config.get(
-                "runtime_settings.max_full_heatmap_points"
-                ),
-            "max_heatmap_grid_cells": self.config.get(
-                "runtime_settings.max_heatmap_grid_cells"
-                ),
-            # Retain the loader keyword for custom factories, but derive it
-            # from the cell budget rather than the obsolete axis preference.
-            "max_heatmap_grid_side": self.config.get(
-                "runtime_settings.max_heatmap_grid_cells"
-                ),
-            "heatmap_axis_ranges": heatmap_axis_ranges,
-            "heatmap_full_axis_ranges": heatmap_full_axis_ranges,
-            "complex_mode": configured_complex_mode(self),
-        }
-        self._requested_complex_mode = loader_kwargs["complex_mode"]
-        database_identity = getattr(
-            getattr(self, "_dataset_key", None),
-            "database_identity",
-            None,
+        controller = self._refresh_controller()
+        request = PlotRefreshRequest(
+            operations, force_sql_heatmap, heatmap_axis_ranges,
+            heatmap_full_axis_ranges, status_message,
         )
-        if database_identity is not None:
-            loader_kwargs["database_identity"] = database_identity
-
-        worker_factory = getattr(self, "_create_plot_loader", loader)
-        worker: Any = worker_factory(
-            self.ds.cache,
-            self.param,
-            self.param_dict,
-            self.axis_options,
-            **loader_kwargs,
-            )
-        worker._qplot_operation_apply_generation = int(
-            getattr(self.oper_widget, "_apply_generation", 0)
-            )
-        dataset_key = getattr(self, "_dataset_key", None)
-        if dataset_key is not None:
-            worker.expected_database_path = dataset_key.database_path
-            worker.expected_resolved_database_path = (
-                dataset_key.resolved_database_path
-            )
-            worker.expected_sidecar_identities = dataset_key.sidecar_identities
-            worker.sidecar_identities = dataset_key.sidecar_identities
-        worker.dataset_length_at_start = self.ds.number_of_results
-
-        if status_message is not None:
-            message = status_message
-        else:
-            message = f"Loading data for {self.param.name}..."
-        self.show_status(message, 0)
-        self.show_plot_state(message, kind="loading")
-        worker.started_at = perf_counter()
-
-        # Callback
-        worker.emitter.finished.connect(
-            lambda finished, worker=worker: self.refreshPlot(finished, worker=worker)
-            )
-        worker_registry = getattr(self.threadPool, "_qplot_workers", None)
-        if worker_registry is not None:
-            worker_registry.add(worker)
-            worker.emitter.finished.connect(
-                lambda _finished, worker=worker, registry=worker_registry: (
-                    registry.discard(worker)
-                    )
-                )
-        # Error event handling
-        worker.emitter.errorOccurred.connect(
-            lambda err, worker=worker: self.err_raiser(err, worker=worker)
-            )
-        worker.emitter.printer.connect(
-            lambda message, worker=worker: self.worker_printer(
-                message,
-                worker=worker,
-                )
-            )
-
-        if wait_on_thread:  # Force freeze main thread
-            hold_up = QtCore.QEventLoop()
-            self.end_wait.connect(hold_up.quit)  # Release main thread event
-
-        if not getattr(self.ds, "running", False):
-            # A terminal reload supersedes the previous displayed snapshot.
-            # Keep it retryable until this worker's concrete display commit.
-            self._qplot_display_synchronized = False
-
-        # Run worker
-        self.worker = worker
-        overlay = self.__dict__.get("plot_state_overlay")
-        if overlay is not None:
-            overlay.track(worker)
-        worker_will_start = getattr(type(self), "_refresh_worker_will_start", None)
-        if callable(worker_will_start):
-            worker_will_start(self, worker)
+        # Connect before submission, and do not enter a nested loop when a
+        # synchronous completion or failed startup already settled the job.
+        hold_up = QtCore.QEventLoop() if wait_on_thread else None
+        if hold_up is not None:
+            self.end_wait.connect(hold_up.quit)
         try:
-            worker.start(self.threadPool)
-        except Exception:
-            worker.running = False
-            if overlay is not None:
-                overlay.show("Plot could not start", kind="error")
-            raise
-
-        if wait_on_thread:
-            hold_up.exec()  # The actual place the code waits for self.end_wait.emit
-            self.end_wait.disconnect(hold_up.quit)
-
-        return True
+            launched = controller.start(request)
+            session = controller.session
+            if (hold_up is not None and launched and session is not None
+                    and controller.accepts(session)):
+                hold_up.exec()
+            return launched
+        finally:
+            if hold_up is not None:
+                self.end_wait.disconnect(hold_up.quit)
 
 
     @QtCore.pyqtSlot()
@@ -601,6 +549,12 @@ class PlotRefreshMixin(_PlotRefreshBase):
             dataset = self.ds
             current_ds_len = dataset.number_of_results
 
+            if self._refresh_controller().busy:
+                self._queue_pending_refresh(force=force)
+                if force:
+                    self.show_status("Refresh queued after the current load.", 3000)
+                return
+
             # Retry the initial read without rebuilding existing renderers.
             if not hasattr(self, "worker"):
                 self.load_data()
@@ -609,12 +563,6 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
             # Check if new data has been added to the dataset
             if current_ds_len != self.last_ds_len or force:
-                if self.worker.running:  # No need to run if already updating
-                    self._queue_pending_refresh(force=force)
-                    if force:
-                        self.show_status("Refresh queued after the current load.", 3000)
-                    return
-
                 # The actual refresh line
                 self.load_data()
 
@@ -657,48 +605,13 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
 
     def _schedule_pending_refresh(self) -> None:
-        state = self.__dict__
-        if not state.get("_refresh_pending", False):
-            return
-        if state.get("_refresh_pending_scheduled", False):
-            return
-
-        self._refresh_pending_scheduled = True
-        QtCore.QTimer.singleShot(0, self._run_pending_refresh)
-
+        self._refresh_controller().schedule_pending()
 
     def _queue_pending_refresh(self, *, force: bool = False) -> None:
-        """Coalesce refreshes while retaining explicit-force provenance."""
-
-        state = self.__dict__
-        if not state.get("_refresh_pending", False):
-            self._refresh_pending_force = False
-        self._refresh_pending = True
-        if force:
-            self._refresh_pending_force = True
-
+        self._refresh_controller().queue(force=force)
 
     def _run_pending_refresh(self) -> None:
-        self._refresh_pending_scheduled = False
-        if not self.__dict__.get("_refresh_pending", False):
-            return
-        if not self._can_process_refresh():
-            self._refresh_pending = False
-            self._refresh_pending_force = False
-            return
-        if getattr(getattr(self, "worker", None), "running", False):
-            # Another load can start after completion queues this callback.
-            # Its completion will schedule the retained request; repeatedly
-            # posting a zero-delay timer here otherwise spins the GUI thread
-            # for the entire lifetime of that worker.
-            return
-
-        force = bool(self.__dict__.get("_refresh_pending_force", False))
-        self._refresh_pending = False
-        self._refresh_pending_force = False
-        if not force and not self._refresh_monitor_required():
-            return
-        self.refreshWindow(force=force)
+        self._refresh_controller().run_pending()
 
 
     @QtCore.pyqtSlot(bool)
@@ -719,12 +632,12 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
         """
         if worker is None:
-            worker = self.__dict__.get("worker")
+            worker = getattr(self, "worker", None)
 
         if worker is None:
             return False
 
-        current_worker = self.__dict__.get("worker")
+        current_worker = getattr(self, "worker", None)
         if worker is not current_worker:
             worker.running = False
             return False
@@ -736,14 +649,16 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
         if not self._can_process_refresh():
             worker.running = False
-            self.end_wait.emit()
+            if not self._refresh_controller().publishing(worker):
+                self.end_wait.emit()
             return False
         if not self._source_database_is_current():
             # A worker can finish from a private snapshot after the source main
             # file was atomically replaced.  Do not let that stale result reach
             # the shared cache or the concrete display callback.
             worker.running = False
-            self.end_wait.emit()
+            if not self._refresh_controller().publishing(worker):
+                self.end_wait.emit()
             return False
 
         try:
@@ -937,12 +852,13 @@ class PlotRefreshMixin(_PlotRefreshBase):
             if self._refresh_publication_for(worker) is not None:
                 if self._refresh_publication_source_is_current(worker):
                     self._rollback_refresh_publication(worker)
-            if worker is self.__dict__.get("worker"):
+            if worker is getattr(self, "worker", None):
                 self.show_plot_state("Plot display failed", kind="error")
             raise
 
         finally:  # Allow code to move on from wait_on_thread
-            if worker is self.worker:
+            if (worker is not None and worker is getattr(self, "worker", None)
+                    and not self._refresh_controller().publishing(worker)):
                 worker.running = False
                 self.end_wait.emit()
                 if (

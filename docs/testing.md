@@ -110,7 +110,7 @@ A local Windows run cannot substitute for those platform results.
 
 ## Static analysis
 
-The explicit mypy targets in `pyproject.toml` cover 165 of the 200 application
+The explicit mypy targets in `pyproject.toml` cover 171 of the 206 application
 modules. The other 35 have individual reasons in `[tool.qplot.typing.deferred]`.
 `follow_imports = "silent"` allows mypy to use imported types while suppressing
 diagnostics from modules outside the explicit targets; this is partial coverage,
@@ -240,6 +240,16 @@ assertions remain in the UI tests, including Qt receiver disconnection on
 window destruction.
 The coalesced-refresh regression also destroys the QObject before its queued
 timer fires and checks that no further worker is submitted.
+
+Plot refresh follows the same boundary. `test_plot_refresh_controller.py` checks
+startup faults, cancellation, reentrant replacement, duplicate completion,
+coalescing and publication ownership without worker threads.
+`test_plot_refresh_startup.py` injects failures into real line and heatmap windows,
+preserves the displayed arrays and source database, then performs a successful
+retry. It also verifies GUI-thread publication and pool ownership through concrete
+rendering. Focused window doubles use `tests/support/plot_refresh.py` to arrange
+controller state; the production observations remain read-only. Existing cache
+rollback, source-sidecar, overlay, volume, cut and shutdown tests remain in use.
 
 Consolidate tests that protect the same behaviour with the same setup into
 clearly named parametrised cases. Keep independent expected values and oracles.

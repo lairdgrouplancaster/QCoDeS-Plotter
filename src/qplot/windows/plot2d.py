@@ -167,7 +167,7 @@ class plot2d(
     def _preserve_heatmap_view_range_after_control_layout(self) -> None:
         """Restore a loaded heatmap's viewport after controls are relaid out."""
 
-        worker = self.__dict__.get("worker")
+        worker = getattr(self, "worker", None)
         if worker is None or getattr(worker, "running", False):
             # Never restore a pre-refresh range over a newly published heatmap.
             return
@@ -219,7 +219,7 @@ class plot2d(
             if self.__dict__.get("_plot_control_layout_token") != token:
                 return
             if (
-                    self.__dict__.get("worker") is not worker
+                    getattr(self, "worker", None) is not worker
                     or getattr(worker, "running", False)
                     or self.__dict__.get("_qplot_publication_generation", 0)
                     != publication_generation
@@ -323,8 +323,6 @@ class plot2d(
         v_sweep.triggered.connect(lambda _: self.openSweep("v"))
         self.vbMenu.insertAction(sep, v_sweep)
         
-        # Link finish update with check for rotation of sweep cursor
-        self.end_wait.connect(self.rotate_sweeps)
         self.vbMenu.insertSeparator(h_sweep)
 
         self._init_colorbar_scale_controls()
@@ -375,6 +373,12 @@ class plot2d(
                     plot_worker,
                     clear_display=clear_display,
                     ):
+                return
+            # Marker orientation must follow the newly published parameter
+            # axes before geometry restoration clamps their coordinates.
+            self.rotate_sweeps()
+            if not self._refresh_publication_source_is_current(
+                    plot_worker, clear_display=clear_display):
                 return
             self._update_large_heatmap_state(plot_worker.result)
             self.refresh_secondary_heatmaps()

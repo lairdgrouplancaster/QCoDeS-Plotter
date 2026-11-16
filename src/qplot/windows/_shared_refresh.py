@@ -16,6 +16,10 @@ def iter_plot_sources(owner: Any) -> Iterator[Any]:
             continue
         seen.add(id(plot))
         state = plot.__dict__
+        # Volume profiles retain their parent even after its window is closed.
+        source = state.get("source")
+        if source is not None:
+            pending.append(source)
         for registry_name in ("lines", "heatmaps"):
             registry = state.get(registry_name, {})
             if not isinstance(registry, dict):
@@ -35,8 +39,8 @@ def apply_shared_refresh_interval(owner: Any, interval: float) -> None:
         if spin_box is None or not callable(update):
             continue
         set_refresh_interval(spin_box, interval)
-        if interval <= 0 and not plot.__dict__.get("_refresh_pending_force", False):
-            plot._refresh_pending = False
+        if interval <= 0:
+            plot._refresh_controller().discard_automatic()
         update(interval)
 
 
