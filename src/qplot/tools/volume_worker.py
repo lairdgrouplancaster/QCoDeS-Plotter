@@ -82,7 +82,7 @@ class VolumeLoader(loader):
             if (any(np.asarray(column).dtype.kind not in "biufO" for column in columns[:3])
                     or np.asarray(columns[3]).dtype.kind not in "biufcO"):
                 raise ValueError("3D viewing requires real numeric measurements and coordinates.")
-            yield tuple(self._float_heatmap_coordinates(np.asarray(column), name)
+            yield tuple(self.processing._float_heatmap_coordinates(np.asarray(column), name)
                         for name, column in zip(names[:3], columns[:3], strict=True)) + (np.asarray(columns[3]),)
 
     def _source_chunks(self, connection):

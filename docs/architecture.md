@@ -37,6 +37,11 @@ leaving handlers installed by callers attached and open.
 
 `desktop.py` provisions launchers and delegates Windows Open With ownership,
 registry preflight, installation, and rollback to `_desktop_associations.py`.
+`_windows_launcher.py` builds a windowed `qPlot.exe` using the pinned distlib
+launcher and embeds qPlot's icon before appending the Python payload. This
+gives Windows file properties an application icon independent of Script Host.
+It starts the existing bootstrap in the selected Python environment with
+isolated interpreter mode (`-I`). No compiler is required during setup.
 `_desktop_sidecars.py` separately manages optional sidecar icons. It converts
 persisted JSON backups into named validated records before registry mutation;
 installation rollback and removal share restoration of those records.
@@ -1113,8 +1118,23 @@ components using NumPy and specification records. `testdata.py` retains chunk
 iteration, cancellation, QCoDeS measurement writes, and destination publication.
 
 `src/qplot/tools/worker.py` defines the background loader used by plot windows.
-It loads data, reshapes it for the plot type, applies selected operations, and
-emits results back to the GUI thread. Plot workers use cooperative cancellation:
+It owns source acquisition, read-only connections, source identity checks and
+Qt result publication. Its `PlotProcessor` in `tools/plot_processing.py` owns
+array normalisation, line/heatmap geometry, complex projection and the ordered
+operation pipeline, without importing Qt or database readers. `PlotProcessingSpec`
+captures parameter metadata and numerical limits; `PlotProcessingInput` carries
+acquired arrays, write counts and planned shape. A cancellation callback keeps
+the numerical component independently executable and testable.
+
+The worker feeds streamed heatmap chunks through the same numerical helpers,
+retaining ownership of cursor iteration and bounded read transactions. Volume
+workers also use the processor for shared coordinate and transform calculations.
+Completed `PlotProcessingResult` mappings are snapshots that share the existing
+array buffers. The worker combines them with source/cache state into
+`PlotLoadResult` only after processing succeeds. Neither processing nor result
+capture writes to the measurement source.
+
+Plot workers use cooperative cancellation:
 shutdown marks every registered worker as cancelled, interrupts its active
 read-only SQLite connection, clears work that has not started, and keeps the Qt
 event loop alive until running workers unwind. Built-in operations receive a

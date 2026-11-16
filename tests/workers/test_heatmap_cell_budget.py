@@ -49,9 +49,9 @@ def test_oversized_legacy_budget_cannot_allocate_an_unbounded_grid():
     from qplot.tools.operation_registry import OperationExecutionError
 
     worker = narrow_worker(max_heatmap_grid_cells=2_000_000_000)
-    assert worker._bounded_grid_shape(2000, 100) == (2000, 100)
+    assert worker.processing._bounded_grid_shape(2000, 100) == (2000, 100)
     with pytest.raises(OperationExecutionError, match="aggregation memory budget"):
-        worker._bounded_grid_shape(100000, 100000)
+        worker.processing._bounded_grid_shape(100000, 100000)
 
 
 @pytest.mark.parametrize("streaming", [False, True])
@@ -67,7 +67,7 @@ def test_narrow_heatmap_keeps_coordinates_and_values(streaming, monkeypatch):
         monkeypatch.setattr(worker, "_array_heatmap_chunks",
                             lambda conn: (chunk for chunk in [(values.size, arrays)]))
         arrays = worker._read_array_heatmap_arrays(None)
-    xa, ya, grid = worker._heatmap_grid_from_arrays(*arrays)
+    xa, ya, grid = worker.processing._heatmap_grid_from_arrays(*arrays)
     np.testing.assert_array_equal(xa, x[0])
     np.testing.assert_array_equal(ya, y[:, 0])
     np.testing.assert_array_equal(grid, values)

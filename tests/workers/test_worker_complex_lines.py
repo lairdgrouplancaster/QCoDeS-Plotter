@@ -22,7 +22,7 @@ def test_line_rejects_complex_coordinates_in_either_axis_order(swapped, imaginar
     data[complex_name] = data[complex_name] + imaginary * 1j
     original = data[complex_name].copy()
     with pytest.raises(ValueError, match=f"'{complex_name}' contains.*{role}"):
-        worker.for_1d(data, np.ones(3, dtype=bool))
+        worker.processing.for_1d(data, np.ones(3, dtype=bool))
     np.testing.assert_array_equal(data[complex_name], original)
 
 
@@ -35,7 +35,7 @@ def test_line_projects_complex_measurements_without_changing_samples(swapped, mo
     )
     recorded = np.arange(1., 4.) + imaginary * 1j
     data = {"x": np.arange(3.), "signal": recorded.copy()}
-    axes, parameters = worker.for_1d(data, np.ones(3, dtype=bool))
+    axes, parameters = worker.processing.for_1d(data, np.ones(3, dtype=bool))
     np.testing.assert_array_equal(data["signal"], recorded)
     np.testing.assert_array_equal(worker.complex_samples.values, recorded)
     np.testing.assert_array_equal(worker.complex_samples.coordinates[0], data["x"])

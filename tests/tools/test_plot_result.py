@@ -53,7 +53,7 @@ def test_capture_failure_clears_previous_result_and_emits_normal_failure(tmp_pat
     worker.emitter.errorOccurred.connect(errors.append)
     worker.emitter.finished.connect(finished.append)
 
-    def fail_capture(_worker):
+    def fail_capture(_worker, **kwargs):
         raise ValueError("injected capture failure")
 
     monkeypatch.setattr(worker_module, "capture_plot_result", fail_capture)
@@ -70,8 +70,8 @@ def test_cancellation_during_capture_never_publishes_result(tmp_path, monkeypatc
     finished = []
     worker.emitter.finished.connect(finished.append)
 
-    def capture_then_cancel(current):
-        result = capture_plot_result(current)
+    def capture_then_cancel(current, **kwargs):
+        result = capture_plot_result(current, **kwargs)
         current.cancel()
         return result
 
@@ -85,7 +85,8 @@ def test_cancellation_during_capture_never_publishes_result(tmp_path, monkeypatc
 
 def test_result_snapshots_mappings_without_copying_or_restricting_samples():
     samples = np.array([2**63 + 1], dtype=np.uint64)
-    worker = SimpleNamespace(
+    worker = make_plot_worker()
+    for name, value in dict(
         axis_data={"x": samples, "y": samples},
         axis_param={"x": "x", "y": "signal"},
         read_data=True,
@@ -97,7 +98,8 @@ def test_result_snapshots_mappings_without_copying_or_restricting_samples():
         database_identity=(1, 2),
         expected_sidecar_identities=frozenset({(3, 4)}),
         heatmap_axis_ranges={"x": (0.0, 1.0)},
-    )
+    ).items():
+        setattr(worker, name, value)
     result = capture_plot_result(worker)
     worker.axis_data["y"] = np.array([0])
     worker.updated_read_status["signal"] = 99

@@ -131,7 +131,7 @@ def test_multidimensional_array_decoder_is_bounded_readonly_and_cancellable(
     with multidimensional_heatmap_dataset(tmp_path) as dataset:
         worker = make_worker(dataset)
         connect = worker_module.sqlite_read_only_connection
-        chunks = worker._arrays_from_values
+        chunks = worker.processing._arrays_from_values
         decoded = []
         blobs = []
 
@@ -177,7 +177,7 @@ def test_multidimensional_array_decoder_is_bounded_readonly_and_cancellable(
             return result
 
         monkeypatch.setattr(worker_module, "sqlite_read_only_connection", Connection)
-        monkeypatch.setattr(worker, "_arrays_from_values", record_chunk)
+        monkeypatch.setattr(worker.processing, "_arrays_from_values", record_chunk)
         monkeypatch.setattr(worker_module, "load_param_data_from_db",
                             lambda *args, **kwargs: pytest.fail("QCoDeS array decoder used"))
         finished, errors = [], []
@@ -458,8 +458,8 @@ def test_record_normalisation_is_private_linear_and_cancellable(tmp_path, monkey
             dataset.cache, "signal", {"signal": 2}, {"signal": 0}, {"signal": source},
         )
         worker = make_worker(dataset, read_data=False)
-        normalise = worker._normalise_array_records
-        check = worker._check_cancelled
+        normalise = worker.processing._normalise_array_records
+        check = worker.processing._check_cancelled
         empty = np.empty
         allocations = []
 
@@ -486,11 +486,11 @@ def test_record_normalisation_is_private_linear_and_cancellable(tmp_path, monkey
             # this representation within each record rather than globally.
             data = {**data, "slow": np.array([0., 1.])}
             with monkeypatch.context() as patch:
-                patch.setattr(worker, "_check_cancelled", check_normalisation)
+                patch.setattr(worker.processing, "_check_cancelled", check_normalisation)
                 patch.setattr(worker_module.np, "empty", allocate)
                 return normalise(data)
 
-        monkeypatch.setattr(worker, "_normalise_array_records", normalise_with_checks)
+        monkeypatch.setattr(worker.processing, "_normalise_array_records", normalise_with_checks)
         errors, finished = [], []
         worker.emitter.errorOccurred.connect(errors.append)
         worker.emitter.finished.connect(finished.append)
@@ -597,13 +597,13 @@ def test_array_heatmap_aggregates_every_paired_sample_in_bounded_chunks(tmp_path
     with heatmap_dataset(tmp_path, shaped=False, records=records) as dataset:
         worker = make_worker(dataset, max_full_heatmap_points=4)
         sizes = []
-        original = worker._arrays_from_values
+        original = worker.processing._arrays_from_values
 
         def record_chunks(x, y, z):
             sizes.append(np.asarray(z).size)
             return original(x, y, z)
 
-        monkeypatch.setattr(worker, "_arrays_from_values", record_chunks)
+        monkeypatch.setattr(worker.processing, "_arrays_from_values", record_chunks)
         monkeypatch.setattr(worker_module, "load_param_data_from_db",
                             lambda *args, **kwargs: pytest.fail("Unbounded cache read"))
         run_worker(worker)
