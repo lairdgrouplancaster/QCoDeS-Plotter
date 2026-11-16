@@ -59,6 +59,20 @@ window actions. It handles:
 * recent database menus
 * database-load progress, cancellation, and restore handling
 
+`windows/_test_database.py` owns the explicit synthetic-data commands: CSV
+templates, destination selection, overwrite confirmation, background generation
+and its terminal result. `MainWindow` composes `SyntheticDatabaseActionsMixin`
+alongside the database-viewing actions. Worker construction, signal connection
+and submission failures use the same recovery path as failed generation.
+The reader gate, accepted-source capture, reader retirement and view restoration
+remain in `_database_actions.py`, because ordinary viewing and database-load
+publication must also enforce them. The generator implementation stays in
+`qplot/testdata.py`; ordinary reader actions do not import it directly.
+
+`windows/_file_manager.py` owns file revelation in Finder or the platform file
+manager. Both generation and diagnostic-log actions use it, so Help no longer
+imports the database controller to reveal a log file.
+
 `_database_load_state.py` defines the pending `DatabaseLoadSession` and immutable
 `DatabaseViewSnapshot`. The snapshot describes the committed view, including its
 reader and database observation; it is separate from the pending worker's state.
@@ -101,8 +115,9 @@ controls owned by the main window. It handles:
 
 When adding a new top-level command, menu action, or workflow that coordinates
 multiple windows, start in `main.py`; put database-specific behaviour in
-`_database_actions.py`, plot-opening/export behaviour in `_plot_actions.py`, and
-run-selection or refresh-control behaviour in `_run_controls.py`.
+`_database_actions.py`, synthetic-data commands in `_test_database.py`,
+plot-opening/export behaviour in `_plot_actions.py`, and run-selection or
+refresh-control behaviour in `_run_controls.py`.
 
 `_refresh_interval.py` keeps each control's accepted interval, displayed value,
 and pending text edit in one `_RefreshIntervalState` record. The state is
@@ -306,6 +321,15 @@ or resolve placeholder defaults itself.
 reusable UI controls used inside plot windows.
 
 ## Data Loading
+
+`tools/__init__.py` exposes `data2matrix`, `unpack_param` and `loader` lazily.
+Importing numerical modules such as `heatmap_geometry`, `sample_statistics`,
+`finite_means` or `native_transform_math` must not import Qt, QCoDeS or the plot
+worker. `general.py` needs QCoDeS only for a type annotation and imports pandas
+only when constructing a dataframe. Internal worker code imports helpers from
+their defining modules, avoiding a cycle through the package exports.
+`tests/infrastructure/test_numerical_imports.py` enforces this boundary in fresh
+processes with the application dependencies blocked.
 
 `datahandling/export_data.py` selects exportable measurements and expands CSV
 columns within each acquisition record. Keep its singleton broadcasting and

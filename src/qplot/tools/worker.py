@@ -52,8 +52,8 @@ from qplot.diagnostics import log_exception
 from qplot.tools.operation_registry import OperationCall, OperationExecutionError
 from qplot.tools.plot_result import PlotLoadResult, capture_plot_result
 
-from . import data2matrix
 from .finite_means import FiniteBinMeans
+from .general import data2matrix
 from .heatmap_geometry import (
     MAX_AGGREGATED_HEATMAP_CELLS,
     bounded_grid_shape,

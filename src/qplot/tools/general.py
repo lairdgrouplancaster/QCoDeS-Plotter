@@ -1,12 +1,14 @@
 from decimal import Decimal, localcontext
 from fractions import Fraction
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import ArrayLike
-from qcodes import dataset
 
 from qplot.tools.sample_statistics import finite_mean, sample_fraction
+
+if TYPE_CHECKING:
+    from qcodes import dataset
 
 
 def data2matrix(indep1 : ArrayLike,
@@ -125,7 +127,7 @@ def data2matrix(indep1 : ArrayLike,
     return matrix
 
 
-def unpack_param(dataset : dataset.data_set.DataSet, paramName : str):
+def unpack_param(dataset : "dataset.data_set.DataSet", paramName : str):
     """
     Gets specified parameter from list all parameters in a dataset.
 

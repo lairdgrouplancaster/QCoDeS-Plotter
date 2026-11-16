@@ -271,9 +271,7 @@ def copy_diagnostic_log_path(parent: Any | None = None) -> str:
 
 def show_diagnostic_log(parent: Any | None = None) -> bool:
     """Reveal the log in Finder, or open its folder in the file manager."""
-    # Database actions also depend on shared Help menus through plot widgets.
-    # Import after window construction to avoid a module initialization cycle.
-    from ._database_actions import reveal_file_in_file_manager
+    from ._file_manager import reveal_file_in_file_manager
 
     path = str(default_log_file())
     opened = reveal_file_in_file_manager(path)

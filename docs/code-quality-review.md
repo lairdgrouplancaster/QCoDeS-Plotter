@@ -1,6 +1,8 @@
 # Code quality review: 1 November 2026
 
-For the current review and refactoring, see the
+For the latest local assessment, see the
+[16 November engineering review](#engineering-review-16-november-2026).
+Earlier refactoring is described in the
 [focused follow-up to PR #121](maintainability-followup-121.md), the
 [5 November follow-up to PR #120](maintainability-followup-120.md) and the
 [4 November maintainability review](#maintainability-review-4-november-2026).
@@ -239,3 +241,66 @@ pass. qPlot remained running through an eight-second offscreen startup check;
 its launcher exited after the check requested termination. The full suite
 required local socket access for the shutdown-supervisor tests. Native Windows
 and platform-specific numeric cases remain subject to their normal CI jobs.
+
+
+## Engineering review: 16 November 2026
+
+Reviewed the local checkout at `b14e0e8`, including the earlier maintainability
+reviews and the recent test reorganisation. The priorities below combine impact,
+likelihood of regression and the cost of making a change safely.
+
+The project is strong in explicit database protection, numerical regression
+coverage, failure injection, process ownership and packaging checks. Repository
+Ruff passed before changes. The main remaining engineering weakness is coupling:
+large controllers combine many lifetimes, and ostensibly independent arithmetic
+still entered the application import graph. Extensive tests are valuable here,
+but they do not make those dependencies easy to understand.
+
+### Priority list
+
+| Priority | Finding and recommendation | Outcome in this pass |
+| --- | --- | --- |
+| 1 | **Make generation startup recoverable.** `generate_test_database_from_csv` released the accepted view and set its active state before worker construction, signal wiring and pool submission. Exceptions at those boundaries escaped without restoring the view. | Implemented: startup failures enter the existing terminal recovery path, cancel an unsubmitted worker when present, clear active ownership and recover the accepted source. Six new fault-injection cases failed against the original code. Three real-window cases also check source preservation, selection, action availability and refresh-timer restoration. |
+| 2 | **Separate synthetic generation from ordinary viewing.** The 4,178-line `_database_actions.py` combined reader lifecycle, run selection, CSV templates, overwrite consent and the generation worker. | Implemented: `_test_database.py` owns the synthetic-data actions and worker, composed explicitly into `MainWindow`. The reader controller retains its gates, accepted-source capture and restoration. Shared file-manager integration now lives in `_file_manager.py`, also removing Help's dependency on the database controller. The reader module is reduced to 3,576 lines. |
+| 3 | **Enforce the numerical dependency boundary.** Importing `tools.heatmap_geometry` loaded the package's worker, Qt and QCoDeS, despite the helper's intended independence. `general.py` also imported QCoDeS solely for an annotation. | Implemented: lazy public tool exports, a typing-only QCoDeS import and direct internal helper imports. Fresh-process tests block GUI/database dependencies while importing the numerical modules, and public-export identity remains covered. A local fresh-process observation dropped from 912 imported modules to 261; this is an import observation, not an application-wide performance benchmark. |
+| 4 | **Replace shared mixin state with explicit controllers incrementally.** After the extraction, the reader mixin still owns 89 methods. Many dependencies are implicit attributes accessed with `getattr`, making partial initialisation and test doubles difficult to distinguish. | Next architectural step: make reader/session ownership a composed controller with explicit state and publication callbacks. Move one lifecycle at a time, beginning with loading/refresh; retain the existing identity and stale-publication tests throughout. Moving methods to more mixins alone would not solve the state coupling. |
+| 5 | **Close static-checking gaps and make the check reproducible.** The baseline mypy file list omits 35 of 194 application modules, including `database.py`, `file_identity.py`, `database_export.py` and the largest window mixins. Newly added files can silently escape the list. | Extend coverage by ownership boundary, add a coverage inventory check or move to package-wide checking with explicitly tracked temporary exceptions, and maintain a tested development dependency set. Locally, installed PyQt6 6.12.0 has an invalid `QtGui.pyi` signature at line 4864, so both baseline-wide and configured mypy runs stop before checking the application. Do not suppress that parser failure and describe it as a passing type check. |
+| 6 | **Separate acquisition, numerical processing and Qt publication in the plot worker.** `tools/worker.py` has 2,906 lines; its main loading function alone has 259. Database acquisition, cancellation, array normalisation, gridding and result publication share one mutable object. | Extract a non-Qt processing component with explicit inputs/results and cancellation callbacks, leaving source acquisition and publication ownership in the worker. Preserve the exact-arithmetic, bounded-memory and cancellation tests. Avoid introducing a generic processing framework or changing the numerical algorithms as part of the extraction. |
+
+The first three are deliberately complete, bounded improvements. The proposed
+controller and worker reorganisations are larger follow-up work, not claims that
+the present extraction eliminates all architectural debt. No settings migration,
+reader permission, SQLite transaction, native VFS or release workflow change is
+part of this pass.
+
+### Validation
+
+The focused Windows run passed **1,656 tests and eight subtests**, with 39
+platform-related skips, across the numerical/worker, generation, main-window,
+plot-integration, Help, shutdown and package-import suites. The three additional
+real-window startup-recovery cases passed separately: **1,659 distinct passing
+tests** in total. Fresh-process import checks prevent accidental GUI/database
+dependencies from returning to the numerical modules. This was targeted
+validation, not a full-suite or cross-platform run.
+
+Repository-wide Ruff and `git diff --check` passed. All four committed PNGs and
+their documentation references passed `scripts/screenshot_support.py validate`,
+and the strict MkDocs build passed.
+
+An AST comparison confirms that all 89 retained reader methods are unchanged,
+and the seven existing moved action methods are equivalent after replacing
+explicit reader-class dispatch with normal host calls. The worker, signals and
+two moved helpers are unchanged. Startup handling is the deliberate behavioural
+change.
+
+The actual project-venv `python -m qplot` entry point opened its main window and
+ran the event loop, then closed normally with exit status zero. Settings and logs
+were isolated, and no measurement database was opened by that startup check.
+The installed runtime's PyQt6 6.12.0 stubs still block the ordinary local mypy
+command. A follow-up check used unmodified typing files from the official
+PyQt6 6.11.0 wheel (CI's analysis version) through a private `PYTHONPATH`, with
+Python 3.12/Linux settings. All 159 configured source files passed, without
+changing the installed GUI runtime or disabling application diagnostics.
+CI had exposed a missing optional-worker declaration in the extracted mixin;
+that declaration is restored, and all 35 focused generation tests passed again.
+Windows-local results do not establish macOS validation.

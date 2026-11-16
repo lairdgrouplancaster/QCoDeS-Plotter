@@ -169,7 +169,7 @@ class HelpMenuTestCase(unittest.TestCase):
             action = next(a for a in menu.actions() if a.objectName() == "showDiagnosticLogAction")
             for opened in (True, False):
                 with self.subTest(opened=opened), patch(
-                    "qplot.windows._database_actions.reveal_file_in_file_manager",
+                    "qplot.windows._file_manager.reveal_file_in_file_manager",
                     return_value=opened,
                 ) as reveal:
                     window.show_status.reset_mock()
