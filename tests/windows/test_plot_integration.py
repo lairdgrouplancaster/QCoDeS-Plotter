@@ -1210,7 +1210,7 @@ def test_real_plot2d_csv_exports_only_current_downsampled_grid(
         heatmap_window._update_heatmap_geometry()
         heatmap_window._render_heatmap()
         heatmap_window._large_heatmap_sql_mode = True
-        heatmap_window.processing._heatmap_downsample_info = {
+        heatmap_window._heatmap_downsample_info = {
             "source_grid_columns": full_x.size,
             "source_grid_rows": full_y.size,
             "grid_columns": current_x.size,
