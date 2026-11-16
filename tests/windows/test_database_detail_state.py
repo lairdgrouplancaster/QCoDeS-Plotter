@@ -91,3 +91,52 @@ def test_metadata_loading_tracks_independent_snapshot_stages(tmp_path, monkeypat
     finally:
         DatabaseActionsMixin._cancel_database_detail_load(window)
         run_list.deleteLater()
+
+
+@pytest.mark.parametrize("expensive", [False, True])
+@pytest.mark.parametrize("failure", ["construction", "submission"])
+def test_snapshot_startup_failure_clears_real_run_list_and_allows_retry(monkeypatch, expensive, failure):
+    from qplot.windows import _database_detail_ui as detail_ui
+
+    run_list = RunList()
+    run_list.addRuns({1: {"guid": "pending"}})
+    item = run_list._item_for_guid("pending")
+    window = SimpleNamespace(
+        RunList=run_list,
+        fileTextbox=SimpleNamespace(text=lambda: "selected.db"),
+        databaseLoadThreadPool=SimpleNamespace(start=lambda worker: None),
+        _database_detail_priority_run_ids=lambda: [1],
+        show_status=lambda *_args: None,
+    )
+    for prefix in ("database_detail", "database_expensive_detail"):
+        for name in ("status", "batch_ready", "finished"):
+            setattr(window, f"{prefix}_{name}", lambda *_args: None)
+
+    def start(stage):
+        DatabaseActionsMixin._start_database_detail_worker(window, "selected.db", [1], None, {}, expensive=stage)
+
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("Startup failed")
+
+    try:
+        start(not expensive)
+        with monkeypatch.context() as patch:
+            if failure == "construction":
+                patch.setattr(detail_ui, "DatabaseExpensiveDetailWorker" if expensive else "DatabaseDetailWorker", fail)
+            else:
+                patch.setattr(window.databaseLoadThreadPool, "start", fail)
+            start(expensive)
+        assert not detail_channel(window, expensive).active
+        assert detail_channel(window, expensive).worker is None
+        assert detail_channel(window, not expensive).active
+        failed_column, other_column = ("Size", "Status") if expensive else ("Status", "Size")
+        assert item.text(run_list.cols.index(failed_column)) == "Unknown"
+        assert item.text(run_list.cols.index(other_column)) == "Loading…"
+        start(expensive)
+        assert item.text(run_list.cols.index(failed_column)) == "Loading…"
+        assert detail_channel(window, expensive).active
+        DatabaseActionsMixin._cancel_database_detail_load(window)
+        assert not item.loading_columns
+    finally:
+        DatabaseActionsMixin._cancel_database_detail_load(window)
+        run_list.deleteLater()

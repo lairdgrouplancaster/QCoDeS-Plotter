@@ -1,9 +1,15 @@
 """Metadata-loading presentation and snapshot detail channel state."""
 
+from __future__ import annotations
+
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from qplot.datahandling.file_identity import DatabaseInstance
+
+if TYPE_CHECKING:
+    from ._database_detail_controller import DatabaseDetailController
 
 BASIC_METADATA_COLUMNS = ("Started", "Status", "Duration", "Completed")
 EXPENSIVE_METADATA_COLUMNS = ("Setpoints", "Size")
@@ -27,10 +33,11 @@ class DetailLoadChannel:
     active: bool = False
     worker: DetailWorker | None = None
     instance: DatabaseInstance | None = None
-
-    def cancel_worker(self) -> None:
-        if self.worker is not None:
-            self.worker.cancel()
+    path: str | None = None
+    failed: bool = False
+    publishing: bool = False
+    pending_batches: deque[dict[int, dict[str, Any]]] = field(default_factory=deque)
+    deferred_completion: tuple[object] | None = None
 
     def invalidate(self) -> None:
         self.generation += 1
@@ -40,6 +47,11 @@ class DetailLoadChannel:
         self.active = False
         self.worker = None
         self.instance = None
+        self.path = None
+        self.failed = False
+        self.publishing = False
+        self.pending_batches.clear()
+        self.deferred_completion = None
 
     def accepts(self, generation: int) -> bool:
         return self.active and self.generation == generation
@@ -51,9 +63,17 @@ class DatabaseDetailChannels:
     expensive: DetailLoadChannel = field(default_factory=DetailLoadChannel)
 
 
+def detail_controller(owner: Any) -> DatabaseDetailController:
+    """Return the owner's single controller, including for embedded window hosts."""
+    from ._database_detail_controller import DatabaseDetailController
+    from ._database_detail_ui import DatabaseDetailUi
+
+    controller = owner.__dict__.get("_database_detail_loader")
+    if controller is None:
+        controller = DatabaseDetailController(DatabaseDetailUi(owner))
+        owner._database_detail_loader = controller
+    return controller
+
+
 def detail_channel(owner: Any, expensive: bool = False) -> DetailLoadChannel:
-    channels = owner.__dict__.get("_database_detail_channels")
-    if channels is None:
-        channels = DatabaseDetailChannels()
-        owner._database_detail_channels = channels
-    return channels.expensive if expensive else channels.basic
+    return detail_controller(owner).channel(expensive)

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Protocol
 from PyQt6 import QtGui
 from PyQt6 import QtWidgets as qtw
 
-from ._database_detail_state import detail_channel
+from ._database_detail_state import detail_controller
 from ._shutdown_resources import ShutdownResources
 
 if TYPE_CHECKING:
@@ -147,8 +147,7 @@ class ShutdownCoordinator:
     def _invalidate_database_publications(self) -> None:
         window = self.window
         window._database_loader.invalidate(cancel=False)
-        detail_channel(window).invalidate()
-        detail_channel(window, True).invalidate()
+        detail_controller(window).invalidate(cancel=False)
         window._database_refresher.invalidate(cancel=False)
         window._database_selected_run_generation = (
             getattr(window, "_database_selected_run_generation", 0) + 1
