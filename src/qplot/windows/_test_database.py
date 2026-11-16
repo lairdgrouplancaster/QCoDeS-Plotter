@@ -185,6 +185,8 @@ class TestDatabaseGenerationWorker(QtCore.QRunnable):
 class SyntheticDatabaseActionsMixin:
     """User-requested synthetic generation composed into the main window."""
 
+    _test_database_generation_worker: TestDatabaseGenerationWorker | None
+
     @QtCore.pyqtSlot()
     def open_bundled_test_database_csv_folder(self):
         """Open the installed CSV templates for inspection in the file manager."""

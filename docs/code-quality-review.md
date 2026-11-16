@@ -296,5 +296,11 @@ change.
 The actual project-venv `python -m qplot` entry point opened its main window and
 ran the event loop, then closed normally with exit status zero. Settings and logs
 were isolated, and no measurement database was opened by that startup check.
-Full configured mypy remains blocked by the installed third-party stub syntax
-error described above; Windows-local results do not establish macOS validation.
+The installed runtime's PyQt6 6.12.0 stubs still block the ordinary local mypy
+command. A follow-up check used unmodified typing files from the official
+PyQt6 6.11.0 wheel (CI's analysis version) through a private `PYTHONPATH`, with
+Python 3.12/Linux settings. All 159 configured source files passed, without
+changing the installed GUI runtime or disabling application diagnostics.
+CI had exposed a missing optional-worker declaration in the extracted mixin;
+that declaration is restored, and all 35 focused generation tests passed again.
+Windows-local results do not establish macOS validation.
