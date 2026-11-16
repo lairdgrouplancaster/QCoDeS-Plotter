@@ -6,6 +6,7 @@ from qplot.windows._database_actions import DatabaseActionsMixin
 from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._shutdown_coordinator import ShutdownCoordinator
 from qplot.windows._widgets.treeWidgets import RunList
+from tests._database_load_fakes import seed_load
 
 
 def test_shutdown_invalidates_both_channels_before_late_callbacks():
@@ -13,6 +14,7 @@ def test_shutdown_invalidates_both_channels_before_late_callbacks():
         _database_load_generation=1,
         show_status=lambda *_args: (_ for _ in ()).throw(AssertionError("late status")),
     )
+    seed_load(window, generation=1)
     basic = detail_channel(window)
     expensive = detail_channel(window, True)
     basic.generation, expensive.generation = 3, 7
