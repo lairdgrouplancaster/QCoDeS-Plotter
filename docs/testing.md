@@ -108,6 +108,53 @@ with **full-validation** enabled as well. That includes the complete Python
 matrix, Linux checks, combined coverage and source-distribution validation.
 A local Windows run cannot substitute for those platform results.
 
+## Static analysis
+
+The explicit mypy targets in `pyproject.toml` cover 165 of the 200 application
+modules. The other 35 have individual reasons in `[tool.qplot.typing.deferred]`.
+`follow_imports = "silent"` allows mypy to use imported types while suppressing
+diagnostics from modules outside the explicit targets; this is partial coverage,
+not a claim that every function is fully annotated.
+
+When adding or renaming a module, add its exact `src/qplot/...py` path to
+`tool.mypy.files`, or record a specific reason for deferring it. When bringing a
+module into the checked set, remove its deferral. The inventory check fails for
+unaccounted modules, stale paths, duplicate targets, overlapping entries and
+empty reasons. Prefer checking new code; deferrals are visible work remaining.
+
+Use a separate analysis venv so the validated Qt stubs do not replace the Qt
+version used for runtime testing. `requirements/analysis.txt` pins mypy and
+PyQt6 for both contributors and CI. Application dependencies retain the ranges
+in `pyproject.toml`; this is an analysis-tool pin, not a complete dependency lock.
+The mypy target is Python 3.12 on Linux, matching CI on every contributor OS.
+This does not cover every platform-specific branch. Extending static checking
+to Windows and macOS remains separate work; runtime CI still tests both systems.
+
+From the repository root on Windows:
+
+```powershell
+.venv\Scripts\python.exe -m venv .venv-analysis
+.venv-analysis\Scripts\python.exe -m pip install --only-binary=:all: -e . -r requirements/analysis.txt
+.venv-analysis\Scripts\python.exe scripts/check_typing_inventory.py
+.venv-analysis\Scripts\python.exe -m mypy
+```
+
+Use `..\.venv\Scripts\python.exe` for the first command if the development
+environment is beside the repository. On macOS/Linux:
+
+```bash
+MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-mac/bin/python -m venv .venv-analysis
+MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-analysis/bin/python -m pip install --only-binary=:all: -e . -r requirements/analysis.txt
+MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-analysis/bin/python scripts/check_typing_inventory.py
+MPLCONFIGDIR=/private/tmp/qplot-matplotlib-cache .venv-analysis/bin/python -m mypy
+```
+
+For an unpublished native dependency, include the matching locally built native
+wheel in the install command, as described in [contributing](../CONTRIBUTING.md).
+CI installs its current-revision application/native wheels before the same
+analysis requirements. No extracted stubs or `PYTHONPATH` overrides are needed.
+Keep runtime tests in the development venv.
+
 ## Isolation and measurement safety
 
 `tests/conftest.py` provides the process-wide QApplication, restores QCoDeS's

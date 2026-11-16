@@ -368,3 +368,28 @@ refresh intervals and release publishing are unchanged.
 
 The next priorities are the static-checking coverage inventory and reproducible
 analysis dependencies, followed by the numerical plot-worker boundary.
+
+## Static-checking coverage follow-up
+
+Every application module is now accounted for: 165 are explicit mypy targets,
+and 35 have individual deferral reasons in `pyproject.toml`. CI rejects new
+unaccounted modules, stale paths, duplicate targets and obsolete or unexplained
+deferrals. The inventory is a coverage guard, not a claim of complete annotation.
+
+`database.py` and `file_identity.py` join the checked set. The worker base now
+types source identity, cancellation, deadlines, interruptible connections and
+trusted request results. Load/refresh construction and refresh publication
+contracts are annotated. Snapshot refresh rejects trusted-mode watch records
+before a status query, reporting the normal bounded worker error. File identity
+also rejects new untyped function definitions through a module-specific rule.
+
+Contributors and CI install the same pinned mypy/Qt analysis requirements.
+The documented isolated analysis venv replaces the extracted-stub workaround;
+the standard check targets Python 3.12/Linux consistently across host platforms.
+The remaining platform-specific typing errors and module deferrals remain
+visible limitations. Runtime testing continues with its separately selected Qt.
+See [static analysis](testing.md#static-analysis) for setup and coverage policy.
+
+The next architectural step is to separate numerical plot acquisition,
+processing and Qt publication. Further type coverage can then follow those
+smaller interfaces rather than expanding the existing window mixins at once.

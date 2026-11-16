@@ -4,6 +4,13 @@ This directory contains local development helpers. They are not installed as
 package entry points and should be run from the repository root using the
 project development environment.
 
+## `check_typing_inventory.py`
+
+Checks every `src/qplot` Python module against the explicit mypy targets and
+reasoned deferrals in `pyproject.toml`. It requires only the standard library
+and fails for untracked modules or stale entries. Run it before mypy; see the
+shared local/CI [analysis setup](../docs/testing.md#static-analysis).
+
 ## `render_icons.py`
 
 Rebuilds the packaged PNG, Windows ICO, and macOS ICNS icons from the editable

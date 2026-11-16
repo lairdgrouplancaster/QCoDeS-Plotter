@@ -222,5 +222,6 @@ def test_runtime_qt_selection_preserves_wheel_audit_and_separate_analysis_pin():
     assert "python -m pip show PyQt6 PyQt6-Qt6 PyQt6-sip" in platform
     ci = (workflows / "ci.yml").read_text()
     analysis = ci.split("\n  static-analysis:\n", 1)[1].split("\n  coverage:\n", 1)[0]
-    assert 'python -m pip install "PyQt6==6.11.0"' in analysis
+    assert 'python -m pip install -r requirements/analysis.txt' in analysis
+    assert 'python scripts/check_typing_inventory.py' in analysis
     assert "qt-requirement" not in analysis

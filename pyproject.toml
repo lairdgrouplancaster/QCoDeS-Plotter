@@ -103,6 +103,9 @@ select = ["F", "B", "I", "UP"]
 ignore = ["UP040", "UP046"]
 
 [tool.mypy]
+python_version = "3.12"
+# Match CI on every contributor OS. This does not check every platform branch.
+platform = "linux"
 check_untyped_defs = true
 follow_imports = "silent"
 files = [
@@ -140,6 +143,8 @@ files = [
     "src/qplot/configuration/themes/dark.py",
     "src/qplot/configuration/themes/light.py",
     "src/qplot/datahandling/__init__.py",
+    "src/qplot/datahandling/database.py",
+    "src/qplot/datahandling/file_identity.py",
     "src/qplot/datahandling/LoadFromDB.py",
     "src/qplot/datahandling/dimensions.py",
     "src/qplot/datahandling/qcodes_compat.py",
@@ -275,6 +280,10 @@ no_implicit_optional = true
 sqlite_cache = false
 warn_unused_ignores = true
 
+[[tool.mypy.overrides]]
+module = "qplot.datahandling.file_identity"
+disallow_untyped_defs = true
+
 # Qt's Python stubs describe several runtime-composed widget attributes as
 # optional or absent. Keep mypy coverage for these modules while excluding only
 # the error categories produced by those dynamic Qt APIs.
@@ -316,3 +325,41 @@ disable_error_code = ["attr-defined"]
 [[tool.mypy.overrides]]
 module = "qplot.testdata"
 disable_error_code = ["method-assign"]
+
+# Temporary module-level deferrals. New modules must be checked or explained here.
+[tool.qplot.typing.deferred]
+"src/qplot/_auxiliary_paths.py" = "Filesystem helpers need typed path and file-identity collections across settings and export callers."
+"src/qplot/configuration/fonts.py" = "Font discovery exposes dynamic Qt font-database values; define its public return types first."
+"src/qplot/configuration/trace.py" = "Trace settings combine JSON values and plot objects; establish the current settings value types."
+"src/qplot/datahandling/database_export.py" = "Export combines SQLite callbacks and worker signals; type the export job and publication boundary together."
+"src/qplot/datahandling/parameter_data.py" = "Parameter arrays need explicit scalar and array result types shared with plot acquisition."
+"src/qplot/datahandling/plot_progress.py" = "Progress helpers consume heterogeneous acquisition records; define the worker progress payload first."
+"src/qplot/datahandling/source_activity.py" = "Source activity combines filesystem observations and SQLite state; type its observation records together."
+"src/qplot/datahandling/trusted_array_preview.py" = "Preview reshaping needs array and bounded-result annotations shared with trusted plot acquisition."
+"src/qplot/datahandling/trusted_heatmap.py" = "Heatmap accumulation needs typed array shapes and aggregation results shared with the plot worker."
+"src/qplot/datahandling/trusted_plot.py" = "Trusted acquisition combines multiple result variants; type the acquisition boundary during the plot-worker split."
+"src/qplot/tools/finite_means.py" = "Numerical reducers need shared NumPy array and scalar annotations, including empty results."
+"src/qplot/tools/sample_statistics.py" = "Statistics combine scalar, complex and array inputs; define the accepted numerical types first."
+"src/qplot/windows/_appearance_feedback.py" = "Appearance mixin requires a typed widget host before checking dynamic attributes."
+"src/qplot/windows/_appearance_layout.py" = "Appearance layout mixin requires a typed widget host before checking dynamic attributes."
+"src/qplot/windows/_auto_plot.py" = "Automatic plotting requires a typed main-window host and dataset selection contract."
+"src/qplot/windows/_csv_filenames.py" = "CSV naming consumes loosely typed dataset metadata; define its metadata input contract."
+"src/qplot/windows/_database_actions.py" = "Main-window database mixin still needs host contracts for detail scheduling and source replacement."
+"src/qplot/windows/_database_export.py" = "Export UI needs a typed host coordinated with database export worker contracts."
+"src/qplot/windows/_dataset_statistics.py" = "Statistics UI consumes heterogeneous worker results; type the statistics payload and host together."
+"src/qplot/windows/_display_precision.py" = "Precision mixin requires typed plot-axis and settings attributes on its host."
+"src/qplot/windows/_drawing_controls.py" = "Drawing controls need a typed host for dynamically composed Qt controls."
+"src/qplot/windows/_export_paths.py" = "Export paths depend on dynamic window and dataset attributes; define the export host."
+"src/qplot/windows/_file_manager.py" = "File-manager integration needs typed platform callbacks and window host attributes."
+"src/qplot/windows/_plotWin.py" = "Shared plot window composes numerous mixins; extend PlotHost coverage before checking the full class."
+"src/qplot/windows/_plot_actions.py" = "Plot actions require a host contract for dataset selection and plot construction."
+"src/qplot/windows/_plot_annotation.py" = "Annotation mixin needs explicit Qt item and plot host types."
+"src/qplot/windows/_plot_cursor_hover.py" = "Cursor handling needs typed pyqtgraph events and plot host attributes."
+"src/qplot/windows/_plot_hover.py" = "Hover handling needs typed pyqtgraph events and dimensional plot variants."
+"src/qplot/windows/_plot_status.py" = "Status mixin needs a typed host for current dataset and Qt status widgets."
+"src/qplot/windows/_plot_tiling.py" = "Tiling needs typed MDI window and geometry collections."
+"src/qplot/windows/_plot_transform_labels.py" = "Transform labels need shared operation metadata and plot host types."
+"src/qplot/windows/_run_controls.py" = "Run controls need a typed main-window host for selection, details and plot actions."
+"src/qplot/windows/_status.py" = "Main-window status mixin needs typed widget and lifecycle state attributes."
+"src/qplot/windows/_test_database.py" = "Generation UI needs a typed host covering generation jobs, settings and publication callbacks."
+"src/qplot/windows/_trace_snap_geometry.py" = "Trace snapping needs explicit numerical geometry and curve input types."

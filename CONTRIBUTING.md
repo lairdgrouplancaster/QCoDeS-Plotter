@@ -165,9 +165,11 @@ Run the lightweight static check before committing:
 python -m ruff check .
 ```
 
-Run the scoped type check:
+Run the typing inventory and scoped type check in the separate analysis
+environment described in [Testing qPlot](docs/testing.md#static-analysis):
 
 ```console
+python scripts/check_typing_inventory.py
 python -m mypy
 ```
 
