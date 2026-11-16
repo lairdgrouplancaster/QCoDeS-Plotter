@@ -1,7 +1,15 @@
+import re
+import sys
 import unittest
+from html import unescape
+from pathlib import Path
+from unittest.mock import Mock
 
+import pytest
+from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 
+import qplot
 from qplot.windows._commands import command_spec
 from qplot.windows._help import (
     add_help_menu,
@@ -9,6 +17,54 @@ from qplot.windows._help import (
     show_about,
     show_quick_start,
 )
+
+
+@pytest.mark.parametrize("editable", [False, True])
+@pytest.mark.parametrize("opened", [False, True])
+def test_about_opens_running_locations_with_literal_paths(
+    qapplication, monkeypatch, tmp_path, editable, opened,
+):
+    environment = tmp_path / "Environment & measurements #1 %20" / ".venv"
+    package = (
+        tmp_path / ("Source 測定 " + "long" * 40) / "src" / "qplot"
+        if editable else environment / "Lib" / "site-packages" / "qplot"
+    )
+    monkeypatch.setattr(sys, "prefix", str(environment))
+    monkeypatch.setattr(qplot, "__file__", str(package / "__init__.py"))
+    monkeypatch.setenv("VIRTUAL_ENV", str(tmp_path / "another-environment"))
+    monkeypatch.setattr("qplot.windows._help.version_info", lambda: {"version": "2.0"})
+    open_url = Mock(return_value=opened)
+    warning = Mock()
+    monkeypatch.setattr(QtGui.QDesktopServices, "openUrl", open_url)
+    monkeypatch.setattr(qtw.QMessageBox, "warning", warning)
+    dialog = show_about()
+    try:
+        browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
+        original = browser.toPlainText()
+        assert str(environment) in original
+        assert str(package) in original
+        assert "another-environment" not in original
+        qapplication.processEvents()
+        assert browser.horizontalScrollBar().maximum() == 0
+        urls = [QtCore.QUrl(unescape(href))
+                for href in re.findall(r'href="([^"]+)"', browser.toHtml())]
+        folders = [url for url in urls if url.isLocalFile()]
+        assert [Path(url.toLocalFile()) for url in folders] == [environment, package]
+        assert not browser.openLinks()
+        assert not browser.openExternalLinks()
+        for url in urls:
+            open_url.reset_mock()
+            warning.reset_mock()
+            browser.anchorClicked.emit(url)
+            open_url.assert_called_once_with(url)
+            assert browser.toPlainText() == original
+            if url.isLocalFile() and not opened:
+                warning.assert_called_once()
+                assert url.toLocalFile() in warning.call_args.args[2]
+            else:
+                warning.assert_not_called()
+    finally:
+        sip.delete(dialog)
 
 
 class HelpMenuTestCase(unittest.TestCase):

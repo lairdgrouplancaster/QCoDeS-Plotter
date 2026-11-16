@@ -426,6 +426,10 @@ Common actions:
   it describes the recorded commit, including when there are local changes.
   This information works offline in source checkouts and stamped packages.
   The date is omitted when unavailable; it is not a merge or publication date.
+  The selectable `Python environment` and `qPlot location` paths identify the
+  environment running qPlot and the loaded package folder. Each has an
+  `Open folder` link to open it in your file manager. For editable installations,
+  the package can be in a source checkout outside the environment.
 * `Help -> Check for Updates…` checks PyPI for a newer qPlot release and shows
   release notes and upgrade instructions. Stable releases are selected by
   default; withdrawn releases and incompatible application wheels are ignored.
