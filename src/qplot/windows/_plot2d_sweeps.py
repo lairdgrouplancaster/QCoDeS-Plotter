@@ -312,18 +312,8 @@ class Plot2DSweepMixin(_Plot2DSweepBase):
     
     @QtCore.pyqtSlot()  
     def rotate_sweeps(self) -> None:
-        """
-        Event handler for changing assigned axes (is connected to self.end_wait
-                                                  in self.refreshPlot)
-        
-        Rotates sweep cursors if the axis is flipped. Otherwise removes them
-
-        Returns
-        -------
-        None.
-
-        """
-        if self.rotate is None: # Not from changing axis parameters
+        """Align markers with published axes before restoring heatmap geometry."""
+        if self.__dict__.get("rotate") is None:  # No pending axis change.
             return
         
         # remote lines as parameters have changed

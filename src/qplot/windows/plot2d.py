@@ -323,8 +323,6 @@ class plot2d(
         v_sweep.triggered.connect(lambda _: self.openSweep("v"))
         self.vbMenu.insertAction(sep, v_sweep)
         
-        # Link finish update with check for rotation of sweep cursor
-        self.end_wait.connect(self.rotate_sweeps)
         self.vbMenu.insertSeparator(h_sweep)
 
         self._init_colorbar_scale_controls()
@@ -375,6 +373,12 @@ class plot2d(
                     plot_worker,
                     clear_display=clear_display,
                     ):
+                return
+            # Marker orientation must follow the newly published parameter
+            # axes before geometry restoration clamps their coordinates.
+            self.rotate_sweeps()
+            if not self._refresh_publication_source_is_current(
+                    plot_worker, clear_display=clear_display):
                 return
             self._update_large_heatmap_state(plot_worker.result)
             self.refresh_secondary_heatmaps()

@@ -163,7 +163,11 @@ def test_unpublished_operations_retain_last_merged_publication(
         release.set()
         wait_for(lambda: bool(finished) and not pending.running)
         source.monitor.stop()
-        assert finished == [outcome == "superseded"]
+        # A replacement now cancels the previous controller-owned job. Its
+        # cancelled result must still leave the newer publication untouched.
+        assert finished == [False]
+        if outcome in {"cancelled", "superseded"}:
+            assert pending.is_cancelled()
         assert len(errors) == (1 if outcome == "failed" else 0)
         host.refresh_secondary_lines()
         assert_samples(source.line, x, expected)
