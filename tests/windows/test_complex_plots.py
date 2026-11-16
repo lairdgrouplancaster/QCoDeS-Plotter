@@ -221,7 +221,10 @@ def test_bundled_complex_preview_double_click_opens_plot(tmp_path, monkeypatch, 
         QtTest.QTest.mouseDClick(label, QtCore.Qt.MouseButton.LeftButton)
         wait_for(lambda: len(window.windows) > previous)
         plot = window.windows[-1]
-        wait_for(lambda: hasattr(plot, "worker") and not plot.worker.running)
+        # Bundled complex maps use array-backed samples, read through many
+        # bounded helper transactions. They can take over 20 seconds locally;
+        # allow this data read longer than the ordinary GUI-state waits above.
+        wait_for(lambda: hasattr(plot, "worker") and not plot.worker.running, timeout=30)
         assert plot.worker.result is not None, plot._last_error_text
         assert plot.param.name == "S11"
         assert plot.complex_samples is not None
