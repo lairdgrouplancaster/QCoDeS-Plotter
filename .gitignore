@@ -10,6 +10,7 @@
 .venv-mac/
 .venv-linux/
 .venv-win/
+.venv-analysis/
 .pytest_cache/
 .ruff_cache/
 .coverage

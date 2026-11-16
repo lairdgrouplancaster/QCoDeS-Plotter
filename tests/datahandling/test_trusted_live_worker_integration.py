@@ -38,6 +38,25 @@ from qplot.datahandling.trusted_query_types import (
 from qplot.datahandling.trusted_snapshot import normalize_trusted_snapshot
 
 
+def test_snapshot_refresh_rejects_trusted_watch_records(tmp_path, monkeypatch):
+    """A malformed snapshot request must report failure before querying status."""
+    worker = database_module.DatabaseRefreshWorker(
+        1, str(tmp_path / "absent.db"), 0, [(1, "guid", "selected")],
+    )
+    monkeypatch.setattr(database_module, "find_new_runs", lambda *args, **kwargs: {})
+
+    def unexpected_status_query(*args, **kwargs):
+        pytest.fail("Snapshot SQL must receive a GUID string, not a trusted watch record")
+
+    monkeypatch.setattr(database_module, "get_run_status", unexpected_status_query)
+    results = []
+    worker.signals.finished.connect(lambda *args: results.append(args))
+    worker.run()
+    assert len(results) == 1
+    assert results[0][2:4] == ({}, {})
+    assert results[0][4] == "Snapshot refresh requires run GUID strings."
+
+
 def _wait_for(predicate: Callable[[], bool], timeout: float = 3.0) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

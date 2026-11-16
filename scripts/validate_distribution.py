@@ -35,6 +35,7 @@ REQUIRED_ROOT_FILES = {
     "MANIFEST.in",
     "README.md",
     "pyproject.toml",
+    "requirements/analysis.txt",
 }
 SDIST_SOURCE_PREFIXES = ("docs/", "scripts/", "src/", "tests/")
 REQUIRED_NATIVE_SOURCE_FILES = {

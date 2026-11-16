@@ -413,7 +413,7 @@ def _checked_windows_file_identity(
     return identity
 
 
-def _windows_handle_identity(handle) -> DatabaseFileIdentity | None:
+def _windows_handle_identity(handle: int) -> DatabaseFileIdentity | None:
     """Return Windows' volume/file-index identity for an existing handle."""
 
     try:

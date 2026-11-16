@@ -1,0 +1,6 @@
+# Shared local/CI type-checking tools. Install in a separate analysis venv;
+# runtime and compatibility tests continue to use their own Qt versions.
+mypy==1.20.2
+# 6.12.0 contains malformed signatures; 6.12.1 mis-types QObject parents
+# and requires pyqtSignal's optional arguments keyword.
+PyQt6==6.11.0
