@@ -548,10 +548,7 @@ def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
         read_data=False, axis_data={}, axis_param={}, dataset_completed=False,
     ))
     set_plot_worker(plot, older_worker)
-    plot._qplot_publication_generation = 1
-    plot._refresh_publication = plot_refresh_module.RefreshPublication(
-        older_worker, 1, None, "signal", None, {},
-    )
+    plot._publication_owner().begin(older_worker, plot.__dict__, cache=None, parameter_name="signal")
     plot.param = type("Param", (), {"name": "signal"})()
     plot.renderer_state = "older geometry"
     plot.statuses = []
@@ -574,7 +571,7 @@ def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
 
     def publish_newer_state():
         set_plot_worker(plot, newer_worker)
-        plot._qplot_publication_generation = 2
+        plot._publication_owner().begin(newer_worker, plot.__dict__, cache=None, parameter_name="signal")
         plot.renderer_state = "newer renderer"
         plot.statuses[:] = [("newer status", 5000)]
         plot.states[:] = [(("Newer plot state",), {})]
@@ -591,7 +588,8 @@ def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
     assert plot._refresh_publication_for(older_worker) is None
 
 
-def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path, plot_stub):
+@pytest.mark.parametrize("boundary", ["render", "complete"])
+def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path, plot_stub, boundary):
     database_path = _source_with_sidecars(tmp_path, "line-callback.db")
     key = DatasetKey(database_path, "run-guid")
 
@@ -620,7 +618,7 @@ def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path, plo
 
         def setData(self, *args, **kwargs):
             self.calls.append((args, kwargs))
-            if len(self.calls) == 1:
+            if boundary == "render" and len(self.calls) == 1:
                 _replace_sidecars(database_path)
 
     plot = plot_stub(plot1d)
@@ -652,6 +650,8 @@ def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path, plo
     plot._set_param_axis_labels = lambda: None
     plot._update_coordinate_context = lambda: None
     plot.refresh_secondary_lines = lambda: None
+    if boundary == "complete":
+        plot._complete_plot_publication = lambda _worker: _replace_sidecars(database_path)
 
     worker = _RefreshWorker()
     worker.read_data = False
@@ -670,7 +670,7 @@ def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path, plo
     assert plot.line.calls[-1] == (([], []), {})
     assert plot.axis_data == {"x": [0.0], "y": [1.0]}
     assert plot.axis_param == {"x": "old-x", "y": "old-y"}
-    assert plot.trace_updated.values == []
+    assert plot.trace_updated.values == ([()] if boundary == "complete" else [])
     assert _normalized_paths(
         path for (path,) in plot.database_replaced.values
     ) == _normalized_paths([database_path])

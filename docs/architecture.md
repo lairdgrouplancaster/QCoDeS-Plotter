@@ -242,18 +242,29 @@ refresh usable while overlays retain it; final consumer release and shutdown
 cancel through the controller. Pool-registration cleanup also survives window
 destruction.
 
-`windows/_plot_refresh.py` retains refresh admission, source identity checks,
-cache publication and the existing rendering rollback transaction. Numerical
-processing remains in `tools/plot_processing.py` and database acquisition stays
-in the worker.
+`windows/_plot_refresh.py` retains refresh admission, source identity checks and
+Qt presentation. Numerical processing remains in `tools/plot_processing.py` and
+database acquisition stays in the worker.
 
-The plot window owns one typed `RefreshPublication` rollback record for the
-latest callback. It captures the prior cache parameter and plot fields, records
-the cache values actually published, and conditionally restores them if the
-source changes before rendering finishes. A nested newer callback replaces the
-record; an older callback cannot restore or discard the newer state. Source
-checks remain at the cache and renderer publication boundaries. Worker result
-data and completion signals remain separate from this GUI-owned rollback state.
+`windows/_plot_publication.py` owns the current `RefreshPublication`, its
+generation and explicit terminal outcome. Its `PlotSnapshot` retains exact
+array references and distinguishes absent fields from fields containing `None`.
+Source rejection restores the plot fields and conditionally restores shared
+cache slots, preserving any newer cache publication. Rendering failure instead
+retains valid shared cache data, restores plot fields and leaves the display
+retryable. The Qt adapter clears the incomplete renderer and presents the error.
+A nested newer publication replaces the record; older callbacks cannot commit,
+restore or discard it. Window observations of this state are read-only.
+
+The concrete renderers share a publication scope with separate successful and
+exceptional exits. Lines publish their data before updating overlays; heatmaps
+rotate cut markers before installing geometry and restoring interactions.
+Volume annotations, navigation feedback and dependent cuts, and cut coverage
+metadata, finish inside that scope before commit and optional preview reuse.
+Normal empty or unsupported-data displays can commit without a preview.
+Source and worker checks surround callbacks that can replace or cancel a job,
+including preparation, labels and final dependent-view updates. Worker result
+data and completion signals remain separate from publication ownership.
 
 `src/qplot/windows/_dataset_handle.py` defines the small `DatasetHandle`
 structure used by the main window and plot windows to track an open dataset,

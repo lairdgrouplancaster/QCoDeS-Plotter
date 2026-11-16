@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
@@ -6,14 +7,11 @@ from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.qcodes_cache import (
-    CacheParameterPublicationState,
     cache_has_no_written_data,
     cache_is_live,
     cache_parameter_is_synchronized,
-    restore_cache_parameter_publication_state,
     set_cache_dataset_completed,
     set_cache_parameter_synchronized,
-    snapshot_cache_parameter_publication_state,
     update_cache_parameter_data,
 )
 from qplot.datahandling.readonly import quarantine_wal_for_replaced_database
@@ -24,6 +22,7 @@ from qplot.tools.plot_result import PlotLoadResult
 from ._complex_plots import configured_complex_mode, sync_complex_axes
 from ._dataset_handle import DatasetKey, dataset_key_matches_current_source
 from ._plot_host import PlotHost
+from ._plot_publication import PlotPublicationOwner, RefreshPublication
 from ._plot_refresh_controller import PlotRefreshController, PlotRefreshRequest
 from ._refresh_interval import refresh_interval_value
 
@@ -69,51 +68,26 @@ def plot_refresh_required(source: Any) -> bool:
     return bool(getattr(dataset, "running", False))
 
 
-@dataclass
-class RefreshPublication:
-    """GUI-owned rollback state for the latest plot publication.
-
-    A reentrant callback replaces this record. An older callback may finish,
-    but must neither restore its fields nor discard the newer record.
-    """
-
-    worker: Any
-    generation: int
-    cache: Any
-    parameter_name: str
-    prior_cache: CacheParameterPublicationState | None
-    fields: dict[str, tuple[bool, Any]]
-    committed_cache: CacheParameterPublicationState | None = None
-
-    def owns(self, worker: Any, generation: int) -> bool:
-        return self.worker is worker and self.generation == generation
-
-    def record_cache(self) -> None:
-        if self.prior_cache is not None:
-            self.committed_cache = snapshot_cache_parameter_publication_state(
-                self.cache, self.parameter_name,
-            )
-
-    def rollback(self, plot_fields: dict[str, Any]) -> None:
-        if self.committed_cache is not None:
-            restore_cache_parameter_publication_state(
-                self.cache, self.parameter_name,
-                self.prior_cache, self.committed_cache,
-            )
-        for name, (present, value) in self.fields.items():
-            if present:
-                plot_fields[name] = value
-            else:
-                plot_fields.pop(name, None)
-
-
 class PlotRefreshMixin(_PlotRefreshBase):
     """
     Worker-backed plot refresh orchestration shared by plot windows.
 
     """
 
-    _refresh_publication: RefreshPublication | None = None
+    def _publication_owner(self) -> PlotPublicationOwner:
+        owner = self.__dict__.get("_plot_publication_owner")
+        if owner is None:
+            owner = PlotPublicationOwner()
+            self._plot_publication_owner = owner
+        return owner
+
+    @property
+    def _refresh_publication(self) -> RefreshPublication | None:
+        return self._publication_owner().current
+
+    @property
+    def _qplot_publication_generation(self) -> int:
+        return self._publication_owner().generation
 
     def _refresh_controller(self) -> PlotRefreshController:
         controller = self.__dict__.get("_plot_refresh_controller")
@@ -154,14 +128,10 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
 
     def _refresh_publication_for(self, worker: Any) -> RefreshPublication | None:
-        publication = self._refresh_publication
-        if publication is not None and publication.worker is worker:
-            return publication
-        return None
+        return self._publication_owner().for_worker(worker)
 
     def _discard_refresh_publication(self, worker: Any) -> None:
-        if self._refresh_publication_for(worker) is not None:
-            self._refresh_publication = None
+        self._publication_owner().discard(worker)
 
     def _can_process_refresh(self) -> bool:
         """Return whether this window still has an active dataset owner."""
@@ -225,73 +195,22 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
 
     def _begin_refresh_publication(self, worker: Any) -> None:
-        """Capture the cache and plot fields a callback may mutate."""
-
-        publication_generation = (
-            self.__dict__.get("_qplot_publication_generation", 0) + 1
-        )
-        self._qplot_publication_generation = publication_generation
-        cache = getattr(self.ds, "cache", None)
-        parameter_name = self.param.name
-        fields = {}
-        for name in (
-                "_live",
-                "_qplot_display_synchronized",
-                "_qplot_display_uses_direct_sql",
-                "_heatmap_full_resolution",
-                "axis_data",
-                "axis_param",
-                "dataGrid",
-                "display_param",
-                "complex_samples",
-                "last_ds_len",
-                ) + tuple(getattr(self, "_extra_publication_fields", ())):
-            fields[name] = (name in self.__dict__, self.__dict__.get(name))
-        try:
-            prior_cache = (
-                snapshot_cache_parameter_publication_state(
-                    cache,
-                    parameter_name,
-                )
-                if cache is not None
-                else None
-            )
-        except AttributeError:
-            # Narrow legacy/test cache doubles may not expose QCoDeS' private
-            # status mappings. They cannot receive the shared-cache mutation
-            # guarded here, but their plot fields still need rollback state.
-            prior_cache = None
-        self._refresh_publication = RefreshPublication(
-            worker=worker,
-            generation=publication_generation,
-            cache=cache,
-            parameter_name=parameter_name,
-            prior_cache=prior_cache,
-            fields=fields,
+        self._publication_owner().begin(
+            worker, self.__dict__, cache=getattr(self.ds, "cache", None),
+            parameter_name=self.param.name,
+            extra_fields=tuple(getattr(self, "_extra_publication_fields", ())),
         )
         worker._qplot_source_rejected = False
 
-
     def _record_refresh_cache_publication(self, worker: Any) -> None:
-        publication = self._refresh_publication_for(worker)
-        if publication is not None:
-            publication.record_cache()
-
+        self._publication_owner().record_cache(worker)
 
     def _rollback_refresh_publication(self, worker: Any) -> None:
-        """Remove stale cache/axis state before replacement recovery runs."""
-
-        publication = self._refresh_publication_for(worker)
-        if publication is None:
+        if self._refresh_publication_for(worker) is None:
             return
-        if publication.owns(
-                getattr(self, "worker", None), self._qplot_publication_generation,
-                ):
-            publication.rollback(self.__dict__)
+        self._publication_owner().rollback(worker, getattr(self, "worker", None), self.__dict__)
         worker._qplot_display_commit_ready = False
         worker._qplot_source_rejected = True
-        self._discard_refresh_publication(worker)
-
 
     def _refresh_publication_source_is_current(
             self,
@@ -305,12 +224,12 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 or getattr(worker, "is_cancelled", lambda: False)()):
             worker._qplot_display_commit_ready = False
             self._rollback_refresh_publication(worker)
+            if worker is getattr(self, "worker", None) and callable(clear_display):
+                clear_display()
             return False
         publication = self._refresh_publication_for(worker)
         if publication is not None:
-            if not publication.owns(
-                    getattr(self, "worker", None), self._qplot_publication_generation,
-                    ):
+            if not self._publication_owner().owns(publication, getattr(self, "worker", None)):
                 # A nested same-source callback already owns the plot.  The
                 # older callback must stop harmlessly: rollback or renderer
                 # clearing here would corrupt the newer accepted publication.
@@ -331,11 +250,22 @@ class PlotRefreshMixin(_PlotRefreshBase):
 
 
     def _commit_refresh_publication(
-            self, worker: Any, *, preview_ready: bool = False
+            self, worker: Any, *, preview_ready: bool = False,
+            clear_display: Callable[[], None] | None = None,
             ) -> None:
         """Release rollback state after the concrete display committed."""
 
-        self._discard_refresh_publication(worker)
+        publication = self._refresh_publication_for(worker)
+        if publication is None or publication.completing:
+            return
+        if not self._refresh_publication_source_is_current(worker, clear_display=clear_display):
+            return
+        publication.completing = True
+        self._complete_plot_publication(worker)
+        if not self._refresh_publication_source_is_current(worker, clear_display=clear_display):
+            return
+        if not self._publication_owner().commit(publication, getattr(self, "worker", None)):
+            return
         overlay = self.__dict__.get("plot_state_overlay")
         if overlay is not None:
             overlay.finish(worker)
@@ -343,6 +273,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
         result = getattr(worker, "result", None)
         if (
             preview_ready
+            and self._publication_owner().generation == publication.generation
+            and self._refresh_controller().current_worker(worker)
             and result is not None
             and callable(publish_preview)
             and not getattr(worker, "operations", None)
@@ -356,6 +288,43 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 # A supplementary image must never turn a successful plot
                 # publication into a plot load failure.
                 log_exception("Plot preview reuse failed", error, __name__)
+
+    def _publication_step(self, worker: Any, callback: Callable[[], Any]) -> bool:
+        """Fence a dependent-view callback that can replace the current job."""
+        if not self._refresh_publication_source_is_current(worker):
+            return False
+        callback()
+        return self._refresh_publication_source_is_current(worker)
+
+    def _complete_plot_publication(self, worker: Any) -> None:
+        """Renderer-specific dependent views finish before the publication commits."""
+
+    @contextmanager
+    def _render_publication(self, worker: Any, clear_display: Callable[[], None]) -> Iterator[None]:
+        """Separate accepted display outcomes from interrupted rendering.
+
+        A normal early return may display an empty or unsupported-data message.
+        An exception must not commit that partial renderer. Source rejection
+        keeps its stronger cache rollback and replacement-recovery behaviour.
+        """
+        try:
+            yield
+            if self._refresh_publication_for(worker) is not None:
+                if self._refresh_publication_source_is_current(worker, clear_display=clear_display):
+                    self._commit_refresh_publication(worker, clear_display=clear_display)
+        except Exception:
+            if self._refresh_publication_source_is_current(worker, clear_display=clear_display):
+                if self._publication_owner().render_failed(worker, getattr(self, "worker", None), self.__dict__):
+                    worker._qplot_display_commit_ready = False
+                    clear_display()
+            raise
+        finally:
+            overlay = self.__dict__.get("plot_state_overlay")
+            if overlay is not None:
+                overlay.finish(worker)
+            worker.running = False
+            if worker is getattr(self, "worker", None):
+                self._ensure_refresh_monitor()
 
     def _refresh_monitor_required(self, dataset: Any | None = None) -> bool:
         """Keep polling until this plot has committed its terminal display."""
@@ -689,6 +658,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
             prepare_publication = getattr(self, "_prepare_plot_publication", None)
             if callable(prepare_publication):
                 prepare_publication(worker, result)
+                if not self._refresh_publication_source_is_current(worker):
+                    return False
             # Update qcodes dataset variables if db read happened
             cache_update = result.cache_update
             if cache_update is not None:
@@ -751,6 +722,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
             # it is used, as the performace hit is neglible
             # Update text
             self._set_param_axis_labels()
+            if not self._refresh_publication_source_is_current(worker):
+                return False
             update_coordinate_context = getattr(
                 self,
                 "_update_coordinate_context",
@@ -758,7 +731,11 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 )
             if callable(update_coordinate_context):
                 update_coordinate_context()
+                if not self._refresh_publication_source_is_current(worker):
+                    return False
             sync_complex_axes(self)
+            if not self._refresh_publication_source_is_current(worker):
+                return False
             elapsed = perf_counter() - worker.started_at
 
             if result.loaded_from_sql_heatmap:
@@ -793,6 +770,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
                     f"Loaded {loaded_points:,} points in {elapsed:.2f} s",
                     5000,
                     )
+            if not self._refresh_publication_source_is_current(worker):
+                return False
             dataset_length = result.dataset_length_at_start
             if dataset_length is None:
                 dataset_length = self.ds.number_of_results
@@ -805,6 +784,8 @@ class PlotRefreshMixin(_PlotRefreshBase):
                 overlay.rendering(worker)
             else:
                 self.hide_plot_state()
+            if not self._refresh_publication_source_is_current(worker):
+                return False
             if (
                     result.loaded_from_sql_heatmap
                     and result.dataset_completed is True

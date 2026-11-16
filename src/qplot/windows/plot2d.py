@@ -179,10 +179,7 @@ class plot2d(
 
         try:
             viewbox = self._primary_heatmap_viewbox()
-            publication_generation = self.__dict__.get(
-                "_qplot_publication_generation",
-                0,
-                )
+            publication_generation = getattr(self, "_qplot_publication_generation", 0)
             pending = self.__dict__.get("_plot_control_layout_restore")
             if (
                     isinstance(pending, dict)
@@ -221,7 +218,7 @@ class plot2d(
             if (
                     getattr(self, "worker", None) is not worker
                     or getattr(worker, "running", False)
-                    or self.__dict__.get("_qplot_publication_generation", 0)
+                    or getattr(self, "_qplot_publication_generation", 0)
                     != publication_generation
                     ):
                 self.__dict__.pop("_plot_control_layout_restore", None)
@@ -361,35 +358,199 @@ class plot2d(
             and plot_worker.result.heatmap_axis_ranges is None
         )
 
-        try:
-            def clear_display():
-                self._invalidate_heatmap_geometry()
-                bar = self.__dict__.get("bar")
-                hide = getattr(bar, "hide", None)
-                if callable(hide):
-                    hide()
+        def clear_display():
+            self._invalidate_heatmap_geometry()
+            bar = self.__dict__.get("bar")
+            hide = getattr(bar, "hide", None)
+            if callable(hide):
+                hide()
 
-            if not self._refresh_publication_source_is_current(
-                    plot_worker,
-                    clear_display=clear_display,
+        try:
+            with self._render_publication(plot_worker, clear_display):
+                if not self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    return
+                # Marker orientation must follow the newly published parameter
+                # axes before geometry restoration clamps their coordinates.
+                self.rotate_sweeps()
+                if not self._refresh_publication_source_is_current(
+                        plot_worker, clear_display=clear_display):
+                    return
+                self._update_large_heatmap_state(plot_worker.result)
+                self.refresh_secondary_heatmaps()
+                self.refresh_secondary_lines()
+                if not self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    return
+                if not self._has_plottable_heatmap_data():
+                    self._invalidate_heatmap_geometry()
+                    if not self._refresh_publication_source_is_current(
+                            plot_worker,
+                            clear_display=clear_display,
+                            ):
+                        return
+                    self._emit_heatmap_trace_updated()
+                    if not self._refresh_publication_source_is_current(
+                            plot_worker,
+                            clear_display=clear_display,
+                            ):
+                        return
+                    self.show_status(
+                        f"Waiting for plottable data for {self.param.name}...",
+                        5000,
+                        )
+                    self.show_plot_state(
+                        "Waiting for plottable data",
+                        f"{self.param.name} has no finite heatmap data yet.",
+                        kind="empty",
+                    )
+                    display_synchronized = self._mark_display_synchronized(
+                        plot_worker,
+                    )
+                    if (
+                        plot_worker.result.dataset_completed is True
+                        and not display_synchronized
                     ):
-                return
-            # Marker orientation must follow the newly published parameter
-            # axes before geometry restoration clamps their coordinates.
-            self.rotate_sweeps()
-            if not self._refresh_publication_source_is_current(
-                    plot_worker, clear_display=clear_display):
-                return
-            self._update_large_heatmap_state(plot_worker.result)
-            self.refresh_secondary_heatmaps()
-            self.refresh_secondary_lines()
-            if not self._refresh_publication_source_is_current(
-                    plot_worker,
-                    clear_display=clear_display,
-                    ):
-                return
-            if not self._has_plottable_heatmap_data():
-                self._invalidate_heatmap_geometry()
+                        return
+                    if getattr(plot_worker, "_qplot_source_rejected", False):
+                        clear_display()
+                        return
+                    self._commit_refresh_publication(plot_worker, clear_display=clear_display)
+                    return
+
+                try:
+                    geometry = self._update_heatmap_geometry()
+                except (TypeError, ValueError) as error:
+                    self._invalidate_heatmap_geometry()
+                    self._emit_heatmap_trace_updated()
+                    if not self._refresh_publication_source_is_current(
+                            plot_worker,
+                            clear_display=clear_display,
+                            ):
+                        return
+                    self.show_status(f"Cannot display heatmap: {error}", 10_000)
+                    self.show_plot_state(
+                        "Invalid heatmap geometry",
+                        str(error),
+                        kind="error",
+                        )
+                    return
+
+                viewbox = self._primary_heatmap_viewbox()
+                if not heatmap_display_range_is_finite(geometry, (viewbox.width(), viewbox.height())):
+                    self._heatmap_view_reload_timer.stop()
+                    self._reject_heatmap_color_range(
+                        message=HEATMAP_DISPLAY_RANGE_MESSAGE,
+                        title="Unsupported heatmap coordinate range",
+                    )
+                    self._emit_heatmap_trace_updated()
+                    if self._refresh_publication_source_is_current(
+                            plot_worker, clear_display=clear_display):
+                        self._mark_display_synchronized(plot_worker)
+                    return
+
+                if float_display_loses_distinctions(self.dataGrid):
+                    self._reject_heatmap_color_range(
+                        message=DISPLAY_PRECISION_MESSAGE,
+                        title="Unsupported heatmap display precision",
+                    )
+                    self._emit_heatmap_trace_updated()
+                    if self._refresh_publication_source_is_current(
+                            plot_worker, clear_display=clear_display):
+                        self._mark_display_synchronized(plot_worker)
+                    return
+
+                autoLevels = self.relevel_refresh.isChecked() and self._colorbar_manual_levels is None
+                operation_apply_generation = int(
+                    getattr(plot_worker, "_qplot_operation_apply_generation", 0)
+                    )
+                operation_auto_levels = bool(
+                    operation_apply_generation
+                    > self.__dict__.get("_colorbar_operation_apply_generation", 0)
+                    and self._colorbar_manual_levels is None
+                    )
+                initial_primary_levels = bool(
+                    self.__dict__.get("_colorbar_pending_primary", False)
+                    and self._colorbar_manual_levels is None
+                    )
+                color_levels = self._colorbar_manual_levels
+                if color_levels is None:
+                    if not hasattr(self, "bar") or autoLevels or operation_auto_levels or initial_primary_levels:
+                        color_levels = self._data_colorbar_levels()
+                    else:
+                        color_levels = self.bar.levels()
+                if color_levels is not None and not np.isfinite(float(color_levels[1]) - float(color_levels[0])):
+                    self._reject_heatmap_color_range()
+                    self._emit_heatmap_trace_updated()
+                    if not self._refresh_publication_source_is_current(
+                            plot_worker,
+                            clear_display=clear_display,
+                            ):
+                        return
+                    # A color rejection is a concrete display of the loaded data.
+                    # A completed source must not keep replacing that error with
+                    # automatic reloads; live sources and explicit refreshes remain
+                    # retryable through the usual guarded publication state.
+                    self._mark_display_synchronized(plot_worker)
+                    return
+                self._heatmap_color_range_rejected = False
+                self._heatmap_publication_color_levels = color_levels
+                try:
+                    self._render_heatmap()
+                finally:
+                    self.__dict__.pop("_heatmap_publication_color_levels", None)
+                if not self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    return
+
+                # A trace dropped before this first image can already have put
+                # the shared axes into qPlot-managed Auto with empty image bounds.
+                self._refresh_trace_axis_auto_ranges()
+
+                # Produce color bar on first run
+                if not hasattr(self, "bar"):
+                    colorbar_items = self._heatmap_colorbar_items()
+                    self.bar = self.plot.addColorBar(
+                        colorbar_items,
+                        colorMap=self._colorbar_colormap(),
+                        rounding=self._data_colorbar_rounding(),
+                        width=self._configured_colorbar_width(),
+                        colorMapMenu=False,
+                        )
+                    self._heatmap_colorbar_item_ids = tuple(
+                        id(item) for item in colorbar_items
+                        )
+                    self._set_colorbar_tick_formatter()
+                    # The colour bar is created after the initial plot theme has
+                    # been applied, so style its axes immediately as well.
+                    self.config.theme.style_plotItem(self)
+                    self.apply_axis_major_tick_count_preference()
+                    if self._colorbar_manual_levels is None:
+                        self.scaleColorbar()
+                    else:
+                        minimum, maximum = self._colorbar_manual_levels
+                        self._set_colorbar_levels(minimum, maximum)
+
+                self.bar.show()
+
+                # The dependent-variable label may have changed when an operation
+                # such as differentiation was added or removed.
+                self._sync_colorbar_axis_scaling()
+                if autoLevels or operation_auto_levels or initial_primary_levels:
+                    self.__dict__["_colorbar_manual_levels"] = None
+                    self.scaleColorbar()
+                elif self._colorbar_manual_levels is not None:
+                    minimum, maximum = self._colorbar_manual_levels
+                    self._set_colorbar_levels(minimum, maximum)
+                self.__dict__.pop("_colorbar_pending_primary", None)
+            
+                self._restore_heatmap_interactions()
                 if not self._refresh_publication_source_is_current(
                         plot_worker,
                         clear_display=clear_display,
@@ -401,191 +562,16 @@ class plot2d(
                         clear_display=clear_display,
                         ):
                     return
-                self.show_status(
-                    f"Waiting for plottable data for {self.param.name}...",
-                    5000,
+                self.__dict__["_colorbar_operation_apply_generation"] = max(
+                    operation_apply_generation,
+                    self.__dict__.get("_colorbar_operation_apply_generation", 0),
                     )
-                self.show_plot_state(
-                    "Waiting for plottable data",
-                    f"{self.param.name} has no finite heatmap data yet.",
-                    kind="empty",
-                )
-                display_synchronized = self._mark_display_synchronized(
-                    plot_worker,
-                )
-                if (
-                    plot_worker.result.dataset_completed is True
-                    and not display_synchronized
-                ):
-                    return
+                self._mark_display_synchronized(plot_worker)
                 if getattr(plot_worker, "_qplot_source_rejected", False):
                     clear_display()
                     return
-                self._commit_refresh_publication(plot_worker)
-                return
-
-            try:
-                geometry = self._update_heatmap_geometry()
-            except (TypeError, ValueError) as error:
-                self._invalidate_heatmap_geometry()
-                self._emit_heatmap_trace_updated()
-                if not self._refresh_publication_source_is_current(
-                        plot_worker,
-                        clear_display=clear_display,
-                        ):
-                    return
-                self.show_status(f"Cannot display heatmap: {error}", 10_000)
-                self.show_plot_state(
-                    "Invalid heatmap geometry",
-                    str(error),
-                    kind="error",
-                    )
-                return
-
-            viewbox = self._primary_heatmap_viewbox()
-            if not heatmap_display_range_is_finite(geometry, (viewbox.width(), viewbox.height())):
-                self._heatmap_view_reload_timer.stop()
-                self._reject_heatmap_color_range(
-                    message=HEATMAP_DISPLAY_RANGE_MESSAGE,
-                    title="Unsupported heatmap coordinate range",
-                )
-                self._emit_heatmap_trace_updated()
-                if self._refresh_publication_source_is_current(
-                        plot_worker, clear_display=clear_display):
-                    self._mark_display_synchronized(plot_worker)
-                return
-
-            if float_display_loses_distinctions(self.dataGrid):
-                self._reject_heatmap_color_range(
-                    message=DISPLAY_PRECISION_MESSAGE,
-                    title="Unsupported heatmap display precision",
-                )
-                self._emit_heatmap_trace_updated()
-                if self._refresh_publication_source_is_current(
-                        plot_worker, clear_display=clear_display):
-                    self._mark_display_synchronized(plot_worker)
-                return
-
-            autoLevels = self.relevel_refresh.isChecked() and self._colorbar_manual_levels is None
-            operation_apply_generation = int(
-                getattr(plot_worker, "_qplot_operation_apply_generation", 0)
-                )
-            operation_auto_levels = bool(
-                operation_apply_generation
-                > self.__dict__.get("_colorbar_operation_apply_generation", 0)
-                and self._colorbar_manual_levels is None
-                )
-            initial_primary_levels = bool(
-                self.__dict__.get("_colorbar_pending_primary", False)
-                and self._colorbar_manual_levels is None
-                )
-            color_levels = self._colorbar_manual_levels
-            if color_levels is None:
-                if not hasattr(self, "bar") or autoLevels or operation_auto_levels or initial_primary_levels:
-                    color_levels = self._data_colorbar_levels()
-                else:
-                    color_levels = self.bar.levels()
-            if color_levels is not None and not np.isfinite(float(color_levels[1]) - float(color_levels[0])):
-                self._reject_heatmap_color_range()
-                self._emit_heatmap_trace_updated()
-                if not self._refresh_publication_source_is_current(
-                        plot_worker,
-                        clear_display=clear_display,
-                        ):
-                    return
-                # A color rejection is a concrete display of the loaded data.
-                # A completed source must not keep replacing that error with
-                # automatic reloads; live sources and explicit refreshes remain
-                # retryable through the usual guarded publication state.
-                self._mark_display_synchronized(plot_worker)
-                return
-            self._heatmap_color_range_rejected = False
-            self._heatmap_publication_color_levels = color_levels
-            try:
-                self._render_heatmap()
-            finally:
-                self.__dict__.pop("_heatmap_publication_color_levels", None)
-            if not self._refresh_publication_source_is_current(
-                    plot_worker,
-                    clear_display=clear_display,
-                    ):
-                return
-
-            # A trace dropped before this first image can already have put
-            # the shared axes into qPlot-managed Auto with empty image bounds.
-            self._refresh_trace_axis_auto_ranges()
-
-            # Produce color bar on first run
-            if not hasattr(self, "bar"):
-                colorbar_items = self._heatmap_colorbar_items()
-                self.bar = self.plot.addColorBar(
-                    colorbar_items,
-                    colorMap=self._colorbar_colormap(),
-                    rounding=self._data_colorbar_rounding(),
-                    width=self._configured_colorbar_width(),
-                    colorMapMenu=False,
-                    )
-                self._heatmap_colorbar_item_ids = tuple(
-                    id(item) for item in colorbar_items
-                    )
-                self._set_colorbar_tick_formatter()
-                # The colour bar is created after the initial plot theme has
-                # been applied, so style its axes immediately as well.
-                self.config.theme.style_plotItem(self)
-                self.apply_axis_major_tick_count_preference()
-                if self._colorbar_manual_levels is None:
-                    self.scaleColorbar()
-                else:
-                    minimum, maximum = self._colorbar_manual_levels
-                    self._set_colorbar_levels(minimum, maximum)
-
-            self.bar.show()
-
-            # The dependent-variable label may have changed when an operation
-            # such as differentiation was added or removed.
-            self._sync_colorbar_axis_scaling()
-            if autoLevels or operation_auto_levels or initial_primary_levels:
-                self.__dict__["_colorbar_manual_levels"] = None
-                self.scaleColorbar()
-            elif self._colorbar_manual_levels is not None:
-                minimum, maximum = self._colorbar_manual_levels
-                self._set_colorbar_levels(minimum, maximum)
-            self.__dict__.pop("_colorbar_pending_primary", None)
-            
-            self._restore_heatmap_interactions()
-            if not self._refresh_publication_source_is_current(
-                    plot_worker,
-                    clear_display=clear_display,
-                    ):
-                return
-            self._emit_heatmap_trace_updated()
-            if not self._refresh_publication_source_is_current(
-                    plot_worker,
-                    clear_display=clear_display,
-                    ):
-                return
-            self.__dict__["_colorbar_operation_apply_generation"] = max(
-                operation_apply_generation,
-                self.__dict__.get("_colorbar_operation_apply_generation", 0),
-                )
-            self._mark_display_synchronized(plot_worker)
-            if getattr(plot_worker, "_qplot_source_rejected", False):
-                clear_display()
-                return
-            self._commit_refresh_publication(plot_worker, preview_ready=True)
+                self._commit_refresh_publication(plot_worker, preview_ready=True, clear_display=clear_display)
         finally:
-            overlay = self.__dict__.get("plot_state_overlay")
-            if overlay is not None:
-                overlay.finish(plot_worker)
-            if self._refresh_publication_for(plot_worker) is not None:
-                if self._refresh_publication_source_is_current(
-                        plot_worker,
-                        clear_display=clear_display,
-                        ):
-                    self._commit_refresh_publication(plot_worker)
-            # Allow new workers after empty live loads or display errors.
-            plot_worker.running = False
-            self._ensure_refresh_monitor()
             if full_sql_refresh and not self.__dict__.get("_heatmap_color_range_rejected", False):
                 self._schedule_visible_heatmap_reload()
 

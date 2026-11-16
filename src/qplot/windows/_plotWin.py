@@ -360,6 +360,7 @@ class plotWidget(
         self._plot_setup_started = False
         self._plot_setup_complete = False
         self._refresh_controller()
+        self._publication_owner()
 
     @final
     def initialize_plot_window(self) -> None:

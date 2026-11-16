@@ -95,7 +95,9 @@ class _CutTargetItem(pg.TargetItem):
 
 
 class VolumeCut(plot1d):
-    _extra_publication_fields = ("_displayed_cut_metadata", "_displayed_description")
+    _extra_publication_fields = (
+        "_displayed_cut_metadata", "_displayed_description", "_coverage_counts", "_coverage_depths",
+    )
 
     def __init__(self, dataset_key, param, source, selection, config, threadPool,
                  dataset_holder, **kwargs):
@@ -343,16 +345,15 @@ class VolumeCut(plot1d):
     def _ensure_refresh_monitor(self):
         self.monitor.stop()
 
-    def refreshPlot(self, finished=True, worker=None):
-        worker = worker if worker is not None else getattr(self, "worker", None)
-        super().refreshPlot(finished, worker=worker)
-        if finished and worker is not None and worker is getattr(self, "worker", None) and getattr(worker, "result", None) is not None:
-            self._update_plot_annotation()
-            counts = getattr(worker, "counts", np.array([]))
-            self._coverage_counts = counts.copy()
-            self._coverage_depths = worker.volume.axes[worker.selection.depth].copy()
-            self.coverage_label.setText(f" Valid cells per depth: {counts.min()}–{counts.max()}" if self.selection.kind == "mean" and counts.size else "")
-        self.monitor.stop()
+    def _complete_plot_publication(self, worker):
+        if not self._publication_step(worker, self._update_plot_annotation):
+            return
+        counts = getattr(worker, "counts", np.array([]))
+        self._coverage_counts = counts.copy()
+        self._coverage_depths = worker.volume.axes[worker.selection.depth].copy()
+        self.coverage_label.setText(
+            f" Valid cells per depth: {counts.min()}–{counts.max()}"
+            if self.selection.kind == "mean" and counts.size else "")
 
     def _requested_description(self):
         s = self.selection

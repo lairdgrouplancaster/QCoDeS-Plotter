@@ -442,30 +442,30 @@ class plot3d(plot2d):
                 self._colorbar_pending_primary = True
             self._update_navigator()
 
-    def refreshPlot(self, finished=True, worker=None):
-        worker = worker if worker is not None else getattr(self, "worker", None)
-        if worker is not getattr(self, "worker", None):
-            if worker is not None:
-                worker.running = False
+    def _complete_plot_publication(self, worker):
+        result = worker.result
+        if (self.volume is not result.slice_volume or self.slice_frame is None
+                or not self._can_process_refresh()):
             return
-        result = getattr(worker, "result", None)
-        super().refreshPlot(finished, worker=worker)
-        if (finished and result is not None and self.volume is result.slice_volume
-                and self.slice_frame is not None and self._can_process_refresh()
-                and not getattr(worker, "_qplot_source_rejected", False)):
-            self._update_plot_annotation()
-            self.apply_cursor_label_widths()
-            self._update_depth_readout()
-            self._update_cursor_tooltip()
-            position = self.__dict__.get("_last_cursor_scene_pos")
-            if position is not None:
-                self.mouseMoved(position)
-            if self.slice_frame.values.size and not np.any(numeric_isfinite(self.slice_frame.values)):
-                self.show_plot_state("No finite data in this slice", self._slice_description(), kind="empty")
-            self._start_volume_range()
-            self._prefetch_neighbours()
-            for cut in tuple(self._cuts):
-                cut.source_updated()
+        # Finish the slice's dependent views while rollback state is retained.
+        for update in (self._update_plot_annotation, self.apply_cursor_label_widths,
+                       self._update_depth_readout, self._update_cursor_tooltip):
+            if not self._publication_step(worker, update):
+                return
+        position = self.__dict__.get("_last_cursor_scene_pos")
+        if position is not None:
+            if not self._publication_step(worker, lambda: self.mouseMoved(position)):
+                return
+        if self.slice_frame.values.size and not np.any(numeric_isfinite(self.slice_frame.values)):
+            if not self._publication_step(worker, lambda: self.show_plot_state(
+                    "No finite data in this slice", self._slice_description(), kind="empty")):
+                return
+        for update in (self._start_volume_range, self._prefetch_neighbours):
+            if not self._publication_step(worker, update):
+                return
+        for cut in tuple(self._cuts):
+            if not self._publication_step(worker, cut.source_updated):
+                return
 
     def _update_navigator(self):
         frame = self.slice_frame
