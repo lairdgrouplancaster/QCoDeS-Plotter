@@ -18,6 +18,7 @@ from qplot.datahandling import trusted_work_coordinator as coordinator_module
 from qplot.datahandling.file_identity import logical_database_path
 from qplot.datahandling.trusted_derived_cache import TrustedDerivedDiskCache
 from qplot.windows import _database_actions as database_actions
+from qplot.windows import _database_detail_ui as detail_ui
 from qplot.windows import main as main_window
 from qplot.windows._widgets import details_tables
 from qplot.windows._widgets import preview as preview_module
@@ -263,14 +264,14 @@ def test_real_wal_progressive_ui_refresh_switch_and_close(
                 ),
             ),
             patch.object(
-                database_actions,
+                detail_ui,
                 "DatabaseDetailWorker",
-                wraps=database_actions.DatabaseDetailWorker,
+                wraps=detail_ui.DatabaseDetailWorker,
             ) as legacy_cheap,
             patch.object(
-                database_actions,
+                detail_ui,
                 "DatabaseExpensiveDetailWorker",
-                wraps=database_actions.DatabaseExpensiveDetailWorker,
+                wraps=detail_ui.DatabaseExpensiveDetailWorker,
             ) as legacy_expensive,
             patch.object(
                 database_workers.DatabaseSelectedRunWorker,

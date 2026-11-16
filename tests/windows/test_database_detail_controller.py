@@ -233,6 +233,19 @@ def test_wrong_path_and_old_generation_cannot_publish_or_finish():
     assert not host.published and not host.source_checks
 
 
+def test_completion_retires_worker_after_view_changes_without_publishing_to_new_view():
+    host = Host()
+    host.start()
+    path = host.selected_path
+    host.selected_path = "another.db"
+    before = set(host.loading)
+    host.controller.finish(1, path, RuntimeError("obsolete error"), expensive=False)
+    assert not host.controller.channel().active
+    assert host.controller.channel().worker is None
+    assert host.loading == before
+    assert not host.statuses and not host.source_checks
+
+
 def test_instance_changed_completion_cancels_both_channels_and_requests_reload():
     host = Host()
     host.start()

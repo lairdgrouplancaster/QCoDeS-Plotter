@@ -169,10 +169,16 @@ class DatabaseDetailController:
         if self.channel(expensive).accepts(generation):
             self.host.show_status(message, 0)
 
-    def _accepts(self, channel: DetailLoadChannel, generation: int, path: str) -> bool:
+    @staticmethod
+    def _matches(channel: DetailLoadChannel, generation: int, path: str) -> bool:
         return (
             channel.accepts(generation)
             and (channel.path is None or logical_database_path(path) == logical_database_path(channel.path))
+        )
+
+    def _accepts(self, channel: DetailLoadChannel, generation: int, path: str) -> bool:
+        return (
+            self._matches(channel, generation, path)
             and self.host.can_publish(path)
             and channel.accepts(generation)
         )
@@ -233,7 +239,7 @@ class DatabaseDetailController:
 
     def finish(self, generation: int, path: str, error: object, *, expensive: bool) -> None:
         channel = self.channel(expensive)
-        if not self._accepts(channel, generation, path):
+        if not self._matches(channel, generation, path):
             return
         if channel.publishing:
             channel.deferred_completion = (error,)
@@ -241,6 +247,10 @@ class DatabaseDetailController:
         instance = channel.instance
         channel.clear()
         channel.failed = error is not None
+        # Retire a finished job even if its view has gone away; do not touch the
+        # newly selected view's indicators or report errors against that view.
+        if not self.host.can_publish(path) or channel.generation != generation:
+            return
         if isinstance(error, DatabaseInstanceChangedError):
             expected = [self.channel(stage).generation + 1 for stage in (False, True)]
             self.cancel()
