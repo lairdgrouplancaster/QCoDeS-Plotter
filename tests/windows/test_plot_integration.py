@@ -4027,6 +4027,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
 
         original_set_data = plot_b.line.setData
         original_refresh_plot = plot_b.refreshPlot
+        previous_axes = plot_b.axis_data
         display_errors = []
         fail_display = True
 
@@ -4057,7 +4058,11 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
         )
 
         np.testing.assert_array_equal(cache_values("signal_b"), [20.0, 21.0, 22.0])
-        np.testing.assert_array_equal(line_values(plot_b), [20.0])
+        # A failed render may have changed only part of the display. Clear it
+        # and restore plot fields while retaining the valid cache for retry.
+        assert plot_b.line.getData() == (None, None)
+        assert plot_b.axis_data is previous_axes
+        assert plot_b._refresh_publication is None
         np.testing.assert_array_equal(line_values(hidden_plot_b), [20.0])
         np.testing.assert_array_equal(np.asarray(merged_b.getData()[1]), [20.0])
         assert final_loads == ["signal_a", "signal_b", "signal_b"]

@@ -682,6 +682,10 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         worker.axis_param = {}
         worker.result = capture_fake_plot_result(worker)
         window = plot2d.__new__(plot2d)
+        qtw.QMainWindow.__init__(window)
+        self.addCleanup(sip.delete, window)
+        set_plot_worker(window, worker)
+        window._emit_heatmap_trace_updated = lambda: None
         window.param = type("Param", (), {"name": "signal"})()
         window._update_large_heatmap_state = lambda _worker: None
         window._has_plottable_heatmap_data = lambda: False

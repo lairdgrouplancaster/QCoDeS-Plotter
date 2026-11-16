@@ -110,7 +110,7 @@ A local Windows run cannot substitute for those platform results.
 
 ## Static analysis
 
-The explicit mypy targets in `pyproject.toml` cover 171 of the 206 application
+The explicit mypy targets in `pyproject.toml` cover 172 of the 207 application
 modules. The other 35 have individual reasons in `[tool.qplot.typing.deferred]`.
 `follow_imports = "silent"` allows mypy to use imported types while suppressing
 diagnostics from modules outside the explicit targets; this is partial coverage,
@@ -250,6 +250,15 @@ retry. It also verifies GUI-thread publication and pool ownership through concre
 rendering. Focused window doubles use `tests/support/plot_refresh.py` to arrange
 controller state; the production observations remain read-only. Existing cache
 rollback, source-sidecar, overlay, volume, cut and shutdown tests remain in use.
+
+`test_plot_publication.py` exercises exact snapshots, explicit terminal outcomes
+and conditional shared-cache rollback without constructing windows.
+`test_plot_publication_integration.py` injects failures and cancellation during
+real line and heatmap rendering, and starts nested refreshes from preparation
+and completion callbacks. `test_volume_publication.py` verifies metadata recovery
+and retry after dependent-view failures in volumes and cuts. These tests retain
+source-artefact assertions; sidecar-replacement tests also cover final completion
+before commit.
 
 Consolidate tests that protect the same behaviour with the same setup into
 clearly named parametrised cases. Keep independent expected values and oracles.
