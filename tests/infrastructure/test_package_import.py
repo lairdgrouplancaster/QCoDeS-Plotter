@@ -115,3 +115,10 @@ def test_lazy_package_exports_preserve_public_api():
             LoadFromDB if name.startswith("load_param_data") else readSQL
         )
         assert getattr(datahandling, name) is getattr(defining_module, name)
+
+    from qplot.tools.general import data2matrix, unpack_param
+    from qplot.tools.worker import loader
+
+    assert qplot.tools.data2matrix is data2matrix
+    assert qplot.tools.unpack_param is unpack_param
+    assert qplot.tools.loader is loader

@@ -32,7 +32,7 @@ from ._config_persistence import (
     persist_config_value,
     set_widget_value_without_signals,
 )
-from ._database_actions import DatabaseActionsMixin, TestDatabaseGenerationWorker
+from ._database_actions import DatabaseActionsMixin
 from ._database_load_state import DatabaseLoadSession
 from ._dataset_handle import DatasetHandle, DatasetKey
 from ._error_dialog import ErrorDialog
@@ -46,6 +46,7 @@ from ._run_controls import AUTO_PLOT_KEY, RunControlsMixin
 from ._shutdown_coordinator import ShutdownCoordinator
 from ._signal_blocking import blocked_signals
 from ._status import StatusLabel
+from ._test_database import SyntheticDatabaseActionsMixin, TestDatabaseGenerationWorker
 from ._trusted_derived_qt import TrustedDerivedQtBridge
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
@@ -130,6 +131,7 @@ class DatabasePathLineEdit(qtw.QLineEdit):
 
 class MainWindow(
     DatabaseActionsMixin,
+    SyntheticDatabaseActionsMixin,
     PlotActionsMixin,
     RunControlsMixin,
     qtw.QMainWindow,

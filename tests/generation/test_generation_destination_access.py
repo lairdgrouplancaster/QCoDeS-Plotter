@@ -127,7 +127,7 @@ def test_destination_read_failure_at_publication_preserves_old_database(
 def test_gui_worker_downloads_cloud_target_before_generating(
     tmp_path, monkeypatch, outcome
 ):
-    from qplot.windows import _database_actions as actions
+    from qplot.windows import _test_database as actions
 
     destination = testdata.generate_database(
         [small_specification()], tmp_path / "cloud.db"
@@ -187,7 +187,7 @@ def test_gui_worker_downloads_cloud_target_before_generating(
 
 
 def test_gui_worker_skips_cloud_download_for_local_or_new_output(tmp_path, monkeypatch):
-    from qplot.windows import _database_actions as actions
+    from qplot.windows import _test_database as actions
 
     def no_download(*args, **kwargs):
         pytest.fail("Local/new output must not be downloaded")

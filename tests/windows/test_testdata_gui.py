@@ -16,11 +16,10 @@ from qplot.datahandling.file_identity import (
     database_publication_guard_path,
 )
 from qplot.testdata import CSV_COLUMNS, INSTRUCTION_FILE_NAMES, GenerationCancelled
-from qplot.windows import _database_actions as database_actions_module
-from qplot.windows._database_actions import (
-    DatabaseActionsMixin,
-    reveal_file_in_file_manager,
-)
+from qplot.windows import _test_database as test_database_module
+from qplot.windows._database_actions import DatabaseActionsMixin
+from qplot.windows._file_manager import reveal_file_in_file_manager
+from qplot.windows._test_database import SyntheticDatabaseActionsMixin
 
 
 class ImmediateThreadPool:
@@ -28,7 +27,7 @@ class ImmediateThreadPool:
         worker.run()
 
 
-class GuiHarness(DatabaseActionsMixin, qtw.QWidget):
+class GuiHarness(DatabaseActionsMixin, SyntheticDatabaseActionsMixin, qtw.QWidget):
     def __init__(self, directory):
         super().__init__()
         self.directory = str(directory)
@@ -71,7 +70,7 @@ def test_create_example_csv_opens_its_folder(tmp_path):
                 return_value=(str(csv_path), "CSV Files (*.csv)"),
             ),
             patch(
-                "qplot.windows._database_actions.reveal_file_in_file_manager",
+                "qplot.windows._test_database.reveal_file_in_file_manager",
                 return_value=True,
             ) as reveal_file,
         ):
@@ -105,7 +104,7 @@ def test_create_example_csv_confirms_normalized_existing_path(tmp_path):
                 return_value=qtw.QMessageBox.StandardButton.No,
             ) as question,
             patch(
-                "qplot.windows._database_actions.reveal_file_in_file_manager",
+                "qplot.windows._test_database.reveal_file_in_file_manager",
             ) as reveal_file,
         ):
             assert not harness.create_test_database_csv()
@@ -130,7 +129,7 @@ def test_export_csv_collection_opens_its_folder(tmp_path):
                 return_value=str(tmp_path),
             ),
             patch(
-                "qplot.windows._database_actions.reveal_file_in_file_manager",
+                "qplot.windows._test_database.reveal_file_in_file_manager",
                 return_value=True,
             ) as reveal_file,
         ):
@@ -165,7 +164,7 @@ def test_example_csv_rejects_loaded_database_with_csv_suffix(tmp_path):
             ),
             patch.object(qtw.QMessageBox, "question") as question,
             patch(
-                "qplot.windows._database_actions.reveal_file_in_file_manager",
+                "qplot.windows._test_database.reveal_file_in_file_manager",
             ) as reveal_file,
         ):
             assert not harness.create_test_database_csv()
@@ -201,7 +200,7 @@ def test_collection_preflights_all_targets_before_writing(tmp_path):
                 return_value=str(tmp_path),
             ),
             patch(
-                "qplot.windows._database_actions.reveal_file_in_file_manager",
+                "qplot.windows._test_database.reveal_file_in_file_manager",
             ) as reveal_file,
         ):
             assert not harness.export_test_database_csv_collection()
@@ -224,9 +223,9 @@ def test_reveal_file_uses_finder_selection_on_macos(tmp_path):
     completed = Mock(returncode=0)
 
     with (
-        patch("qplot.windows._database_actions.sys.platform", "darwin"),
+        patch("qplot.windows._file_manager.sys.platform", "darwin"),
         patch(
-            "qplot.windows._database_actions.subprocess.run",
+            "qplot.windows._file_manager.subprocess.run",
             return_value=completed,
         ) as run,
     ):
@@ -278,6 +277,74 @@ def test_generate_database_from_csv_runs_in_worker_pool(tmp_path):
         harness.deleteLater()
 
 
+@pytest.mark.parametrize("loaded_output", [False, True], ids=["new-output", "loaded-output"])
+@pytest.mark.parametrize("failure_stage", ["construct", "connect", "submit"])
+def test_generation_start_failure_recovers_controller_and_preserves_files(
+    tmp_path, monkeypatch, loaded_output, failure_stage,
+):
+    harness = GuiHarness(tmp_path)
+    csv_path = tmp_path / "runs.csv"
+    database_path = tmp_path / "runs.db"
+    write_small_specification(csv_path)
+    protected = []
+    if loaded_output:
+        for suffix in ("", "-wal", "-journal", "-shm"):
+            artifact = Path(f"{database_path}{suffix}")
+            artifact.write_bytes(f"original {suffix}".encode())
+            protected.append((artifact, artifact.read_bytes(), artifact.stat().st_mtime_ns))
+        harness.fileTextbox = SimpleNamespace(text=lambda: str(database_path))
+
+        def release_view(path):
+            harness._test_database_replacement_state = SimpleNamespace(
+                database_path=path, original_instance=database_instance(path), outcome=None,
+            )
+            harness._database_view_released_for_generation = True
+
+        harness._prepare_test_database_replacement = Mock(side_effect=release_view)
+    harness.load_file = Mock(return_value=True)
+    failure = RuntimeError(f"injected {failure_stage} failure")
+    worker = Mock()
+    factory = Mock(return_value=worker)
+    pool = Mock()
+    harness.testDatabaseGenerationThreadPool = pool
+    if failure_stage == "construct":
+        factory.side_effect = failure
+    elif failure_stage == "connect":
+        worker.signals.finished.connect.side_effect = failure
+    else:
+        pool.start.side_effect = failure
+    monkeypatch.setattr(test_database_module, "TestDatabaseGenerationWorker", factory)
+    quarantine = Mock()
+    monkeypatch.setattr(test_database_module, "quarantine_wal_for_replaced_database", quarantine)
+    monkeypatch.setattr(qtw.QFileDialog, "getOpenFileName", lambda *a, **kw: (str(csv_path), ""))
+    monkeypatch.setattr(qtw.QFileDialog, "getSaveFileName", lambda *a, **kw: (str(database_path), ""))
+    monkeypatch.setattr(qtw.QMessageBox, "question", lambda *a, **kw: qtw.QMessageBox.StandardButton.Yes)
+
+    try:
+        assert not harness.generate_test_database_from_csv()
+        assert not harness._test_database_generation_active
+        assert harness._test_database_generation_worker is None
+        assert harness.errors == [(
+            "Test Database Generation Failed", "Could not generate the test database.", str(failure),
+        )]
+        quarantine.assert_not_called()
+        if loaded_output:
+            harness.load_file.assert_called_once_with(
+                str(database_path), force=True, generation_recovery=True,
+            )
+            assert harness._test_database_replacement_state.outcome == "recovering-original"
+            assert harness._database_generation_transaction_blocks_path(database_path)
+        else:
+            harness.load_file.assert_not_called()
+            assert harness.generateTestDatabaseAction.isEnabled()
+            assert not database_path.exists()
+        for artifact, contents, mtime in protected:
+            assert artifact.read_bytes() == contents
+            assert artifact.stat().st_mtime_ns == mtime
+    finally:
+        harness.deleteLater()
+
+
 def test_generation_completion_force_reloads_replaced_current_database(tmp_path):
     harness = GuiHarness(tmp_path)
     database_path = tmp_path / "runs.db"
@@ -291,7 +358,7 @@ def test_generation_completion_force_reloads_replaced_current_database(tmp_path)
 
     try:
         with patch(
-            "qplot.windows._database_actions.quarantine_wal_for_replaced_database"
+            "qplot.windows._test_database.quarantine_wal_for_replaced_database"
         ) as quarantine:
             harness.test_database_generation_finished(
                 str(database_path),
@@ -368,7 +435,7 @@ def test_generation_releases_current_database_before_replacing_it(tmp_path):
                 return_value=qtw.QMessageBox.StandardButton.Yes,
             ),
             patch(
-                "qplot.windows._database_actions."
+                "qplot.windows._test_database."
                 "quarantine_wal_for_replaced_database"
             ) as quarantine,
         ):
@@ -442,11 +509,11 @@ def test_failed_current_database_replacement_reloads_without_quarantine(tmp_path
                 return_value=qtw.QMessageBox.StandardButton.Yes,
             ),
             patch(
-                "qplot.windows._database_actions.generate_database",
+                "qplot.windows._test_database.generate_database",
                 side_effect=publication_error,
             ),
             patch(
-                "qplot.windows._database_actions."
+                "qplot.windows._test_database."
                 "quarantine_wal_for_replaced_database"
             ) as quarantine,
         ):
@@ -499,7 +566,7 @@ def test_ambiguous_sidecar_failure_keeps_guarded_database_unloaded(tmp_path):
 
     try:
         with patch(
-            "qplot.windows._database_actions.quarantine_wal_for_replaced_database"
+            "qplot.windows._test_database.quarantine_wal_for_replaced_database"
         ) as quarantine:
             harness.test_database_generation_finished(
                 str(database_path),
@@ -561,11 +628,11 @@ def test_generation_waits_for_reader_shutdown_before_touching_output(
         return released.wait(timeout)
 
     if outcome == "timeout":
-        monkeypatch.setattr(database_actions_module,
+        monkeypatch.setattr(test_database_module,
                             "_TEST_DATABASE_READER_RELEASE_TIMEOUT_SECONDS", 0.1)
     generate = Mock()
-    monkeypatch.setattr(database_actions_module, "generate_database", generate)
-    worker = database_actions_module.TestDatabaseGenerationWorker(
+    monkeypatch.setattr(test_database_module, "generate_database", generate)
+    worker = test_database_module.TestDatabaseGenerationWorker(
         [], database_path, overwrite=True,
         read_services=(SimpleNamespace(wait_closed=wait_closed),),
     )
@@ -690,11 +757,11 @@ def test_exception_after_publication_is_reloaded_as_replacement(tmp_path):
                 return_value=qtw.QMessageBox.StandardButton.Yes,
             ),
             patch(
-                "qplot.windows._database_actions.generate_database",
+                "qplot.windows._test_database.generate_database",
                 side_effect=publish_then_fail,
             ),
             patch(
-                "qplot.windows._database_actions."
+                "qplot.windows._test_database."
                 "quarantine_wal_for_replaced_database"
             ) as quarantine,
         ):
@@ -813,8 +880,8 @@ def csv_folder_harness(tmp_path, monkeypatch):
 @pytest.mark.parametrize("opened", [True, False])
 def test_open_bundled_csv_folder_uses_installed_resource_directory(csv_folder_harness, opened):
     harness = csv_folder_harness
-    expected = database_actions_module.resources.files("qplot").joinpath("resources", "testdata")
-    with patch.object(database_actions_module.QDesktopServices, "openUrl", return_value=opened) as open_url:
+    expected = test_database_module.resources.files("qplot").joinpath("resources", "testdata")
+    with patch.object(test_database_module.QDesktopServices, "openUrl", return_value=opened) as open_url:
         assert harness.open_bundled_test_database_csv_folder() is opened
     assert Path(open_url.call_args.args[0].toLocalFile()) == expected
     assert all((expected / name).is_file() for name in INSTRUCTION_FILE_NAMES)
@@ -846,13 +913,13 @@ def test_csv_actions_remember_folder_across_sessions(csv_folder_harness, tmp_pat
     elif action == "example":
         with (
             patch.object(qtw.QFileDialog, "getSaveFileName", return_value=(str(csv_path), "CSV Files (*.csv)")),
-            patch.object(database_actions_module, "reveal_file_in_file_manager", return_value=True),
+            patch.object(test_database_module, "reveal_file_in_file_manager", return_value=True),
         ):
             assert harness.create_test_database_csv()
     else:
         with (
             patch.object(qtw.QFileDialog, "getExistingDirectory", return_value=str(selected)),
-            patch.object(database_actions_module, "reveal_file_in_file_manager", return_value=True),
+            patch.object(test_database_module, "reveal_file_in_file_manager", return_value=True),
         ):
             assert harness.export_test_database_csv_collection()
     assert harness.config.get("file.last_testdata_csv_directory") == str(selected)

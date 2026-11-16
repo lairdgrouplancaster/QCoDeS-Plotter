@@ -51,6 +51,7 @@ from qplot.testdata import (
 )
 from qplot.windows import _database_actions as database_actions_module
 from qplot.windows import _plot_actions as plot_actions_module
+from qplot.windows import _test_database as test_database_module
 from qplot.windows import main as main_window
 from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._database_load_state import DatabaseLoadSession
@@ -2904,7 +2905,7 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
         journal_mode="DELETE",
     )
     write_small_generation_specification(csv_path, point_count=5)
-    original_generate_database = database_actions_module.generate_database
+    original_generate_database = test_database_module.generate_database
     worker_entered = threading.Event()
     release_worker = threading.Event()
     injected_error = RuntimeError("injected prepublication generation failure")
@@ -2956,7 +2957,7 @@ def test_same_path_generation_gate_blocks_every_database_consumer(
 
         configure_generation_dialogs(monkeypatch, csv_path, database_path)
         monkeypatch.setattr(
-            database_actions_module,
+            test_database_module,
             "generate_database",
             blocked_generate_database,
         )
@@ -3115,7 +3116,7 @@ def test_unrelated_database_load_is_not_overwritten_by_generation_callback(
     build_line_database(owned_path, 2, journal_mode="DELETE")
     build_line_database(unrelated_path, 3, journal_mode="DELETE")
     write_small_generation_specification(csv_path, point_count=5)
-    original_generate_database = database_actions_module.generate_database
+    original_generate_database = test_database_module.generate_database
     worker_entered = threading.Event()
     release_worker = threading.Event()
     load_pool_blocked = threading.Event()
@@ -3150,7 +3151,7 @@ def test_unrelated_database_load_is_not_overwritten_by_generation_callback(
 
         configure_generation_dialogs(monkeypatch, csv_path, owned_path)
         monkeypatch.setattr(
-            database_actions_module,
+            test_database_module,
             "generate_database",
             blocked_generate_database,
         )
@@ -3282,7 +3283,7 @@ def test_same_path_generation_prepublication_failure_restores_static_view(
             raise injected_error
 
         monkeypatch.setattr(
-            database_actions_module,
+            test_database_module,
             "generate_database",
             fail_before_publication,
         )
@@ -3421,7 +3422,7 @@ def test_same_path_generation_prepublication_failure_restores_live_wal_view(
             raise injected_error
 
         monkeypatch.setattr(
-            database_actions_module,
+            test_database_module,
             "generate_database",
             fail_before_publication,
         )

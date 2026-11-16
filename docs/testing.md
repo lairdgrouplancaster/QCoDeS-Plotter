@@ -5,6 +5,13 @@ faithful measurements, responsive live updates and working application controls.
 Organise tests by the behaviour they protect. Development stages and the names
 of bug-finding exercises do not define test ownership.
 
+Worker lifecycle tests should exercise construction, signal wiring and pool
+submission failures as well as exceptions inside a running worker. For example,
+`windows/test_generation_startup.py` verifies that failed generation startup
+restores the accepted database view and refresh timer without changing the
+source. The smaller fault-injection cases in `windows/test_testdata_gui.py`
+also cover new destinations and signal-connection failure.
+
 ## Finding the relevant tests
 
 | Directory | Behaviour covered |
