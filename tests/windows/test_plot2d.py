@@ -26,6 +26,7 @@ from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import plot2d
 from tests._plot_results import capture_fake_plot_result
+from tests.support.plot_refresh import set_plot_worker
 
 
 @pytest.mark.parametrize("metadata, expected, absent", [
@@ -222,7 +223,7 @@ def test_visible_reload_resolves_pending_auto_range_without_overriding_zoom(zoom
     window = plot2d.__new__(plot2d)
     qtw.QMainWindow.__init__(window)
     window.vb = viewbox
-    window.worker = SimpleNamespace(running=False)
+    set_plot_worker(window, SimpleNamespace(running=False))
     window.param = SimpleNamespace(name="signal")
     window._large_heatmap_sql_mode = True
     window._heatmap_full_axis_ranges = {"x": (0.0, 2.0), "y": (0.0, 3.0)}
@@ -303,7 +304,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         qtw.QMainWindow.__init__(cut)
         worker = Worker()
         slider = Slider()
-        cut.worker = worker
+        set_plot_worker(cut, worker)
         cut.axis_data = {"x": np.asarray([]), "y": np.asarray([])}
         cut.axis_param = {"x": object(), "y": object()}
         cut.dataGrid = np.empty((0, 0))
@@ -513,7 +514,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             }
         window.__dict__["dataGrid"] = np.zeros((2, 2))
         window._update_heatmap_geometry()
-        window.worker = worker
+        set_plot_worker(window, worker)
         window._guid = "guid"
         window._dataset_key = DatasetKey("database.db", "guid")
         window._dataset_holder = {window._dataset_key: DatasetHandle(Dataset())}
@@ -796,7 +797,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
 
         failed_worker = Worker()
         failed_worker.result = capture_fake_plot_result(failed_worker)
-        window.worker = failed_worker
+        set_plot_worker(window, failed_worker)
         window._render_heatmap = lambda: (_ for _ in ()).throw(
             RuntimeError("injected direct-SQL display failure")
             )
@@ -820,7 +821,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
 
         successful_worker = Worker()
         successful_worker.result = capture_fake_plot_result(successful_worker)
-        window.worker = successful_worker
+        set_plot_worker(window, successful_worker)
         window._render_heatmap = lambda: None
         plot2d.refreshPlot(window, True, worker=successful_worker)
 
@@ -865,7 +866,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             "x": (10.0, 20.0),
             "y": (5.0, 10.0),
             }
-        window.worker = type("Worker", (), {"running": False})()
+        set_plot_worker(window, type("Worker", (), {"running": False})())
         window.param = type("Param", (), {"name": "signal"})()
         loads = []
         window.load_data = lambda **kwargs: loads.append(kwargs)
@@ -902,7 +903,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             "x": (10.0, 20.0),
             "y": (5.0, 10.0),
             }
-        window.worker = type("Worker", (), {"running": False})()
+        set_plot_worker(window, type("Worker", (), {"running": False})())
         window.param = type("Param", (), {"name": "signal"})()
         window._visible_heatmap_axis_ranges = lambda: None
         loads = []
@@ -929,7 +930,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             "y": (0.0, 20.0),
             }
         window._heatmap_last_view_ranges = None
-        window.worker = type("Worker", (), {"running": False})()
+        set_plot_worker(window, type("Worker", (), {"running": False})())
         window.param = type("Param", (), {"name": "signal"})()
         window._visible_heatmap_axis_ranges = lambda: requested_ranges
         loads = []
@@ -978,7 +979,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             "x": (10.0, 20.0),
             "y": (5.0, 10.0),
             }
-        window.worker = type("Worker", (), {"running": True})()
+        set_plot_worker(window, type("Worker", (), {"running": True})())
         window.param = type("Param", (), {"name": "signal"})()
         window._visible_heatmap_axis_ranges = lambda: None
         loads = []
@@ -1063,13 +1064,13 @@ class CutAxisTransactionQtIntegrationTestCase(unittest.TestCase):
             self.workers = []
 
         def __call__(self, force=False):
-            current = self.cut.__dict__.get("worker")
+            current = getattr(self.cut, "worker", None)
             if current is not None and getattr(current, "running", False):
                 self.cut._queue_pending_refresh(force=force)
                 return
             worker = CutAxisTransactionQtIntegrationTestCase.Worker()
             self.workers.append(worker)
-            self.cut.worker = worker
+            set_plot_worker(self.cut, worker)
             self.cut._refresh_worker_will_start(worker)
 
     def setUp(self):
@@ -1095,9 +1096,7 @@ class CutAxisTransactionQtIntegrationTestCase(unittest.TestCase):
         cut._axis_change_serial = 0
         cut._axis_change_transaction = None
         cut._axis_selection = {"x": "gate", "y": "bias"}
-        cut._refresh_pending = False
-        cut._refresh_pending_force = False
-        cut._refresh_pending_scheduled = False
+        cut._refresh_controller().restore_pending(False)
         cut._closed = False
         cut._merged_trace_users = 0
         cut._qplot_display_synchronized = True
@@ -1168,7 +1167,7 @@ class CutAxisTransactionQtIntegrationTestCase(unittest.TestCase):
         cut._dataset_key = dataset_key
         cut._guid = dataset_key.guid
         cut._dataset_holder = {dataset_key: DatasetHandle(self.Dataset())}
-        cut.worker = self.Worker(running=False)
+        set_plot_worker(cut, self.Worker(running=False))
         return cut
 
     @staticmethod

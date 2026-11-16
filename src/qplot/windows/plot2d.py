@@ -167,7 +167,7 @@ class plot2d(
     def _preserve_heatmap_view_range_after_control_layout(self) -> None:
         """Restore a loaded heatmap's viewport after controls are relaid out."""
 
-        worker = self.__dict__.get("worker")
+        worker = getattr(self, "worker", None)
         if worker is None or getattr(worker, "running", False):
             # Never restore a pre-refresh range over a newly published heatmap.
             return
@@ -219,7 +219,7 @@ class plot2d(
             if self.__dict__.get("_plot_control_layout_token") != token:
                 return
             if (
-                    self.__dict__.get("worker") is not worker
+                    getattr(self, "worker", None) is not worker
                     or getattr(worker, "running", False)
                     or self.__dict__.get("_qplot_publication_generation", 0)
                     != publication_generation

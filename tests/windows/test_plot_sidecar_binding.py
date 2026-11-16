@@ -18,6 +18,7 @@ from qplot.windows._plotWin import plotWidget
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot2d import plot2d
 from tests._plot_results import capture_fake_plot_result
+from tests.support.plot_refresh import set_plot_worker
 
 
 def _source_with_sidecars(tmp_path: Path, name: str) -> Path:
@@ -97,7 +98,7 @@ def _retained_plot(database_path: Path, plot_stub):
         )
     }
     plot.monitor = _Monitor()
-    plot.worker = _RefreshWorker()
+    set_plot_worker(plot, _RefreshWorker())
     plot.database_replaced = _Signal()
     plot.end_wait = _Signal()
     plot.statuses = []
@@ -193,7 +194,7 @@ def test_sidecar_swap_during_worker_read_is_rejected_before_publication(
     # state because the plot performs its own final exact source guard.
     plot = _retained_plot(database_path, plot_stub)
     plot._dataset_key = key
-    plot.worker = plot_worker
+    set_plot_worker(plot, plot_worker)
     cache_updates = []
     monkeypatch.setattr(
         plot_refresh_module,
@@ -269,7 +270,7 @@ def test_callback_swap_rolls_back_shared_cache_and_axis_state(
     worker.dataset_length_at_start = 2
     worker.started_at = 0.0
     worker.result = capture_fake_plot_result(worker)
-    plot.worker = worker
+    set_plot_worker(plot, worker)
 
     real_update = plot_refresh_module.update_cache_parameter_data
 
@@ -355,7 +356,7 @@ def test_attribute_error_after_swap_rolls_back_before_soft_error(tmp_path, plot_
     worker.dataset_length_at_start = 2
     worker.started_at = 0.0
     worker.result = capture_fake_plot_result(worker)
-    plot.worker = worker
+    set_plot_worker(plot, worker)
 
     assert not plotWidget.refreshPlot(plot, True, worker=worker)
 
@@ -399,14 +400,14 @@ def test_older_callback_rollback_cannot_clobber_reentrant_newer_publication(plot
     plot.axis_data = "initial-axis"
 
     older_worker = _RefreshWorker()
-    plot.worker = older_worker
+    set_plot_worker(plot, older_worker)
     plot._begin_refresh_publication(older_worker)
     plot.axis_data = "older-axis"
     plot.ds.cache._data["signal"] = "older-cache"
     plot._record_refresh_cache_publication(older_worker)
 
     newer_worker = _RefreshWorker()
-    plot.worker = newer_worker
+    set_plot_worker(plot, newer_worker)
     plot._begin_refresh_publication(newer_worker)
     plot.axis_data = "newer-axis"
     plot.ds.cache._data["signal"] = "newer-cache"
@@ -494,7 +495,7 @@ def test_old_line_callback_cannot_render_after_reentrant_newer_publication(
     older_worker.dataset_length_at_start = 2
     older_worker.started_at = 0.0
     older_worker.result = capture_fake_plot_result(older_worker)
-    plot.worker = older_worker
+    set_plot_worker(plot, older_worker)
 
     newer_worker = _RefreshWorker()
     newer_axis_data = {"x": [2.0], "y": [22.0]}
@@ -506,7 +507,7 @@ def test_old_line_callback_cannot_render_after_reentrant_newer_publication(
             if self.emitted:
                 return
             self.emitted = True
-            plot.worker = newer_worker
+            set_plot_worker(plot, newer_worker)
             plot._begin_refresh_publication(newer_worker)
             plot.axis_data = newer_axis_data
             plot.axis_param = {"x": "newer-x", "y": "newer-y"}
@@ -546,7 +547,7 @@ def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
     older_worker.result = capture_fake_plot_result(SimpleNamespace(
         read_data=False, axis_data={}, axis_param={}, dataset_completed=False,
     ))
-    plot.worker = older_worker
+    set_plot_worker(plot, older_worker)
     plot._qplot_publication_generation = 1
     plot._refresh_publication = plot_refresh_module.RefreshPublication(
         older_worker, 1, None, "signal", None, {},
@@ -572,7 +573,7 @@ def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
     plot._ensure_refresh_monitor = lambda: None
 
     def publish_newer_state():
-        plot.worker = newer_worker
+        set_plot_worker(plot, newer_worker)
         plot._qplot_publication_generation = 2
         plot.renderer_state = "newer renderer"
         plot.statuses[:] = [("newer status", 5000)]
@@ -661,7 +662,7 @@ def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path, plo
     worker.dataset_length_at_start = 2
     worker.started_at = 0.0
     worker.result = capture_fake_plot_result(worker)
-    plot.worker = worker
+    set_plot_worker(plot, worker)
 
     plot1d.refreshPlot(plot, True, worker=worker)
 

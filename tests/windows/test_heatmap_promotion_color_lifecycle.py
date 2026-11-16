@@ -194,8 +194,7 @@ def test_ready_overlay_survives_missing_primary_and_retry(promotion_plot, monkey
         )
     # This controlled publication models a failed/cancelled/empty first load;
     # retry below uses the original real QCoDeS data without an injected result.
-    promoted._refresh_pending = False
-    promoted._refresh_pending_force = False
+    promoted._refresh_controller().restore_pending(False)
     original(host, False if first_result == "failed" else finished, worker=worker)
     assert not promoted.worker.running
     _assert_ready_overlay(promoted, overlay, expected["overlay"], levels)

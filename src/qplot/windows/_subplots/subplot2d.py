@@ -265,9 +265,9 @@ class sweeper(Plot1DSnapMixin, plotWidget):
                 ),
             display_param=self.__dict__.get("display_param"),
             overlay=self._capture_overlay_state(),
-            refresh_pending=bool(self.__dict__.get("_refresh_pending", False)),
+            refresh_pending=bool(getattr(self, "_refresh_pending", False)),
             refresh_pending_force=bool(
-                self.__dict__.get("_refresh_pending_force", False)
+                getattr(self, "_refresh_pending_force", False)
                 ),
             complex_samples=self.__dict__.get("complex_samples"),
             )
@@ -362,8 +362,7 @@ class sweeper(Plot1DSnapMixin, plotWidget):
             self._restore_overlay_state(state.overlay)
 
         if transaction.owns_pending_refresh and transaction.worker is None:
-            self._refresh_pending = state.refresh_pending
-            self._refresh_pending_force = state.refresh_pending_force
+            self._refresh_controller().restore_pending(state.refresh_pending, state.refresh_pending_force)
 
 
     def _commit_axis_controls(self, transaction: _AxisChangeTransaction) -> None:
@@ -727,14 +726,12 @@ class sweeper(Plot1DSnapMixin, plotWidget):
 
 
     def _cancel_current_refresh(self) -> None:
-        worker = self.__dict__.get("worker")
+        worker = getattr(self, "worker", None)
         if worker is None or not getattr(worker, "running", False):
             return
         if getattr(worker, "is_cancelled", lambda: False)():
             return
-        cancel = getattr(worker, "cancel", None)
-        if callable(cancel):
-            cancel()
+        self._refresh_controller().request_cancel(worker)
 
 
     def _supersede_axis_change(self) -> None:
@@ -744,9 +741,7 @@ class sweeper(Plot1DSnapMixin, plotWidget):
         worker = transaction.worker
         self._finalize_axis_change(transaction, "failure")
         if worker is not None and getattr(worker, "running", False):
-            cancel = getattr(worker, "cancel", None)
-            if callable(cancel):
-                cancel()
+            self._refresh_controller().request_cancel(worker)
 
 
     def _begin_axis_change(
@@ -789,7 +784,7 @@ class sweeper(Plot1DSnapMixin, plotWidget):
             return
         if transaction.worker is not None:
             return
-        if self.__dict__.get("_refresh_pending", False):
+        if getattr(self, "_refresh_pending", False):
             transaction.owns_pending_refresh = not prior.refresh_pending
             return
         self._finalize_axis_change(transaction, "failure")

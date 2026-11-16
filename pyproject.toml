@@ -256,6 +256,8 @@ files = [
     "src/qplot/windows/_plot_marquee.py",
     "src/qplot/windows/_plot_appearance.py",
     "src/qplot/windows/_plot_refresh.py",
+    "src/qplot/windows/_plot_refresh_controller.py",
+    "src/qplot/windows/_plot_refresh_ui.py",
     "src/qplot/windows/_plot_state.py",
     "src/qplot/windows/_preferences.py",
     "src/qplot/windows/_complex_plots.py",

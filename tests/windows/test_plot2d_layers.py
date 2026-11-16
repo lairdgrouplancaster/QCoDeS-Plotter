@@ -17,6 +17,7 @@ from qplot.windows._plot2d_layers import (
 from qplot.windows._plot_axis_scaling import PlotAxisScalingMixin
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._refresh_interval import set_refresh_interval
+from tests.support.plot_refresh import set_plot_worker
 
 
 class _Monitor:
@@ -73,7 +74,7 @@ class _SourceWindow(QtCore.QObject):
             name: SimpleNamespace(unit=axis_units.get(name, "V"))
             for name in self.axis_options.values()
         }
-        self.worker = SimpleNamespace(running=False)
+        set_plot_worker(self, SimpleNamespace(running=False))
         self.ds = SimpleNamespace(running=False)
         self.visible = visible
         self._closed = not visible
@@ -340,10 +341,10 @@ def test_source_trace_update_refreshes_layer_data(tmp_path):
 def test_source_consumer_is_released_exactly_once(tmp_path):
     host, source, layer = _new_layer(tmp_path, visible=False)
     cancellations = []
-    source.worker = SimpleNamespace(
+    set_plot_worker(source, SimpleNamespace(
         running=True,
         cancel=lambda: cancellations.append(True),
-    )
+    ))
 
     try:
         assert source._merged_trace_users == 1

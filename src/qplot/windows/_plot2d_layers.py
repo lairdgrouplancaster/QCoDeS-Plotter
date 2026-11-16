@@ -483,12 +483,14 @@ class HeatmapLayer:
             timer = source.__dict__.get("_heatmap_view_reload_timer")
             if timer is not None:
                 timer.stop()
-            source._refresh_pending = False
-            source._refresh_pending_force = False
-            worker = source.__dict__.get("worker")
-            cancel = getattr(worker, "cancel", None)
-            if bool(getattr(worker, "running", False)) and callable(cancel):
-                cancel()
+            cancel_refresh = getattr(source, "_cancel_plot_refresh", None)
+            if callable(cancel_refresh):
+                cancel_refresh()
+            else:
+                worker = getattr(source, "worker", None)
+                cancel = getattr(worker, "cancel", None)
+                if bool(getattr(worker, "running", False)) and callable(cancel):
+                    cancel()
 
     def _render(self) -> None:
         geometry = self.geometry

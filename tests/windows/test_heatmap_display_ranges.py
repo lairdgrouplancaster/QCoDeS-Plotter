@@ -8,7 +8,7 @@ import pytest
 from PyQt6 import QtGui, QtTest, QtWidgets
 from pyqtgraph.exporters import CSVExporter
 
-import qplot.windows._plot_refresh as refresh_module
+import qplot.windows._plot_refresh_ui as refresh_module
 from qplot.windows._plot2d_layers import HeatmapLayer
 from tests.support.windows.mixed_plot_drops import _added, _drop
 from tests.support.windows.mixed_plot_drops import mixed_plot as mixed_plot

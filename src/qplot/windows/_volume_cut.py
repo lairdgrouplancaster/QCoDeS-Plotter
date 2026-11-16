@@ -312,8 +312,6 @@ class VolumeCut(plot1d):
     def _reload_cut(self):
         if not self._plot_setup_complete or self._closed:
             return
-        if (worker := self.__dict__.get("worker")) is not None and worker.running:
-            worker.cancel()
         self.load_data()
 
     def _create_plot_loader(self, *args, **kwargs):
@@ -346,9 +344,9 @@ class VolumeCut(plot1d):
         self.monitor.stop()
 
     def refreshPlot(self, finished=True, worker=None):
-        worker = worker if worker is not None else self.__dict__.get("worker")
+        worker = worker if worker is not None else getattr(self, "worker", None)
         super().refreshPlot(finished, worker=worker)
-        if finished and worker is not None and worker is self.__dict__.get("worker") and getattr(worker, "result", None) is not None:
+        if finished and worker is not None and worker is getattr(self, "worker", None) and getattr(worker, "result", None) is not None:
             self._update_plot_annotation()
             counts = getattr(worker, "counts", np.array([]))
             self._coverage_counts = counts.copy()
@@ -425,12 +423,11 @@ class VolumeCut(plot1d):
             pass
         if remaining == 0 and self.source._closed:
             self.source.monitor.stop()
-            if (worker := self.source.__dict__.get("worker")) is not None:
-                worker.cancel()
+            self.source._cancel_plot_refresh()
             self.source._release_volume()
         super().closeEvent(event)
         self.volume = None
-        self.worker = None
+        self._refresh_controller().forget_worker()
 
 
 def _append_annotation(window, text):
