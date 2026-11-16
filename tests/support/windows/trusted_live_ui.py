@@ -12,6 +12,7 @@ from qplot.datahandling.file_identity import (
 )
 from qplot.windows import _database_actions as database_actions
 from tests._database_load_fakes import seed_load
+from tests._database_refresh_fakes import seed_refresh
 
 __all__ = [
     '_FakeLoadWorker',
@@ -218,10 +219,10 @@ class _LifecycleHarness(database_actions.DatabaseActionsMixin):
         seed_load(self, active=False)
         seed_load(self, state=None)
         seed_load(self, worker=None)
-        self._database_refresh_generation = 1
-        self._database_refresh_active = False
-        self._database_refresh_pending = False
-        self._database_refresh_worker = None
+        seed_refresh(self, generation=1)
+        seed_refresh(self, active=False)
+        seed_refresh(self, pending=False)
+        seed_refresh(self, worker=None)
         self._database_selected_run_generation = 2
         self._trusted_read_service = service
         seed_load(self, pending_services={})

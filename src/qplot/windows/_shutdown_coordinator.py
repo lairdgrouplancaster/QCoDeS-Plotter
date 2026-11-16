@@ -149,14 +149,7 @@ class ShutdownCoordinator:
         window._database_loader.invalidate(cancel=False)
         detail_channel(window).invalidate()
         detail_channel(window, True).invalidate()
-        window._database_refresh_generation = (
-            getattr(window, "_database_refresh_generation", 0) + 1
-        )
-        window._database_refresh_active = False
-        window._database_refresh_pending = False
-        window._database_refresh_worker = None
-        window._database_refresh_identity = None
-        window._database_refresh_instance = None
+        window._database_refresher.invalidate(cancel=False)
         window._database_selected_run_generation = (
             getattr(window, "_database_selected_run_generation", 0) + 1
         )

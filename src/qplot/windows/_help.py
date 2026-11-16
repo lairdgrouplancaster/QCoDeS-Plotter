@@ -1,11 +1,13 @@
 import sys
 from datetime import UTC, datetime
 from html import escape
+from pathlib import Path
 from typing import Any, cast
 
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
+import qplot
 from qplot._icons import application_icon
 from qplot._metadata import version_info
 from qplot.diagnostics import default_log_file
@@ -147,7 +149,7 @@ def show_desktop_integration(parent: qtw.QWidget | None = None) -> qtw.QDialog:
 
 
 def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
-    """Show selectable release and development provenance in an owned dialog."""
+    """Show the running installation and selectable build information."""
     info = version_info()
     heading = (
         '<table cellspacing="0" cellpadding="0"><tr>'
@@ -176,19 +178,56 @@ def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
             rows.append(f"<p><b>Committed:</b> {escape(date)}</p>")
     if info.get("pull_request"):
         rows.append(f"<p><b>Pull request:</b> #{escape(str(info['pull_request']))}</p>")
+    # Keep the environment path rather than resolving interpreter symlinks to
+    # a shared base installation. Editable installs can load qPlot elsewhere.
+    locations = (
+        ("Python environment", Path(sys.prefix).absolute()),
+        ("qPlot location", Path(qplot.__file__).absolute().parent),
+    )
+    location_rows = []
+    for label, folder in locations:
+        url = QtCore.QUrl.fromLocalFile(str(folder)).toString(
+            QtCore.QUrl.ComponentFormattingOption.FullyEncoded,
+        )
+        location_rows.append(
+            f'<p><b>{label}:</b> &nbsp; <a href="{escape(url)}" '
+            f'title="Open the {label} folder">Open folder</a><br>'
+            f'{escape(str(folder))}</p>'
+        )
     html = (
-        heading
+        '<style>p { margin-top: 6px; margin-bottom: 6px; }</style>'
+        + heading
         + "".join(rows)
-        + '<p><a href="https://github.com/lairdgrouplancaster/QCoDeS-Plotter">'
-        "Project on GitHub</a></p>"
+        + '<p><a href="https://github.com/lairdgrouplancaster/QCoDeS-Plotter" '
+        'title="https://github.com/lairdgrouplancaster/QCoDeS-Plotter">'
+        "View project on GitHub</a></p>"
+        + "<hr>"
+        + "".join(location_rows)
     )
     dialog = _show_help_dialog(
         parent, "About qPlot", html,
         "qplotAboutDialog",
-        size=(580, 320),
+        size=(640, 400),
         icon=application_icon(),
     )
     dialog.setProperty("qplotUpdatePrefixHtml", html + "<hr>")
+    browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
+    if browser is not None:
+        # QTextBrowser otherwise navigates local links inside the help panel.
+        browser.setOpenLinks(False)
+        browser.setOpenExternalLinks(False)
+        browser.setWordWrapMode(QtGui.QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+
+        def open_link(url: QtCore.QUrl) -> None:
+            if not QtGui.QDesktopServices.openUrl(url) and url.isLocalFile():
+                qtw.QMessageBox.warning(
+                    dialog, "Could not open folder",
+                    "Could not open this folder in the file manager. "
+                    "You can copy its path from the About dialogue.\n\n"
+                    + url.toLocalFile(),
+                )
+
+        browser.anchorClicked.connect(open_link)
     buttons = dialog.findChild(qtw.QDialogButtonBox)
     if buttons is not None:
         check_button = qtw.QPushButton("Check for updates", buttons)
@@ -215,7 +254,7 @@ def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
         if desktop is not None:
             equal_button_widths(check_button, desktop)
         close_default(buttons)
-        resize_dialog(dialog, 580, 320)
+        resize_dialog(dialog, 640, 400)
     return dialog
 
 

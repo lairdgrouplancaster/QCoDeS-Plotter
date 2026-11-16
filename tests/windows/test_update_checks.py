@@ -135,6 +135,8 @@ def test_about_checks_inline_without_losing_version_details(updates, monkeypatch
         "version": "1.0", "commit": "abc123", "released": False,
     })
     dialog = show_about(window)
+    browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
+    locations = text(dialog).split("Python environment:", 1)[1]
     assert not checker._manager.requests
     button = dialog.findChild(qtw.QPushButton, "aboutCheckForUpdatesButton")
     button.click()
@@ -147,6 +149,15 @@ def test_about_checks_inline_without_losing_version_details(updates, monkeypatch
     assert expected in text(dialog)
     assert "Version: 1.0" in text(dialog)
     assert "Commit: abc123" in text(dialog)
+    assert locations in text(dialog)
+    assert not browser.openLinks()
+    opened = []
+    monkeypatch.setattr("PyQt6.QtGui.QDesktopServices.openUrl", lambda url: opened.append(url) or True)
+    cursor = browser.document().find("Open folder")
+    url = QtCore.QUrl(cursor.charFormat().anchorHref())
+    assert url.isLocalFile()
+    browser.anchorClicked.emit(url)
+    assert opened == [url]
     assert cfg.get(LAST_CHECK_KEY) > 0
     button.click()
     assert "Checking for updates" in text(dialog)

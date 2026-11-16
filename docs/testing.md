@@ -182,6 +182,18 @@ arrange controller state. Production window observations remain read-only.
 Existing publication rollback, source replacement, shutdown, refresh and export
 tests continue to exercise their separate boundaries.
 
+`test_database_refresh_controller.py` applies the same small-host approach to
+refresh ownership, coalescing, stale callbacks, queued cancellation, startup
+failure and nested page/completion events. Refresh window doubles use
+`seed_refresh` from `tests/_database_refresh_fakes.py`; they do not make the
+production observations writable. Real-window refresh startup failures verify
+that the accepted reader, selection and source artefacts survive and that a
+subsequent refresh succeeds. Existing source checks and basic-page rollback
+assertions remain in the UI tests, including Qt receiver disconnection on
+window destruction.
+The coalesced-refresh regression also destroys the QObject before its queued
+timer fires and checks that no further worker is submitted.
+
 Consolidate tests that protect the same behaviour with the same setup into
 clearly named parametrised cases. Keep independent expected values and oracles.
 In particular, numerical expectations must not be obtained by calling the

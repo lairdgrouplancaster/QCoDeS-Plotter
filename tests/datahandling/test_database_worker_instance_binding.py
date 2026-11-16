@@ -33,6 +33,7 @@ from qplot.windows import _database_actions as database_actions
 from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._database_load_state import DatabaseLoadSession
 from tests._database_load_fakes import LoadObservations, seed_load
+from tests._database_refresh_fakes import RefreshObservations, seed_refresh
 
 _SQLITE_ARTIFACT_SUFFIXES = ("", "-wal", "-shm", "-journal")
 
@@ -1106,19 +1107,18 @@ def test_refresh_instance_error_discards_results_invalidates_and_reloads(tmp_pat
         def cancel(self):
             self.cancelled = True
 
-    class Harness:
+    class Harness(RefreshObservations):
         database_refresh_finished = (
             database_actions.DatabaseActionsMixin.database_refresh_finished
         )
 
         def __init__(self):
             self.fileTextbox = Field()
-            self._database_refresh_generation = 100
-            self._database_refresh_active = True
-            self._database_refresh_pending = True
-            self._database_refresh_identity = accepted_instance.identity
-            self._database_refresh_instance = accepted_instance
-            self._database_refresh_worker = Worker()
+            seed_refresh(self, generation=100)
+            seed_refresh(self, active=True)
+            seed_refresh(self, pending=True)
+            seed_refresh(self, instance=accepted_instance)
+            seed_refresh(self, worker=Worker())
             self.cancelled_worker = self._database_refresh_worker
             self.reloads = []
 

@@ -74,6 +74,24 @@ modules are in the configured mypy check. Startup failures cancel the pending
 worker, retire its reader and restore the controls. Callbacks must match the
 generation, path and worker; cancellation also invalidates queued retries.
 
+`_database_refresh_controller.py` owns each `RefreshSession`: its worker,
+generation, coalesced request and staged basic rows. Its typed
+`DatabaseRefreshHost` interface is implemented by `_database_refresh_ui.py`.
+The adapter collects selected/visible/watched runs and connects workers on the
+GUI thread; the action mixin retains the widget transaction and source checks.
+Read-only `_database_refresh_*` properties expose observations to neighbouring
+components, and shutdown cancels and invalidates the controller directly.
+
+Refresh startup failures restore idle ownership and permit retry with the
+accepted reader. Publication retains its gate through the bounded basic-row
+transaction and always acknowledges or rejects the originating worker's page.
+A completion received during page publication waits until that transaction
+unwinds. Finalisation only clears the session it started with, and queued
+refresh callbacks are fenced by generation and selected path. Cancelling,
+closing or replacing a session therefore invalidates its queued refresh too.
+Queued callbacks use single-shot timers parented to the window, so deleting its
+Qt object also discards callbacks that have not run yet.
+
 `windows/_test_database.py` owns the explicit synthetic-data commands: CSV
 templates, destination selection, overwrite confirmation, background generation
 and its terminal result. `MainWindow` composes `SyntheticDatabaseActionsMixin`

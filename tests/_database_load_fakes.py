@@ -30,7 +30,10 @@ def seed_load(owner, **values):
     from qplot.datahandling.file_identity import database_instance
     from qplot.windows._database_actions import DatabaseActionsMixin
     from qplot.windows._database_load_state import DatabaseLoadSession
+    from tests._database_refresh_fakes import seed_refresh
 
+    # Load harnesses also exercise close/replacement, which invalidates refresh.
+    seed_refresh(owner)
     if "_database_loader" not in owner.__dict__:
         DatabaseActionsMixin._init_database_loader(owner)
     loader = owner._database_loader

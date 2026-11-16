@@ -25,6 +25,7 @@ from qplot.testdata import (
     generate_database,
 )
 from qplot.windows import _database_actions as database_actions
+from qplot.windows import _database_refresh_ui as refresh_ui
 from qplot.windows import main as main_window
 from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._error_dialog import ErrorDialog
@@ -428,7 +429,8 @@ def test_refresh_and_detail_workers_present_sanitized_errors(
     for name in (
         "DatabaseRefreshWorker", "DatabaseDetailWorker", "DatabaseExpensiveDetailWorker",
     ):
-        worker_type = worker_types[name] = getattr(database_actions, name)
+        owner = refresh_ui if name == "DatabaseRefreshWorker" else database_actions
+        worker_type = worker_types[name] = getattr(owner, name)
 
         def observed_worker(*args, worker_type=worker_type, **kwargs):
             if snapshot:
@@ -440,7 +442,7 @@ def test_refresh_and_detail_workers_present_sanitized_errors(
             worker._test_finished_spy = QtTest.QSignalSpy(worker.signals.finished)
             return worker
 
-        monkeypatch.setattr(database_actions, name, observed_worker)
+        monkeypatch.setattr(owner, name, observed_worker)
     runs = window.RunList.all_run_metadata()
     before = _artifacts(path)
     writer = sqlite3.connect(path)
@@ -481,9 +483,50 @@ def test_refresh_and_detail_workers_present_sanitized_errors(
         writer.rollback()
         writer.close()
     for name, worker_type in worker_types.items():
-        monkeypatch.setattr(database_actions, name, worker_type)
+        owner = refresh_ui if name == "DatabaseRefreshWorker" else database_actions
+        monkeypatch.setattr(owner, name, worker_type)
     window.refreshMain()
     window._start_database_detail_load(str(path), runs)
     _wait_idle(window)
     assert len(errors) == 1
+    assert _artifacts(path) == before
+
+
+@pytest.mark.parametrize("boundary", ["create_worker", "connect_worker", "submit_worker"])
+def test_refresh_startup_failure_preserves_reader_and_allows_retry(
+    tmp_path, error_window, monkeypatch, boundary,
+):
+    window, errors, uncaught = error_window
+    path = tmp_path / "refresh-startup.db"
+    _create_database(path, "signal")
+    assert window.load_file(str(path))
+    _wait_published_metadata(window)
+    runs = window.RunList.all_run_metadata()
+    service = window._trusted_read_service
+    selection = window._selected_run_guid
+    before = _artifacts(path)
+    host = window._database_refresher.host
+
+    def fail(*_args):
+        raise RuntimeError(f"injected {boundary} failure")
+
+    with monkeypatch.context() as failure:
+        failure.setattr(host, boundary, fail)
+        window.refreshMain()
+    assert not window._database_refresh_active
+    assert window._database_refresh_worker is None
+    assert window._trusted_read_service is service
+    assert service.accepted
+    assert window.RunList.all_run_metadata() == runs
+    assert window._selected_run_guid == selection
+    assert _artifacts(path) == before
+    assert len(errors) == 1
+    assert errors[0][0] == "Refresh Failed"
+    assert not uncaught
+
+    window.refreshMain()
+    _wait_idle(window)
+    assert len(errors) == 1
+    assert window._trusted_read_service is service
+    assert window.RunList.all_run_metadata() == runs
     assert _artifacts(path) == before
