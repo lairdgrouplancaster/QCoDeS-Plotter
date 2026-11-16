@@ -206,7 +206,7 @@ def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     dialog = _show_help_dialog(
         parent, "About qPlot", html,
         "qplotAboutDialog",
-        size=(640, 500),
+        size=(640, 400),
         icon=application_icon(),
     )
     dialog.setProperty("qplotUpdatePrefixHtml", html + "<hr>")
@@ -253,7 +253,7 @@ def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
         if desktop is not None:
             equal_button_widths(check_button, desktop)
         close_default(buttons)
-        resize_dialog(dialog, 640, 500)
+        resize_dialog(dialog, 640, 400)
     return dialog
 
 
