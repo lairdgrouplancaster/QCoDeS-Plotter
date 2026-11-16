@@ -30,12 +30,14 @@ from qplot.datahandling.trusted_query_types import (
     TrustedBootstrapResult,
 )
 from qplot.windows import _database_actions as database_actions
+from qplot.windows import _database_load_ui as load_ui
 from qplot.windows import _dataset_registry as dataset_registry_module
 from qplot.windows import _plot_actions as plot_actions
 from qplot.windows import _run_controls as run_controls
 from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._database_load_state import DatabaseLoadSession
 from qplot.windows._widgets import treeWidgets
+from tests._database_load_fakes import seed_load
 from tests.support.windows.trusted_live_ui import (
     _Button as _Button,
 )
@@ -102,8 +104,8 @@ class _RefreshPublicationHarness(database_actions.DatabaseActionsMixin):
         self._database_refresh_publication_active = False
         self._database_refresh_instance = None
         self._database_refresh_staged_new_runs = {}
-        self._database_load_active = False
-        self._database_load_publication_active = False
+        seed_load(self, active=False)
+        seed_load(self, publication_active=False)
         self._test_database_replacement_state = None
         self._test_database_generation_active = False
         self._shutdown_started = False
@@ -483,7 +485,7 @@ def test_refresh_commit_uses_sidecar_baseline_promoted_by_preflight(
 def test_trusted_refresh_updates_selected_completed_row_and_reloads_detail():
     class Harness(database_actions.DatabaseActionsMixin):
         def __init__(self) -> None:
-            self._database_load_publication_active = False
+            seed_load(self, publication_active=False)
             self._database_refresh_publication_active = False
             self._test_database_replacement_state = None
             self._database_access_mode = database_actions.TRUSTED_LIVE_MODE
@@ -1657,7 +1659,7 @@ def test_active_service_is_retained_until_pending_database_succeeds():
         patch.object(
             database_actions, "database_instance", side_effect=observed_instance
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker_b),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker_b),
         patch.object(
             database_actions,
             "set_qcodes_database_location",
@@ -1755,7 +1757,7 @@ def test_pending_load_accepts_shm_then_wal_appearing_during_publication():
             "database_instance",
             side_effect=observed_instance,
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker_b),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker_b),
         patch.object(database_actions, "set_qcodes_database_location"),
         patch.object(database_actions, "log_event"),
     ):
@@ -1823,7 +1825,7 @@ def test_pending_load_rejects_accepted_sidecar_change_before_gui_publication(
             "database_instance",
             side_effect=observed_instance,
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker_b),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker_b),
         patch.object(
             database_actions.QtCore.QTimer,
             "singleShot",
@@ -1901,7 +1903,7 @@ def test_pending_load_rejects_sidecar_swap_after_staging():
             "database_instance",
             side_effect=observed_instance,
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker_b),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker_b),
         patch.object(database_actions, "set_qcodes_database_location"),
         patch.object(database_actions, "log_event"),
         patch.object(harness, "_reload_replaced_database") as reload_replaced,
@@ -1988,7 +1990,7 @@ def test_cancelled_forced_same_instance_load_does_not_mutate_active_adapter():
             "database_instance",
             return_value=instance,
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", side_effect=make_worker),
+        patch.object(load_ui, "DatabaseLoadWorker", side_effect=make_worker),
         patch.object(database_actions, "log_event"),
     ):
         assert harness.load_file(instance.logical_path, force=True)
@@ -2036,7 +2038,7 @@ def test_successful_forced_same_instance_load_commits_isolated_service():
             "database_instance",
             return_value=instance,
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker),
         patch.object(
             database_actions,
             "set_qcodes_database_location",
@@ -2088,7 +2090,7 @@ def test_failed_forced_same_instance_load_does_not_retire_active_service():
             "database_instance",
             return_value=instance,
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker),
         patch.object(database_actions, "log_event"),
         patch.object(database_actions, "log_exception"),
     ):
@@ -2137,12 +2139,12 @@ def test_stale_forced_same_instance_callback_does_not_retire_active_service():
             "database_instance",
             return_value=instance,
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker),
         patch.object(database_actions, "log_event"),
     ):
         assert harness.load_file(instance.logical_path, force=True)
         stale_generation = harness._database_load_generation
-        harness._database_load_generation += 1
+        harness._database_loader.invalidate(cancel=False)
         harness.database_load_finished(
             stale_generation,
             instance.logical_path,
@@ -2182,7 +2184,7 @@ def test_trusted_same_instance_with_lost_service_starts_a_new_session():
             return_value=instance,
         ),
         patch.object(
-            database_actions,
+            load_ui,
             "DatabaseLoadWorker",
             return_value=replacement_worker,
         ),
@@ -2241,7 +2243,7 @@ def test_failed_b_ui_publication_restores_a_and_retires_only_b(gates_already_hel
             "database_instance",
             side_effect=lambda path: instances[logical_database_path(path)],
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker_b),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker_b),
         patch.object(
             database_actions,
             "set_qcodes_database_location",
@@ -2325,7 +2327,7 @@ def test_rollback_failure_retires_b_and_leaves_a_view_safely_closed():
             "database_instance",
             side_effect=lambda path: instances[logical_database_path(path)],
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker_b),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker_b),
         patch.object(
             database_actions.DatabaseActionsMixin,
             "_restore_database_load_publication",
@@ -2360,7 +2362,8 @@ def test_rollback_failure_retires_b_and_leaves_a_view_safely_closed():
     )
 
 
-def test_dual_replacement_does_not_republish_a_when_b_rollback_is_needed():
+@pytest.mark.parametrize("cancel_retry", [False, True])
+def test_dual_replacement_does_not_republish_a_when_b_rollback_is_needed(cancel_retry):
     instance_a = _instance("database-a.db", (1, 1))
     replaced_a = _instance("database-a.db", (1, 3))
     instance_b = _instance("database-b.db", (1, 2))
@@ -2393,7 +2396,7 @@ def test_dual_replacement_does_not_republish_a_when_b_rollback_is_needed():
             "database_instance",
             side_effect=lambda path: instances[logical_database_path(path)],
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker_b),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker_b),
         patch.object(
             database_actions.QtCore.QTimer,
             "singleShot",
@@ -2421,20 +2424,17 @@ def test_dual_replacement_does_not_republish_a_when_b_rollback_is_needed():
     assert harness.RunList.all_run_metadata() == {}
     assert len(retry_callbacks) == 1
 
-    with patch.object(
-        database_actions.DatabaseActionsMixin,
-        "_retry_replaced_database_if_current",
-        return_value=True,
-    ) as retry:
+    if cancel_retry:
+        harness.cancel_database_load()
+    with patch.object(harness._database_loader.host, "reload", return_value=True) as retry:
         retry_callbacks[0]()
-    retry.assert_called_once()
-    retry_args, retry_kwargs = retry.call_args
-    assert retry_args == (
-        harness,
-        harness._database_load_generation,
-        instance_a.logical_path,
-    )
-    assert isinstance(retry_kwargs["load_started_at"], float)
+    if cancel_retry:
+        retry.assert_not_called()
+    else:
+        retry.assert_called_once()
+        request = retry.call_args.args[0]
+        assert request.abspath == instance_a.logical_path
+        assert isinstance(request.load_started_at, float)
 
 
 def test_post_commit_selection_failure_still_retires_old_service():
@@ -2462,22 +2462,27 @@ def test_post_commit_selection_failure_still_retires_old_service():
             "database_instance",
             side_effect=lambda path: instances[logical_database_path(path)],
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker_b),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker_b),
         patch.object(database_actions, "set_qcodes_database_location"),
         patch.object(database_actions, "log_event"),
     ):
         assert harness.load_file(instance_b.logical_path)
         generation = harness._database_load_generation
         service_b.accepted = True
-        with pytest.raises(RuntimeError, match="post-commit selection failure"):
-            harness.database_load_finished(
-                generation,
-                instance_b.logical_path,
-                {9: {"guid": "guid-b", "run_timestamp": 9.0}},
-                None,
-                worker_b,
-            )
+        harness.database_load_finished(
+            generation,
+            instance_b.logical_path,
+            {9: {"guid": "guid-b", "run_timestamp": 9.0}},
+            None,
+            worker_b,
+        )
 
+    assert harness.error_messages == [(
+        "Database Load Failed", f"Could not publish database {instance_b.logical_path}.",
+        "injected post-commit selection failure",
+    )]
+    assert not harness._database_load_active
+    assert not harness._database_load_publication_active
     assert harness._trusted_read_service is service_b
     assert harness._pending_trusted_read_services == {}
     assert service_a.close_async_calls == 1
@@ -2549,7 +2554,7 @@ def test_b_publication_blocks_reentry_and_retires_a_after_full_commit(gates_alre
             "database_instance",
             side_effect=lambda path: instances[logical_database_path(path)],
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker_b),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker_b),
         patch.object(
             database_actions,
             "set_qcodes_database_location",
@@ -2633,7 +2638,7 @@ def test_close_during_b_row_staging_retires_b_and_leaves_closed_view_empty(gates
             "database_instance",
             side_effect=lambda path: instances[logical_database_path(path)],
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker_b),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker_b),
         patch.object(database_actions, "set_qcodes_database_location") as configure,
         patch.object(database_actions, "log_event"),
     ):
@@ -2675,14 +2680,14 @@ def test_stale_load_callback_retires_only_its_pending_service():
     service_b = _FakeService(instance_b)
     service_c = _FakeService(instance_c)
     harness = _LifecycleHarness(instance_a, service_a)
-    harness._database_load_generation = 12
-    harness._database_load_active = True
-    harness._database_load_state = DatabaseLoadSession(
+    seed_load(harness, generation=12)
+    seed_load(harness, active=True)
+    seed_load(harness, state=DatabaseLoadSession(
         abspath=instance_c.logical_path,
         load_instance=instance_c,
-    )
-    harness._database_load_worker = _FakeLoadWorker(service_c)
-    harness._pending_trusted_read_services = {11: service_b, 12: service_c}
+    ))
+    seed_load(harness, worker=_FakeLoadWorker(service_c))
+    seed_load(harness, pending_services={11: service_b, 12: service_c})
 
     harness.database_load_finished(
         11,
@@ -2713,7 +2718,7 @@ def test_close_database_asynchronously_retires_active_and_pending_services():
     service_b = _FakeService(instance_b)
     service_c = _FakeService(instance_c)
     harness = _LifecycleHarness(instance_a, service_a)
-    harness._pending_trusted_read_services = {5: service_b, 6: service_c}
+    seed_load(harness, pending_services={5: service_b, 6: service_c})
 
     harness.close_database(status=False)
 
@@ -2839,7 +2844,7 @@ def test_legacy_preview_callback_cannot_land_on_staged_trusted_rows(
                 side_effect=lambda path: instances[logical_database_path(path)],
             ),
             patch.object(
-                database_actions,
+                load_ui,
                 "DatabaseLoadWorker",
                 return_value=worker_b,
             ),

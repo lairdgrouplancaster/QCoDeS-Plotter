@@ -71,7 +71,7 @@ def preview_menu_token(scope):
     state = window.__dict__
     instance = state.get("_loaded_database_instance")
     return (
-        state.get("_database_load_generation"),
+        getattr(window, "_database_load_generation", None),
         getattr(instance, "logical_path", None),
         getattr(instance, "identity", None),
         getattr(scope, "generation", None),

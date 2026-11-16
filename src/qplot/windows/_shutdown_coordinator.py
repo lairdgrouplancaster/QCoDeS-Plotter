@@ -146,10 +146,7 @@ class ShutdownCoordinator:
 
     def _invalidate_database_publications(self) -> None:
         window = self.window
-        window._database_load_generation += 1
-        window._database_load_active = False
-        window._database_load_state = None
-        window._database_load_worker = None
+        window._database_loader.invalidate(cancel=False)
         detail_channel(window).invalidate()
         detail_channel(window, True).invalidate()
         window._database_refresh_generation = (

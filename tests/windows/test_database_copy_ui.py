@@ -76,7 +76,7 @@ def test_switch_database_before_publication_cancels(export_window, tmp_path, mon
     task = window._export_task_manager.history[-1]
     try:
         wait_for(started.is_set)
-        window._database_load_generation += 1
+        window._database_loader.invalidate(cancel=False)
         release.set()
         wait_for(lambda: task.done)
         assert task.cancelled

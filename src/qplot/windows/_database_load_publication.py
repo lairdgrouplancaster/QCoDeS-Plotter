@@ -9,19 +9,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from qplot.datahandling.file_identity import DatabaseInstance
 from qplot.datahandling.readonly import DatabaseInstanceChangedError
 from qplot.datahandling.trusted_live_service import TRUSTED_LIVE_MODE
 
 from ._auto_plot import cancel_auto_plot
-from ._database_load_state import DatabaseLoadSession
+from ._database_load_controller import AcceptedDatabaseLoad
 from ._database_observation import database_instances_or_sidecars_differ
 
 if TYPE_CHECKING:
-    from qplot.datahandling.trusted_live_service import TrustedLiveReadService
-
     from .main import MainWindow
 
 
@@ -42,30 +40,25 @@ class DatabaseLoadPublication:
     def __init__(
         self,
         window: MainWindow,
-        generation: int,
-        session: DatabaseLoadSession,
-        accepted_instance: DatabaseInstance,
-        runs: dict[int, dict[str, Any]],
-        pending_service: TrustedLiveReadService | None,
-        access_mode: str,
-        fallback_reason: str | None,
+        result: AcceptedDatabaseLoad,
         *,
         observe_instance: Callable[[str], DatabaseInstance],
     ) -> None:
         self.window = window
-        self.generation = generation
-        self.session = session
-        self.accepted_instance = accepted_instance
+        self.result = result
+        self.generation = result.generation
+        self.session = result.session
+        self.accepted_instance = result.instance
         self.observe_instance = observe_instance
-        self.runs = runs
-        self.pending_service = pending_service
-        self.access_mode = access_mode
-        self.fallback_reason = fallback_reason
+        self.runs = result.runs
+        self.pending_service = result.service
+        self.access_mode = result.access_mode
+        self.fallback_reason = result.fallback_reason
         self.snapshot = window._capture_database_load_publication()
         self.old_service = self.snapshot.trusted_service
-        self.new_service = pending_service if access_mode == TRUSTED_LIVE_MODE else None
+        self.new_service = result.service if result.access_mode == TRUSTED_LIVE_MODE else None
         self.derived_bridge = getattr(window, "_trusted_derived_bridge", None)
-        self.staged_instance = accepted_instance
+        self.staged_instance = result.instance
         self.error: Exception | None = None
         self.rollback_error: Exception | None = None
         self.rollback_source_changed = False
@@ -97,6 +90,18 @@ class DatabaseLoadPublication:
         )
 
     def run(self) -> None:
+        try:
+            with self.window._database_loader.publication(
+                self.result, committed=lambda: self.committed,
+            ) as current:
+                if current:
+                    self._run_view_transaction()
+                else:
+                    self.state = PublicationState.ABORTED
+        finally:
+            self.window._sync_database_generation_controls()
+
+    def _run_view_transaction(self) -> None:
         window = self.window
         # Old metadata jobs must not merge into a staged model during Qt yields.
         window._cancel_database_detail_load()
@@ -104,12 +109,6 @@ class DatabaseLoadPublication:
         window._cancel_database_info()
         if self.derived_bridge is not None:
             self.derived_bridge.suspend_publications()
-        if self.pending_service is not None and self.session.owns_trusted_service:
-            window._pending_trusted_read_services[self.generation] = (
-                self.pending_service
-            )
-
-        window._database_load_publication_active = True
         window._sync_database_generation_controls()
         run_id_blocked = window.run_idBox.blockSignals(True)
         run_list_blocked = window.RunList.blockSignals(True)
@@ -138,24 +137,12 @@ class DatabaseLoadPublication:
                 window.RunList.watching = []
                 window.RunList.maxRunId = 0
         finally:
-            owned_pending = getattr(window, "_pending_trusted_read_services", {}).pop(
-                self.generation,
-                None,
-            )
-            if not self.committed and owned_pending is not None:
-                window._retire_trusted_read_service(owned_pending, force=True)
             try:
                 window.RunList.blockSignals(run_list_blocked)
                 window.run_idBox.blockSignals(run_id_blocked)
             finally:
-                try:
-                    if preview_gate_set:
-                        window.RunList.set_preview_publication_suspended(
-                            preview_was_suspended
-                        )
-                finally:
-                    window._database_load_publication_active = False
-                    window._sync_database_generation_controls()
+                if preview_gate_set:
+                    window.RunList.set_preview_publication_suspended(preview_was_suspended)
 
     def _stage_and_commit(self) -> None:
         # Stage B's run model while every action remains gated and A is

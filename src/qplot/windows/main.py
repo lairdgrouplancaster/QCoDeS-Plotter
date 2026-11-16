@@ -33,7 +33,6 @@ from ._config_persistence import (
     set_widget_value_without_signals,
 )
 from ._database_actions import DatabaseActionsMixin
-from ._database_load_state import DatabaseLoadSession
 from ._dataset_handle import DatasetHandle, DatasetKey
 from ._error_dialog import ErrorDialog
 from ._help import add_help_menu
@@ -158,6 +157,7 @@ class MainWindow(
         self.preview_size = self._configured_preview_size()
         self.dataset_holder: dict[DatasetKey, DatasetHandle] = {}
         self.monitor = QtCore.QTimer()
+        self._init_database_loader()
         # The process entry point installs and owns the fail-safe. Embedded
         # windows remain inert at the process boundary.
         self._shutdown_process_fail_safe = None
@@ -176,8 +176,8 @@ class MainWindow(
         self.threadPool._qplot_workers = self._plot_workers  # type: ignore[attr-defined]
         self.databaseLoadThreadPool = resources.create_pool(
             "databaseLoadThreadPool", parent=self,
-            worker_attribute="_database_load_worker",
         )
+        resources.watch_worker("database load", cancel=self._database_loader.cancel_worker)
         self.databaseDetailThreadPool = resources.create_pool(
             "databaseDetailThreadPool", parent=self,
         )
@@ -199,11 +199,6 @@ class MainWindow(
             "testDatabaseGenerationThreadPool", parent=self,
             worker_attribute="_test_database_generation_worker",
         )
-        self._database_load_generation = 0
-        self._database_load_active = False
-        self._database_load_publication_active = False
-        self._database_load_state: DatabaseLoadSession | None = None
-        self._database_load_worker = None
         self._database_info_generation = 0
         self._database_info_worker = None
         self._database_info_instance = None
@@ -224,7 +219,6 @@ class MainWindow(
         self._selected_run_guid = None
         self._snapshot_setpoint_summary_cache = {}
         self._trusted_read_service = None
-        self._pending_trusted_read_services = {}
         self._retired_trusted_read_services = set()
         self._retired_service_reap_diagnostics: dict[int, str] = {}
         self._database_access_mode = None

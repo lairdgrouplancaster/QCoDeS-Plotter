@@ -57,7 +57,22 @@ window actions. It handles:
 * loading and remembering QCoDeS database paths
 * refreshing the run list
 * recent database menus
-* database-load progress, cancellation, and restore handling
+* database-load admission, view restoration and progressive work after publication
+
+`_database_load_controller.py` owns pending load sessions, their workers and
+readers, generation changes, cancellation, source validation and queued retries.
+`MainWindow` constructs one controller and registers its cancellation callback
+with shutdown. The existing `_database_load_*` window observations are read-only
+properties; they let refresh, selection and export consumers observe the same
+generation without acquiring ownership of it. An active load is derived from
+the pending session, and its worker is held by that session.
+
+The controller uses the typed `DatabaseLoadHost` interface.
+`_database_load_ui.py` implements that interface with widget updates, worker
+construction, GUI-thread Qt signal connections and the view transaction. Both
+modules are in the configured mypy check. Startup failures cancel the pending
+worker, retire its reader and restore the controls. Callbacks must match the
+generation, path and worker; cancellation also invalidates queued retries.
 
 `windows/_test_database.py` owns the explicit synthetic-data commands: CSV
 templates, destination selection, overwrite confirmation, background generation
@@ -78,12 +93,14 @@ imports the database controller to reveal a log file.
 reader and database observation; it is separate from the pending worker's state.
 Export protection also includes the pending session's source.
 
-`_database_load_publication.py` owns staging, commit, rollback, and Qt publication
-gates. Run-list insertion may process nested close/shutdown events, so the pending
-reader stays reachable by normal teardown throughout publication. A failed stage
+`_database_load_publication.py` owns staging, commit, rollback, and widget signal
+gates. It enters the controller's publication scope, which keeps the pending
+reader reachable by normal teardown during nested close/shutdown events. A failed stage
 restores the previous view only after revalidating its source; failed restoration
-closes the view. The action mixin handles result validation, user feedback, retries,
-and restarting progressive work after the transaction has released its gates.
+closes the view. The action mixin handles restoration feedback and restarting
+progressive work after the transaction has released its gates. Completion
+exceptions are reported through the normal error UI; a failure after commit does
+not retire the newly committed reader or reverse a completed ownership transfer.
 `_database_observation.py` shares the directional source check: newly created
 WAL/SHM files are allowed, but an already accepted sidecar cannot disappear or be
 replaced. These comparisons use `DatabaseInstance` throughout.

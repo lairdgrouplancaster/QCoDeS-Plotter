@@ -40,6 +40,7 @@ from qplot.datahandling.trusted_work_scheduler import (
     WorkPublication,
 )
 from qplot.windows import _database_actions as database_actions
+from qplot.windows import _database_load_ui as load_ui
 from qplot.windows import _snapshot_session as snapshot_module
 from qplot.windows import _trusted_derived_qt as bridge_module
 from qplot.windows._trusted_derived_qt import TrustedDerivedQtBridge
@@ -1389,7 +1390,7 @@ def test_fast_baseline_commits_before_bridge_start_and_legacy_enrichment() -> No
             "database_instance",
             side_effect=lambda path: observed[str(path)],
         ),
-        patch.object(database_actions, "DatabaseLoadWorker", return_value=worker),
+        patch.object(load_ui, "DatabaseLoadWorker", return_value=worker),
         patch.object(database_actions, "set_qcodes_database_location"),
         patch.object(database_actions, "log_event"),
         patch.object(
