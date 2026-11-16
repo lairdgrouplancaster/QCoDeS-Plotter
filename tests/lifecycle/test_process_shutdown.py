@@ -1,8 +1,14 @@
 """Process fail-safe regressions without Qt window construction."""
 
 from threading import Event as ThreadEvent
+from threading import Lock as ThreadLock
+from threading import Thread
 from time import monotonic
+from types import SimpleNamespace
 
+import pytest
+
+from qplot import _process_shutdown as process_shutdown
 from qplot._process_shutdown import (
     FORCED_SHUTDOWN_EXIT_CODE,
     ProcessShutdownFailSafe,
@@ -193,3 +199,126 @@ def test_async_diagnostic_persistence_never_blocks_its_caller() -> None:
     assert persistence_entered.wait(0.3)
     process_fail_safe.disarm()
     release_persistence.set()
+
+
+@pytest.fixture
+def thread_starts(monkeypatch):
+    """Fail selected starts once, retaining and joining every real test thread."""
+    failures = set()
+    threads = []
+
+    def create_thread(*args, **kwargs):
+        thread = Thread(*args, **kwargs)
+        start = thread.start
+
+        def start_once():
+            if thread.name in failures:
+                failures.remove(thread.name)
+                raise RuntimeError(f"cannot start {thread.name}")
+            start()
+
+        thread.start = start_once
+        threads.append(thread)
+        return thread
+
+    monkeypatch.setattr(process_shutdown, "threading", SimpleNamespace(
+        Thread=create_thread, Lock=ThreadLock, Event=ThreadEvent,
+    ))
+    yield failures
+    for thread in threads:
+        if thread.ident is not None:
+            thread.join(5)
+            assert not thread.is_alive(), f"Shutdown test thread survived: {thread.name}"
+
+
+@pytest.mark.parametrize("failed_names", [
+    pytest.param(("qplot-shutdown-diagnostic-fallback",), id="diagnostic-watchdog"),
+    pytest.param(("qplot-shutdown-process-fallback",), id="termination-watchdog"),
+    pytest.param(("qplot-shutdown-diagnostic-fallback", "qplot-shutdown-process-fallback"),
+                 id="both-watchdogs"),
+])
+def test_failed_watchdog_start_cannot_prevent_exit_at_expired_deadline(
+    thread_starts, failed_names,
+):
+    thread_starts.update(failed_names)
+    armed_deadlines = []
+    forced = []
+    persisted = []
+    fail_safe = ProcessShutdownFailSafe(
+        SimpleNamespace(arm=lambda deadline: armed_deadlines.append(deadline)),
+        persist_diagnostics=lambda **snapshot: persisted.append(snapshot),
+        force_exit=lambda code: forced.append(code),
+    )
+    started_at = monotonic() - 2
+    hard_deadline = started_at + 1
+    try:
+        diagnostic = fail_safe.arm(
+            started_at=started_at,
+            diagnostic_deadline=started_at + 0.5,
+            hard_deadline=hard_deadline,
+        )
+        expected = tuple(
+            "process shutdown local fallback setup raised RuntimeError: cannot start " + name
+            for name in failed_names
+        )
+        assert diagnostic == expected[-1]
+        assert armed_deadlines == [hard_deadline]
+        assert fail_safe.watchdog_operational()
+
+        # An already expired deadline avoids wall-clock sleeps or assumptions
+        # about OS timer rounding. The caller must still reach the exit path
+        # even when neither local watchdog could start.
+        fail_safe.wait_for_forced_exit()
+        fail_safe.persist_now()
+
+        assert forced
+        assert set(forced) == {FORCED_SHUTDOWN_EXIT_CODE}
+        assert all(message in persisted[-1]["diagnostics"] for message in expected)
+        assert not thread_starts
+    finally:
+        fail_safe.disarm()
+
+
+def test_failed_diagnostic_thread_start_can_retry_with_latest_snapshot(thread_starts, monkeypatch):
+    thread_starts.add("qplot-shutdown-diagnostic-persistence")
+    persisted = []
+    recorded = ThreadEvent()
+
+    def persist(**snapshot):
+        persisted.append(snapshot)
+        recorded.set()
+
+    fail_safe = ProcessShutdownFailSafe(
+        SimpleNamespace(arm=lambda _deadline: None),
+        persist_diagnostics=persist,
+        force_exit=lambda _code: None,
+    )
+    # Isolate persistence scheduling from the deadline watchdogs. The tests
+    # above exercise those watchdogs with real, joined threads.
+    monkeypatch.setattr(fail_safe, "_activate_fallback", lambda: None)
+    started_at = monotonic()
+    try:
+        fail_safe.arm(started_at=started_at, diagnostic_deadline=started_at + 30,
+                      hard_deadline=started_at + 60)
+        fail_safe.update_diagnostics(("first observation",))
+        fail_safe.persist_async()
+        assert not persisted
+
+        fail_safe.update_diagnostics(("latest observation",))
+        fail_safe.persist_async()
+        assert recorded.wait(5)
+        fail_safe.persist_now()
+
+        assert len(persisted) == 1
+        assert persisted[0]["diagnostics"] == (
+            "process shutdown diagnostic thread setup raised RuntimeError: "
+            "cannot start qplot-shutdown-diagnostic-persistence",
+            "latest observation",
+        )
+        fail_safe.disarm()
+        fail_safe.persist_now()
+        fail_safe.persist_async()
+        assert len(persisted) == 1
+        assert not thread_starts
+    finally:
+        fail_safe.disarm()

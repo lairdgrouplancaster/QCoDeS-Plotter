@@ -15,7 +15,7 @@ import pytest
 from qplot.datahandling import database_export
 from qplot.datahandling.database_export import export_database_copy
 from qplot.datahandling.file_identity import database_instance
-from tests.support.datahandling.database_export import blocked_backup
+from tests.support.datahandling.database_export import blocked_backup, exiting_backup
 
 
 def digest(path):
@@ -101,12 +101,13 @@ def test_replaced_source_is_rejected(tmp_path):
     assert source.read_bytes() == b"different database"
 
 
-@pytest.mark.parametrize("abort, error", [
-    pytest.param("cancel", InterruptedError, id="cancel"),
-    pytest.param("deadline", TimeoutError, id="deadline"),
+@pytest.mark.parametrize("abort, error, message", [
+    pytest.param("cancel", InterruptedError, "cancelled", id="cancel"),
+    pytest.param("deadline", TimeoutError, "timed out", id="total-deadline"),
+    pytest.param("no-progress", TimeoutError, "stopped responding", id="no-progress"),
 ])
 def test_aborting_started_export_reaps_child_and_removes_private_files(
-    tmp_path, monkeypatch, export_scratch, abort, error,
+    tmp_path, monkeypatch, export_scratch, abort, error, message,
 ):
     source = tmp_path / "source.db"
     with closing(sqlite3.connect(source)) as writer, writer:
@@ -125,19 +126,125 @@ def test_aborting_started_export_reaps_child_and_removes_private_files(
         nonlocal cancelled
         if phase != "Copying committed data":
             return
-        children = [child for child in multiprocessing.active_children()
-                    if child.pid not in prior_pids and child.name == "qplot-database-export"]
-        assert len(children) == 1
-        assert children[0].is_alive()
-        observed_pids.add(children[0].pid)
-        assert list(export_scratch.iterdir())
+        observed_pids.add(_observe_export_child(export_scratch, prior_pids))
         cancelled = abort == "cancel"
-        if abort == "deadline":
+        if abort in ("deadline", "no-progress"):
             clock[0] += 61
 
-    with pytest.raises(error):
+    with pytest.raises(error, match=message):
         export_database_copy(stage, instance=database_instance(source), live=True,
-                             cancelled=lambda: cancelled, progress=progress, timeout=60)
+                             cancelled=lambda: cancelled, progress=progress,
+                             timeout=60 if abort == "deadline" else 1800)
+    assert observed_pids
+    assert not observed_pids & {child.pid for child in multiprocessing.active_children()}
+    assert not list(export_scratch.iterdir())
+    assert stage.read_bytes() == b""
+    assert source.read_bytes() == before
+
+
+def _assert_private_export_files(export_scratch):
+    files = list(export_scratch.glob("*/copy.db*"))
+    assert {path.name for path in files} == {
+        "copy.db", "copy.db-wal", "copy.db-shm", "copy.db-journal",
+    }
+    assert all(path.read_bytes() == b"private export scratch" for path in files)
+
+
+def _observe_export_child(export_scratch, prior_pids):
+    children = [child for child in multiprocessing.active_children()
+                if child.pid not in prior_pids and child.name == "qplot-database-export"]
+    assert len(children) == 1
+    assert children[0].is_alive()
+    _assert_private_export_files(export_scratch)
+    return children[0].pid
+
+
+@pytest.mark.parametrize("outcome, message", [
+    pytest.param("missing-result", "stopped unexpectedly", id="missing-result"),
+    pytest.param("unsuccessful-exit", "did not close cleanly", id="unsuccessful-exit"),
+])
+def test_incomplete_export_reaps_child_and_never_copies_its_output(
+    tmp_path, monkeypatch, export_scratch, outcome, message,
+):
+    source = tmp_path / "source.db"
+    with closing(sqlite3.connect(source)) as writer, writer:
+        writer.execute("CREATE TABLE runs(run_id INTEGER)")
+    before = source.read_bytes()
+    stage = tmp_path / "stage.db"
+    stage.touch()
+    released = multiprocessing.get_context("spawn").Event()
+    prior_pids = {child.pid for child in multiprocessing.active_children()}
+    observed_pids = set()
+    monkeypatch.setattr(database_export, "_backup_child", partial(
+        exiting_backup, released=released, outcome=outcome,
+    ))
+
+    def progress(phase, *_args):
+        if phase != "Copying committed data":
+            return
+        observed_pids.add(_observe_export_child(export_scratch, prior_pids))
+        released.set()
+
+    with pytest.raises(RuntimeError, match=message):
+        export_database_copy(stage, instance=database_instance(source), live=True,
+                             cancelled=lambda: False, progress=progress)
+
+    assert observed_pids
+    assert not observed_pids & {child.pid for child in multiprocessing.active_children()}
+    assert not list(export_scratch.iterdir())
+    assert stage.read_bytes() == b""
+    assert source.read_bytes() == before
+
+
+@pytest.mark.parametrize("operation", ["poll", "receive"])
+def test_export_pipe_disconnect_is_reported_and_child_cleanup_completes(
+    tmp_path, monkeypatch, export_scratch, operation,
+):
+    source = tmp_path / "source.db"
+    with closing(sqlite3.connect(source)) as writer, writer:
+        writer.execute("CREATE TABLE runs(run_id INTEGER)")
+    before = source.read_bytes()
+    stage = tmp_path / "stage.db"
+    stage.touch()
+    context = multiprocessing.get_context("spawn")
+    disconnected = False
+    pipe_error = BrokenPipeError("injected export pipe disconnect")
+    prior_pids = {child.pid for child in multiprocessing.active_children()}
+    observed_pids = set()
+
+    def pipe(**kwargs):
+        receive, send = context.Pipe(**kwargs)
+
+        def poll(timeout):
+            if disconnected:
+                if operation == "poll":
+                    raise pipe_error
+                return True
+            return receive.poll(timeout)
+
+        def recv():
+            if disconnected:
+                raise pipe_error
+            return receive.recv()
+
+        return SimpleNamespace(poll=poll, recv=recv, close=receive.close), send
+
+    monkeypatch.setattr(database_export, "multiprocessing", SimpleNamespace(
+        get_context=lambda _mode: SimpleNamespace(Pipe=pipe, Process=context.Process),
+    ))
+    monkeypatch.setattr(database_export, "_backup_child", blocked_backup)
+
+    def progress(phase, *_args):
+        nonlocal disconnected
+        if phase == "Copying committed data":
+            observed_pids.add(_observe_export_child(export_scratch, prior_pids))
+            disconnected = True
+
+    with pytest.raises(RuntimeError, match="stopped unexpectedly") as failure:
+        export_database_copy(stage, instance=database_instance(source), live=True,
+                             cancelled=lambda: False, progress=progress)
+
+    assert failure.value.__cause__ is pipe_error
     assert observed_pids
     assert not observed_pids & {child.pid for child in multiprocessing.active_children()}
     assert not list(export_scratch.iterdir())

@@ -174,11 +174,15 @@ def export_database_copy(filename, *, instance, live, cancelled, progress,
             last_message = time.monotonic()
             while True:
                 check()
-                if receive.poll(0.05):
-                    try:
+                try:
+                    message_ready = receive.poll(0.05)
+                    if message_ready:
                         message = receive.recv()
-                    except EOFError as error:
-                        raise RuntimeError("The database export process stopped unexpectedly.") from error
+                except (EOFError, OSError) as error:
+                    # Windows can report a disconnected pipe from poll(),
+                    # before recv() has an opportunity to report EOF.
+                    raise RuntimeError("The database export process stopped unexpectedly.") from error
+                if message_ready:
                     last_message = time.monotonic()
                     if message[0] == "done":
                         break
