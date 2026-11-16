@@ -209,6 +209,8 @@ files = [
     "src/qplot/windows/_database_refresh_controller.py",
     "src/qplot/windows/_database_refresh_ui.py",
     "src/qplot/windows/_database_detail_state.py",
+    "src/qplot/windows/_database_detail_controller.py",
+    "src/qplot/windows/_database_detail_ui.py",
     "src/qplot/windows/_database_load_publication.py",
     "src/qplot/windows/_database_observation.py",
     "src/qplot/windows/_trusted_derived_qt.py",

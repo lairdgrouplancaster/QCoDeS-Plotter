@@ -103,6 +103,22 @@ closing or replacing a session therefore invalidates its queued refresh too.
 Queued callbacks use single-shot timers parented to the window, so deleting its
 Qt object also discards callbacks that have not run yet.
 
+`_database_detail_controller.py` owns the independent basic and expensive
+snapshot metadata channels. Its typed `DatabaseDetailHost` interface is
+implemented by `_database_detail_ui.py`, which constructs and connects Qt
+workers, selects their pools and updates the run-list loading indicators.
+The existing protected snapshot readers and source-identity checks remain in
+use; trusted live metadata continues through the derived-data bridge.
+
+Construction, prioritisation, signal-connection and submission failures retire
+the failed channel, clear its indicators and leave the other stage usable.
+Cancellation fences both channels before calling either worker. Publication
+checks the generation, selected path and source identity before applying a
+batch and checks ownership and identity again afterwards. A completion received
+during publication waits for the batch to finish; stale callbacks and cleanup
+cannot clear a replacement job's indicators. Export protection and shutdown
+observe the same controller-owned channel state.
+
 `windows/_test_database.py` owns the explicit synthetic-data commands: CSV
 templates, destination selection, overwrite confirmation, background generation
 and its terminal result. `MainWindow` composes `SyntheticDatabaseActionsMixin`

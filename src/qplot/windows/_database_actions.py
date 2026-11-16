@@ -13,8 +13,6 @@ from PyQt6.QtGui import QDesktopServices
 from qcodes.dataset.sqlite.database import get_DB_location
 
 from qplot.datahandling.database import (
-    DatabaseDetailWorker,
-    DatabaseExpensiveDetailWorker,
     DatabaseInfoWorker,
     DatabaseRefreshWorker,
 )
@@ -36,12 +34,7 @@ from qplot.datahandling.trusted_live_service import (
     TRUSTED_LIVE_MODE,
 )
 from qplot.diagnostics import log_event, log_exception
-from qplot.windows._database_detail_state import (
-    BASIC_METADATA_COLUMNS,
-    EXPENSIVE_METADATA_COLUMNS,
-    detail_channel,
-    set_run_metadata_loading,
-)
+from qplot.windows._database_detail_state import detail_controller
 
 from ._auto_plot import cancel_auto_plot, enqueue_auto_plot, update_auto_plot
 from ._config_persistence import persist_config_value
@@ -2426,12 +2419,7 @@ class DatabaseActionsMixin:
 
 
     def _cancel_database_detail_load(self):
-        channels = (detail_channel(self), detail_channel(self, True))
-        for channel in channels:
-            channel.cancel_worker()
-        for channel in channels:
-            channel.invalidate()
-        set_run_metadata_loading(self, loading=False)
+        detail_controller(self).cancel()
 
 
     def _start_database_detail_load(self, abspath, runs):
@@ -2455,44 +2443,8 @@ class DatabaseActionsMixin:
         if not isinstance(detail_instance, DatabaseInstance):
             detail_instance = database_instance(abspath)
 
-        trusted_service = DatabaseActionsMixin._active_trusted_service_for_instance(
-            self,
-            detail_instance,
-        )
-        if (
-                getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE
-                and trusted_service is None
-                ):
-            DatabaseActionsMixin._cancel_database_detail_load(self)
-            self.show_error(
-                "Trusted Details Unavailable",
-                "The accepted trusted live-reader session is no longer usable.",
-                "Reload the database to start a new trusted session. qPlot did "
-                "not fall back to snapshot metadata after the accepted-session "
-                "failure.",
-            )
-            return
-        worker_kwargs = {
-            "expected_database_instance": detail_instance,
-        }
-        if trusted_service is not None:
-            worker_kwargs["trusted_service"] = trusted_service
-
-        DatabaseActionsMixin._start_database_cheap_detail_worker(
-            self,
-            abspath,
-            run_ids,
-            detail_instance,
-            worker_kwargs,
-        )
-        DatabaseActionsMixin._start_database_expensive_detail_worker(
-            self,
-            abspath,
-            run_ids,
-            detail_instance,
-            worker_kwargs,
-        )
-        QtCore.QTimer.singleShot(0, self._prioritize_database_detail_runs)
+        if detail_controller(self).start_all(abspath, run_ids, detail_instance):
+            QtCore.QTimer.singleShot(0, self._prioritize_database_detail_runs)
 
 
     def _start_database_cheap_detail_worker(
@@ -2513,35 +2465,9 @@ class DatabaseActionsMixin:
             self, abspath, run_ids, detail_instance, worker_kwargs, *, expensive):
         if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
             return
-        channel = detail_channel(self, expensive)
-        channel.cancel_worker()
-        channel.generation += 1
-        channel.active = True
-        channel.instance = detail_instance
-        worker_type = DatabaseExpensiveDetailWorker if expensive else DatabaseDetailWorker
-        priority = self._database_detail_priority_run_ids() if expensive else None
-        worker = worker_type(
-            channel.generation, abspath, run_ids, batch_size=100, **worker_kwargs,
+        detail_controller(self).start(
+            abspath, run_ids, detail_instance, worker_kwargs, expensive=expensive,
         )
-        channel.worker = worker
-        if priority is None:
-            priority = self._database_detail_priority_run_ids()
-        worker.prioritize_run_ids(priority)
-        if expensive:
-            worker.signals.status.connect(self.database_expensive_detail_status)
-            worker.signals.batch_ready.connect(self.database_expensive_detail_batch_ready)
-            worker.signals.finished.connect(self.database_expensive_detail_finished)
-        else:
-            worker.signals.status.connect(self.database_detail_status)
-            worker.signals.batch_ready.connect(self.database_detail_batch_ready)
-            worker.signals.finished.connect(self.database_detail_finished)
-        pool = getattr(self, "databaseDetailThreadPool", self.databaseLoadThreadPool)
-        if expensive:
-            pool = getattr(self, "databaseExpensiveDetailThreadPool", pool)
-        columns = EXPENSIVE_METADATA_COLUMNS if expensive else BASIC_METADATA_COLUMNS
-        set_run_metadata_loading(self, columns=columns, loading=False)
-        set_run_metadata_loading(self, run_ids=run_ids, columns=columns)
-        pool.start(worker)
 
 
     def _database_detail_run_order(self, runs):
@@ -2560,52 +2486,11 @@ class DatabaseActionsMixin:
             if bridge is not None:
                 bridge.request_priority_update()
                 return
-        if not (
-                detail_channel(self).active
-                or detail_channel(self, True).active
-                ):
-            return
-
-        priority_run_ids = self._database_detail_priority_run_ids(run_ids=run_ids)
-        for channel in (detail_channel(self), detail_channel(self, True)):
-            if channel.active and channel.worker is not None:
-                channel.worker.prioritize_run_ids(priority_run_ids)
+        detail_controller(self).prioritize(run_ids)
 
 
     def _database_detail_priority_run_ids(self, run_ids=None):
-        priority_ids = []
-        seen = set()
-
-        def add(candidate):
-            if candidate is None:
-                return
-            try:
-                key = int(candidate)
-            except (TypeError, ValueError):
-                key = candidate
-            if key in seen:
-                return
-            priority_ids.append(candidate)
-            seen.add(key)
-
-        if isinstance(run_ids, (list, tuple, set)):
-            for run_id in run_ids:
-                add(run_id)
-        else:
-            add(run_ids)
-
-        run_list = getattr(self, "RunList", None)
-        selected_run_ids = getattr(run_list, "selected_run_ids", None)
-        if callable(selected_run_ids):
-            for run_id in selected_run_ids():
-                add(run_id)
-
-        visible_run_ids = getattr(run_list, "visible_run_ids", None)
-        if callable(visible_run_ids):
-            for run_id in visible_run_ids():
-                add(run_id)
-
-        return priority_ids
+        return detail_controller(self).host.priority_run_ids(run_ids)
 
 
     @QtCore.pyqtSlot(int, str)
@@ -2619,8 +2504,7 @@ class DatabaseActionsMixin:
 
 
     def _detail_status(self, generation, message, *, expensive):
-        if detail_channel(self, expensive).accepts(generation):
-            self.show_status(message, 0)
+        detail_controller(self).status(generation, message, expensive=expensive)
 
 
     @QtCore.pyqtSlot(int, str, object)
@@ -2638,35 +2522,7 @@ class DatabaseActionsMixin:
 
 
     def _detail_batch_ready(self, generation, abspath, runs, *, expensive):
-        channel = detail_channel(self, expensive)
-        if not channel.accepts(generation):
-            return
-        if DatabaseActionsMixin._database_generation_transaction_blocks_path(self, abspath):
-            return
-        if not _database_paths_equal(abspath, self.fileTextbox.text()):
-            return
-        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-                self, abspath, channel.instance):
-            return
-        detail_instance = channel.instance
-        self._apply_database_detail_batch(runs)
-        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-            self, abspath, detail_instance, discard_stale_publication=True,
-        ) or not channel.accepts(generation):
-            return
-        if expensive:
-            # Shape and size arrive in separate batches from this worker.
-            for name, fields in (
-                ("Setpoints", {"setpoint_shape", "point_shape", "setpoint_count", "expected_results"}),
-                ("Size", {"storage_bytes"}),
-            ):
-                guids = [run.get("guid") for run in runs.values() if fields.intersection(run)]
-                set_run_metadata_loading(self, guids, columns=(name,), loading=False)
-        else:
-            set_run_metadata_loading(
-                self, [run.get("guid") for run in runs.values()],
-                columns=BASIC_METADATA_COLUMNS, loading=False,
-            )
+        detail_controller(self).publish(generation, abspath, runs, expensive=expensive)
 
 
     def _apply_database_detail_batch(self, runs):
@@ -2699,30 +2555,7 @@ class DatabaseActionsMixin:
 
 
     def _detail_finished(self, generation, abspath, error, *, expensive):
-        channel = detail_channel(self, expensive)
-        if generation != channel.generation:
-            return
-        detail_instance = channel.instance
-        channel.clear()
-        if not _database_paths_equal(abspath, self.fileTextbox.text()):
-            return
-        if isinstance(error, DatabaseInstanceChangedError):
-            DatabaseActionsMixin._cancel_database_detail_load(self)
-            self._reload_replaced_database(abspath)
-            return
-        if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
-                self, abspath, detail_instance):
-            return
-        columns = EXPENSIVE_METADATA_COLUMNS if expensive else BASIC_METADATA_COLUMNS
-        set_run_metadata_loading(self, columns=columns, loading=False)
-        if error is not None:
-            diagnostic = "Expensive database detail load failed" if expensive else "Database detail load failed"
-            message = "Setpoint and size loading failed" if expensive else "Run detail loading failed"
-            log_exception(diagnostic, error, __name__)
-            self.show_status(f"{message}: {error}", 5000)
-            return
-        if not detail_channel(self, not expensive).active:
-            self.show_status("Run details loaded.", 5000)
+        detail_controller(self).finish(generation, abspath, error, expensive=expensive)
 
 
     def _refresh_selected_run_details(self, runs, *, live_only=False):

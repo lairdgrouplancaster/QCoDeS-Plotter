@@ -30,6 +30,7 @@ from qplot.datahandling.trusted_query_types import (
     TrustedBootstrapResult,
 )
 from qplot.windows import _database_actions as database_actions
+from qplot.windows import _database_detail_ui as detail_ui
 from qplot.windows import _database_load_ui as load_ui
 from qplot.windows import _dataset_registry as dataset_registry_module
 from qplot.windows import _plot_actions as plot_actions
@@ -1488,9 +1489,9 @@ def test_lost_trusted_service_cannot_start_snapshot_detail_workers(unusable_stat
     harness = Harness()
     worker_kwargs = {"expected_database_instance": instance}
     with (
-        patch.object(database_actions, "DatabaseDetailWorker") as cheap_worker,
+        patch.object(detail_ui, "DatabaseDetailWorker") as cheap_worker,
         patch.object(
-            database_actions,
+            detail_ui,
             "DatabaseExpensiveDetailWorker",
         ) as expensive_worker,
     ):

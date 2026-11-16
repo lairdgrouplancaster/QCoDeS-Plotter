@@ -23,7 +23,7 @@ from qplot.datahandling.database import (
     database_path_from_mime_data,
 )
 from qplot.diagnostics import log_user_error
-from qplot.windows._database_detail_state import detail_channel
+from qplot.windows._database_detail_state import detail_controller
 
 from ._commands import create_action
 from ._complex_plots import apply_complex_preference
@@ -159,6 +159,7 @@ class MainWindow(
         self.monitor = QtCore.QTimer()
         self._init_database_loader()
         self._init_database_refresher()
+        self._database_detail_loader = detail_controller(self)
         # The process entry point installs and owns the fail-safe. Embedded
         # windows remain inert at the process boundary.
         self._shutdown_process_fail_safe = None
@@ -182,11 +183,10 @@ class MainWindow(
         self.databaseDetailThreadPool = resources.create_pool(
             "databaseDetailThreadPool", parent=self,
         )
-        resources.watch_worker("basic details", cancel=detail_channel(self).cancel_worker)
         self.databaseExpensiveDetailThreadPool = resources.create_pool(
             "databaseExpensiveDetailThreadPool", parent=self,
         )
-        resources.watch_worker("expensive details", cancel=detail_channel(self, True).cancel_worker)
+        resources.watch_worker("database details", cancel=self._database_detail_loader.cancel)
         self.databaseRefreshThreadPool = resources.create_pool(
             "databaseRefreshThreadPool", parent=self,
         )

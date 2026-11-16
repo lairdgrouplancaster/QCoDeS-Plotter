@@ -25,6 +25,7 @@ from qplot.testdata import (
     generate_database,
 )
 from qplot.windows import _database_actions as database_actions
+from qplot.windows import _database_detail_ui as detail_ui
 from qplot.windows import _database_refresh_ui as refresh_ui
 from qplot.windows import main as main_window
 from qplot.windows._database_detail_state import detail_channel
@@ -429,7 +430,7 @@ def test_refresh_and_detail_workers_present_sanitized_errors(
     for name in (
         "DatabaseRefreshWorker", "DatabaseDetailWorker", "DatabaseExpensiveDetailWorker",
     ):
-        owner = refresh_ui if name == "DatabaseRefreshWorker" else database_actions
+        owner = refresh_ui if name == "DatabaseRefreshWorker" else detail_ui
         worker_type = worker_types[name] = getattr(owner, name)
 
         def observed_worker(*args, worker_type=worker_type, **kwargs):
@@ -483,7 +484,7 @@ def test_refresh_and_detail_workers_present_sanitized_errors(
         writer.rollback()
         writer.close()
     for name, worker_type in worker_types.items():
-        owner = refresh_ui if name == "DatabaseRefreshWorker" else database_actions
+        owner = refresh_ui if name == "DatabaseRefreshWorker" else detail_ui
         monkeypatch.setattr(owner, name, worker_type)
     window.refreshMain()
     window._start_database_detail_load(str(path), runs)
