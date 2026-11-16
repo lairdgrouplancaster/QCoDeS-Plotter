@@ -26,6 +26,7 @@ from qplot._desktop_sidecars import (
     remove_sidecar_icons,
 )
 from qplot._icons import icon_path
+from qplot._windows_launcher import create_windows_executable
 
 _MARKER = "qplot-desktop-launcher-v1"
 _DOCUMENT_ICONS = ("qplot-database", "sqlite-wal", "sqlite-shm")
@@ -148,35 +149,8 @@ end open
     return resources
 
 
-def _vbs_string(value: str) -> str:
-    return '"' + value.replace('"', '""') + '"'
-
-
 def _windows_launcher(destination: Path, python: Path) -> Path:
-    # WScript supplies a native error even when Python no longer exists. It
-    # passes arguments directly to CreateProcess, with no cmd.exe expansion.
-    bootstrap = destination / "bootstrap.py"
-    command = subprocess.list2cmdline([str(python), "-I", str(bootstrap)])
-    script = f'''Option Explicit
-Dim shell, fs, command, argument, status
-Set shell = CreateObject("WScript.Shell")
-Set fs = CreateObject("Scripting.FileSystemObject")
-If Not fs.FileExists({_vbs_string(str(python))}) Then
-    MsgBox "Python is missing or moved. Remove the old launcher, then run python -m qplot.desktop setup from the installed environment.", 16, "qPlot could not start"
-    WScript.Quit 1
-End If
-command = {_vbs_string(command)}
-For Each argument In WScript.Arguments
-    command = command & " " & Chr(34) & argument & Chr(34)
-Next
-On Error Resume Next
-status = shell.Run(command, 0, True)
-If Err.Number <> 0 Or (status <> 0 And status <> 79) Then
-    MsgBox "Could not start Python. Remove the old launcher, then run python -m qplot.desktop setup from the installed environment.", 16, "qPlot could not start"
-End If
-'''
-    # Windows Script Host requires a BOM for Unicode source text.
-    (destination / "launch.vbs").write_text(script, encoding="utf-16")
+    create_windows_executable(destination, python)
     shutil.copyfile(icon_path("qplot.ico"), destination / "qplot.ico")
     _windows_shortcut(destination)
     return destination
@@ -226,8 +200,8 @@ def _windows_shortcut(destination: Path) -> None:
         # IShellLinkW slots: SetPath, SetArguments, SetWorkingDirectory,
         # SetDescription. Every string crosses COM as UTF-16, never ANSI.
         for slot, value in (
-            (20, str(Path(os.environ["SystemRoot"]) / "System32/wscript.exe")),
-            (11, subprocess.list2cmdline(["//nologo", str(destination / "launch.vbs")])),
+            (20, str(destination / "qPlot.exe")),
+            (11, ""),
             (9, os.environ["USERPROFILE"]),
             (7, "qPlot QCoDeS viewer"),
         ):

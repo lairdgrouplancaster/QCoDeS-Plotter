@@ -26,6 +26,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = [
+    "distlib==0.4.4; sys_platform == 'win32'",
     "qplotter-native==1.0.1",
     "apsw==3.53.4.0",
     "jsonschema>=4.23.0",
@@ -128,6 +129,7 @@ files = [
     "src/qplot/_shutdown_protocol.py",
     "src/qplot/_process_shutdown.py",
     "src/qplot/_windows_shutdown_job.py",
+    "src/qplot/_windows_launcher.py",
     "src/qplot/_metadata.py",
     "src/qplot/_number_formatting.py",
     "src/qplot/_update_presentation.py",

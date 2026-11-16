@@ -63,7 +63,7 @@ def _configure_application_identity(app):
     from qplot._icons import application_icon
 
     if sys.platform == "win32":
-        # The Start Menu shortcut runs wscript.exe, but the taskbar window is
+        # The Start Menu shortcut runs qPlot.exe, but the taskbar window is
         # owned by this Python process. Give it qPlot's own shell identity.
         import ctypes
 
