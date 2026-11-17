@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
+from weakref import ref
 
 from PyQt6 import QtCore
 
@@ -17,7 +18,16 @@ if TYPE_CHECKING:
 
 class PreviewQtHost:
     def __init__(self, tab: PreviewTab) -> None:
-        self.tab = tab
+        # The widget owns its controller. A strong reverse link would also
+        # retain it through the controller's destroyed-signal callback.
+        self._tab = ref(tab)
+
+    @property
+    def tab(self) -> PreviewTab:
+        tab = self._tab()
+        if tab is None:
+            raise RuntimeError("Preview widget is no longer available")
+        return tab
 
     def create_worker(self, job: PreviewJob) -> Any:
         from .preview import (

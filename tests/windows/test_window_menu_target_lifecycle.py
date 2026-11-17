@@ -59,11 +59,13 @@ def _popup(owner, callback):
         except Exception as error:
             state["error"] = error
             poll.stop()
-            menu.close()
+            if not sip.isdeleted(menu):
+                menu.close()
 
     def abort():
         state["timed_out"] = True
-        menu.close()
+        if not sip.isdeleted(menu):
+            menu.close()
 
     poll.timeout.connect(progress)
     watchdog.timeout.connect(abort)
@@ -110,18 +112,20 @@ def test_automatic_replacement_retires_window_menu_commands(
             protected[source] = replacement_state
         elif main._selected_run_guid == new_guid and not main._database_load_active:
             assert target._closed and target not in main.windows
-            assert not target.isVisible()
+            assert sip.isdeleted(target) or not target.isVisible()
             _choose(menu, state["action"], keyboard)
 
     menu, state = _popup(owner, replace)
     wait_for(lambda: not main._database_load_active and main._selected_run_guid == new_guid)
     if owner is target:
-        assert not menu.isVisible()
-        # An action dispatched just before owner retirement is harmless too.
-        state["action"].trigger()
+        assert sip.isdeleted(menu) or not menu.isVisible()
+        # Qt deletes plot-owned actions with the window. Any action still
+        # alive between close and disposal must also reject the stale target.
+        if not sip.isdeleted(state["action"]):
+            state["action"].trigger()
     assert target._closed and target not in main.windows
-    assert not target.isVisible()
-    assert not target.monitor.isActive()
+    assert sip.isdeleted(target) or not target.isVisible()
+    assert sip.isdeleted(target.monitor) or not target.monitor.isActive()
 
 
 @pytest.mark.parametrize("route", ["focus", "minimize", "maximize", "fullscreen"])
@@ -138,7 +142,8 @@ def test_public_close_database_invalidates_window_commands(color_cut, route):
         menu.close()
 
     _menu, state = _popup(owner, close)
-    assert not main.windows and not cut.isVisible() and not heatmap.isVisible()
+    assert not main.windows
+    assert all(sip.isdeleted(plot) or not plot.isVisible() for plot in (cut, heatmap))
     if owner is cut:
         assert not state["owner_popup_visible"]
     assert cut._closed

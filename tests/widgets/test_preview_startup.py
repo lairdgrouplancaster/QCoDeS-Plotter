@@ -1,5 +1,7 @@
 """Preview startup faults must release the slot and permit an explicit retry."""
 
+import gc
+import weakref
 from time import monotonic
 from types import SimpleNamespace
 
@@ -129,5 +131,18 @@ def test_deleting_widget_cancels_retained_preview_work(qapplication):
     seed_preview_job(tab, "retained", SimpleNamespace(cancel=lambda: cancelled.append(True)))
     tab.deleteLater()
     qapplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+    assert controller.closed
+    assert cancelled == [True]
+
+
+def test_preview_controller_does_not_retain_its_widget(qapplication):
+    tab = preview_module.PreviewTab()
+    controller = tab._preview_controller
+    cancelled = []
+    seed_preview_job(tab, "retained", SimpleNamespace(cancel=lambda: cancelled.append(True)))
+    reference = weakref.ref(tab)
+    del tab
+    gc.collect()
+    assert reference() is None
     assert controller.closed
     assert cancelled == [True]

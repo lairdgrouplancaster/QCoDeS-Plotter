@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from PyQt6 import QtCore, QtTest
+from PyQt6 import QtCore, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import ImageExporter
 
@@ -45,6 +45,8 @@ def _native_menu(plot, level):
 
 def _close_native_menus(plot):
     for root in (plot.vbMenu, plot.plot.ctrlMenu):
+        if sip.isdeleted(root):
+            continue
         for menu in root.findChildren(qtw.QMenu):
             menu.close()
         root.close()
@@ -58,6 +60,8 @@ def test_automatic_replacement_closes_native_menu_levels(color_cut, tmp_path, ta
     wait_for(lambda: hasattr(cut, "axis_data") and not cut.worker.running)
     target = heatmap if target_kind == "heatmap" else cut
     menu = _native_menu(target, level)
+    menus = (menu, target.vbMenu, target.plot.ctrlMenu)
+    callbacks = (target.copy_plot_image, target.save_plot_pdf, target.open_export_dialog)
     source = Path(heatmap._dataset_key.database_path)
     replacement = tmp_path / "native-menu-replacement.db"
     _run_id, guid, _a, _b = _build_two_heatmap_database(replacement)
@@ -72,17 +76,16 @@ def test_automatic_replacement_closes_native_menu_levels(color_cut, tmp_path, ta
         protected[source] = replacement_state
         main.spinBox.setValue(.1)
         wait_for(lambda: not main._database_load_active and main._selected_run_guid == guid)
-        assert target._closed and target not in main.windows and not target.isVisible()
-        assert not menu.isVisible()
-        assert not target.vbMenu.isVisible()
-        assert not target.plot.ctrlMenu.isVisible()
+        assert target._closed and target not in main.windows
+        assert sip.isdeleted(target) or not target.isVisible()
+        assert all(sip.isdeleted(popup) or not popup.isVisible() for popup in menus)
 
-        # Queued actions must remain harmless even after the popup disappears.
+        # Invoke the actual slots captured before close, even if Qt has since
+        # deleted their QAction objects. Queued callbacks remain harmless.
         clipboard = qtw.QApplication.clipboard()
         clipboard.setText("current clipboard survives retired plot")
-        target.copyPlotImageAction.trigger()
-        target.savePlotPdfAction.trigger()
-        target.exportPlotAction.trigger()
+        for callback in callbacks:
+            callback()
         assert clipboard.text() == "current clipboard survives retired plot"
         assert not any(isinstance(widget, qtw.QDialog) and widget.isVisible()
                        for widget in qtw.QApplication.topLevelWidgets())
@@ -109,12 +112,17 @@ def test_retained_source_closes_native_menu_without_changing_overlay(merged_plot
 
 
 @pytest.mark.parametrize("route", ["copy", "pdf", "export", "context"])
-def test_delayed_native_actions_do_not_reopen_closed_plot_ui(color_cut, route):
+@pytest.mark.parametrize("dispose", [False, True], ids=["closed", "disposed"])
+def test_delayed_native_actions_do_not_reopen_closed_plot_ui(color_cut, route, dispose):
     _main, _heatmap, cut, _protected = color_cut
     wait_for(lambda: hasattr(cut, "axis_data") and not cut.worker.running)
     callback = {"copy": cut.copy_plot_image, "pdf": cut.save_plot_pdf,
                 "export": cut.open_export_dialog, "context": cut.open_context_menu}[route]
     cut.close()
+    if dispose:
+        cut.deleteLater()
+        qtw.QApplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+        assert sip.isdeleted(cut)
     clipboard = qtw.QApplication.clipboard()
     clipboard.setText("unchanged clipboard")
     observed = []
@@ -136,7 +144,7 @@ def test_delayed_native_actions_do_not_reopen_closed_plot_ui(color_cut, route):
         timer.stop()
     assert not observed
     assert clipboard.text() == "unchanged clipboard"
-    assert not cut.isVisible()
+    assert sip.isdeleted(cut) or not cut.isVisible()
 
 
 def test_current_native_menu_copy_and_escape_remain_usable(color_cut):

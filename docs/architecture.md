@@ -444,7 +444,10 @@ explicit retry. Synchronous completion waits for successful submission; retired
 or duplicate callbacks cannot publish over a newer job. Retired running workers
 remain visible to shutdown until their completion callbacks release them.
 `_preview_ui.py` supplies source validation, GUI-thread signal connections,
-parented timers and widget feedback. Numerical preview generation, cache policy
+parented timers and widget feedback. Its reference to the owning widget is weak,
+so the controller's destruction callback cannot retain that widget in a cycle.
+Widget destruction closes the controller and cancels retained work.
+Numerical preview generation, cache policy
 and the trusted derived-data bridge remain separate from this ownership change.
 
 `src/qplot/windows/_widgets/operations.py` defines the operation panel widgets
