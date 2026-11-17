@@ -266,6 +266,14 @@ Source and worker checks surround callbacks that can replace or cancel a job,
 including preparation, labels and final dependent-view updates. Worker result
 data and completion signals remain separate from publication ownership.
 
+`_plot_lifetime.py` retires the native Qt window after close, once its last
+overlay/cut consumer and refresh callbacks have finished. Disposal is deferred
+past in-progress startup and publication, including nested Qt event loops.
+Closed retained sources stay usable; final consumer release requests retirement
+again. Refresh timers are children of their plot windows. This releases native
+widgets and their signal closures during repeated opening and closing, rather
+than retaining every closed plot until the application exits.
+
 `windows/_heatmap_viewport.py` owns SQL heatmap viewport state and delayed
 detail-reload decisions. Immutable ranges distinguish full source extents,
 full-image view bounds, the last accepted image range and the requested range.
@@ -427,6 +435,22 @@ be tested without constructing Qt widgets.
 thumbnails. It also handles preview selection and drag payloads. Trusted
 sessions receive decoded Stage 5C images from the bridge; retained compatibility
 paths may still use the bounded legacy preview queue.
+
+`_widgets/_preview_controller.py` owns that snapshot preview queue, priorities,
+worker sessions, generation changes and deferred starts. Widget observations of
+jobs are read-only. Construction, signal-connection, loading-feedback and pool
+submission failures release the failed slot, report the error and permit an
+explicit retry. Synchronous completion waits for successful submission; retired
+or duplicate callbacks cannot publish over a newer job. Retired running workers
+remain visible to shutdown until their completion callbacks release them.
+`_preview_ui.py` supplies source validation, GUI-thread signal connections,
+parented timers and widget feedback. Its reference to the owning widget is weak,
+so the controller's destruction callback cannot retain that widget in a cycle.
+One finaliser closes the controller and cancels retained work on either native
+widget destruction or Python collection. It keeps the cleanup callable alive
+while cyclic widget/controller ownership is collected, and runs only once.
+Numerical preview generation, cache policy
+and the trusted derived-data bridge remain separate from this ownership change.
 
 `src/qplot/windows/_widgets/operations.py` defines the operation panel widgets
 that collect user-selected data operations before refresh processing. Operation

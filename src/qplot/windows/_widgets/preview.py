@@ -3,6 +3,7 @@ import sqlite3
 import threading
 from collections import OrderedDict
 from time import monotonic
+from weakref import finalize
 
 import numpy as np
 from PyQt6 import QtCore, QtGui, sip
@@ -32,6 +33,7 @@ from qplot.datahandling.trusted_presentation import bounded_presentation_error
 from qplot.diagnostics import log_exception
 
 from .._dragdrop import make_run_previews_mime
+from ._preview_controller import PreviewController
 from ._preview_selection import (
     active_preview_labels,
     preview_key,
@@ -39,6 +41,7 @@ from ._preview_selection import (
     select_preview,
     selected_preview_targets,
 )
+from ._preview_ui import PreviewQtHost
 from ._run_formatting import preview_title as _preview_title
 from ._run_formatting import preview_tooltip_text
 
@@ -165,7 +168,11 @@ class PreviewTab(qtw.QWidget):
         self.database_path = ""
         self.database_instance: DatabaseInstance | None = None
         self._database_binding: _PreviewDatabaseBinding | None = None
-        self.generation = 0
+        controller = PreviewController(PreviewQtHost(self), max_workers=PREVIEW_MAX_ACTIVE_WORKERS)
+        self._preview_controller = controller
+        # Keep cleanup alive independently of widget/controller cycles. Native
+        # deletion and Python collection share the same one-shot cancellation.
+        self.destroyed.connect(finalize(self, controller.reset, close=True))
         self.current_guid = None
         self.run_metadata = {}
         self.cache = OrderedDict()
@@ -174,14 +181,8 @@ class PreviewTab(qtw.QWidget):
         self.cache_bytes = 0
         self.errors = {}
         self.thumbnail_errors = {}
-        self.queue = {}
         self._explicit_guids: set[str] = set()
-        self.active: set[tuple[int, str]] = set()
-        self._active_priorities: dict[tuple[int, str], int] = {}
-        self._workers = {}
         self.metadata_signatures = {}
-        self._start_scheduled = False
-        self._shutting_down = False
         self._preview_active = True
         self._trusted_derived_mode = False
 
@@ -213,20 +214,39 @@ class PreviewTab(qtw.QWidget):
         self._show_message("Select a run")
 
 
+    @property
+    def generation(self):
+        return self._preview_controller.generation
+
+    @property
+    def queue(self):
+        return self._preview_controller.queue
+
+    @property
+    def active(self):
+        return self._preview_controller.active
+
+    @property
+    def _workers(self):
+        return self._preview_controller.workers
+
+    @property
+    def _active_priorities(self):
+        return self._preview_controller.priorities
+
+    @property
+    def _start_scheduled(self):
+        return self._preview_controller.scheduled
+
+    @property
+    def _shutting_down(self):
+        return self._preview_controller.closed
+
     def shutdown(self):
         """Stop scheduling preview work without waiting for active queries."""
-        if self._shutting_down:
-            return
-
-        self._shutting_down = True
-        self.generation += 1
-        self.queue = {}
-        self._explicit_guids = set()
-        self.active = set()
-        self._active_priorities = {}
-        self._start_scheduled = False
-        for worker in tuple(self._workers.values()):
-            worker.cancel()
+        if not self._shutting_down:
+            self._explicit_guids.clear()
+            self._preview_controller.reset(close=True)
 
 
     def closeEvent(self, event):
@@ -263,14 +283,10 @@ class PreviewTab(qtw.QWidget):
             if self.current_guid:
                 self._show_message("Generating preview...")
             return
-        self._cancel_workers()
-        self.generation += 1
+        self._preview_controller.reset()
         self.cache = OrderedDict()
         self.cache_bytes = 0
         self.errors = {}
-        self.queue = {}
-        self.active = set()
-        self._active_priorities = {}
         self.metadata_signatures = {
             guid: self._metadata_signature(metadata)
             for guid, metadata in self.run_metadata.items()
@@ -303,8 +319,7 @@ class PreviewTab(qtw.QWidget):
 
 
     def set_database_runs(self, database_path, runs):
-        self._cancel_workers()
-        self.generation += 1
+        self._preview_controller.reset()
         self._trusted_derived_mode = False
         self.database_instance = _preview_database_instance(database_path)
         self._database_binding = (
@@ -325,10 +340,7 @@ class PreviewTab(qtw.QWidget):
         self.cache_bytes = 0
         self.errors = {}
         self.thumbnail_errors = {}
-        self.queue = {}
         self._explicit_guids = set()
-        self.active = set()
-        self._active_priorities = {}
         self.metadata_signatures = {
             guid: self._metadata_signature(metadata)
             for guid, metadata in self.run_metadata.items()
@@ -340,8 +352,7 @@ class PreviewTab(qtw.QWidget):
     def set_trusted_derived_runs(self, runs):
         """Bind plain run identities without enabling the legacy producer."""
 
-        self._cancel_workers()
-        self.generation += 1
+        self._preview_controller.reset()
         self._trusted_derived_mode = True
         self.database_instance = None
         self._database_binding = None
@@ -354,13 +365,8 @@ class PreviewTab(qtw.QWidget):
         self.cache_bytes = 0
         self.errors = {}
         self.thumbnail_errors = {}
-        self.queue = {}
         self._explicit_guids = set()
-        self.active = set()
-        self._active_priorities = {}
-        self._workers = {}
         self.metadata_signatures = {}
-        self._start_scheduled = False
         self._show_message("Select a run")
 
 
@@ -506,7 +512,7 @@ class PreviewTab(qtw.QWidget):
                 self.thumbnail_errors.pop(guid, None)
                 active_worker = self._workers.get((self.generation, guid))
                 if active_worker is not None:
-                    active_worker.cancel()
+                    self._preview_controller.cancel_worker(active_worker)
 
             if queue_previews and guid == self.current_guid:
                 self._enqueue(
@@ -676,9 +682,7 @@ class PreviewTab(qtw.QWidget):
                 requested_priorities.get(guid, PREVIEW_PLOTTED_PRIORITY),
             )
         requested_guids = set(requested_priorities)
-        for guid in list(self.queue):
-            if guid not in requested_guids:
-                self.queue.pop(guid, None)
+        self._preview_controller.retain_queued(requested_guids)
 
         for active_key in tuple(self.active):
             generation, guid = active_key
@@ -689,14 +693,14 @@ class PreviewTab(qtw.QWidget):
             worker = self._workers.get(active_key)
             if requested_priority is None:
                 if worker is not None:
-                    worker.cancel()
+                    self._preview_controller.cancel_worker(worker)
                 continue
 
             if (
                     worker is not None
                     and getattr(worker, "is_cancelled", lambda: False)()
                     ):
-                self._active_priorities[active_key] = requested_priority
+                self._preview_controller.set_priority(active_key, requested_priority)
                 self._enqueue(
                     guid,
                     priority=requested_priority,
@@ -711,14 +715,14 @@ class PreviewTab(qtw.QWidget):
             if requested_priority > active_priority:
                 # A visible job that becomes selected already contains exactly
                 # the work the interactive slot would perform.
-                self._active_priorities[active_key] = requested_priority
+                self._preview_controller.set_priority(active_key, requested_priority)
             elif requested_priority < active_priority:
                 # Release the interactive role when selection moves.  Queue
                 # the old run again as background work because cancellation
                 # can interrupt its current SQL statement.
                 if worker is not None:
-                    worker.cancel()
-                self._active_priorities[active_key] = requested_priority
+                    self._preview_controller.cancel_worker(worker)
+                self._preview_controller.set_priority(active_key, requested_priority)
                 self._enqueue(
                     guid,
                     priority=requested_priority,
@@ -748,11 +752,7 @@ class PreviewTab(qtw.QWidget):
         ordered_guids.extend(
             guid for guid in self._explicit_guids if guid not in prioritized_guids
             )
-        self.queue = {
-            guid: self.queue[guid]
-            for guid in ordered_guids
-            if guid in self.queue
-            }
+        self._preview_controller.order_queued(ordered_guids)
 
         self._preempt_for_higher_priority_request()
         self._start_next()
@@ -785,7 +785,7 @@ class PreviewTab(qtw.QWidget):
                     allow_active=True,
                     )
             else:
-                self._active_priorities[active_key] = PREVIEW_PLOTTED_PRIORITY
+                self._preview_controller.set_priority(active_key, PREVIEW_PLOTTED_PRIORITY)
 
         self._start_next()
 
@@ -864,43 +864,15 @@ class PreviewTab(qtw.QWidget):
         if not self.database_path:
             return
 
-        self.queue[guid] = max(priority, self.queue.get(guid, priority))
+        self._preview_controller.enqueue(guid, priority, allow_active=allow_active)
 
 
     def _cancel_workers(self):
-        for worker in tuple(self._workers.values()):
-            worker.cancel()
+        self._preview_controller.cancel_workers()
 
 
     def _preempt_for_higher_priority_request(self):
-        """Cancel one lower-priority job when all slots block urgent work."""
-        active_keys = [
-            active_key
-            for active_key in self.active
-            if active_key[0] == self.generation
-        ]
-        if len(active_keys) < PREVIEW_MAX_ACTIVE_WORKERS or not self.queue:
-            return
-
-        highest_queued = max(self.queue.values())
-        lowest_active_key = min(
-            active_keys,
-            key=lambda key: self._active_priorities.get(
-                key,
-                PREVIEW_REMAINING_PRIORITY,
-            ),
-        )
-        if (
-                highest_queued
-                <= self._active_priorities.get(
-                    lowest_active_key,
-                    PREVIEW_REMAINING_PRIORITY,
-                )
-                ):
-            return
-        worker = self._workers.get(lowest_active_key)
-        if worker is not None:
-            worker.cancel()
+        self._preview_controller.preempt()
 
 
     def _cached_previews(self, guid):
@@ -959,92 +931,11 @@ class PreviewTab(qtw.QWidget):
 
 
     def _schedule_start_next(self):
-        if self._shutting_down or self._start_scheduled:
-            return
-
-        self._start_scheduled = True
-        QtCore.QTimer.singleShot(0, self._scheduled_start_next)
-
-
-    def _scheduled_start_next(self):
-        self._start_scheduled = False
-        self._start_next()
+        self._preview_controller.schedule()
 
 
     def _start_next(self):
-        if self._shutting_down or not self.queue:
-            return
-
-        active_keys = {
-            active_key
-            for active_key in self.active
-            if active_key[0] == self.generation
-            }
-        available_slots = max(0, PREVIEW_MAX_ACTIVE_WORKERS - len(active_keys))
-        if available_slots == 0:
-            return
-        active_guids = {guid for _generation, guid in active_keys}
-        while available_slots:
-            guid = self._next_queued_guid(
-                lambda _priority: True,
-                active_guids,
-                )
-            if guid is None:
-                break
-            self._start_worker(guid)
-            active_guids.add(guid)
-            available_slots -= 1
-
-
-    def _next_queued_guid(self, accepts_priority, active_guids):
-        candidates = [
-            guid
-            for guid, priority in self.queue.items()
-            if accepts_priority(priority) and guid not in active_guids
-            ]
-        if not candidates:
-            return None
-        return max(
-            candidates,
-            key=lambda guid: self.queue[guid],
-            )
-
-
-    def _start_worker(self, guid):
-        binding = self._database_binding
-        if binding is None:
-            self.queue.pop(guid, None)
-            return
-        try:
-            self.database_instance = binding.require_current()
-        except DatabaseInstanceChangedError:
-            self._database_was_replaced(binding.database_instance)
-            return
-
-        priority = self.queue.pop(guid)
-        active_key = (self.generation, guid)
-        self.active.add(active_key)
-        self._active_priorities[active_key] = priority
-        self.previewGenerationChanged.emit(guid, True)
-
-        worker = PreviewWorker(
-            self.generation,
-            binding,
-            guid,
-            self.run_metadata[guid],
-            (
-                PREVIEW_THUMBNAIL_SIZE
-                if priority in (
-                    PREVIEW_VISIBLE_PRIORITY,
-                    PREVIEW_SELECTED_THUMBNAIL_PRIORITY,
-                )
-                else self.preview_size
-            ),
-            )
-        worker.complex_modes = self.complex_modes
-        worker.signals.finished.connect(self._worker_signal_finished)
-        self._workers[active_key] = worker
-        self.thread_pool.start(worker)
+        self._preview_controller.pump()
 
 
     @QtCore.pyqtSlot(object, int, str, object, object)
@@ -1060,37 +951,15 @@ class PreviewTab(qtw.QWidget):
             error,
             completed_worker=None,
             ):
-        active_key = (generation, guid)
-        current_worker = self._workers.get(active_key)
-        if completed_worker is not None and completed_worker is not current_worker:
-            return
-        worker = self._workers.pop(active_key, None)
-        was_cancelled = bool(
-            worker is not None
-            and getattr(worker, "is_cancelled", lambda: False)()
-            )
-        was_active = active_key in self.active
-        self.active.discard(active_key)
-        completed_priority = self._active_priorities.pop(active_key, None)
-        if self._shutting_down:
-            return
-        if was_active and generation == self.generation:
-            self.previewGenerationChanged.emit(guid, False)
+        self._preview_controller.finish(generation, guid, completed_worker, previews, error)
 
-        if generation != self.generation:
-            self._start_next()
-            return
 
-        if worker is None:
-            self._start_next()
-            return
-
+    def _publish_preview(self, job, previews, error):
+        generation, guid = job.key
+        worker = job.worker
+        completed_priority = job.priority
         if isinstance(error, DatabaseInstanceChangedError):
             self._database_was_replaced(worker.database_instance)
-            return
-
-        if was_cancelled:
-            self._start_next()
             return
 
         try:
@@ -1112,9 +981,9 @@ class PreviewTab(qtw.QWidget):
                         or completed_priority
                         == PREVIEW_SELECTED_THUMBNAIL_PRIORITY
                         ):
-                    self._enqueue(guid, priority=PREVIEW_SELECTED_PRIORITY)
+                    self._enqueue(guid, priority=PREVIEW_SELECTED_PRIORITY, allow_active=True)
                 else:
-                    self._enqueue(guid, priority=PREVIEW_REMAINING_PRIORITY)
+                    self._enqueue(guid, priority=PREVIEW_REMAINING_PRIORITY, allow_active=True)
             else:
                 self._store_cached(guid, previews)
                 self._plot_previews.pop(guid, None)
@@ -1171,14 +1040,12 @@ class PreviewTab(qtw.QWidget):
                 return
             self.database_instance = current_instance
 
-        self._start_next()
 
 
     def _database_was_replaced(self, replaced_instance):
         """Discard stale previews and ask MainWindow to reload the source."""
         replaced_path = replaced_instance.logical_path
-        self._cancel_workers()
-        self.generation += 1
+        self._preview_controller.reset()
         self.database_path = ""
         self.database_instance = None
         self._database_binding = None
@@ -1190,13 +1057,8 @@ class PreviewTab(qtw.QWidget):
         self.cache_bytes = 0
         self.errors = {}
         self.thumbnail_errors = {}
-        self.queue = {}
         self._explicit_guids = set()
-        self.active = set()
-        self._active_priorities = {}
-        self._workers = {}
         self.metadata_signatures = {}
-        self._start_scheduled = False
         self._show_message("Database replaced; reloading previews...")
         self.databaseReplaced.emit(replaced_path)
 

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from PyQt6 import QtCore
+from PyQt6 import QtCore, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter
 
@@ -743,7 +743,7 @@ def test_removing_source_promotes_bottom_remaining_dataset(
             )
     assert _data_identities(replacement) == expected_order
     assert window.dataset_holder[original_key].users == 0
-    assert not target.monitor.isActive()
+    assert sip.isdeleted(target.monitor) or not target.monitor.isActive()
     assert target not in window.windows
     assert all(item not in replacement.plot.items for item in original_items)
     _assert_scene_data_order(replacement)

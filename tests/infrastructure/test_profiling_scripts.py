@@ -73,7 +73,7 @@ def test_actual_plot_benchmark_reports_lines_and_heatmaps(measured_database, run
     result = _run("benchmark_plot_launch.py", measured_database, run_id, "--repeats", 2)
     assert result.returncode == 0, result.stdout + result.stderr
     report = json.loads(result.stdout)
-    assert report["protected_file_stats_unchanged"]
+    assert report["protected_files_unchanged"]
     assert len(report["results"]) == 2
     for iteration in report["results"]:
         assert iteration["grids"] == ([[2, 3]] if run_id == 2 else [])
@@ -91,7 +91,7 @@ def test_plot_benchmark_repeated_preceding_run_accepts_cached_completion(
     )
     assert result.returncode == 0, result.stdout + result.stderr
     report = json.loads(result.stdout)
-    assert report["protected_file_stats_unchanged"]
+    assert report["protected_files_unchanged"]
     assert len(report["results"]) == 2
     for iteration in report["results"]:
         assert iteration["line_samples"] == [3]
@@ -133,6 +133,7 @@ def test_plot_benchmark_retires_owned_qt_objects_before_return(
     probe.write_text("""
 import json
 import runpy
+import sys
 from pathlib import Path
 from PyQt6 import QtWidgets, sip
 from qplot.windows.main import MainWindow
@@ -165,6 +166,7 @@ if FAIL_PAINT:
     plotWidget.grab = failed_grab
 
 try:
+    sys.path.insert(0, str(Path(SCRIPT).parent))
     runpy.run_path(SCRIPT, run_name="__main__")
 finally:
     Path(STATE).write_text(json.dumps({
@@ -215,3 +217,51 @@ def test_actual_array_only_read_profiler_explains_numeric_limit(measured_databas
     assert result.returncode == 2, result.stdout + result.stderr
     assert "no scalar numeric parameters" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+
+def test_workflow_benchmark_refreshes_selects_and_records_resource_samples(measured_database, tmp_path):
+    output = tmp_path / "workflow.json"
+    result = _run("benchmark_plot_launch.py", measured_database, 2,
+                  "--repeats", 3, "--refreshes", 2, "--selection-rounds", 2,
+                  "--output", output)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(output.read_text())
+    assert report == json.loads(result.stdout)
+    assert report["protected_files_unchanged"]
+    assert report["source_before"][""]["sha256"] == hashlib.sha256(measured_database.read_bytes()).hexdigest()
+    assert report["refresh_summary"]["count"] == 6
+    assert report["event_loop_delay"]["count"] > 0
+    for cycle in report["results"]:
+        assert len(cycle["refresh_ms"]) == 2
+        assert cycle["active_plot_workers"] == 0
+        assert cycle["memory_after_close"]["rss_bytes"] > 0
+        assert cycle["grids"] == [[2, 3]]
+
+
+def test_workflow_report_does_not_replace_existing_file(measured_database, tmp_path):
+    output = tmp_path / "existing.json"
+    output.write_bytes(b"original")
+    result = _run("benchmark_plot_launch.py", measured_database, 1, "--output", output)
+    assert result.returncode == 2
+    assert "output already exists" in result.stderr
+    assert output.read_bytes() == b"original"
+
+
+def test_benchmark_fixture_is_qcodes_and_refuses_replacement(tmp_path):
+    path = tmp_path / "workload.db"
+    command = [sys.executable, str(ROOT / "scripts/create_benchmark_database.py"),
+               str(path), "--heatmap-side", "4", "--runs", "2"]
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=45)
+    assert result.returncode == 0, result.stdout + result.stderr
+    before = _state(path)
+    from qplot.datahandling.readonly import sqlite_read_only_connection
+    with sqlite_read_only_connection(path) as connection:
+        assert connection.execute("SELECT name FROM runs ORDER BY run_id").fetchall() == [
+            ("line",), ("heatmap",),
+        ]
+    connection.close()
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=45)
+    assert result.returncode != 0
+    assert "already exists" in result.stderr
+    assert _state(path) == before

@@ -206,7 +206,7 @@ def test_automatic_replacement_closes_marquee_popup(color_cut, tmp_path):
     wait_for(lambda: not main.windows and not main._database_load_active)
     assert state["replaced"]
     assert not state.get("visible_after_close", False)
-    assert getattr(heatmap, "_marquee_stats_dialog", None) is None
+    assert heatmap.__dict__.get("_marquee_stats_dialog") is None
     assert _retired(state["menu"])
 
 

@@ -222,4 +222,5 @@ def test_failed_controls_submit_no_read_and_keep_existing_source_usable(
         assert source.axis_data["x"].size == 5
     finally:
         for window in failed:
-            sip.delete(window)
+            if not sip.isdeleted(window):
+                sip.delete(window)

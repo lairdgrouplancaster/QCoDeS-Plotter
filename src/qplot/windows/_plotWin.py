@@ -346,7 +346,7 @@ class plotWidget(
         self.name = str(self)
         self.label = f"ID:{self.ds.run_id} {self.param.name}"
         self._trace_key = TraceKey(self._dataset_key, self.param.name)
-        self.monitor = QtCore.QTimer()
+        self.monitor = QtCore.QTimer(self)
         self.threadPool = threadPool
         self.last_ds_len = self.ds.number_of_results
         self.config = config
@@ -1723,6 +1723,9 @@ class plotWidget(
         if overlay is not None:
             overlay.hide()
         self.closed.emit(self)
+
+        from ._plot_lifetime import retire_closed_plot
+        retire_closed_plot(self)
 
         if (
                 self.__dict__.get("_merged_trace_users", 0) > 0

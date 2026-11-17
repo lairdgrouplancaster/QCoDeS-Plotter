@@ -6,10 +6,19 @@ opened only by qPlot's trusted reader. No writer or checkpoint is started.
 """
 
 import argparse
+import gc
 import json
 import tempfile
 import time
+import weakref
 from pathlib import Path
+
+from benchmark_metrics import (
+    environment,
+    memory_sample,
+    protected_source_state,
+    timing_summary,
+)
 
 
 def main():
@@ -25,7 +34,23 @@ def main():
     parser.add_argument("--large-summary-rows", type=int, choices=(65_536, 262_144),
                         help="Override summary batches after an axis saturates")
     parser.add_argument("--preceding-stage", choices=("any", "aggregate", "large-summary"), default="any")
+    parser.add_argument("--refreshes", type=int, default=0,
+                        help="Force this many refreshes before closing each plot")
+    parser.add_argument("--selection-rounds", type=int, default=0,
+                        help="Rapidly select up to ten runs this many times per cycle")
+    parser.add_argument("--settle-ms", type=int, default=250,
+                        help="Service events after closing before sampling memory")
+    parser.add_argument("--output", type=Path, help="Create a new JSON report (never overwrite)")
     args = parser.parse_args()
+    if args.repeats < 1 or min(args.refreshes, args.selection_rounds, args.settle_ms) < 0:
+        parser.error("repeats must be positive; refreshes, selection rounds and settle time must be non-negative")
+    if args.output is not None:
+        from qplot._auxiliary_paths import ensure_safe_auxiliary_path
+        if args.output.suffix.lower() != ".json":
+            parser.error("output must be a new .json file")
+        ensure_safe_auxiliary_path(args.output)
+        if args.output.exists():
+            parser.error("output already exists")
 
     from PyQt6 import QtCore, QtWidgets, sip
 
@@ -38,13 +63,6 @@ def main():
     from qplot.windows._plot_feedback import PlotWindowFeedbackMixin
     from qplot.windows._plotWin import plotWidget
     from qplot.windows.main import MainWindow
-
-    def source_state():
-        return {
-            suffix: (candidate.stat().st_size, candidate.stat().st_mtime_ns)
-            for suffix in ("", "-wal", "-journal")
-            if (candidate := Path(str(args.database) + suffix)).exists()
-        }
 
     def no_copy(*_args, **_kwargs):
         raise AssertionError("Benchmark attempted whole-database snapshot copying")
@@ -136,7 +154,21 @@ def main():
                     painted[watched] = time.perf_counter()
             return False
 
-    before = source_state()
+    before = protected_source_state(args.database)
+    heartbeat_delays = []
+    last_heartbeat = time.perf_counter()
+
+    def heartbeat():
+        nonlocal last_heartbeat
+        now = time.perf_counter()
+        heartbeat_delays.append(max(0., (now - last_heartbeat) * 1000 - 10))
+        last_heartbeat = now
+
+    pulse = QtCore.QTimer()
+    pulse.setInterval(10)
+    pulse.timeout.connect(heartbeat)
+    pulse.start()
+    plot_refs = []
     results, errors = [], []
     PlotWindowFeedbackMixin.show_error = lambda self, *items: errors.append(items)
     with tempfile.TemporaryDirectory(prefix="qplot-benchmark-") as directory:
@@ -176,6 +208,14 @@ def main():
                         window.measurementBox.setText("*")
                         window.plotRunButton.click()
             for iteration in range(args.repeats):
+                heartbeat_start = len(heartbeat_delays)
+                if args.selection_rounds:
+                    items = [window.RunList.topLevelItem(index)
+                             for index in range(min(10, window.RunList.topLevelItemCount()))]
+                    for _round in range(args.selection_rounds):
+                        for item in items:
+                            window.RunList.setCurrentItem(item)
+                            app.processEvents()
                 painted = {}
                 timings.clear()
                 capture_steps.clear()
@@ -222,9 +262,25 @@ def main():
                 for plot in plots:
                     plot.grab()
                 app.processEvents()
+                display_ms = (time.perf_counter() - started) * 1000
+                refresh_ms = []
+                for _refresh in range(args.refreshes):
+                    refresh_started = time.perf_counter()
+                    generations = [plot._refresh_controller().generation for plot in plots]
+                    for plot in plots:
+                        plot.refreshWindow(force=True)
+                    wait_for(lambda plots=plots, generations=generations: all(
+                        plot._refresh_controller().generation > generation
+                        and not plot._refresh_controller().busy
+                        and plot._qplot_display_synchronized
+                        for plot, generation in zip(plots, generations, strict=True)))
+                    for plot in plots:
+                        plot.grab()
+                    refresh_ms.append((time.perf_counter() - refresh_started) * 1000)
                 results.append({
                     "iteration": iteration + 1,
-                    "display_ms": (time.perf_counter() - started) * 1000,
+                    "display_ms": display_ms,
+                    "refresh_ms": refresh_ms,
                     "paint_ms": [(value - started) * 1000 for value in painted.values()],
                     "grids": [list(plot.dataGrid.shape) for plot in plots if hasattr(plot, "dataGrid")],
                     "line_samples": [int(plot.axis_data["y"].size) for plot in plots
@@ -237,11 +293,29 @@ def main():
                     "preceding_capture_steps": [preceding_steps_start,
                                                 capture_steps.get(args.preceding_run, 0)],
                 })
+                plot_refs.extend(weakref.ref(plot) for plot in plots)
                 window.close_plot_windows(confirm=False, status=False)
                 wait_for(lambda: not window._plot_workers)
+                # Do not keep closed windows alive through benchmark locals.
+                plots.clear()
+                painted.clear()
+                plot = None
+                settle_until = time.monotonic() + args.settle_ms / 1000
+                wait_for(lambda settle_until=settle_until: time.monotonic() >= settle_until)
+                app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+                gc.collect()
+                app.processEvents()
+                results[-1].update({
+                    "memory_after_close": memory_sample(),
+                    "retained_plot_objects": sum(reference() is not None for reference in plot_refs),
+                    "active_plot_workers": len(window._plot_workers),
+                    "active_preview_workers": len(window.infoBox.preview._workers),
+                    "event_loop_delay": timing_summary(heartbeat_delays[heartbeat_start:]),
+                })
         finally:
             # Use the application's bounded shutdown for every worker pool,
             # preview and broker, including a failed measurement iteration.
+            pulse.stop()
             window.close()
             wait_for(lambda: window._shutdown_ready, timeout=20, check_errors=False)
             if window._shutdown_background_work_active():
@@ -257,15 +331,31 @@ def main():
             app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
             app.processEvents()
             sip.delete(app)
-    after = source_state()
-    print(json.dumps({"database_bytes": args.database.stat().st_size,
-                      "database_open_ms": open_ms, "run_id": args.run_id,
-                      "preceding_run": args.preceding_run,
-                      "aggregate_rows": trusted_heatmap.AGGREGATE_ROWS,
-                      "large_summary_rows": trusted_heatmap.LARGE_SUMMARY_ROWS,
-                      "results": results, "protected_file_stats_unchanged": before == after}, indent=2))
+    after = protected_source_state(args.database)
+    report = {
+        "schema_version": 1, "environment": environment(),
+        "database_bytes": args.database.stat().st_size,
+        "database_open_ms": open_ms, "run_id": args.run_id,
+        "preceding_run": args.preceding_run,
+        "refreshes": args.refreshes, "selection_rounds": args.selection_rounds,
+        "settle_ms": args.settle_ms,
+        "aggregate_rows": trusted_heatmap.AGGREGATE_ROWS,
+        "large_summary_rows": trusted_heatmap.LARGE_SUMMARY_ROWS,
+        "results": results,
+        "display_summary": timing_summary([item["display_ms"] for item in results]),
+        "refresh_summary": timing_summary([value for item in results for value in item["refresh_ms"]]),
+        "event_loop_delay": timing_summary(heartbeat_delays),
+        "source_before": before,
+        "protected_files_unchanged": before == after,
+    }
     if before != after:
-        raise RuntimeError("Source main/WAL/journal metadata changed during validation")
+        raise RuntimeError("Source main/WAL/journal content or metadata changed during validation")
+    if args.output is not None:
+        ensure_safe_auxiliary_path(args.output)
+        with args.output.open("x", encoding="utf-8") as output:
+            json.dump(report, output, indent=2)
+    print(json.dumps(report, indent=2))
+
 
 
 if __name__ == "__main__":
