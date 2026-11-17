@@ -104,11 +104,33 @@ def _pending_count(window, automatic):
 
 @pytest.mark.parametrize("accept", [False, True], ids=["cancel", "accept"])
 @pytest.mark.parametrize("automatic", [False, True], ids=["manual", "automatic"])
+@pytest.mark.parametrize("publish_before_answer", [False, True], ids=["pending", "published"])
 def test_close_all_confirmation_retires_only_accepted_pending_launches(
-    pending_plot_window, qapplication, accept, automatic,
+    pending_plot_window, qapplication, monkeypatch, accept, automatic, publish_before_answer,
 ):
     window, guids, _writer, _experiment, _database = pending_plot_window
     original = _open_original(window, guids[-1])
+    released = False
+    submit = window._trusted_read_service.submit_plot_dataset
+
+    class HeldRequest:
+        # Keep the real broker request, but choose when Qt can publish it.
+        # Timer ordering alone cannot guarantee a pending launch in a modal loop.
+        def __init__(self, request):
+            self.request = request
+
+        @property
+        def done(self):
+            return released and self.request.done
+
+        def wait(self, timeout):
+            return self.request.wait(timeout)
+
+        def cancel(self):
+            self.request.cancel()
+
+    monkeypatch.setattr(window._trusted_read_service, "submit_plot_dataset",
+                        lambda guid: HeldRequest(submit(guid)))
     _queue_plot(window, guids[0], automatic)
     assert _pending_count(window, automatic) == 1
     assert window.windows == [original]
@@ -118,7 +140,11 @@ def test_close_all_confirmation_retires_only_accepted_pending_launches(
     timeout.setSingleShot(True)
 
     def answer():
+        nonlocal released
         dialog = qapplication.activeModalWidget()
+        if publish_before_answer:
+            released = True
+            _drain_plot_publication(window)
         observations.append((isinstance(dialog, qtw.QMessageBox),
                              _pending_count(window, automatic), len(window.windows)))
         if isinstance(dialog, qtw.QMessageBox):
@@ -139,7 +165,8 @@ def test_close_all_confirmation_retires_only_accepted_pending_launches(
     finally:
         timeout.stop()
     assert not timeouts
-    assert observations == [(True, 1, 1)]
+    assert observations == [(True, 0, 2) if publish_before_answer else (True, 1, 1)]
+    released = True
     _drain_plot_publication(window)
     if accept:
         assert window.windows == []

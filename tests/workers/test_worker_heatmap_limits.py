@@ -12,6 +12,7 @@ from qcodes.dataset import (
     load_or_create_experiment,
 )
 
+import qplot.tools.plot_processing as processing_module
 import qplot.tools.worker as worker_module
 from qplot.datahandling.qcodes_cache import update_cache_parameter_data
 from qplot.datahandling.readonly import load_by_id_read_only
@@ -40,13 +41,13 @@ def test_diagonal_scan_never_allocates_cartesian_grid(worker, shaped, operations
 
     def load():
         if shaped:
-            return worker.for_shaped_2d(data, coordinates)
-        return worker.for_unshaped_2d(data, np.isfinite(coordinates), coordinates)
+            return worker.processing.for_shaped_2d(data, coordinates)
+        return worker.processing.for_unshaped_2d(data, np.isfinite(coordinates), coordinates)
 
     with (
-        patch.object(worker_module, "data2matrix") as pivot,
-        patch.object(worker, "_unique_heatmap_grid") as exact_grid,
-        patch.object(worker, "_shaped_data_grid") as shaped_grid,
+        patch.object(processing_module, "data2matrix") as pivot,
+        patch.object(worker.processing, "_unique_heatmap_grid") as exact_grid,
+        patch.object(worker.processing, "_shaped_data_grid") as shaped_grid,
     ):
         if operations:
             with pytest.raises(
@@ -83,11 +84,11 @@ def test_cartesian_count_ignores_duplicates_and_missing_samples(worker, shaped):
         z[8] = np.nan
         x, y, z = (values.reshape(2, 5) for values in (x, y, z))
 
-    with patch.object(worker_module, "data2matrix", wraps=worker_module.data2matrix) as pivot:
+    with patch.object(processing_module, "data2matrix", wraps=processing_module.data2matrix) as pivot:
         if shaped:
-            axes, _params, grid = worker.for_shaped_2d({"x": x, "y": y}, z)
+            axes, _params, grid = worker.processing.for_shaped_2d({"x": x, "y": y}, z)
         else:
-            axes, _params, grid = worker.for_unshaped_2d({"x": x, "y": y}, valid, z)
+            axes, _params, grid = worker.processing.for_unshaped_2d({"x": x, "y": y}, valid, z)
         pivot.assert_called_once()
 
     np.testing.assert_array_equal(axes["x"], [0, 1])
@@ -101,7 +102,7 @@ def test_empty_or_missing_heatmap_has_no_cartesian_cells(worker, size):
     worker.operations = [lambda data: data]
     x = np.arange(size, dtype=float)
     z = np.full(size, np.nan)
-    axes, _params, grid = worker.for_unshaped_2d(
+    axes, _params, grid = worker.processing.for_unshaped_2d(
         {"x": x, "y": x}, np.ones(size, dtype=bool), z,
     )
     assert grid.shape == (0, 0)
@@ -114,8 +115,8 @@ def test_bounded_grid_averages_duplicate_samples_and_skips_missing_values(worker
     x = np.array([0, 0, 1, 2, 3, np.nan, 99], dtype=float)
     y = np.array([0, 0, 1, 2, 3, 99, np.nan], dtype=float)
     z = np.array([2, 4, 6, 8, 10, 100, 100], dtype=float)
-    with patch.object(worker_module, "data2matrix") as pivot:
-        _axes, _params, grid = worker.for_unshaped_2d(
+    with patch.object(processing_module, "data2matrix") as pivot:
+        _axes, _params, grid = worker.processing.for_unshaped_2d(
             {"x": x, "y": y}, np.isfinite(z), z,
         )
         pivot.assert_not_called()
@@ -128,12 +129,12 @@ def test_cached_rectilinear_shape_is_bounded_before_dense_copy(worker, operation
     worker.max_full_heatmap_points = 6
     worker.operations = [lambda data: data] if operations else []
     x, y = np.meshgrid(np.arange(4, dtype=float), np.arange(3, dtype=float))
-    with patch.object(worker, "_shaped_data_grid") as dense_copy:
+    with patch.object(worker.processing, "_shaped_data_grid") as dense_copy:
         if operations:
             with pytest.raises(worker_module.OperationExecutionError, match="12.*limit of 6"):
-                worker.for_shaped_2d({"x": x, "y": y}, x + y)
+                worker.processing.for_shaped_2d({"x": x, "y": y}, x + y)
         else:
-            _axes, _params, grid = worker.for_shaped_2d({"x": x, "y": y}, x + y)
+            _axes, _params, grid = worker.processing.for_shaped_2d({"x": x, "y": y}, x + y)
             assert grid.size <= 6
         dense_copy.assert_not_called()
 
@@ -147,8 +148,8 @@ def test_bounded_gridding_obeys_configured_cells_and_sides(
     worker.max_heatmap_grid_cells = max_cells
     worker.max_heatmap_grid_side = max_side
     x, y = np.meshgrid(np.arange(4, dtype=float), np.arange(3, dtype=float))
-    with patch.object(worker, "_unique_heatmap_grid") as exact_grid:
-        _x_axis, _y_axis, grid = worker._heatmap_grid_from_arrays(
+    with patch.object(worker.processing, "_unique_heatmap_grid") as exact_grid:
+        _x_axis, _y_axis, grid = worker.processing._heatmap_grid_from_arrays(
             x.ravel(), y.ravel(), (x + y).ravel(), max_cells=requested_cells,
         )
         exact_grid.assert_not_called()
@@ -167,11 +168,11 @@ def test_cancellation_during_cardinality_check_prevents_gridding(worker):
 
     with (
         patch.object(worker_module.np, "unique", side_effect=cancel_after_unique),
-        patch.object(worker_module, "data2matrix") as pivot,
-        patch.object(worker, "_heatmap_grid_from_arrays") as bounded_grid,
+        patch.object(processing_module, "data2matrix") as pivot,
+        patch.object(worker.processing, "_heatmap_grid_from_arrays") as bounded_grid,
     ):
         with pytest.raises(worker_module.PlotWorkCancelled):
-            worker.for_unshaped_2d(
+            worker.processing.for_unshaped_2d(
                 {"x": coordinates, "y": coordinates},
                 np.isfinite(coordinates), coordinates,
             )
@@ -205,7 +206,7 @@ def test_diagonal_qcodes_heatmap_is_bounded_on_initial_and_cached_load(tmp_path)
             finished, errors = [], []
             worker.emitter.finished.connect(finished.append)
             worker.emitter.errorOccurred.connect(errors.append)
-            with patch.object(worker_module, "data2matrix") as pivot:
+            with patch.object(processing_module, "data2matrix") as pivot:
                 worker.run()
                 pivot.assert_not_called()
             if operations:

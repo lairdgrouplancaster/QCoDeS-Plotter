@@ -10,7 +10,6 @@ from PyQt6 import sip
 
 from qplot.datahandling.file_identity import database_sidecar_identities
 from qplot.tools import worker as worker_module
-from qplot.tools.plot_result import capture_plot_result
 from qplot.tools.worker import loader
 from qplot.windows import _plot_refresh as plot_refresh_module
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
@@ -18,6 +17,8 @@ from qplot.windows._plot_actions import PlotActionsMixin
 from qplot.windows._plotWin import plotWidget
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot2d import plot2d
+from tests._plot_results import capture_fake_plot_result
+from tests.support.plot_refresh import set_plot_worker
 
 
 def _source_with_sidecars(tmp_path: Path, name: str) -> Path:
@@ -97,7 +98,7 @@ def _retained_plot(database_path: Path, plot_stub):
         )
     }
     plot.monitor = _Monitor()
-    plot.worker = _RefreshWorker()
+    set_plot_worker(plot, _RefreshWorker())
     plot.database_replaced = _Signal()
     plot.end_wait = _Signal()
     plot.statuses = []
@@ -193,7 +194,7 @@ def test_sidecar_swap_during_worker_read_is_rejected_before_publication(
     # state because the plot performs its own final exact source guard.
     plot = _retained_plot(database_path, plot_stub)
     plot._dataset_key = key
-    plot.worker = plot_worker
+    set_plot_worker(plot, plot_worker)
     cache_updates = []
     monkeypatch.setattr(
         plot_refresh_module,
@@ -268,8 +269,8 @@ def test_callback_swap_rolls_back_shared_cache_and_axis_state(
     worker.display_param = "new-display"
     worker.dataset_length_at_start = 2
     worker.started_at = 0.0
-    worker.result = capture_plot_result(worker)
-    plot.worker = worker
+    worker.result = capture_fake_plot_result(worker)
+    set_plot_worker(plot, worker)
 
     real_update = plot_refresh_module.update_cache_parameter_data
 
@@ -354,8 +355,8 @@ def test_attribute_error_after_swap_rolls_back_before_soft_error(tmp_path, plot_
     worker.display_param = "new-display"
     worker.dataset_length_at_start = 2
     worker.started_at = 0.0
-    worker.result = capture_plot_result(worker)
-    plot.worker = worker
+    worker.result = capture_fake_plot_result(worker)
+    set_plot_worker(plot, worker)
 
     assert not plotWidget.refreshPlot(plot, True, worker=worker)
 
@@ -399,14 +400,14 @@ def test_older_callback_rollback_cannot_clobber_reentrant_newer_publication(plot
     plot.axis_data = "initial-axis"
 
     older_worker = _RefreshWorker()
-    plot.worker = older_worker
+    set_plot_worker(plot, older_worker)
     plot._begin_refresh_publication(older_worker)
     plot.axis_data = "older-axis"
     plot.ds.cache._data["signal"] = "older-cache"
     plot._record_refresh_cache_publication(older_worker)
 
     newer_worker = _RefreshWorker()
-    plot.worker = newer_worker
+    set_plot_worker(plot, newer_worker)
     plot._begin_refresh_publication(newer_worker)
     plot.axis_data = "newer-axis"
     plot.ds.cache._data["signal"] = "newer-cache"
@@ -493,8 +494,8 @@ def test_old_line_callback_cannot_render_after_reentrant_newer_publication(
     older_worker.display_param = "older-display"
     older_worker.dataset_length_at_start = 2
     older_worker.started_at = 0.0
-    older_worker.result = capture_plot_result(older_worker)
-    plot.worker = older_worker
+    older_worker.result = capture_fake_plot_result(older_worker)
+    set_plot_worker(plot, older_worker)
 
     newer_worker = _RefreshWorker()
     newer_axis_data = {"x": [2.0], "y": [22.0]}
@@ -506,7 +507,7 @@ def test_old_line_callback_cannot_render_after_reentrant_newer_publication(
             if self.emitted:
                 return
             self.emitted = True
-            plot.worker = newer_worker
+            set_plot_worker(plot, newer_worker)
             plot._begin_refresh_publication(newer_worker)
             plot.axis_data = newer_axis_data
             plot.axis_param = {"x": "newer-x", "y": "newer-y"}
@@ -543,14 +544,11 @@ def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
     newer_worker = _RefreshWorker(running=True)
 
     plot = plot_stub(plot2d)
-    older_worker.result = capture_plot_result(SimpleNamespace(
+    older_worker.result = capture_fake_plot_result(SimpleNamespace(
         read_data=False, axis_data={}, axis_param={}, dataset_completed=False,
     ))
-    plot.worker = older_worker
-    plot._qplot_publication_generation = 1
-    plot._refresh_publication = plot_refresh_module.RefreshPublication(
-        older_worker, 1, None, "signal", None, {},
-    )
+    set_plot_worker(plot, older_worker)
+    plot._publication_owner().begin(older_worker, plot.__dict__, cache=None, parameter_name="signal")
     plot.param = type("Param", (), {"name": "signal"})()
     plot.renderer_state = "older geometry"
     plot.statuses = []
@@ -572,8 +570,8 @@ def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
     plot._ensure_refresh_monitor = lambda: None
 
     def publish_newer_state():
-        plot.worker = newer_worker
-        plot._qplot_publication_generation = 2
+        set_plot_worker(plot, newer_worker)
+        plot._publication_owner().begin(newer_worker, plot.__dict__, cache=None, parameter_name="signal")
         plot.renderer_state = "newer renderer"
         plot.statuses[:] = [("newer status", 5000)]
         plot.states[:] = [(("Newer plot state",), {})]
@@ -590,7 +588,8 @@ def test_old_invalid_heatmap_callback_cannot_overwrite_reentrant_newer_state(
     assert plot._refresh_publication_for(older_worker) is None
 
 
-def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path, plot_stub):
+@pytest.mark.parametrize("boundary", ["render", "complete"])
+def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path, plot_stub, boundary):
     database_path = _source_with_sidecars(tmp_path, "line-callback.db")
     key = DatasetKey(database_path, "run-guid")
 
@@ -619,7 +618,7 @@ def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path, plo
 
         def setData(self, *args, **kwargs):
             self.calls.append((args, kwargs))
-            if len(self.calls) == 1:
+            if boundary == "render" and len(self.calls) == 1:
                 _replace_sidecars(database_path)
 
     plot = plot_stub(plot1d)
@@ -651,6 +650,8 @@ def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path, plo
     plot._set_param_axis_labels = lambda: None
     plot._update_coordinate_context = lambda: None
     plot.refresh_secondary_lines = lambda: None
+    if boundary == "complete":
+        plot._complete_plot_publication = lambda _worker: _replace_sidecars(database_path)
 
     worker = _RefreshWorker()
     worker.read_data = False
@@ -660,8 +661,8 @@ def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path, plo
     worker.display_param = "new-display"
     worker.dataset_length_at_start = 2
     worker.started_at = 0.0
-    worker.result = capture_plot_result(worker)
-    plot.worker = worker
+    worker.result = capture_fake_plot_result(worker)
+    set_plot_worker(plot, worker)
 
     plot1d.refreshPlot(plot, True, worker=worker)
 
@@ -669,7 +670,7 @@ def test_line_render_swap_clears_display_and_rolls_back_axis_state(tmp_path, plo
     assert plot.line.calls[-1] == (([], []), {})
     assert plot.axis_data == {"x": [0.0], "y": [1.0]}
     assert plot.axis_param == {"x": "old-x", "y": "old-y"}
-    assert plot.trace_updated.values == []
+    assert plot.trace_updated.values == ([()] if boundary == "complete" else [])
     assert _normalized_paths(
         path for (path,) in plot.database_replaced.values
     ) == _normalized_paths([database_path])

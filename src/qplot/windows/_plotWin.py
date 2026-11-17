@@ -346,7 +346,7 @@ class plotWidget(
         self.name = str(self)
         self.label = f"ID:{self.ds.run_id} {self.param.name}"
         self._trace_key = TraceKey(self._dataset_key, self.param.name)
-        self.monitor = QtCore.QTimer()
+        self.monitor = QtCore.QTimer(self)
         self.threadPool = threadPool
         self.last_ds_len = self.ds.number_of_results
         self.config = config
@@ -359,6 +359,8 @@ class plotWidget(
         self._initial_refresh_rate = refrate
         self._plot_setup_started = False
         self._plot_setup_complete = False
+        self._refresh_controller()
+        self._publication_owner()
 
     @final
     def initialize_plot_window(self) -> None:
@@ -445,8 +447,8 @@ class plotWidget(
         
         # Read only after the full control tree and its callbacks are ready.
         self._plot_setup_complete = True
-        self.load_data()
-        self.show_status(self._initial_load_message, 5000)
+        if self.load_data():
+            self.show_status(self._initial_load_message, 5000)
 
         # Keep the timer alive through this plot's own terminal display commit,
         # even if another parameter publishes shared dataset completion first.
@@ -1712,20 +1714,18 @@ class plotWidget(
         )
         if callable(dispose_export_dialog):
             dispose_export_dialog()
-        if self.__dict__.get("_merged_trace_users", 0) <= 0:
-            self.monitor.stop()
-            self._refresh_pending = False
-            self._refresh_pending_force = False
-            worker = self.__dict__.get("worker")
-            cancel = getattr(worker, "cancel", None)
-            if callable(cancel):
-                cancel()
         self.visible = False
         self._closed = True
+        if self.__dict__.get("_merged_trace_users", 0) <= 0:
+            self.monitor.stop()
+            self._cancel_plot_refresh()
         overlay = self.__dict__.get("plot_state_overlay")
         if overlay is not None:
             overlay.hide()
         self.closed.emit(self)
+
+        from ._plot_lifetime import retire_closed_plot
+        retire_closed_plot(self)
 
         if (
                 self.__dict__.get("_merged_trace_users", 0) > 0

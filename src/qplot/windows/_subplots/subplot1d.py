@@ -191,6 +191,9 @@ class subplot1d(NativePlotDataItem):
             monitor = getattr(source, "monitor", None)
             if monitor is not None:
                 monitor.stop()
+            cancel = getattr(source, "_cancel_plot_refresh", None)
+            if callable(cancel):
+                cancel()
 
 
     def disconnect_source_updates(self):

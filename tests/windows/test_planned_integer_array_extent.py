@@ -40,8 +40,8 @@ def wait_for_plot_refresh(plot):
     # request to publish too before checking the cache or stopping its monitor.
     wait_for(lambda: (
         not plot.worker.running
-        and not plot.__dict__.get("_refresh_pending", False)
-        and not plot.__dict__.get("_refresh_pending_scheduled", False)
+        and not getattr(plot, "_refresh_pending", False)
+        and not getattr(plot, "_refresh_pending_scheduled", False)
     ))
 
 
@@ -148,14 +148,14 @@ def test_actual_planned_integer_array_acquisition_extent(
                 assert_values(cached, x, y, grid)
 
                 cancelled = loader(plot.ds.cache, params["signal"], params, axes, read_data=False)
-                acquired_mask = cancelled._acquired_sample_mask
+                acquired_mask = cancelled.processing._acquired_sample_mask
 
                 def cancel_after_extent(*args):
                     mask = acquired_mask(*args)
                     cancelled.cancel()
                     return mask
 
-                monkeypatch.setattr(cancelled, "_acquired_sample_mask", cancel_after_extent)
+                monkeypatch.setattr(cancelled.processing, "_acquired_sample_mask", cancel_after_extent)
                 run_worker(cancelled, cancelled=True)
                 assert not hasattr(cancelled, "axis_data")
                 assert not hasattr(cancelled, "dataGrid")

@@ -112,8 +112,8 @@ def test_axis_panel_is_available_only_as_cut_controls(heatmap_with_cuts):
 def _wait_for_axes(heatmap, axes):
     wait_for(lambda: (
         not heatmap.worker.running
-        and not heatmap.__dict__.get("_refresh_pending", False)
-        and not heatmap.__dict__.get("_refresh_pending_scheduled", False)
+        and not getattr(heatmap, "_refresh_pending", False)
+        and not getattr(heatmap, "_refresh_pending_scheduled", False)
         and heatmap.axis_options == axes
         and all(heatmap.axis_param[axis].name == name for axis, name in axes.items())
     ))

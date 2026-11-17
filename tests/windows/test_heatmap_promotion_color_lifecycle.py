@@ -16,7 +16,7 @@ from qcodes.dataset import (
 from qcodes.parameters import ManualParameter
 
 from qplot.windows import main as main_window
-from qplot.windows.plot2d import plot2d
+from qplot.windows._plot_refresh_controller import PlotRefreshController
 from tests._window_lifecycle import close_main_window
 from tests.support.windows.heatmap_layer_integration import (
     _assert_reader_artifact_invariant,
@@ -96,16 +96,18 @@ def promotion_plot(request, tmp_path, monkeypatch):
 def _promote_with_pending_primary(main, target, monkeypatch):
     """Hold only the new primary's publication, after real data loading."""
     sources = [layer.from_win for layer in target.heatmaps.values()]
-    original = plot2d.refreshPlot
+    original = PlotRefreshController.finish
     publications = []
 
-    def hold_new_primary(self, finished=True, worker=None):
-        if self not in sources:
-            publications.append((self, finished, worker))
+    def hold_new_primary(self, session, finished):
+        if self.host.window not in sources:
+            publications.append((self, session, finished))
             return None
-        return original(self, finished, worker=worker)
+        return original(self, session, finished)
 
-    monkeypatch.setattr(plot2d, "refreshPlot", hold_new_primary)
+    # Pause at the lifecycle boundary. Returning from the renderer now means
+    # publication has finished and legitimately releases the controller's job.
+    monkeypatch.setattr(PlotRefreshController, "finish", hold_new_primary)
     target.appearance_action.trigger()
     dialog = target._plot_appearance_dialog
     dialog.select_trace(next(key for key, line in target.lines.items() if line is target.line))
@@ -155,9 +157,9 @@ def test_promotion_renders_before_first_primary_publication(promotion_plot, monk
     _assert_ready_overlay(promoted, overlay, expected["overlay"], levels)
     assert promoted.bar.colorMap().name == "plasma"
     _wait_for(lambda: bool(publications))
-    monkeypatch.setattr(plot2d, "refreshPlot", original)
-    for host, finished, worker in publications:
-        original(host, finished, worker=worker)
+    monkeypatch.setattr(PlotRefreshController, "finish", original)
+    for controller, session, finished in publications:
+        original(controller, session, finished)
     _wait_for(lambda: not promoted.worker.running)
     np.testing.assert_array_equal(promoted.dataGrid, expected["primary"])
     final_levels = manual if scale.startswith("manual") else (expected["overlay"].min(), expected["primary"].max())
@@ -177,8 +179,9 @@ def test_ready_overlay_survives_missing_primary_and_retry(promotion_plot, monkey
     levels = (expected["overlay"].min(), expected["overlay"].max())
     _assert_ready_overlay(promoted, overlay, expected["overlay"], levels)
     _wait_for(lambda: bool(publications))
-    monkeypatch.setattr(plot2d, "refreshPlot", original)
-    host, finished, worker = publications[-1]
+    monkeypatch.setattr(PlotRefreshController, "finish", original)
+    controller, session, finished = publications[-1]
+    worker = session.worker
     assert worker.result is not None
     if first_result == "cancelled":
         worker.cancel()
@@ -194,9 +197,8 @@ def test_ready_overlay_survives_missing_primary_and_retry(promotion_plot, monkey
         )
     # This controlled publication models a failed/cancelled/empty first load;
     # retry below uses the original real QCoDeS data without an injected result.
-    promoted._refresh_pending = False
-    promoted._refresh_pending_force = False
-    original(host, False if first_result == "failed" else finished, worker=worker)
+    promoted._refresh_controller().restore_pending(False)
+    original(controller, session, False if first_result == "failed" else finished)
     assert not promoted.worker.running
     _assert_ready_overlay(promoted, overlay, expected["overlay"], levels)
     promoted.refreshWindow(force=True)

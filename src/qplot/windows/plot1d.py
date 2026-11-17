@@ -210,8 +210,8 @@ class plot1d(Plot1DSnapMixin, MixedPlotMixin, plotWidget):
         if not super().refreshPlot(finished, worker=worker):
             return
 
-        try:
-            clear_display = lambda: self.line.setData([], [])
+        clear_display = lambda: self.line.setData([], [])
+        with self._render_publication(plot_worker, clear_display):
             if not self._refresh_publication_source_is_current(
                     plot_worker,
                     clear_display=clear_display,
@@ -250,7 +250,7 @@ class plot1d(Plot1DSnapMixin, MixedPlotMixin, plotWidget):
                 if getattr(plot_worker, "_qplot_source_rejected", False):
                     clear_display()
                     return
-                self._commit_refresh_publication(plot_worker)
+                self._commit_refresh_publication(plot_worker, clear_display=clear_display)
                 return
 
             # Main line
@@ -283,19 +283,7 @@ class plot1d(Plot1DSnapMixin, MixedPlotMixin, plotWidget):
             if getattr(plot_worker, "_qplot_source_rejected", False):
                 clear_display()
                 return
-            self._commit_refresh_publication(plot_worker, preview_ready=True)
-        finally:
-            overlay = self.__dict__.get("plot_state_overlay")
-            if overlay is not None:
-                overlay.finish(plot_worker)
-            if self._refresh_publication_for(plot_worker) is not None:
-                if self._refresh_publication_source_is_current(
-                        plot_worker,
-                        clear_display=clear_display,
-                        ):
-                    self._commit_refresh_publication(plot_worker)
-            plot_worker.running = False
-            self._ensure_refresh_monitor()
+            self._commit_refresh_publication(plot_worker, preview_ready=True, clear_display=clear_display)
 
 
     def _has_plottable_line_data(self) -> bool:

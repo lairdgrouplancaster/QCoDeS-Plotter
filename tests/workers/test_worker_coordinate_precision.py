@@ -55,10 +55,10 @@ def test_coordinate_precision_check_remains_cancellable(tmp_path, monkeypatch):
                 worker.cancel()
             original_check()
 
-        original_check = worker._check_cancelled
-        monkeypatch.setattr(worker, "_check_cancelled", cancel_after_unique)
+        original_check = worker.processing._check_cancelled
+        monkeypatch.setattr(worker.processing, "_check_cancelled", cancel_after_unique)
         with pytest.raises(worker_module.PlotWorkCancelled):
-            worker._float_heatmap_coordinates(np.array([2**53, 2**53 + 4]), "fast")
+            worker.processing._float_heatmap_coordinates(np.array([2**53, 2**53 + 4]), "fast")
 
 
 @pytest.mark.parametrize("unsigned", [False, True])
@@ -100,7 +100,7 @@ def test_unacquired_coordinates_do_not_trigger_precision_error(tmp_path):
         data = {"fast": np.array([[0, 1, 2], [2**53, 2**53 + 1, 2**53 + 4]]),
                 "slow": np.array([[0, 0, 0], [0, 0, 0]])}
         acquired = np.array([[True, True, True], [False, False, False]])
-        axes, _, grid = worker.for_shaped_2d(data, signal, acquired=acquired)
+        axes, _, grid = worker.processing.for_shaped_2d(data, signal, acquired=acquired)
         np.testing.assert_array_equal(axes["x"], [0, 1, 2])
         np.testing.assert_array_equal(grid, [[1, 2, 3]])
 
@@ -110,4 +110,4 @@ def test_numpy_object_scalar_comparison_cannot_hide_coordinate_collision(tmp_pat
         worker = coordinate_worker(dataset)
         values = np.array([np.int64(2**53 + 1), np.float64(2**53)], dtype=object)
         with pytest.raises(ValueError, match="coordinate precision"):
-            worker._float_heatmap_coordinates(values, "fast")
+            worker.processing._float_heatmap_coordinates(values, "fast")

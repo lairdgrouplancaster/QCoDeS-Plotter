@@ -25,9 +25,9 @@ from qplot.datahandling.file_identity import (
     database_file_identity,
 )
 from qplot.tools.operation_registry import OperationValidationError
-from qplot.tools.plot_result import capture_plot_result
 from qplot.windows import _plot_export as plot_export_module
 from qplot.windows import _plot_refresh as plot_refresh_module
+from qplot.windows import _plot_refresh_ui as plot_refresh_ui_module
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
 from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._plot_status import PlotStatusWidget
@@ -41,6 +41,8 @@ from qplot.windows._range_entry import RangeEntry
 from qplot.windows._widgets import treeWidgets
 from qplot.windows.plot1d import plot1d
 from qplot.windows.plot2d import plot2d
+from tests._plot_results import capture_fake_plot_result
+from tests.support.plot_refresh import set_plot_worker
 
 _PRINT_DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
 
@@ -288,7 +290,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         window._guid = "guid"
         window._dataset_key = DatasetKey("database.db", "guid")
         window._dataset_holder = {window._dataset_key: DatasetHandle(self.Dataset())}
-        window.worker = self.Worker(worker_running)
+        set_plot_worker(window, self.Worker(worker_running))
         window.last_ds_len = 0
         window.load_calls = []
         window.restart_intervals = []
@@ -480,7 +482,7 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
             }
         window._axis_selection = {"x": "x", "y": "y"}
         old_worker = object()
-        window.worker = old_worker
+        set_plot_worker(window, old_worker)
         refreshes = []
         window.refreshWindow = lambda force=False: refreshes.append(force)
 
@@ -611,12 +613,12 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
             (message, worker)
             )
 
-        old_loader = plot_refresh_module.loader
+        old_loader = plot_refresh_ui_module.loader
         try:
-            plot_refresh_module.loader = Worker
+            plot_refresh_ui_module.loader = Worker
             plotWidget.load_data(window)
         finally:
-            plot_refresh_module.loader = old_loader
+            plot_refresh_ui_module.loader = old_loader
 
         self.assertEqual(len(window.threadPool.started), 1)
         worker = window.threadPool.started[0]
@@ -630,9 +632,9 @@ class PlotWindowRefreshTestCase(unittest.TestCase):
         self.assertIn("Loading data for signal", window.show_statuses[-1][0])
 
         error = RuntimeError("failed")
-        worker.emitter.finished.slots[0](True)
         worker.emitter.errorOccurred.slots[0](error)
         worker.emitter.printer.slots[0]("working")
+        worker.emitter.finished.slots[0](True)
 
         self.assertEqual(window.refresh_calls, [(True, worker)])
         self.assertEqual(window.error_calls, [(error, worker)])
@@ -662,7 +664,7 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
 
     def _window(self):
         window = plotWidget.__new__(plotWidget)
-        window.worker = self.Worker()
+        set_plot_worker(window, self.Worker())
         window.end_wait = self.Signal()
         window.statuses = []
         window.plot_states = []
@@ -929,9 +931,9 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
         window = plotWidget.__new__(plotWidget)
         qtw.QMainWindow.__init__(window)
         window.monitor = Monitor()
-        window.worker = Worker()
+        set_plot_worker(window, Worker())
         window._merged_trace_users = 0
-        window._refresh_pending = True
+        window._queue_pending_refresh()
         window.plot_state_overlay = Mock()
 
         plotWidget.closeEvent(window, object())
@@ -976,7 +978,7 @@ class PlotWorkerCallbackTestCase(unittest.TestCase):
         window = plot1d.__new__(plot1d)
         qtw.QMainWindow.__init__(window)
         worker = Worker()
-        window.worker = worker
+        set_plot_worker(window, worker)
         window.axis_data = {"x": [0.0, 1.0], "y": [10.0, 20.0]}
         window.line = Line()
         window.marquee = None
@@ -1106,7 +1108,7 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window = plotWidget.__new__(plotWidget)
         worker = Worker()
         states = []
-        window.worker = worker
+        set_plot_worker(window, worker)
         window.end_wait = Signal()
         window.show_plot_state = lambda *args, **kwargs: states.append((args, kwargs))
 
@@ -1150,11 +1152,11 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window = plot1d.__new__(plot1d)
         qtw.QMainWindow.__init__(window)
         worker = Worker()
-        worker.result = capture_plot_result(worker)
+        worker.result = capture_fake_plot_result(worker)
         line = Line()
         states = []
         statuses = []
-        window.worker = worker
+        set_plot_worker(window, worker)
         window.line = line
         window.marquee = None
         # This focused refresh host is a valid Qt widget, but does not build
@@ -1221,8 +1223,8 @@ class PlotStateOverlayTestCase(unittest.TestCase):
         window = plot1d.__new__(plot1d)
         qtw.QMainWindow.__init__(window)
         worker = Worker()
-        worker.result = capture_plot_result(worker)
-        window.worker = worker
+        worker.result = capture_fake_plot_result(worker)
+        set_plot_worker(window, worker)
         window.line = Line()
         window.marquee = None
         window.trace_label = qtw.QLabel()

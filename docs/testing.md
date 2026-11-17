@@ -110,7 +110,7 @@ A local Windows run cannot substitute for those platform results.
 
 ## Static analysis
 
-The explicit mypy targets in `pyproject.toml` cover 165 of the 200 application
+The explicit mypy targets in `pyproject.toml` cover 180 of the 215 application
 modules. The other 35 have individual reasons in `[tool.qplot.typing.deferred]`.
 `follow_imports = "silent"` allows mypy to use imported types while suppressing
 diagnostics from modules outside the explicit targets; this is partial coverage,
@@ -212,6 +212,24 @@ may reset to validated current defaults. Keep safe persistence and backup
 checks. Unsupported or malformed database rejection tests protect the read
 boundary and are not a promise to support old QCoDeS schemas.
 
+## Preview and plot lifetimes
+
+`widgets/test_preview_controller.py` covers startup faults, reentrant source
+changes, synchronous and duplicate completion, cancelled generations and queued
+timers. `test_preview_startup.py` checks the real Qt adapter, widget destruction
+and a real worker retry with exact source-file observations. Existing priority,
+selection, cache and database-replacement tests remain in use.
+
+`windows/test_plot_lifetime.py` checks native widget retirement after close,
+retained source ownership and closure during an active publication. These tests
+do not forcibly delete the plot under examination. Test teardown still retires
+the whole main window after asserting the behaviour.
+
+The [workflow performance assessment](performance-assessment.md) describes the
+opt-in measurements. Profiling CLI tests validate real line/heatmap rendering,
+refresh completion, report creation, source preservation and shutdown without
+asserting machine-dependent elapsed-time or memory thresholds.
+
 ## Simplifying coverage
 
 Database-loading lifecycle tests have two boundaries:
@@ -240,6 +258,45 @@ assertions remain in the UI tests, including Qt receiver disconnection on
 window destruction.
 The coalesced-refresh regression also destroys the QObject before its queued
 timer fires and checks that no further worker is submitted.
+
+Plot refresh follows the same boundary. `test_plot_refresh_controller.py` checks
+startup faults, cancellation, reentrant replacement, duplicate completion,
+coalescing and publication ownership without worker threads.
+`test_plot_refresh_startup.py` injects failures into real line and heatmap windows,
+preserves the displayed arrays and source database, then performs a successful
+retry. It also verifies GUI-thread publication and pool ownership through concrete
+rendering. Focused window doubles use `tests/support/plot_refresh.py` to arrange
+controller state; the production observations remain read-only. Existing cache
+rollback, source-sidecar, overlay, volume, cut and shutdown tests remain in use.
+
+`test_plot_publication.py` exercises exact snapshots, explicit terminal outcomes
+and conditional shared-cache rollback without constructing windows.
+`test_plot_publication_integration.py` injects failures and cancellation during
+real line and heatmap rendering, and starts nested refreshes from preparation
+and completion callbacks. `test_volume_publication.py` verifies metadata recovery
+and retry after dependent-view failures in volumes and cuts. These tests retain
+source-artefact assertions; sidecar-replacement tests also cover final completion
+before commit.
+
+`test_heatmap_viewport.py` covers range decisions, debounce ownership and staged
+publication outcomes without constructing windows. Real SQL heatmap cases in
+`test_heatmap_viewport_integration.py` exercise failed zoom/full-view rendering
+and retry, rapid changes during publication, nested newer results, cancellation
+on close or source rejection, and retained plots after selecting another
+database. They check rendered values and preservation of source artefacts.
+`test_heatmap_layer_integration.py` also checks that a hidden SQL source can
+reload while retained and cancels pending viewport work on final removal.
+
+`tools/test_heatmap_resolution.py` checks immutable reporting facts, conservative
+fallbacks, missing metadata, cropped views and explanatory wording without
+constructing windows. `windows/test_heatmap_resolution_state.py` covers report
+publication outcomes. The real SQL cases in
+`windows/test_heatmap_resolution_integration.py` check open dialogue updates,
+failed renders and retries, nested newer publications, full-resolution transitions
+and source rejection, retaining protected-source artefact assertions. Hidden-source
+cases verify that completed publication snapshots are released even without
+warning controls. Their SQL heatmap fixture lives in
+`tests/support/windows/sql_heatmap.py`.
 
 Consolidate tests that protect the same behaviour with the same setup into
 clearly named parametrised cases. Keep independent expected values and oracles.

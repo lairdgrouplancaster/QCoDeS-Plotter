@@ -1,11 +1,9 @@
 """Planned heatmap shapes must not erase differing acquired coordinates."""
 
-from types import MethodType, SimpleNamespace
-
 import numpy as np
 import pytest
 
-from qplot.tools.worker import loader
+from tests._plot_worker import make_plot_worker
 from tests.support.workers.worker_array_heatmaps import (
     heatmap_dataset,
     make_worker,
@@ -44,7 +42,6 @@ def test_shaped_heatmap_retains_nonrectilinear_record_coordinates(
     (1e12, .125, False),
 ])
 def test_constant_representatives_keep_absolute_coordinate_tolerance(base, delta, accepted):
-    host = SimpleNamespace(_check_cancelled=lambda: None)
-    host._shaped_axis_values = MethodType(loader._shaped_axis_values, host)
+    host = make_plot_worker()
     coordinates = np.array([[base, base], [base, base + delta]])
-    assert loader._shaped_axis_is_rectilinear(host, coordinates, 1) is accepted
+    assert host.processing._shaped_axis_is_rectilinear(coordinates, 1) is accepted

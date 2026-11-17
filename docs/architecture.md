@@ -37,9 +37,20 @@ leaving handlers installed by callers attached and open.
 
 `desktop.py` provisions launchers and delegates Windows Open With ownership,
 registry preflight, installation, and rollback to `_desktop_associations.py`.
+`_windows_launcher.py` builds a windowed `qPlot.exe` using the pinned distlib
+launcher and embeds qPlot's icon before appending the Python payload. This
+gives Windows file properties an application icon independent of Script Host.
+It starts the existing bootstrap in the selected Python environment with
+isolated interpreter mode (`-I`). No compiler is required during setup.
 `_desktop_sidecars.py` separately manages optional sidecar icons. It converts
 persisted JSON backups into named validated records before registry mutation;
 installation rollback and removal share restoration of those records.
+
+`_windows_launcher.py` builds a windowed `qPlot.exe` using the pinned distlib
+launcher and embeds qPlot's icon before appending the Python payload. Windows
+file properties can therefore extract the application icon from the executable.
+It starts the existing bootstrap in the selected Python environment with isolated
+interpreter mode (`-I`). No compiler is required during setup.
 
 `_macos_identity.py` shares one bounded interpreter-identity preflight between
 desktop installation and runtime-bundle creation. Each caller keeps its own
@@ -91,6 +102,22 @@ refresh callbacks are fenced by generation and selected path. Cancelling,
 closing or replacing a session therefore invalidates its queued refresh too.
 Queued callbacks use single-shot timers parented to the window, so deleting its
 Qt object also discards callbacks that have not run yet.
+
+`_database_detail_controller.py` owns the independent basic and expensive
+snapshot metadata channels. Its typed `DatabaseDetailHost` interface is
+implemented by `_database_detail_ui.py`, which constructs and connects Qt
+workers, selects their pools and updates the run-list loading indicators.
+The existing protected snapshot readers and source-identity checks remain in
+use; trusted live metadata continues through the derived-data bridge.
+
+Construction, prioritisation, signal-connection and submission failures retire
+the failed channel, clear its indicators and leave the other stage usable.
+Cancellation fences both channels before calling either worker. Publication
+checks the generation, selected path and source identity before applying a
+batch and checks ownership and identity again afterwards. A completion received
+during publication waits for the batch to finish; stale callbacks and cleanup
+cannot clear a replacement job's indicators. Export protection and shutdown
+observe the same controller-owned channel state.
 
 `windows/_test_database.py` owns the explicit synthetic-data commands: CSV
 templates, destination selection, overwrite confirmation, background generation
@@ -198,18 +225,85 @@ widths without importing Qt. Statistics use it directly; plot windows keep
 their existing formatting methods as delegates and supply the current cursor
 precision preference.
 
-`src/qplot/windows/_plot_refresh.py` contains shared worker-backed plot refresh
-orchestration: deciding whether to read from the database or cached data,
-starting workers, applying worker results back to plot-window state, and
-surfacing worker failures.
+`windows/_plot_refresh_controller.py` owns plot-refresh sessions, worker startup,
+cancellation and coalesced refresh requests. Its typed `PlotRefreshHost` interface
+is implemented by `_plot_refresh_ui.py`, which constructs workers, binds Qt
+signals to GUI-thread receivers and manages status feedback. Worker and pending
+request observations on the window are read-only. Construction, configuration,
+signal connection, loading feedback and submission failures retire the failed
+job and allow retry without replacing the displayed data.
 
-The plot window owns one typed `RefreshPublication` rollback record for the
-latest callback. It captures the prior cache parameter and plot fields, records
-the cache values actually published, and conditionally restores them if the
-source changes before rendering finishes. A nested newer callback replaces the
-record; an older callback cannot restore or discard the newer state. Source
-checks remain at the cache and renderer publication boundaries. Worker result
-data and completion signals remain separate from this GUI-owned rollback state.
+The controller retains ownership through the entire concrete rendering callback,
+including volume and cut publication. Duplicate, cancelled and superseded
+callbacks cannot publish or consume newer requests. Queued refresh timers are
+parented to the window and fenced by generation; completion schedules retained
+requests without repeatedly posting while a worker is busy. Closing a plot keeps
+refresh usable while overlays retain it; final consumer release and shutdown
+cancel through the controller. Pool-registration cleanup also survives window
+destruction.
+
+`windows/_plot_refresh.py` retains refresh admission, source identity checks and
+Qt presentation. Numerical processing remains in `tools/plot_processing.py` and
+database acquisition stays in the worker.
+
+`windows/_plot_publication.py` owns the current `RefreshPublication`, its
+generation and explicit terminal outcome. Its `PlotSnapshot` retains exact
+array references and distinguishes absent fields from fields containing `None`.
+Source rejection restores the plot fields and conditionally restores shared
+cache slots, preserving any newer cache publication. Rendering failure instead
+retains valid shared cache data, restores plot fields and leaves the display
+retryable. The Qt adapter clears the incomplete renderer and presents the error.
+A nested newer publication replaces the record; older callbacks cannot commit,
+restore or discard it. Window observations of this state are read-only.
+
+The concrete renderers share a publication scope with separate successful and
+exceptional exits. Lines publish their data before updating overlays; heatmaps
+rotate cut markers before installing geometry and restoring interactions.
+Volume annotations, navigation feedback and dependent cuts, and cut coverage
+metadata, finish inside that scope before commit and optional preview reuse.
+Normal empty or unsupported-data displays can commit without a preview.
+Source and worker checks surround callbacks that can replace or cancel a job,
+including preparation, labels and final dependent-view updates. Worker result
+data and completion signals remain separate from publication ownership.
+
+`_plot_lifetime.py` retires the native Qt window after close, once its last
+overlay/cut consumer and refresh callbacks have finished. Disposal is deferred
+past in-progress startup and publication, including nested Qt event loops.
+Closed retained sources stay usable; final consumer release requests retirement
+again. Refresh timers are children of their plot windows. This releases native
+widgets and their signal closures during repeated opening and closing, rather
+than retaining every closed plot until the application exits.
+
+`windows/_heatmap_viewport.py` owns SQL heatmap viewport state and delayed
+detail-reload decisions. Immutable ranges distinguish full source extents,
+full-image view bounds, the last accepted image range and the requested range.
+A staged viewport follows its `RefreshPublication` outcome: only a committed
+image advances accepted ranges; a failed render remains retryable at the same
+range. Nested newer publications retain ownership through outer finalisation.
+`_heatmap_viewport_ui.py` supplies Qt range observations, window lifetime checks
+and parented debounce timers. Each timer retains its own request token, so
+cancelled callbacks cannot load a later source or consume a newer zoom request.
+Busy publications retain pending intent, including an explicit return to the
+full view. Hidden overlay sources remain usable until their final consumer
+releases them. Window observations of viewport state are read-only.
+
+`tools/heatmap_resolution.py` converts processing metadata into an immutable
+`HeatmapResolutionReport` and formats its summary and details. Source rows,
+display cells, estimates, sampling, averaging and interpolation remain distinct.
+Missing or invalid counts stay unknown. Fallback grid-size comparisons never
+infer sampling or interpolation, and a cropped view alone is not evidence of
+reduced resolution. Full-resolution volume planes and frozen slices retain their
+explicit resolution status.
+
+`windows/_heatmap_resolution_state.py` stages the report with its
+`RefreshPublication`. Only a committed result replaces the accepted explanation;
+a cleared failed display or retired source has no warning. Nested publications
+cannot overwrite a newer report. `_heatmap_resolution_ui.py` owns the warning
+button and dialogue. Reports settle for hidden sources too, releasing completed
+workers and rollback snapshots without requiring a UI observer. The adapter
+updates an open explanation after a commit and dismisses it
+when no report applies. The plot window supplies existing in-memory observations
+and coordinates publication; reporting does not acquire data or query a database.
 
 `src/qplot/windows/_dataset_handle.py` defines the small `DatasetHandle`
 structure used by the main window and plot windows to track an open dataset,
@@ -341,6 +435,22 @@ be tested without constructing Qt widgets.
 thumbnails. It also handles preview selection and drag payloads. Trusted
 sessions receive decoded Stage 5C images from the bridge; retained compatibility
 paths may still use the bounded legacy preview queue.
+
+`_widgets/_preview_controller.py` owns that snapshot preview queue, priorities,
+worker sessions, generation changes and deferred starts. Widget observations of
+jobs are read-only. Construction, signal-connection, loading-feedback and pool
+submission failures release the failed slot, report the error and permit an
+explicit retry. Synchronous completion waits for successful submission; retired
+or duplicate callbacks cannot publish over a newer job. Retired running workers
+remain visible to shutdown until their completion callbacks release them.
+`_preview_ui.py` supplies source validation, GUI-thread signal connections,
+parented timers and widget feedback. Its reference to the owning widget is weak,
+so the controller's destruction callback cannot retain that widget in a cycle.
+One finaliser closes the controller and cancels retained work on either native
+widget destruction or Python collection. It keeps the cleanup callable alive
+while cyclic widget/controller ownership is collected, and runs only once.
+Numerical preview generation, cache policy
+and the trusted derived-data bridge remain separate from this ownership change.
 
 `src/qplot/windows/_widgets/operations.py` defines the operation panel widgets
 that collect user-selected data operations before refresh processing. Operation
@@ -1113,8 +1223,23 @@ components using NumPy and specification records. `testdata.py` retains chunk
 iteration, cancellation, QCoDeS measurement writes, and destination publication.
 
 `src/qplot/tools/worker.py` defines the background loader used by plot windows.
-It loads data, reshapes it for the plot type, applies selected operations, and
-emits results back to the GUI thread. Plot workers use cooperative cancellation:
+It owns source acquisition, read-only connections, source identity checks and
+Qt result publication. Its `PlotProcessor` in `tools/plot_processing.py` owns
+array normalisation, line/heatmap geometry, complex projection and the ordered
+operation pipeline, without importing Qt or database readers. `PlotProcessingSpec`
+captures parameter metadata and numerical limits; `PlotProcessingInput` carries
+acquired arrays, write counts and planned shape. A cancellation callback keeps
+the numerical component independently executable and testable.
+
+The worker feeds streamed heatmap chunks through the same numerical helpers,
+retaining ownership of cursor iteration and bounded read transactions. Volume
+workers also use the processor for shared coordinate and transform calculations.
+Completed `PlotProcessingResult` mappings are snapshots that share the existing
+array buffers. The worker combines them with source/cache state into
+`PlotLoadResult` only after processing succeeds. Neither processing nor result
+capture writes to the measurement source.
+
+Plot workers use cooperative cancellation:
 shutdown marks every registered worker as cancelled, interrupts its active
 read-only SQLite connection, clears work that has not started, and keeps the Qt
 event loop alive until running workers unwind. Built-in operations receive a

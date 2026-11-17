@@ -91,14 +91,22 @@ class ShutdownResources:
         return services
 
     def cancel_plot_work(self) -> None:
+        from ._shared_refresh import iter_plot_sources
+
         cancel_auto_plot(self.window)
         workers = set(getattr(self.window, "_plot_workers", ()))
-        for window in list(getattr(self.window, "windows", ())):
+        cancelled = set()
+        for window in iter_plot_sources(self.window):
             worker = getattr(window, "worker", None)
-            if worker is not None:
+            cancel_refresh = getattr(window, "_cancel_plot_refresh", None)
+            if callable(cancel_refresh):
+                cancel_refresh()
+                if worker is not None:
+                    cancelled.add(worker)
+            elif worker is not None:
                 workers.add(worker)
 
-        for worker in workers:
+        for worker in workers - cancelled:
             cancel = getattr(worker, "cancel", None)
             if callable(cancel):
                 cancel()

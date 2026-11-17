@@ -63,10 +63,10 @@ class CutLoader(loader):
                     )
             self.axis_param = {"x": self.source_params[self.selection.varying], "y": copy(value_param)}
             self.display_param = copy(value_param)
-            operated = self.do_operations()
+            operated = self.processing.do_operations()
             if operated is not None:
                 self.axis_data = {"x": operated[0], "y": operated[1]}
-                self._apply_operation_metadata()
+                self.processing._apply_operation_metadata()
             self.dataset_completed = self.volume.completed
             self.loaded_from_sql_heatmap = True
             self.dataset_length_at_start = self.volume.revision
@@ -95,7 +95,9 @@ class _CutTargetItem(pg.TargetItem):
 
 
 class VolumeCut(plot1d):
-    _extra_publication_fields = ("_displayed_cut_metadata", "_displayed_description")
+    _extra_publication_fields = (
+        "_displayed_cut_metadata", "_displayed_description", "_coverage_counts", "_coverage_depths",
+    )
 
     def __init__(self, dataset_key, param, source, selection, config, threadPool,
                  dataset_holder, **kwargs):
@@ -312,8 +314,6 @@ class VolumeCut(plot1d):
     def _reload_cut(self):
         if not self._plot_setup_complete or self._closed:
             return
-        if (worker := self.__dict__.get("worker")) is not None and worker.running:
-            worker.cancel()
         self.load_data()
 
     def _create_plot_loader(self, *args, **kwargs):
@@ -345,16 +345,15 @@ class VolumeCut(plot1d):
     def _ensure_refresh_monitor(self):
         self.monitor.stop()
 
-    def refreshPlot(self, finished=True, worker=None):
-        worker = worker if worker is not None else self.__dict__.get("worker")
-        super().refreshPlot(finished, worker=worker)
-        if finished and worker is not None and worker is self.__dict__.get("worker") and getattr(worker, "result", None) is not None:
-            self._update_plot_annotation()
-            counts = getattr(worker, "counts", np.array([]))
-            self._coverage_counts = counts.copy()
-            self._coverage_depths = worker.volume.axes[worker.selection.depth].copy()
-            self.coverage_label.setText(f" Valid cells per depth: {counts.min()}–{counts.max()}" if self.selection.kind == "mean" and counts.size else "")
-        self.monitor.stop()
+    def _complete_plot_publication(self, worker):
+        if not self._publication_step(worker, self._update_plot_annotation):
+            return
+        counts = getattr(worker, "counts", np.array([]))
+        self._coverage_counts = counts.copy()
+        self._coverage_depths = worker.volume.axes[worker.selection.depth].copy()
+        self.coverage_label.setText(
+            f" Valid cells per depth: {counts.min()}–{counts.max()}"
+            if self.selection.kind == "mean" and counts.size else "")
 
     def _requested_description(self):
         s = self.selection
@@ -425,12 +424,11 @@ class VolumeCut(plot1d):
             pass
         if remaining == 0 and self.source._closed:
             self.source.monitor.stop()
-            if (worker := self.source.__dict__.get("worker")) is not None:
-                worker.cancel()
+            self.source._cancel_plot_refresh()
             self.source._release_volume()
         super().closeEvent(event)
         self.volume = None
-        self.worker = None
+        self._refresh_controller().forget_worker()
 
 
 def _append_annotation(window, text):
@@ -470,12 +468,12 @@ class FrozenLoader(loader):
                 )
             if original.dataGrid is not None:
                 self.dataGrid = (original.dataGrid.T if transposed else original.dataGrid).copy()
-            operated = self.do_operations()
+            operated = self.processing.do_operations()
             if operated is not None:
                 self.axis_data = {"x": operated[0], "y": operated[1]}
                 if original.dataGrid is not None:
                     self.dataGrid = operated[2]
-                self._apply_operation_metadata()
+                self.processing._apply_operation_metadata()
             if self.complex_samples is not None and original.dataGrid is not None:
                 self.complex_samples = self.complex_samples.bind_grid(
                     self.axis_data["x"], self.axis_data["y"], check=self._check_cancelled,
@@ -495,6 +493,8 @@ class FrozenLoader(loader):
 class FrozenSlice(plot2d):
     """A detached, already processed plane with normal 2D appearance/export."""
 
+    _uses_heatmap_viewport = False
+
     def __init__(self, dataset_key, param, source, config, threadPool, dataset_holder, **kwargs):
         axes = source.axis_options
         synthetic = ParamSpec(param.name, "numeric", label=source.display_param.label,
@@ -513,10 +513,6 @@ class FrozenSlice(plot2d):
 
     def _refresh_monitor_required(self, dataset=None):
         return False
-
-    def _update_large_heatmap_state(self, worker):
-        self._large_heatmap_sql_mode = False
-        self._update_heatmap_downsample_state(worker)
 
     def _update_plot_annotation(self):
         super()._update_plot_annotation()

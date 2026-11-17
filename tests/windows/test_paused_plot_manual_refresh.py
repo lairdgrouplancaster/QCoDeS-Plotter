@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from PyQt6 import QtGui
+from PyQt6 import QtGui, sip
 from PyQt6 import QtWidgets as qtw
 from qcodes.dataset import (
     Measurement,
@@ -220,7 +220,8 @@ def test_manual_refresh_coalesces_busy_sources_and_close_cancels(tmp_path, monke
         assert not window.windows
         assert source._merged_trace_users == 0
         assert not source._can_process_refresh()
-        assert not host.monitor.isActive() and not source.monitor.isActive()
+        assert all(sip.isdeleted(plot.monitor) or not plot.monitor.isActive()
+                   for plot in (host, source))
 
 
 def test_applying_primary_operations_does_not_refresh_secondary_source(tmp_path, monkeypatch):

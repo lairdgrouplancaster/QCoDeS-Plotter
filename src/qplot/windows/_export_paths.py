@@ -567,8 +567,9 @@ def _collect_owner_database_sources(
             pass
 
     try:
-        channels = getattr(owner, "_database_detail_channels", None)
-        if channels is not None:
+        detail_loader = getattr(owner, "_database_detail_loader", None)
+        if detail_loader is not None:
+            channels = detail_loader.channels
             for channel in (channels.basic, channels.expensive):
                 add_source(channel.worker)
                 add_source(channel.instance)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import struct
+import sys
 import tempfile
 from pathlib import Path
 
@@ -27,6 +28,8 @@ except OSError as error:
 
 def _embed_icon(executable: Path, icon: bytes) -> None:
     """Add an icon group to a private launcher stub before its ZIP is appended."""
+    if sys.platform != "win32":
+        raise OSError("Executable icon resources require Windows")
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     pointer = ctypes.c_void_p
     kernel.BeginUpdateResourceW.argtypes = [ctypes.c_wchar_p, ctypes.c_int]
@@ -87,7 +90,7 @@ def create_windows_executable(destination: Path, python: Path) -> None:
 
         class IconScriptMaker(ScriptMaker):
             # distlib is pinned: this hook customises only its native stub.
-            def _get_launcher(self, kind):
+            def _get_launcher(self, kind: str) -> bytes:
                 stub = scratch / "stub.exe"
                 stub.write_bytes(super()._get_launcher(kind))
                 _embed_icon(stub, icon_path("qplot.ico").read_bytes())

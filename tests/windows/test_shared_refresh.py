@@ -48,14 +48,12 @@ def test_manual_shared_refresh_skips_frozen_snapshots_and_deduplicates_sources()
 def test_disabling_shared_refresh_discards_only_automatic_pending_work(tmp_path, monkeypatch, forced):
     with live_view(tmp_path, monkeypatch, .149) as (window, open_plot):
         plot = open_plot("signal_a")
-        plot._refresh_pending = True
-        plot._refresh_pending_force = forced
+        plot._refresh_controller().queue(force=forced)
         apply_shared_refresh_interval(window, 0.)
         assert_interval(plot, 0.)
         assert plot._refresh_pending == forced
         assert plot._refresh_pending_force == forced
-        plot._refresh_pending = False
-        plot._refresh_pending_force = False
+        plot._refresh_controller().restore_pending(False)
 
 
 def test_main_refresh_button_updates_visible_and_closed_overlay_sources(tmp_path, monkeypatch):

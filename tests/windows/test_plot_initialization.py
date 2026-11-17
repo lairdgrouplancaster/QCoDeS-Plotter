@@ -62,12 +62,12 @@ def test_constructor_defers_controls_and_reading_until_explicit_setup(
         assert entered == []
         assert not window._plot_setup_started
         assert not window._plot_setup_complete
-        assert "worker" not in window.__dict__
+        assert getattr(window, "worker", None) is None
         assert "widget" not in window.__dict__
         assert not window.monitor.isActive()
         assert pool.activeThreadCount() == 0
         window.refreshWindow(force=True)
-        assert "worker" not in window.__dict__
+        assert getattr(window, "worker", None) is None
 
         with pytest.raises(RuntimeError, match="axes setup failed"):
             window.initialize_plot_window()
@@ -209,7 +209,7 @@ def test_failed_controls_submit_no_read_and_keep_existing_source_usable(
         assert len(failed) == 1
         assert failed[0]._closed
         assert not failed[0]._plot_setup_complete
-        assert "worker" not in failed[0].__dict__
+        assert getattr(failed[0], "worker", None) is None
         assert not failed[0].monitor.isActive()
         assert owner.windows == original_windows
         assert owner.dataset_holder[source._dataset_key] is handle
@@ -222,4 +222,5 @@ def test_failed_controls_submit_no_read_and_keep_existing_source_usable(
         assert source.axis_data["x"].size == 5
     finally:
         for window in failed:
-            sip.delete(window)
+            if not sip.isdeleted(window):
+                sip.delete(window)

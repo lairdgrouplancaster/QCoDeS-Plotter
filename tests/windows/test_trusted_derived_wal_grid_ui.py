@@ -13,6 +13,7 @@ from qplot.datahandling import database as database_workers
 from qplot.datahandling import trusted_work_coordinator as coordinator_module
 from qplot.datahandling.trusted_derived_cache import TrustedDerivedDiskCache
 from qplot.windows import _database_actions as database_actions
+from qplot.windows import _database_detail_ui as detail_ui
 from qplot.windows import main as main_window
 from qplot.windows._widgets import preview as preview_module
 from qplot.windows._widgets import treeWidgets as tree_widgets
@@ -186,14 +187,14 @@ def test_real_wal_partial_two_dependent_grid_populates_detail_before_images(
                 ),
             ),
             patch.object(
-                database_actions,
+                detail_ui,
                 "DatabaseDetailWorker",
-                wraps=database_actions.DatabaseDetailWorker,
+                wraps=detail_ui.DatabaseDetailWorker,
             ) as legacy_cheap,
             patch.object(
-                database_actions,
+                detail_ui,
                 "DatabaseExpensiveDetailWorker",
-                wraps=database_actions.DatabaseExpensiveDetailWorker,
+                wraps=detail_ui.DatabaseExpensiveDetailWorker,
             ) as legacy_expensive,
             patch.object(
                 database_workers.DatabaseSelectedRunWorker,

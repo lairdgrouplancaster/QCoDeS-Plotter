@@ -57,6 +57,7 @@ from qplot.windows._widgets.preview import (
     render_heatmap_preview,
     render_sparkline_preview,
 )
+from tests.support.widgets.preview_jobs import seed_preview_job
 
 
 def _tree_items(tree):
@@ -1886,11 +1887,8 @@ class RunDetailsTabsTestCase(unittest.TestCase):
                 self.cancelled = True
 
         worker = Worker()
-        preview.queue = {"queued-guid": PREVIEW_SELECTED_PRIORITY}
-        preview.active = {(preview.generation, "active-guid")}
-        preview._workers = {
-            (preview.generation, "active-guid"): worker,
-        }
+        preview._preview_controller.enqueue("queued-guid", PREVIEW_SELECTED_PRIORITY)
+        seed_preview_job(preview, "active-guid", worker)
 
         preview.shutdown()
 
@@ -2164,14 +2162,14 @@ class RunDetailsTabsTestCase(unittest.TestCase):
     def test_same_preview_size_keeps_workers_and_cache(self):
         preview = PreviewTab(preview_size=200)
         preview.cache = {"guid": ["preview"]}
-        preview.queue = {"queued": PREVIEW_SELECTED_PRIORITY}
-        preview.generation = 4
+        preview._preview_controller.enqueue("queued", PREVIEW_SELECTED_PRIORITY)
+        generation = preview.generation
 
         preview.set_preview_size(200)
 
         self.assertEqual(preview.cache, {"guid": ["preview"]})
         self.assertEqual(preview.queue, {"queued": PREVIEW_SELECTED_PRIORITY})
-        self.assertEqual(preview.generation, 4)
+        self.assertEqual(preview.generation, generation)
 
     def test_rapid_preview_resizes_reject_late_old_size_result(self):
         preview = PreviewTab(preview_size=200)

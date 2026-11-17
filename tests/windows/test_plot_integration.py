@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import qcodes
-from PyQt6 import QtCore
+from PyQt6 import QtCore, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter
 from qcodes.dataset import (
@@ -58,6 +58,8 @@ from qplot.windows._database_load_state import DatabaseLoadSession
 from qplot.windows._dataset_handle import database_file_identity
 from tests._database_load_fakes import seed_load
 from tests._window_lifecycle import close_main_window
+from tests.support.heatmap_resolution import set_resolution
+from tests.support.heatmap_viewport import set_viewport
 from tests.support.windows.plot_integration import (
     _UnavailableTrustedRequest as _UnavailableTrustedRequest,
 )
@@ -444,7 +446,11 @@ def select_nondefault_run_and_finish_previews(window):
     )
     assert len(matches) == 1
     target_guid = matches[0].guid
-    window.RunList.setCurrentItem(matches[0])
+    # This setup requires one selected run, independent of modifiers left by
+    # earlier QTest mouse/key events in the shared QApplication.
+    window.RunList.setCurrentItem(
+        matches[0], 0, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+    )
     wait_for(
         lambda: (
             window.selected_run_id == target_run_id
@@ -618,7 +624,39 @@ def assert_same_path_generation_consumers_released(window):
     assert not window.monitor.isActive()
 
 
-def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch):
+@pytest.fixture
+def checked_plot_wait(monkeypatch):
+    """Surface GUI errors in pytest instead of blocking inside a modal dialog."""
+    from qplot.windows._error_dialog import ErrorDialog
+
+    errors = []
+
+    def capture_error(dialog):
+        errors.append(dialog._copy_text)
+        dialog.accept()
+        return qtw.QDialog.DialogCode.Accepted
+
+    def check_errors():
+        assert not errors, "Unexpected GUI errors:\n\n" + "\n\n".join(errors)
+
+    def checked_wait(predicate, timeout=12):
+        def checked_predicate():
+            check_errors()
+            return predicate()
+
+        wait_for(checked_predicate, timeout=timeout)
+        check_errors()
+
+    monkeypatch.setattr(ErrorDialog, "exec", capture_error)
+    yield checked_wait
+    check_errors()
+
+
+@pytest.mark.timeout(90, method="thread")
+def test_main_window_opens_real_1d_and_2d_plots(tmp_path, monkeypatch, checked_plot_wait):
+    # Thread-mode timeout prints every thread's stack even if Qt blocks while
+    # draining events, where the predicate timeout cannot regain control.
+    wait_for = checked_plot_wait
     configure_temp_qplot(monkeypatch, tmp_path)
     database_path = Path(tmp_path) / "qplot-integration.db"
     line_run_id, heatmap_run_id = build_synthetic_database(database_path)
@@ -1177,8 +1215,8 @@ def test_real_plot2d_csv_exports_only_current_downsampled_grid(
         heatmap_window.dataGrid = current_grid
         heatmap_window._update_heatmap_geometry()
         heatmap_window._render_heatmap()
-        heatmap_window._large_heatmap_sql_mode = True
-        heatmap_window._heatmap_downsample_info = {
+        set_viewport(heatmap_window, _large_heatmap_sql_mode=True)
+        set_resolution(heatmap_window, {
             "source_grid_columns": full_x.size,
             "source_grid_rows": full_y.size,
             "grid_columns": current_x.size,
@@ -1188,7 +1226,7 @@ def test_real_plot2d_csv_exports_only_current_downsampled_grid(
                 "x": (float(current_x[0]), float(current_x[-1])),
                 "y": (float(current_y[0]), float(current_y[-1])),
             },
-        }
+        })
 
         assert current_grid.size == current_x.size * current_y.size
         assert current_grid.size < full_grid.size
@@ -2250,7 +2288,8 @@ def test_replaced_background_plot_does_not_switch_current_database(
         assert source_plot not in window.windows
         assert source_handle.closed
         assert source_plot._merged_trace_users == 0
-        assert not source_plot.monitor.isActive()
+        wait_for(lambda: sip.isdeleted(source_plot))
+        assert sip.isdeleted(source_plot.monitor)
         assert target_plot in window.windows
         np.testing.assert_array_equal(target_plot.line.getData()[1], [10.0, 11.0])
         assert window.fileTextbox.text() == str(database_b)
@@ -3995,6 +4034,7 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
 
         original_set_data = plot_b.line.setData
         original_refresh_plot = plot_b.refreshPlot
+        previous_axes = plot_b.axis_data
         display_errors = []
         fail_display = True
 
@@ -4025,7 +4065,11 @@ def test_threaded_multi_parameter_completion_retries_each_real_plot(
         )
 
         np.testing.assert_array_equal(cache_values("signal_b"), [20.0, 21.0, 22.0])
-        np.testing.assert_array_equal(line_values(plot_b), [20.0])
+        # A failed render may have changed only part of the display. Clear it
+        # and restore plot fields while retaining the valid cache for retry.
+        assert plot_b.line.getData() == (None, None)
+        assert plot_b.axis_data is previous_axes
+        assert plot_b._refresh_publication is None
         np.testing.assert_array_equal(line_values(hidden_plot_b), [20.0])
         np.testing.assert_array_equal(np.asarray(merged_b.getData()[1]), [20.0])
         assert final_loads == ["signal_a", "signal_b", "signal_b"]

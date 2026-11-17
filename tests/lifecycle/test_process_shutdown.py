@@ -49,7 +49,8 @@ def test_unavailable_supervisor_uses_original_deadline_local_fallback() -> None:
     process_fail_safe.disarm()
 
 
-def test_supervisor_arm_failure_is_exact_and_keeps_local_fallback() -> None:
+@pytest.mark.parametrize("available", [False, True], ids=["unavailable", "arm-error"])
+def test_supervisor_failure_is_recorded_before_expired_deadline_fallback(monkeypatch, available) -> None:
     forced = ThreadEvent()
     persistence_recorded = ThreadEvent()
     persisted = []
@@ -63,25 +64,35 @@ def test_supervisor_arm_failure_is_exact_and_keeps_local_fallback() -> None:
             raise OSError("exact ARM transport failure")
 
     process_fail_safe = ProcessShutdownFailSafe(
-        FailingClient(),
+        FailingClient() if available else None,
         persist_diagnostics=record_persistence,
         force_exit=lambda _code: forced.set(),
     )
-    started_at = monotonic()
+    activate_fallback = process_fail_safe._activate_fallback
+
+    def activate_and_capture():
+        activate_fallback()
+        assert persistence_recorded.wait(2)
+
+    monkeypatch.setattr(process_fail_safe, "_activate_fallback", activate_and_capture)
+    # Force the watchdog to capture before arm returns, rather than assuming
+    # the calling thread will beat a 50 ms deadline on a busy CI runner.
+    started_at = monotonic() - 1
 
     arm_diagnostic = process_fail_safe.arm(
         started_at=started_at,
         diagnostic_deadline=started_at + 0.05,
         hard_deadline=started_at + 0.10,
     )
-    process_fail_safe.update_diagnostics(("final receiver_alive=True",))
-
-    assert arm_diagnostic == (
+    expected = (
         "process shutdown supervisor ARM raised OSError: exact ARM transport failure"
-    )
-    assert forced.wait(0.25)
-    assert persistence_recorded.wait(0.3)
+        if available else "process shutdown supervisor is unavailable; "
+        "only the in-process deadline fallback is armed")
+    assert arm_diagnostic == expected
+    assert forced.wait(2)
     assert arm_diagnostic in persisted[-1]["diagnostics"]
+    process_fail_safe.update_diagnostics(("final receiver_alive=True",))
+    process_fail_safe.persist_now()
     assert "final receiver_alive=True" in persisted[-1]["diagnostics"]
     process_fail_safe.disarm()
 

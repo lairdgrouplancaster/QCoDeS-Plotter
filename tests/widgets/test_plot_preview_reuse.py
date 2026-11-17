@@ -4,14 +4,15 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from qplot.tools.plot_result import capture_plot_result
 from qplot.windows._dataset_handle import DatasetKey
 from qplot.windows._plot_actions import PlotActionsMixin
-from qplot.windows._plot_refresh import PlotRefreshMixin, RefreshPublication
+from qplot.windows._plot_refresh import PlotRefreshMixin
 from qplot.windows._widgets.preview import (
     PreviewTab,
     render_displayed_plot_preview,
 )
+from tests._plot_results import capture_fake_plot_result
+from tests.support.plot_refresh import set_plot_worker
 
 
 def _preview(parameter):
@@ -76,8 +77,9 @@ def test_completed_plot_publishes_only_unmodified_committed_data():
         operations={},
         is_cancelled=lambda: False,
     )
-    worker.result = capture_plot_result(worker)
-    plot._refresh_publication = RefreshPublication(worker, 1, None, "signal", None, {})
+    worker.result = capture_fake_plot_result(worker)
+    set_plot_worker(plot, worker)
+    plot._publication_owner().begin(worker, plot.__dict__, cache=None, parameter_name="signal")
     plot._commit_refresh_publication(worker, preview_ready=True)
     assert published == [True]
     assert plot._refresh_publication is None

@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -12,6 +13,12 @@ from qplot.tools.heatmap_geometry import (
     HeatmapGeometry,
     canonicalize_heatmap_data,
 )
+from qplot.tools.heatmap_resolution import (
+    GridSize,
+    HeatmapResolutionReport,
+    resolution_report,
+    source_grid_size,
+)
 
 from ._commands import command_spec, create_action
 from ._display_precision import (
@@ -20,14 +27,20 @@ from ._display_precision import (
     float_display_loses_distinctions,
     heatmap_display_range_is_finite,
 )
+from ._heatmap_resolution_state import HeatmapResolutionState
+from ._heatmap_resolution_ui import HeatmapResolutionUi
+from ._heatmap_viewport import (
+    AxisRanges,
+    HeatmapViewportController,
+    HeatmapViewportState,
+)
+from ._heatmap_viewport_ui import HeatmapViewportUi
 from ._mixed_plots import MixedPlotMixin
 from ._plot1d_snap import Plot1DSnapMixin
 from ._plot2d_sweeps import Plot2DSweepMixin
 from ._plot_axis_scaling import _install_flush_axis_draw_specs
+from ._plot_publication import PublicationOutcome
 from ._plotWin import plotWidget
-
-_HEATMAP_VIEW_RELOAD_DEBOUNCE_MS = 450
-_HEATMAP_VIEW_RELOAD_MIN_FRACTION = 0.95
 
 
 class plot2d(
@@ -47,6 +60,7 @@ class plot2d(
         
     """
     operation_kind = "plot2d"
+    _uses_heatmap_viewport = True
     _initial_load_message = "Heatmap ready; loading data..."
     get_mergables = QtCore.pyqtSignal()
     open_subplot = QtCore.pyqtSignal([object, object, tuple])
@@ -90,17 +104,8 @@ class plot2d(
 
         """
         self.vb.set_shift_pan_axis_constraint(True)
-        self._large_heatmap_sql_mode = False
-        self._heatmap_full_axis_ranges: dict[str, tuple[float, float]] | None = None
-        self._heatmap_full_view_ranges: dict[str, tuple[float, float]] | None = None
-        self._heatmap_last_view_ranges: dict[str, tuple[float, float]] | None = None
-        self._heatmap_worker_downsample_info: dict[str, Any] | None = None
-        self._heatmap_downsample_info: dict[str, Any] | None = None
-        self._heatmap_view_reload_timer = QtCore.QTimer(self)
-        self._heatmap_view_reload_timer.setSingleShot(True)
-        self._heatmap_view_reload_timer.timeout.connect(
-            self._reload_visible_heatmap_data
-            )
+        self._viewport_controller()
+        self._resolution_state()
         self._connect_heatmap_range_controls()
         self._install_plot_control_view_range_preserver()
 
@@ -124,6 +129,52 @@ class plot2d(
         self.hover_pixel_outline.hide()
         self._add_plot_overlay(self.hover_pixel_outline)
         self._init_heatmap_layers()
+
+    def _viewport_controller(self) -> HeatmapViewportController:
+        controller = self.__dict__.get("_heatmap_viewport_controller")
+        if controller is None:
+            ui = HeatmapViewportUi(self)
+            self.__dict__["_heatmap_viewport_ui"] = ui
+            controller = self.__dict__["_heatmap_viewport_controller"] = HeatmapViewportController(ui)
+        return controller
+
+    @property
+    def _viewport_state(self) -> HeatmapViewportState:
+        controller = self.__dict__.get("_heatmap_viewport_controller")
+        return controller.accepted if controller is not None else HeatmapViewportState()
+
+    @property
+    def _large_heatmap_sql_mode(self) -> bool:
+        return self._viewport_state.enabled
+
+    @property
+    def _heatmap_full_axis_ranges(self) -> dict[str, tuple[float, float]] | None:
+        ranges = self._viewport_state.full
+        return ranges.as_dict() if ranges is not None else None
+
+    @property
+    def _heatmap_full_view_ranges(self) -> dict[str, tuple[float, float]] | None:
+        ranges = self._viewport_state.full_view
+        return ranges.as_dict() if ranges is not None else None
+
+    @property
+    def _heatmap_last_view_ranges(self) -> dict[str, tuple[float, float]] | None:
+        ranges = self._viewport_state.displayed
+        return ranges.as_dict() if ranges is not None else None
+
+    @property
+    def _heatmap_view_reload_timer(self) -> QtCore.QTimer:
+        return self.__dict__["_heatmap_viewport_ui"].timer
+
+    def _cancel_plot_refresh(self) -> None:
+        controller = self.__dict__.get("_heatmap_viewport_controller")
+        if controller is not None:
+            controller.reset()
+        state = self.__dict__.get("_heatmap_resolution_state")
+        if state is not None:
+            state.reset()
+            self._sync_heatmap_resolution_warning()
+        super()._cancel_plot_refresh()
 
     def _connect_heatmap_range_controls(self) -> None:
         self.plot.sigRangeChangedManually.connect(
@@ -167,7 +218,7 @@ class plot2d(
     def _preserve_heatmap_view_range_after_control_layout(self) -> None:
         """Restore a loaded heatmap's viewport after controls are relaid out."""
 
-        worker = self.__dict__.get("worker")
+        worker = getattr(self, "worker", None)
         if worker is None or getattr(worker, "running", False):
             # Never restore a pre-refresh range over a newly published heatmap.
             return
@@ -179,10 +230,7 @@ class plot2d(
 
         try:
             viewbox = self._primary_heatmap_viewbox()
-            publication_generation = self.__dict__.get(
-                "_qplot_publication_generation",
-                0,
-                )
+            publication_generation = getattr(self, "_qplot_publication_generation", 0)
             pending = self.__dict__.get("_plot_control_layout_restore")
             if (
                     isinstance(pending, dict)
@@ -219,9 +267,9 @@ class plot2d(
             if self.__dict__.get("_plot_control_layout_token") != token:
                 return
             if (
-                    self.__dict__.get("worker") is not worker
+                    getattr(self, "worker", None) is not worker
                     or getattr(worker, "running", False)
-                    or self.__dict__.get("_qplot_publication_generation", 0)
+                    or getattr(self, "_qplot_publication_generation", 0)
                     != publication_generation
                     ):
                 self.__dict__.pop("_plot_control_layout_restore", None)
@@ -323,8 +371,6 @@ class plot2d(
         v_sweep.triggered.connect(lambda _: self.openSweep("v"))
         self.vbMenu.insertAction(sep, v_sweep)
         
-        # Link finish update with check for rotation of sweep cursor
-        self.end_wait.connect(self.rotate_sweeps)
         self.vbMenu.insertSeparator(h_sweep)
 
         self._init_colorbar_scale_controls()
@@ -362,30 +408,202 @@ class plot2d(
             plot_worker.result.loaded_from_sql_heatmap
             and plot_worker.result.heatmap_axis_ranges is None
         )
+        publication = self._refresh_publication_for(plot_worker)
+
+        def clear_display():
+            self._invalidate_heatmap_geometry()
+            bar = self.__dict__.get("bar")
+            hide = getattr(bar, "hide", None)
+            if callable(hide):
+                hide()
 
         try:
-            def clear_display():
-                self._invalidate_heatmap_geometry()
-                bar = self.__dict__.get("bar")
-                hide = getattr(bar, "hide", None)
-                if callable(hide):
-                    hide()
+            with self._render_publication(plot_worker, clear_display):
+                self._stage_heatmap_resolution(plot_worker.result)
+                if not self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    return
+                # Marker orientation must follow the newly published parameter
+                # axes before geometry restoration clamps their coordinates.
+                self.rotate_sweeps()
+                if not self._refresh_publication_source_is_current(
+                        plot_worker, clear_display=clear_display):
+                    return
+                self._update_large_heatmap_state(plot_worker.result)
+                self.refresh_secondary_heatmaps()
+                self.refresh_secondary_lines()
+                if not self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    return
+                if not self._has_plottable_heatmap_data():
+                    self._invalidate_heatmap_geometry()
+                    if not self._refresh_publication_source_is_current(
+                            plot_worker,
+                            clear_display=clear_display,
+                            ):
+                        return
+                    self._emit_heatmap_trace_updated()
+                    if not self._refresh_publication_source_is_current(
+                            plot_worker,
+                            clear_display=clear_display,
+                            ):
+                        return
+                    self.show_status(
+                        f"Waiting for plottable data for {self.param.name}...",
+                        5000,
+                        )
+                    self.show_plot_state(
+                        "Waiting for plottable data",
+                        f"{self.param.name} has no finite heatmap data yet.",
+                        kind="empty",
+                    )
+                    display_synchronized = self._mark_display_synchronized(
+                        plot_worker,
+                    )
+                    if (
+                        plot_worker.result.dataset_completed is True
+                        and not display_synchronized
+                    ):
+                        return
+                    if getattr(plot_worker, "_qplot_source_rejected", False):
+                        clear_display()
+                        return
+                    self._commit_refresh_publication(plot_worker, clear_display=clear_display)
+                    return
 
-            if not self._refresh_publication_source_is_current(
-                    plot_worker,
-                    clear_display=clear_display,
-                    ):
-                return
-            self._update_large_heatmap_state(plot_worker.result)
-            self.refresh_secondary_heatmaps()
-            self.refresh_secondary_lines()
-            if not self._refresh_publication_source_is_current(
-                    plot_worker,
-                    clear_display=clear_display,
-                    ):
-                return
-            if not self._has_plottable_heatmap_data():
-                self._invalidate_heatmap_geometry()
+                try:
+                    geometry = self._update_heatmap_geometry()
+                except (TypeError, ValueError) as error:
+                    self._invalidate_heatmap_geometry()
+                    self._emit_heatmap_trace_updated()
+                    if not self._refresh_publication_source_is_current(
+                            plot_worker,
+                            clear_display=clear_display,
+                            ):
+                        return
+                    self.show_status(f"Cannot display heatmap: {error}", 10_000)
+                    self.show_plot_state(
+                        "Invalid heatmap geometry",
+                        str(error),
+                        kind="error",
+                        )
+                    return
+
+                viewbox = self._primary_heatmap_viewbox()
+                if not heatmap_display_range_is_finite(geometry, (viewbox.width(), viewbox.height())):
+                    self._viewport_controller().cancel_pending()
+                    self._reject_heatmap_color_range(
+                        message=HEATMAP_DISPLAY_RANGE_MESSAGE,
+                        title="Unsupported heatmap coordinate range",
+                    )
+                    self._emit_heatmap_trace_updated()
+                    if self._refresh_publication_source_is_current(
+                            plot_worker, clear_display=clear_display):
+                        self._mark_display_synchronized(plot_worker)
+                    return
+
+                if float_display_loses_distinctions(self.dataGrid):
+                    self._reject_heatmap_color_range(
+                        message=DISPLAY_PRECISION_MESSAGE,
+                        title="Unsupported heatmap display precision",
+                    )
+                    self._emit_heatmap_trace_updated()
+                    if self._refresh_publication_source_is_current(
+                            plot_worker, clear_display=clear_display):
+                        self._mark_display_synchronized(plot_worker)
+                    return
+
+                autoLevels = self.relevel_refresh.isChecked() and self._colorbar_manual_levels is None
+                operation_apply_generation = int(
+                    getattr(plot_worker, "_qplot_operation_apply_generation", 0)
+                    )
+                operation_auto_levels = bool(
+                    operation_apply_generation
+                    > self.__dict__.get("_colorbar_operation_apply_generation", 0)
+                    and self._colorbar_manual_levels is None
+                    )
+                initial_primary_levels = bool(
+                    self.__dict__.get("_colorbar_pending_primary", False)
+                    and self._colorbar_manual_levels is None
+                    )
+                color_levels = self._colorbar_manual_levels
+                if color_levels is None:
+                    if not hasattr(self, "bar") or autoLevels or operation_auto_levels or initial_primary_levels:
+                        color_levels = self._data_colorbar_levels()
+                    else:
+                        color_levels = self.bar.levels()
+                if color_levels is not None and not np.isfinite(float(color_levels[1]) - float(color_levels[0])):
+                    self._reject_heatmap_color_range()
+                    self._emit_heatmap_trace_updated()
+                    if not self._refresh_publication_source_is_current(
+                            plot_worker,
+                            clear_display=clear_display,
+                            ):
+                        return
+                    # A color rejection is a concrete display of the loaded data.
+                    # A completed source must not keep replacing that error with
+                    # automatic reloads; live sources and explicit refreshes remain
+                    # retryable through the usual guarded publication state.
+                    self._mark_display_synchronized(plot_worker)
+                    return
+                self._heatmap_color_range_rejected = False
+                self._heatmap_publication_color_levels = color_levels
+                try:
+                    self._render_heatmap()
+                finally:
+                    self.__dict__.pop("_heatmap_publication_color_levels", None)
+                if not self._refresh_publication_source_is_current(
+                        plot_worker,
+                        clear_display=clear_display,
+                        ):
+                    return
+
+                # A trace dropped before this first image can already have put
+                # the shared axes into qPlot-managed Auto with empty image bounds.
+                self._refresh_trace_axis_auto_ranges()
+
+                # Produce color bar on first run
+                if not hasattr(self, "bar"):
+                    colorbar_items = self._heatmap_colorbar_items()
+                    self.bar = self.plot.addColorBar(
+                        colorbar_items,
+                        colorMap=self._colorbar_colormap(),
+                        rounding=self._data_colorbar_rounding(),
+                        width=self._configured_colorbar_width(),
+                        colorMapMenu=False,
+                        )
+                    self._heatmap_colorbar_item_ids = tuple(
+                        id(item) for item in colorbar_items
+                        )
+                    self._set_colorbar_tick_formatter()
+                    # The colour bar is created after the initial plot theme has
+                    # been applied, so style its axes immediately as well.
+                    self.config.theme.style_plotItem(self)
+                    self.apply_axis_major_tick_count_preference()
+                    if self._colorbar_manual_levels is None:
+                        self.scaleColorbar()
+                    else:
+                        minimum, maximum = self._colorbar_manual_levels
+                        self._set_colorbar_levels(minimum, maximum)
+
+                self.bar.show()
+
+                # The dependent-variable label may have changed when an operation
+                # such as differentiation was added or removed.
+                self._sync_colorbar_axis_scaling()
+                if autoLevels or operation_auto_levels or initial_primary_levels:
+                    self.__dict__["_colorbar_manual_levels"] = None
+                    self.scaleColorbar()
+                elif self._colorbar_manual_levels is not None:
+                    minimum, maximum = self._colorbar_manual_levels
+                    self._set_colorbar_levels(minimum, maximum)
+                self.__dict__.pop("_colorbar_pending_primary", None)
+            
+                self._restore_heatmap_interactions()
                 if not self._refresh_publication_source_is_current(
                         plot_worker,
                         clear_display=clear_display,
@@ -397,877 +615,116 @@ class plot2d(
                         clear_display=clear_display,
                         ):
                     return
-                self.show_status(
-                    f"Waiting for plottable data for {self.param.name}...",
-                    5000,
+                self.__dict__["_colorbar_operation_apply_generation"] = max(
+                    operation_apply_generation,
+                    self.__dict__.get("_colorbar_operation_apply_generation", 0),
                     )
-                self.show_plot_state(
-                    "Waiting for plottable data",
-                    f"{self.param.name} has no finite heatmap data yet.",
-                    kind="empty",
-                )
-                display_synchronized = self._mark_display_synchronized(
-                    plot_worker,
-                )
-                if (
-                    plot_worker.result.dataset_completed is True
-                    and not display_synchronized
-                ):
-                    return
+                self._mark_display_synchronized(plot_worker)
                 if getattr(plot_worker, "_qplot_source_rejected", False):
                     clear_display()
                     return
-                self._commit_refresh_publication(plot_worker)
-                return
-
-            try:
-                geometry = self._update_heatmap_geometry()
-            except (TypeError, ValueError) as error:
-                self._invalidate_heatmap_geometry()
-                self._emit_heatmap_trace_updated()
-                if not self._refresh_publication_source_is_current(
-                        plot_worker,
-                        clear_display=clear_display,
-                        ):
-                    return
-                self.show_status(f"Cannot display heatmap: {error}", 10_000)
-                self.show_plot_state(
-                    "Invalid heatmap geometry",
-                    str(error),
-                    kind="error",
-                    )
-                return
-
-            viewbox = self._primary_heatmap_viewbox()
-            if not heatmap_display_range_is_finite(geometry, (viewbox.width(), viewbox.height())):
-                self._heatmap_view_reload_timer.stop()
-                self._reject_heatmap_color_range(
-                    message=HEATMAP_DISPLAY_RANGE_MESSAGE,
-                    title="Unsupported heatmap coordinate range",
-                )
-                self._emit_heatmap_trace_updated()
-                if self._refresh_publication_source_is_current(
-                        plot_worker, clear_display=clear_display):
-                    self._mark_display_synchronized(plot_worker)
-                return
-
-            if float_display_loses_distinctions(self.dataGrid):
-                self._reject_heatmap_color_range(
-                    message=DISPLAY_PRECISION_MESSAGE,
-                    title="Unsupported heatmap display precision",
-                )
-                self._emit_heatmap_trace_updated()
-                if self._refresh_publication_source_is_current(
-                        plot_worker, clear_display=clear_display):
-                    self._mark_display_synchronized(plot_worker)
-                return
-
-            autoLevels = self.relevel_refresh.isChecked() and self._colorbar_manual_levels is None
-            operation_apply_generation = int(
-                getattr(plot_worker, "_qplot_operation_apply_generation", 0)
-                )
-            operation_auto_levels = bool(
-                operation_apply_generation
-                > self.__dict__.get("_colorbar_operation_apply_generation", 0)
-                and self._colorbar_manual_levels is None
-                )
-            initial_primary_levels = bool(
-                self.__dict__.get("_colorbar_pending_primary", False)
-                and self._colorbar_manual_levels is None
-                )
-            color_levels = self._colorbar_manual_levels
-            if color_levels is None:
-                if not hasattr(self, "bar") or autoLevels or operation_auto_levels or initial_primary_levels:
-                    color_levels = self._data_colorbar_levels()
-                else:
-                    color_levels = self.bar.levels()
-            if color_levels is not None and not np.isfinite(float(color_levels[1]) - float(color_levels[0])):
-                self._reject_heatmap_color_range()
-                self._emit_heatmap_trace_updated()
-                if not self._refresh_publication_source_is_current(
-                        plot_worker,
-                        clear_display=clear_display,
-                        ):
-                    return
-                # A color rejection is a concrete display of the loaded data.
-                # A completed source must not keep replacing that error with
-                # automatic reloads; live sources and explicit refreshes remain
-                # retryable through the usual guarded publication state.
-                self._mark_display_synchronized(plot_worker)
-                return
-            self._heatmap_color_range_rejected = False
-            self._heatmap_publication_color_levels = color_levels
-            try:
-                self._render_heatmap()
-            finally:
-                self.__dict__.pop("_heatmap_publication_color_levels", None)
-            if not self._refresh_publication_source_is_current(
-                    plot_worker,
-                    clear_display=clear_display,
-                    ):
-                return
-
-            # A trace dropped before this first image can already have put
-            # the shared axes into qPlot-managed Auto with empty image bounds.
-            self._refresh_trace_axis_auto_ranges()
-
-            # Produce color bar on first run
-            if not hasattr(self, "bar"):
-                colorbar_items = self._heatmap_colorbar_items()
-                self.bar = self.plot.addColorBar(
-                    colorbar_items,
-                    colorMap=self._colorbar_colormap(),
-                    rounding=self._data_colorbar_rounding(),
-                    width=self._configured_colorbar_width(),
-                    colorMapMenu=False,
-                    )
-                self._heatmap_colorbar_item_ids = tuple(
-                    id(item) for item in colorbar_items
-                    )
-                self._set_colorbar_tick_formatter()
-                # The colour bar is created after the initial plot theme has
-                # been applied, so style its axes immediately as well.
-                self.config.theme.style_plotItem(self)
-                self.apply_axis_major_tick_count_preference()
-                if self._colorbar_manual_levels is None:
-                    self.scaleColorbar()
-                else:
-                    minimum, maximum = self._colorbar_manual_levels
-                    self._set_colorbar_levels(minimum, maximum)
-
-            self.bar.show()
-
-            # The dependent-variable label may have changed when an operation
-            # such as differentiation was added or removed.
-            self._sync_colorbar_axis_scaling()
-            if autoLevels or operation_auto_levels or initial_primary_levels:
-                self.__dict__["_colorbar_manual_levels"] = None
-                self.scaleColorbar()
-            elif self._colorbar_manual_levels is not None:
-                minimum, maximum = self._colorbar_manual_levels
-                self._set_colorbar_levels(minimum, maximum)
-            self.__dict__.pop("_colorbar_pending_primary", None)
-            
-            self._restore_heatmap_interactions()
-            if not self._refresh_publication_source_is_current(
-                    plot_worker,
-                    clear_display=clear_display,
-                    ):
-                return
-            self._emit_heatmap_trace_updated()
-            if not self._refresh_publication_source_is_current(
-                    plot_worker,
-                    clear_display=clear_display,
-                    ):
-                return
-            self.__dict__["_colorbar_operation_apply_generation"] = max(
-                operation_apply_generation,
-                self.__dict__.get("_colorbar_operation_apply_generation", 0),
-                )
-            self._mark_display_synchronized(plot_worker)
-            if getattr(plot_worker, "_qplot_source_rejected", False):
-                clear_display()
-                return
-            self._commit_refresh_publication(plot_worker, preview_ready=True)
+                self._commit_refresh_publication(plot_worker, preview_ready=True, clear_display=clear_display)
         finally:
-            overlay = self.__dict__.get("plot_state_overlay")
-            if overlay is not None:
-                overlay.finish(plot_worker)
-            if self._refresh_publication_for(plot_worker) is not None:
-                if self._refresh_publication_source_is_current(
-                        plot_worker,
-                        clear_display=clear_display,
-                        ):
-                    self._commit_refresh_publication(plot_worker)
-            # Allow new workers after empty live loads or display errors.
-            plot_worker.running = False
-            self._ensure_refresh_monitor()
-            if full_sql_refresh and not self.__dict__.get("_heatmap_color_range_rejected", False):
+            viewport = self.__dict__.get("_heatmap_viewport_controller")
+            if viewport is not None:
+                viewport.finish(publication)
+            self._sync_heatmap_resolution_warning()
+            if (publication is not None and publication.outcome is PublicationOutcome.COMMITTED
+                    and self._qplot_publication_generation == publication.generation
+                    and (viewport is None or not viewport.pending)
+                    and full_sql_refresh and not self.__dict__.get("_heatmap_color_range_rejected", False)):
                 self._schedule_visible_heatmap_reload()
 
 
     def _update_large_heatmap_state(self, worker: Any) -> None:
-        self._update_heatmap_downsample_state(worker)
-        if not getattr(worker, "loaded_from_sql_heatmap", False):
-            self._large_heatmap_sql_mode = False
-            self._heatmap_full_axis_ranges = None
-            self._heatmap_full_view_ranges = None
-            self._heatmap_last_view_ranges = None
-            timer = self.__dict__.get("_heatmap_view_reload_timer")
-            if timer is not None:
-                timer.stop()
+        publication = self._refresh_publication
+        if publication is None:
             return
-
-        self._large_heatmap_sql_mode = True
-        worker_ranges = getattr(worker, "heatmap_axis_ranges", None)
-        if worker_ranges is None or self._heatmap_full_axis_ranges is None:
-            source_ranges = self._normalise_axis_ranges(
-                getattr(worker, "heatmap_source_axis_ranges", None)
-                )
-            self._heatmap_full_axis_ranges = (
-                source_ranges or self._axis_ranges_from_data()
-                )
-            self._heatmap_full_view_ranges = self._axis_view_ranges_from_data()
-
-        self._heatmap_last_view_ranges = self._normalise_axis_ranges(worker_ranges)
-
-
-    def _init_heatmap_downsample_warning_button(self) -> None:
-        parent = self._heatmap_downsample_button_parent()
-        self.__dict__["_heatmap_downsample_button_parent"] = parent
-        parent.installEventFilter(self)
-        self.heatmap_downsample_button = self._new_heatmap_downsample_button(parent)
-
-        self._update_heatmap_downsample_button()
+        controller = self._viewport_controller()
+        state = HeatmapViewportState()
+        if self._uses_heatmap_viewport and getattr(worker, "loaded_from_sql_heatmap", False):
+            displayed = AxisRanges.normalise(getattr(worker, "heatmap_axis_ranges", None))
+            accepted = controller.accepted
+            full, full_view = accepted.full, accepted.full_view
+            if displayed is None or full is None:
+                full = (AxisRanges.normalise(getattr(worker, "heatmap_source_axis_ranges", None))
+                        or AxisRanges.normalise(self._axis_ranges_from_data()))
+                full_view = AxisRanges.normalise(self._axis_view_ranges_from_data())
+            state = HeatmapViewportState(True, full, full_view, displayed)
+        controller.stage(publication, state)
 
 
-    def _heatmap_downsample_button_parent(self) -> qtw.QWidget:
-        viewport = self.widget.viewport() if hasattr(self.widget, "viewport") else None
-        if isinstance(viewport, qtw.QWidget):
-            return viewport
-        return self.widget
+    def _resolution_state(self) -> HeatmapResolutionState:
+        state = self.__dict__.get("_heatmap_resolution_state")
+        if state is None:
+            state = self.__dict__["_heatmap_resolution_state"] = HeatmapResolutionState()
+        return state
 
+    @property
+    def _heatmap_resolution_report(self) -> HeatmapResolutionReport | None:
+        state = self.__dict__.get("_heatmap_resolution_state")
+        return state.accepted if state is not None else None
 
-    def _new_heatmap_downsample_button(
-            self,
-            parent: qtw.QWidget,
-            ) -> qtw.QToolButton:
-        button = qtw.QToolButton(parent)
-        button.setObjectName("heatmapDownsampleWarningButton")
-        style = self.style()
-        if style is not None:
-            button.setIcon(
-                style.standardIcon(qtw.QStyle.StandardPixmap.SP_MessageBoxWarning)
-                )
-        button.setIconSize(QtCore.QSize(18, 18))
-        button.setAutoRaise(False)
-        button.setFixedSize(28, 28)
-        button.setText("")
-        button.setToolButtonStyle(
-            QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly
-            )
-        button.setToolTip("This heatmap is downsampled. Click for details.")
-        button.clicked.connect(
-            lambda _checked=False: self.show_heatmap_downsample_dialog()
-            )
-        return button
-
-
-    def _position_heatmap_downsample_button(self) -> None:
-        button = self.__dict__.get("heatmap_downsample_button")
-        parent = self.__dict__.get("_heatmap_downsample_button_parent")
-        if button is None or parent is None:
+    def _stage_heatmap_resolution(self, result: Any) -> None:
+        publication = self._refresh_publication
+        if publication is None:
             return
-
-        margin = 8
-        button.move(
-            max(margin, parent.width() - button.width() - margin),
-            max(margin, parent.height() - button.height() - margin),
-            )
-        button.raise_()
-
-
-    def eventFilter(self, source, event):
-        if (
-                any(source is control for control in self._plot_layout_controls())
-                and event.type() in {
-                    QtCore.QEvent.Type.Show,
-                    QtCore.QEvent.Type.Hide,
-                    }
-                ):
-            self._preserve_heatmap_view_range_after_control_layout()
-
-        if (
-                event.type() == QtCore.QEvent.Type.Resize
-                and source is self.__dict__.get("_heatmap_downsample_button_parent")
-                ):
-            self._position_heatmap_downsample_button()
-
-        return super().eventFilter(source, event)
-
-
-    def _update_heatmap_downsample_state(self, worker: Any) -> None:
-        self._heatmap_full_resolution = getattr(worker, "heatmap_full_resolution", False) is True
-        self._heatmap_worker_downsample_info = self._heatmap_downsample_info_from_worker(
-            worker
-            )
-        self._refresh_heatmap_downsample_info()
-
-
-    def _refresh_heatmap_downsample_info(self) -> None:
-        merged: dict[str, Any] = {}
-        worker_info = self.__dict__.get("_heatmap_worker_downsample_info")
-        if isinstance(worker_info, dict):
-            merged.update(worker_info)
-
-        self._heatmap_downsample_info = merged or None
-        self._update_heatmap_downsample_button()
-
-
-    def _heatmap_downsample_info_from_worker(
-            self,
-            worker: Any,
-            ) -> dict[str, Any] | None:
-        info = getattr(worker, "heatmap_downsample_info", None)
-        if isinstance(info, dict) and (
-                info.get("source_sampled")
-                or info.get("source_aggregated")
-                or info.get("grid_binned")
-                or info.get("empty_bins_filled")
-                ):
-            return dict(info)
-
-        if getattr(worker, "heatmap_full_resolution", False) is True:
-            return None
-
-        return self._fallback_heatmap_downsample_info(worker)
-
-
-    def _fallback_heatmap_downsample_info(
-            self,
-            worker: Any,
-            ) -> dict[str, Any] | None:
-        data_grid = getattr(worker, "dataGrid", None)
-        if data_grid is None:
-            data_grid = self.__dict__.get("dataGrid")
-        if data_grid is None:
-            return None
-        try:
-            grid_rows, grid_columns = data_grid.shape
-        except (AttributeError, ValueError):
-            return None
-
-        if grid_rows <= 0 or grid_columns <= 0:
-            return None
-
-        source_rows, source_columns = self._source_heatmap_grid_shape(worker)
-        source_cell_count = self._source_heatmap_cell_count(
-            source_rows,
-            source_columns,
-            worker,
-            )
-        if source_cell_count is None:
-            return None
-
-        limit = self._full_resolution_heatmap_limit(worker)
-        grid_cell_count = int(grid_rows * grid_columns)
-        grid_reduced = grid_cell_count < int(source_cell_count)
-        if (
-                source_rows is not None
-                and source_columns is not None
-                and (
-                    int(grid_rows) < int(source_rows)
-                    or int(grid_columns) < int(source_columns)
-                    )
-                ):
-            grid_reduced = True
-
-        if int(source_cell_count) <= limit or not grid_reduced:
-            return None
-
-        loaded_point_count = getattr(worker, "loaded_point_count", None)
-        source_aggregated = bool(
-            getattr(worker, "aggregated_heatmap_source", False)
-            )
-        source_sampled = bool(getattr(worker, "sampled_heatmap_source", False))
-        if loaded_point_count is not None and not source_aggregated:
-            try:
-                source_sampled = source_sampled or int(loaded_point_count) < int(
-                    source_cell_count
-                    )
-            except (TypeError, ValueError):
-                # Invalid point-count metadata cannot refine the existing conservative
-                # downsampling description.
-                pass
-
-        source_row_count = getattr(worker, "total_point_count_estimate", None)
-        if source_row_count is None:
-            source_row_count = source_cell_count
-        return {
-            "source_row_count": source_row_count,
-            "estimated_range_rows": getattr(
-                worker,
-                "_heatmap_estimated_range_rows",
-                None,
-                ),
-            "loaded_point_count": loaded_point_count,
-            "source_sampled": source_sampled,
-            "source_aggregated": source_aggregated,
-            "aggregated_source_row_count": getattr(
-                worker,
-                "_heatmap_aggregated_source_rows",
-                None,
-                ),
-            "source_sample_limit": (
-                loaded_point_count if source_sampled else None
-                ),
-            "source_sample_stride": getattr(
-                worker,
-                "_heatmap_source_sample_stride",
-                None,
-                ),
-            "source_sample_strategy": None,
-            "source_aggregation_strategy": (
-                "spatial mean" if source_aggregated else None
-                ),
-            "axis_ranges": getattr(worker, "heatmap_axis_ranges", None),
-            "unique_x_count": source_columns,
-            "unique_y_count": source_rows,
-            "exact_cell_count": source_cell_count,
-            "source_grid_columns": source_columns,
-            "source_grid_rows": source_rows,
-            "source_grid_cell_count": source_cell_count,
-            "grid_columns": int(grid_columns),
-            "grid_rows": int(grid_rows),
-            "grid_cell_count": grid_cell_count,
-            "grid_binned": True,
-            "grid_cell_limit": limit,
-            "full_resolution_point_limit": limit,
-            "empty_bins_filled": bool(source_sampled),
-            }
-
-
-    def _source_heatmap_grid_shape(
-            self,
-            worker: Any,
-            ) -> tuple[int | None, int | None]:
-        shape = getattr(worker, "heatmap_source_grid_shape", None)
-        if shape is None and hasattr(worker, "_heatmap_source_grid_shape_from_metadata"):
-            try:
-                shape = worker._heatmap_source_grid_shape_from_metadata()
-            except (AttributeError, TypeError, ValueError):
-                shape = None
-        if shape is None:
-            shape = self._source_heatmap_grid_shape_from_metadata()
-        if shape is None:
-            return None, None
-
-        try:
-            source_rows, source_columns = shape
-            source_rows = int(source_rows)
-            source_columns = int(source_columns)
-        except (TypeError, ValueError):
-            return None, None
-
-        if source_rows <= 0 or source_columns <= 0:
-            return None, None
-
-        return source_rows, source_columns
-
-
-    def _source_heatmap_grid_shape_from_metadata(self) -> tuple[int, int] | None:
+        state = self._resolution_state()
+        state.stage(publication, None)
+        info = getattr(result, "heatmap_downsample_info", None)
+        if isinstance(info, Mapping):
+            explicit_report = HeatmapResolutionReport.from_metadata(info)
+            if explicit_report.reduced:
+                state.stage(publication, explicit_report)
+                return
+        if getattr(result, "heatmap_full_resolution", False) is True:
+            return
         try:
             dataset = self.ds
         except (AttributeError, KeyError):
-            return None
-
+            dataset = None
         cache = getattr(dataset, "cache", None)
         shapes = getattr(getattr(cache, "rundescriber", None), "shapes", None)
-        if not isinstance(shapes, dict):
-            return None
+        param = getattr(self, "param", None)
+        source = source_grid_size(shapes, getattr(param, "name", ""),
+                                  getattr(param, "depends_on_", ()),
+                                  getattr(self, "axis_options", {}))
+        config = self.__dict__.get("config")
+        limit = getattr(result, "max_full_heatmap_points", None)
+        if limit is None and config is not None:
+            limit = config.get("runtime_settings.max_full_heatmap_points")
+        report = resolution_report(
+            result, source=source,
+            displayed=GridSize.from_shape(getattr(self.__dict__.get("dataGrid"), "shape", None)),
+            source_rows=getattr(dataset, "number_of_results", None),
+            full_resolution_limit=limit,
+        )
+        if self._refresh_publication is publication:
+            state.stage(publication, report)
 
-        shape = shapes.get(self.param.name)
-        if shape is None:
-            return None
+    def _init_heatmap_downsample_warning_button(self) -> None:
+        ui = HeatmapResolutionUi(self)
+        self.__dict__["_heatmap_resolution_ui"] = ui
+        self.heatmap_downsample_button = ui.button
+        self._sync_heatmap_resolution_warning()
 
-        try:
-            dimensions = [int(dimension) for dimension in shape]
-        except (TypeError, ValueError):
-            return None
-
-        depends_on = list(getattr(self.param, "depends_on_", ()))
-        if len(dimensions) != len(depends_on):
-            return None
-
-        axes = self.axis_options
-        try:
-            x_dimension = depends_on.index(axes["x"])
-            y_dimension = depends_on.index(axes["y"])
-        except (KeyError, ValueError):
-            return None
-
-        if (
-                x_dimension >= len(dimensions)
-                or y_dimension >= len(dimensions)
-                or dimensions[x_dimension] <= 0
-                or dimensions[y_dimension] <= 0
-                ):
-            return None
-
-        return dimensions[y_dimension], dimensions[x_dimension]
-
-
-    def _source_heatmap_cell_count(
-            self,
-            source_rows: int | None,
-            source_columns: int | None,
-            worker: Any,
-            ) -> int | None:
-        if source_rows is not None and source_columns is not None:
-            return int(source_rows * source_columns)
-
-        try:
-            dataset_count = getattr(self.ds, "number_of_results", None)
-        except (AttributeError, KeyError):
-            dataset_count = None
-
-        for value in (
-                getattr(worker, "total_point_count_estimate", None),
-                dataset_count,
-                ):
-            if value is None:
-                continue
-            try:
-                count = int(value)
-            except (TypeError, ValueError):
-                continue
-            if count > 0:
-                return count
-
-        return None
-
-
-    def _full_resolution_heatmap_limit(self, worker: Any) -> int:
-        try:
-            configured_limit = worker.max_full_heatmap_points
-        except AttributeError:
-            configured_limit = None
-        if configured_limit is None:
-            configured_limit = self.config.get(
-                "runtime_settings.max_full_heatmap_points"
-                )
-        return max(1, int(configured_limit))
-
-
-    def _update_heatmap_downsample_button(self) -> None:
-        visible = self.__dict__.get("_heatmap_downsample_info") is not None
-        button = self.__dict__.get("heatmap_downsample_button")
-        if button is None:
-            return
-
-        button.setVisible(visible)
-        if visible:
-            self._position_heatmap_downsample_button()
-
+    def _sync_heatmap_resolution_warning(self) -> None:
+        # Hidden overlay sources have no warning widget. Settle their report
+        # too, so completed publications release workers and rollback arrays.
+        report = self._heatmap_resolution_report
+        ui = self.__dict__.get("_heatmap_resolution_ui")
+        if ui is not None:
+            ui.sync(report)
 
     def show_heatmap_downsample_dialog(self) -> None:
-        if self._heatmap_downsample_info is None:
-            return
+        self._sync_heatmap_resolution_warning()
+        self.__dict__["_heatmap_resolution_ui"].show()
 
-        dialog = self._new_heatmap_downsample_dialog()
-        try:
-            dialog.exec()
-        finally:
-            dialog.deleteLater()
-
-
-    def _new_heatmap_downsample_dialog(self) -> qtw.QDialog:
-        """Create a titled warning dialog for a downsampled heatmap."""
-        dialog = qtw.QDialog(self)
-        dialog.setWindowTitle("Heatmap displayed at reduced resolution")
-        dialog.setModal(True)
-
-        layout = qtw.QVBoxLayout(dialog)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
-        content = qtw.QHBoxLayout()
-        content.setSpacing(12)
-        icon_label = qtw.QLabel(dialog)
-        style = dialog.style()
-        assert style is not None
-        icon = style.standardIcon(
-            qtw.QStyle.StandardPixmap.SP_MessageBoxWarning
-            )
-        icon_size = style.pixelMetric(qtw.QStyle.PixelMetric.PM_MessageBoxIconSize)
-        icon_label.setPixmap(icon.pixmap(icon_size, icon_size))
-        icon_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
-        content.addWidget(icon_label)
-
-        message_label = qtw.QLabel(self._heatmap_downsample_dialog_message(), dialog)
-        message_label.setObjectName("heatmapResolutionSummary")
-        message_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        message_label.setWordWrap(True)
-        message_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-        content.addWidget(message_label, 1)
-        layout.addLayout(content)
-
-        details_button = qtw.QToolButton(dialog)
-        details_button.setObjectName("heatmapResolutionDetailsButton")
-        details_button.setText("Details")
-        details_button.setCheckable(True)
-        details_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        details_button.setArrowType(QtCore.Qt.ArrowType.RightArrow)
-        layout.addWidget(details_button, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
-        details = qtw.QPlainTextEdit(self._heatmap_downsample_dialog_text(), dialog)
-        details.setObjectName("heatmapResolutionDetails")
-        details.setAccessibleName("Heatmap resolution details")
-        details.setReadOnly(True)
-        details.setFixedHeight(details.fontMetrics().lineSpacing() * 10)
-        details.hide()
-        layout.addWidget(details)
-
-        def toggle_details(expanded: bool) -> None:
-            details.setVisible(expanded)
-            details_button.setArrowType(
-                QtCore.Qt.ArrowType.DownArrow if expanded else QtCore.Qt.ArrowType.RightArrow
-                )
-            layout.activate()
-            dialog.resize(dialog.width(), dialog.sizeHint().height())
-
-        details_button.toggled.connect(toggle_details)
-
-        button_box = qtw.QDialogButtonBox(
-            qtw.QDialogButtonBox.StandardButton.Ok,
-            dialog,
-            )
-        preferences_button = qtw.QPushButton("Open Preferences…", dialog)
-        button_box.addButton(
-            preferences_button, qtw.QDialogButtonBox.ButtonRole.ActionRole
-            )
-        preferences_button.setObjectName("openHeatmapLimitPreferencesButton")
-        preferences_button.clicked.connect(
-            lambda: self._open_heatmap_limit_preferences(dialog)
-            )
-        button_box.accepted.connect(dialog.accept)
-        ok_button = button_box.button(qtw.QDialogButtonBox.StandardButton.Ok)
-        assert ok_button is not None
-        ok_button.setDefault(True)
-        layout.addWidget(button_box)
-        dialog.resize(520, dialog.sizeHint().height())
-        return dialog
-
-
-    def _open_heatmap_limit_preferences(self, dialog: qtw.QDialog) -> None:
-        """Close the alert, then open the preference that controls this limit."""
-        dialog.accept()
-        QtCore.QTimer.singleShot(
-            0,
-            lambda: self.show_preferences_dialog(initial_tab="Performance"),
-            )
-
-
-    def _heatmap_source_grid_description(self, info: dict[str, Any]) -> str:
-        if info.get("source_dimensions_limited"):
-            return (
-                "Exact source dimensions were not retained during downsampling "
-                "to keep memory use bounded."
-            )
-        columns, rows = info.get("source_grid_columns"), info.get("source_grid_rows")
-        if columns is None or rows is None:
-            return "Exact source grid dimensions are unavailable in the run metadata."
-        return (
-            f"The source heatmap grid is {self._format_heatmap_count(columns)} x "
-            f"{self._format_heatmap_count(rows)} = "
-            f"{self._format_heatmap_count(info.get('source_grid_cell_count'))} cells."
-        )
-
-    def _heatmap_downsample_dialog_message(self) -> str:
-        """Keep the initial explanation short and specific to the available metadata."""
-        info = self._heatmap_downsample_info or {}
-        lines = ["This heatmap is displayed at reduced resolution.", ""]
-        for label, prefix in (("Source", "source_grid_"), ("Displayed", "grid_")):
-            columns, rows = info.get(prefix + "columns"), info.get(prefix + "rows")
-            if columns is not None and rows is not None:
-                dimensions = (
-                    f"{self._format_heatmap_count(columns)} × "
-                    f"{self._format_heatmap_count(rows)} (columns × rows)"
-                    )
-            else:
-                dimensions = "Exact dimensions unavailable"
-            lines.append(f"{label} grid: {dimensions}")
-        lines.append("")
-        if info.get("source_sampled"):
-            lines.append("A subset of source rows was sampled before plotting.")
-            if info.get("grid_binned"):
-                lines.append("Sampled values were averaged into display cells.")
-        elif info.get("source_aggregated"):
-            lines.append(
-                "Source rows were combined using spatial means."
-                if "spatial mean" in str(info.get("source_aggregation_strategy", ""))
-                else "Source rows were aggregated before plotting."
-                )
-        elif info.get("grid_binned"):
-            lines.append("Loaded values were averaged into display cells.")
-        lines.extend(["", "Adjust heatmap limits in Preferences → Performance."])
-        return "\n".join(lines)
-
-
-    def _heatmap_downsample_dialog_text(self) -> str:
-        info = self._heatmap_downsample_info or {}
-        lines = ["This heatmap is displayed at reduced resolution."]
-
-        if (
-                not info.get("source_sampled")
-                and not info.get("source_aggregated")
-                and not info.get("grid_binned")
-                and not info.get("empty_bins_filled")
-                ):
-            return "\n".join(lines)
-
-        lines.append("")
-
-        axis_ranges = info.get("axis_ranges")
-        if isinstance(axis_ranges, dict):
-            x_range = self._format_heatmap_axis_range(axis_ranges.get("x"))
-            y_range = self._format_heatmap_axis_range(axis_ranges.get("y"))
-            if x_range and y_range:
-                lines.extend([
-                    "Visible range loaded:",
-                    f"X: {x_range}",
-                    f"Y: {y_range}",
-                    "",
-                    ])
-
-        grid_columns = self._format_heatmap_count(info.get("grid_columns"))
-        grid_rows = self._format_heatmap_count(info.get("grid_rows"))
-        grid_cells = self._format_heatmap_count(info.get("grid_cell_count"))
-        full_limit = self._format_heatmap_count(
-            info.get("full_resolution_point_limit")
-            )
-        if info.get("grid_binned"):
-            lines.extend([
-                "Full-resolution grid:",
-                self._heatmap_source_grid_description(info),
-                "The full-resolution heatmap limit is "
-                f"{full_limit} points.",
-                f"The plotted grid is {grid_columns} x {grid_rows} = "
-                f"{grid_cells} cells.",
-                "",
-                ])
-
-        lines.append("Source rows:")
-        loaded_count = info.get("loaded_point_count")
-        source_count = info.get("source_row_count")
-        aggregated_count = info.get("aggregated_source_row_count")
-        if (info.get("source_aggregated") and not info.get("source_sampled")
-                and aggregated_count is not None
-                and "spatial mean" in str(info.get("source_aggregation_strategy", ""))):
-            lines.append(
-                "Spatial averaging used "
-                f"{self._format_heatmap_count(aggregated_count)} matching "
-                "source rows."
-                )
-        elif info.get("source_aggregated"):
-            lines.append("Source rows were aggregated before plotting.")
-        elif loaded_count is not None and source_count is not None:
-            lines.append(
-                "Loaded "
-                f"{self._format_heatmap_count(loaded_count)} finite "
-                "source rows from "
-                f"{self._format_heatmap_count(source_count)} database rows."
-                )
-        elif loaded_count is not None:
-            lines.append(
-                "Loaded "
-                f"{self._format_heatmap_count(loaded_count)} finite source rows."
-                )
-        else:
-            lines.append("The number of loaded source rows is unknown.")
-        estimated_rows = info.get("estimated_range_rows")
-        if estimated_rows not in (None, info.get("source_row_count")):
-            lines.append(
-                "Estimated rows in the visible range: "
-                f"{self._format_heatmap_count(estimated_rows)}."
-                )
-        if info.get("source_sampled"):
-            sample_limit = self._format_heatmap_count(
-                info.get("source_sample_limit")
-                )
-            stride = info.get("source_sample_stride")
-            cap = (
-                f", capped at {sample_limit} rows."
-                if info.get("source_sample_limit") is not None else "."
-                )
-            if isinstance(stride, (int, float)) and stride > 1:
-                lines.append(
-                    "Database rows were stride-sampled before plotting "
-                    "(about every "
-                    f"{self._format_heatmap_ordinal(stride)} matching row)" + cap
-                    )
-            elif info.get("source_sample_strategy") == "uniform rowid sample":
-                lines.append(
-                    "Database rows were uniformly sampled before plotting" + cap
-                    )
-            else:
-                lines.append("Database rows were sampled before plotting" + cap)
-
-        lines.extend(["", "Display grid:"])
-        unique_x = self._format_heatmap_count(info.get("unique_x_count"))
-        unique_y = self._format_heatmap_count(info.get("unique_y_count"))
-        if info.get("grid_binned"):
-            if info.get("source_aggregated"):
-                grid_description = "Aggregated values were displayed on a "
-            else:
-                grid_description = "Loaded values were averaged into a "
-            lines.append(
-                grid_description +
-                f"{grid_columns} x {grid_rows} display grid."
-                )
-            if info.get("unique_x_count") is None or info.get("unique_y_count") is None:
-                lines.append(
-                    "Exact source-axis counts were not retained during downsampling."
-                    if info.get("source_dimensions_limited") else
-                    "Exact source-axis counts are unavailable."
-                )
-            else:
-                lines.append(
-                    "The source x/y positions would form up to "
-                    f"{unique_x} x {unique_y} cells."
-                    )
-        else:
-            lines.append(
-                "Loaded values were displayed on an exact "
-                f"{grid_columns} x {grid_rows} grid."
-                )
-
-        if info.get("empty_bins_filled"):
-            if info.get("source_sampled"):
-                lines.append(
-                    "Empty sampled display bins were filled by interpolation."
-                    )
-            else:
-                lines.append(
-                    "Empty display bins were filled by interpolation."
-                    )
-
-        return "\n".join(lines)
-
-
-    @staticmethod
-    def _format_heatmap_count(value: Any) -> str:
-        try:
-            return f"{int(value):,}"
-        except (TypeError, ValueError):
-            return "unknown"
-
-
-    @staticmethod
-    def _format_heatmap_ordinal(value: Any) -> str:
-        try:
-            number = int(value)
-        except (TypeError, ValueError):
-            return "unknown"
-
-        suffix = "th"
-        if number % 100 not in (11, 12, 13):
-            suffix = {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
-
-        return f"{number:,}{suffix}"
-
-
-    @staticmethod
-    def _format_heatmap_axis_range(value: Any) -> str | None:
-        try:
-            low, high = value
-            low = float(low)
-            high = float(high)
-        except (TypeError, ValueError):
-            return None
-
-        if not np.isfinite(low) or not np.isfinite(high):
-            return None
-
-        return f"{low:.6g} to {high:.6g}"
+    def eventFilter(self, source, event):
+        if (any(source is control for control in self._plot_layout_controls())
+                and event.type() in {QtCore.QEvent.Type.Show, QtCore.QEvent.Type.Hide}):
+            self._preserve_heatmap_view_range_after_control_layout()
+        return super().eventFilter(source, event)
 
 
     def _axis_ranges_from_data(self) -> dict[str, tuple[float, float]] | None:
@@ -1315,7 +772,7 @@ class plot2d(
             self._sync_secondary_heatmap_view_ranges()
             return
 
-        self._heatmap_view_reload_timer.stop()
+        self._viewport_controller().cancel_pending()
         view_ranges = self._heatmap_full_view_ranges or full_axis_ranges
         self._primary_heatmap_viewbox().setRange(
             xRange=view_ranges["x"],
@@ -1328,57 +785,18 @@ class plot2d(
 
 
     def _reload_full_heatmap_data(self) -> bool:
-        full_axis_ranges = self._heatmap_full_axis_ranges
-        if full_axis_ranges is None or self._heatmap_last_view_ranges is None:
-            return False
-        if getattr(getattr(self, "worker", None), "running", False):
-            self._heatmap_view_reload_timer.start(
-                _HEATMAP_VIEW_RELOAD_DEBOUNCE_MS
-                )
-            return False
-
-        return self.load_data(
-            force_sql_heatmap=True,
-            heatmap_axis_ranges=None,
-            heatmap_full_axis_ranges=full_axis_ranges,
-            status_message=f"Loading full heatmap for {self.param.name}...",
-            )
+        return self._viewport_controller().reload(full=True)
 
 
     def _schedule_visible_heatmap_reload(self, *_args: Any) -> None:
         if not self.__dict__.get("_heatmap_layer_view_sync_active", False):
             self._sync_secondary_heatmap_view_ranges()
-
-        if not self._large_heatmap_sql_mode:
-            return
-
-        if not self._has_plottable_heatmap_data():
-            return
-
-        self._heatmap_view_reload_timer.start(_HEATMAP_VIEW_RELOAD_DEBOUNCE_MS)
+        if self._large_heatmap_sql_mode and self._has_plottable_heatmap_data():
+            self._viewport_controller().schedule_visible()
 
 
     def _reload_visible_heatmap_data(self) -> None:
-        if not self._large_heatmap_sql_mode:
-            return
-
-        if getattr(getattr(self, "worker", None), "running", False):
-            self._heatmap_view_reload_timer.start(_HEATMAP_VIEW_RELOAD_DEBOUNCE_MS)
-            return
-
-        ranges = self._visible_heatmap_axis_ranges()
-        if ranges is None:
-            self._reload_full_heatmap_data()
-            return
-        if self._axis_ranges_match(ranges, self._heatmap_last_view_ranges):
-            return
-
-        self.load_data(
-            force_sql_heatmap=True,
-            heatmap_axis_ranges=ranges,
-            heatmap_full_axis_ranges=self._heatmap_full_axis_ranges,
-            status_message=f"Loading visible data for {self.param.name}...",
-            )
+        self._viewport_controller().reload()
 
 
     def _visible_heatmap_axis_ranges(self) -> dict[str, tuple[float, float]] | None:
@@ -1397,91 +815,10 @@ class plot2d(
         except Exception:
             return None
 
-        ranges = self._normalise_axis_ranges({
-            "x": tuple(view_x),
-            "y": tuple(view_y),
-            })
-        if ranges is None:
-            return None
-
-        clamped = {}
-        is_zoomed = False
-        for axis in ("x", "y"):
-            full_low, full_high = full_ranges[axis]
-            low, high = ranges[axis]
-            full_width = full_high - full_low
-            if full_width <= 0:
-                return None
-
-            low = max(full_low, min(full_high, low))
-            high = max(full_low, min(full_high, high))
-            if high <= low:
-                return None
-
-            if (high - low) < full_width * _HEATMAP_VIEW_RELOAD_MIN_FRACTION:
-                is_zoomed = True
-
-            clamped[axis] = (low, high)
-
-        return clamped if is_zoomed else None
-
-
-    def _normalise_axis_ranges(
-            self,
-            ranges: dict[str, tuple[float, float]] | None,
-            ) -> dict[str, tuple[float, float]] | None:
-        if ranges is None:
-            return None
-
-        normalised = {}
-        for axis in ("x", "y"):
-            axis_range = ranges.get(axis)
-            if axis_range is None:
-                return None
-
-            try:
-                low, high = sorted(float(value) for value in axis_range)
-            except (TypeError, ValueError):
-                return None
-
-            if not (np.isfinite(low) and np.isfinite(high)) or low == high:
-                return None
-
-            normalised[axis] = (low, high)
-
-        return normalised
-
-
-    def _axis_ranges_match(
-            self,
-            left: dict[str, tuple[float, float]],
-            right: dict[str, tuple[float, float]] | None,
-            ) -> bool:
-        if right is None:
-            return False
-
-        for axis in ("x", "y"):
-            left_low, left_high = left[axis]
-            right_low, right_high = right[axis]
-            width = max(abs(left_high - left_low), abs(right_high - right_low))
-            coordinate_scale = max(
-                abs(left_low),
-                abs(left_high),
-                abs(right_low),
-                abs(right_high),
-                1.0,
-                )
-            tolerance = max(
-                width * 0.01,
-                np.finfo(float).eps * coordinate_scale * 16,
-                )
-            if (
-                    abs(left_low - right_low) > tolerance
-                    or abs(left_high - right_high) > tolerance
-                    ):
-                return False
-
-        return True
+        ranges = AxisRanges.normalise({"x": tuple(view_x), "y": tuple(view_y)})
+        full = AxisRanges.normalise(full_ranges)
+        visible = ranges.visible_within(full) if ranges is not None and full is not None else None
+        return visible.as_dict() if visible is not None else None
 
 
     def _has_plottable_heatmap_data(self) -> bool:

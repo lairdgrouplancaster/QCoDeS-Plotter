@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from PyQt6 import QtCore
+from PyQt6 import QtCore, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter
 
@@ -720,7 +720,7 @@ def test_removing_source_promotes_bottom_remaining_dataset(
     _commit_removal(dialog)
     assert errors == []
     replacement = next(win for win in window.windows if win.visible)
-    _wait_for(lambda: not replacement.worker.running and not replacement.__dict__.get("_refresh_pending", False))
+    _wait_for(lambda: not replacement.worker.running and not getattr(replacement, "_refresh_pending", False))
     assert replacement is not target
     assert replacement.windowTitle() == original_title
     assert replacement._dataset_key == sources[bottom_name]._dataset_key
@@ -743,7 +743,7 @@ def test_removing_source_promotes_bottom_remaining_dataset(
             )
     assert _data_identities(replacement) == expected_order
     assert window.dataset_holder[original_key].users == 0
-    assert not target.monitor.isActive()
+    assert sip.isdeleted(target.monitor) or not target.monitor.isActive()
     assert target not in window.windows
     assert all(item not in replacement.plot.items for item in original_items)
     _assert_scene_data_order(replacement)
@@ -855,7 +855,7 @@ def test_source_promotion_cancels_pending_old_refresh(mixed_plot, monkeypatch):
     _commit_removal(dialog)
     assert errors == []
     replacement = next(win for win in window.windows if win.visible)
-    _wait_for(lambda: not replacement.worker.running and not replacement.__dict__.get("_refresh_pending", False))
+    _wait_for(lambda: not replacement.worker.running and not getattr(replacement, "_refresh_pending", False))
     assert old_worker.is_cancelled()
     assert window.dataset_holder[original_key].users == 0
     assert replacement._trace_key == source._trace_key

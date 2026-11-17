@@ -55,7 +55,7 @@ def test_primary_removal_skips_cut_but_preserves_order_and_updates(mixed_plot, m
     original_key = target._dataset_key
     replacement = target.remove_plot_items([("heatmap", target._primary_heatmap_key)])
     assert replacement is not target
-    _wait_for(lambda: not replacement.worker.running and not replacement.__dict__.get("_refresh_pending", False))
+    _wait_for(lambda: not replacement.worker.running and not getattr(replacement, "_refresh_pending", False))
     assert replacement._trace_key == survivor._trace_key
     assert mixed_helpers._data_identities(replacement) == expected
     assert cut._merged_trace_users == 1
