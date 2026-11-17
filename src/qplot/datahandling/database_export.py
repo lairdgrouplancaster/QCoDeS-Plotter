@@ -44,7 +44,8 @@ def _retain_selected_runs(output, run_ids, progress):
                 if name in retained or name in {"runs", "experiments", "layouts", "dependencies"}:
                     raise ValueError("Unexpected shared result table in the database.")
                 if name:
-                    target.execute('DROP TABLE "' + name.replace('"', '""') + '"')
+                    # Externally stored runs name a table that is absent from the catalogue.
+                    target.execute('DROP TABLE IF EXISTS main."' + name.replace('"', '""') + '"')
                 progress(0, 0)
             target.execute("DELETE FROM dependencies WHERE dependent IN "
                            "(SELECT layout_id FROM layouts WHERE run_id NOT IN selected_runs) "
@@ -57,6 +58,25 @@ def _retain_selected_runs(output, run_ids, progress):
         target.execute("VACUUM")
         if target.execute("PRAGMA foreign_key_check").fetchone():
             raise RuntimeError("The selected-run database has inconsistent references.")
+
+
+def _require_embedded_results(connection):
+    # QCoDeS also records an export path for an optional NetCDF copy of an
+    # embedded run. Check the retained runs' actual storage in this backup.
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(runs)")}
+    external = "result.name IS NULL"
+    if "raw_data_db_path" in columns:
+        external += " OR runs.raw_data_db_path IS NOT NULL"
+    run = connection.execute(
+        "SELECT runs.run_id FROM runs LEFT JOIN main.sqlite_schema AS result "
+        "ON result.type = 'table' AND result.name = runs.result_table_name "
+        f"WHERE {external} LIMIT 1"
+    ).fetchone()
+    if run is not None:
+        raise RuntimeError(
+            f"Run {run[0]} stores measurement data in separate files "
+            "and cannot be exported as a standalone database."
+        )
 
 
 def _backup_child(channel, instance, live, output, deadline, run_ids=None):
@@ -117,15 +137,7 @@ def _backup_child(channel, instance, live, output, deadline, run_ids=None):
         with closing(sqlite3.connect(
             Path(output).as_uri() + "?mode=ro&immutable=1", uri=True,
         )) as check:
-            check.execute("SELECT run_id FROM runs LIMIT 1").fetchall()
-            columns = {row[1] for row in check.execute("PRAGMA table_info(runs)")}
-            if "raw_data_db_path" in columns and check.execute(
-                "SELECT 1 FROM runs WHERE raw_data_db_path IS NOT NULL LIMIT 1"
-            ).fetchone():
-                raise RuntimeError(
-                    "This database stores measurement data in separate files; "
-                    "it cannot be exported as a standalone database."
-                )
+            _require_embedded_results(check)
             if check.execute("PRAGMA quick_check").fetchone() != ("ok",):
                 raise RuntimeError("The exported database failed its integrity check.")
         channel.send(("done",))
