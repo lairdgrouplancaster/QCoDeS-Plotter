@@ -110,7 +110,7 @@ A local Windows run cannot substitute for those platform results.
 
 ## Static analysis
 
-The explicit mypy targets in `pyproject.toml` cover 177 of the 212 application
+The explicit mypy targets in `pyproject.toml` cover 180 of the 215 application
 modules. The other 35 have individual reasons in `[tool.qplot.typing.deferred]`.
 `follow_imports = "silent"` allows mypy to use imported types while suppressing
 diagnostics from modules outside the explicit targets; this is partial coverage,
@@ -211,6 +211,24 @@ add settings migrations to satisfy old settings tests: incompatible settings
 may reset to validated current defaults. Keep safe persistence and backup
 checks. Unsupported or malformed database rejection tests protect the read
 boundary and are not a promise to support old QCoDeS schemas.
+
+## Preview and plot lifetimes
+
+`widgets/test_preview_controller.py` covers startup faults, reentrant source
+changes, synchronous and duplicate completion, cancelled generations and queued
+timers. `test_preview_startup.py` checks the real Qt adapter, widget destruction
+and a real worker retry with exact source-file observations. Existing priority,
+selection, cache and database-replacement tests remain in use.
+
+`windows/test_plot_lifetime.py` checks native widget retirement after close,
+retained source ownership and closure during an active publication. These tests
+do not forcibly delete the plot under examination. Test teardown still retires
+the whole main window after asserting the behaviour.
+
+The [workflow performance assessment](performance-assessment.md) describes the
+opt-in measurements. Profiling CLI tests validate real line/heatmap rendering,
+refresh completion, report creation, source preservation and shutdown without
+asserting machine-dependent elapsed-time or memory thresholds.
 
 ## Simplifying coverage
 

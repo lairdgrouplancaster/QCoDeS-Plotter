@@ -16,6 +16,7 @@ nav:
   - Development:
       - Architecture: architecture.md
       - Testing: testing.md
+      - Performance measurements: performance-assessment.md
       - Trusted live reader: trusted-live-reader.md
       - Distribution and releases: distribution.md
       - Documentation releases: documentation-releases.md

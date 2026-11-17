@@ -1,0 +1,886 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.14.8",
+    "qt_platform": "offscreen",
+    "application_sha256": "6f86574e93674b126900e8787a1f6e3b252d6b8def0ed2affd35732df7dab8ff",
+    "packages": {
+      "qcodes": "0.63.0",
+      "numpy": "2.5.4",
+      "PyQt6": "6.12.0",
+      "pyqtgraph": "0.14.0",
+      "qplotter-native": "1.0.1",
+      "psutil": "7.2.2"
+    }
+  },
+  "database_bytes": 80547840,
+  "database_open_ms": 510.4849000053946,
+  "run_id": 1,
+  "preceding_run": null,
+  "refreshes": 2,
+  "selection_rounds": 2,
+  "settle_ms": 250,
+  "aggregate_rows": 262144,
+  "large_summary_rows": 262144,
+  "results": [
+    {
+      "iteration": 1,
+      "display_ms": 975.902899983339,
+      "refresh_ms": [
+        157.456800021464,
+        182.67890001880005
+      ],
+      "paint_ms": [
+        951.6366999887396
+      ],
+      "grids": [],
+      "line_samples": [
+        20000
+      ],
+      "capture": [
+        {
+          "run_id": 1,
+          "capture_ms": 695.517700019991,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 8.758300013141707,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 8.644700021250173,
+          "rows": 20000,
+          "private_bytes": 520192
+        }
+      ],
+      "broker_queries": [
+        {
+          "run_id": 1,
+          "phase": "other",
+          "calls": 7,
+          "seconds": 0.5821858000126667,
+          "max_seconds": 0.23113020000164397
+        }
+      ],
+      "preceding_run_pending": false,
+      "preceding_capture_steps": [
+        0,
+        0
+      ],
+      "memory_after_close": {
+        "rss_bytes": 167018496,
+        "children": [
+          {
+            "pid": 14580,
+            "rss_bytes": 41431040
+          }
+        ],
+        "threads": 46,
+        "handles_or_fds": 626
+      },
+      "retained_plot_objects": 0,
+      "active_plot_workers": 0,
+      "active_preview_workers": 0,
+      "event_loop_delay": {
+        "count": 123,
+        "median_ms": 0.6716000009328127,
+        "p95_ms": 34.02930001378991,
+        "max_ms": 125.10959999985062
+      }
+    },
+    {
+      "iteration": 2,
+      "display_ms": 493.6264999851119,
+      "refresh_ms": [
+        267.1346999995876,
+        185.80090001341887
+      ],
+      "paint_ms": [
+        472.36590000102296
+      ],
+      "grids": [],
+      "line_samples": [
+        20000
+      ],
+      "capture": [
+        {
+          "run_id": 1,
+          "capture_ms": 14.984700013883412,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 13.380700023844838,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 9.389600018039346,
+          "rows": 20000,
+          "private_bytes": 520192
+        }
+      ],
+      "broker_queries": [
+        {
+          "run_id": 1,
+          "phase": "other",
+          "calls": 3,
+          "seconds": 0.037697100022342056,
+          "max_seconds": 0.014968400006182492
+        }
+      ],
+      "preceding_run_pending": false,
+      "preceding_capture_steps": [
+        0,
+        0
+      ],
+      "memory_after_close": {
+        "rss_bytes": 168128512,
+        "children": [
+          {
+            "pid": 14580,
+            "rss_bytes": 40869888
+          }
+        ],
+        "threads": 46,
+        "handles_or_fds": 746
+      },
+      "retained_plot_objects": 0,
+      "active_plot_workers": 0,
+      "active_preview_workers": 0,
+      "event_loop_delay": {
+        "count": 88,
+        "median_ms": 0.9599999996135011,
+        "p95_ms": 79.99530001892708,
+        "max_ms": 173.85699999635108
+      }
+    },
+    {
+      "iteration": 3,
+      "display_ms": 476.93219999200664,
+      "refresh_ms": [
+        144.28229999612086,
+        302.38229999667965
+      ],
+      "paint_ms": [
+        453.58200001646765
+      ],
+      "grids": [],
+      "line_samples": [
+        20000
+      ],
+      "capture": [
+        {
+          "run_id": 1,
+          "capture_ms": 10.018100001616403,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 10.070900025311857,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 10.11040000594221,
+          "rows": 20000,
+          "private_bytes": 520192
+        }
+      ],
+      "broker_queries": [
+        {
+          "run_id": 1,
+          "phase": "other",
+          "calls": 3,
+          "seconds": 0.03014179997262545,
+          "max_seconds": 0.010090900002978742
+        }
+      ],
+      "preceding_run_pending": false,
+      "preceding_capture_steps": [
+        0,
+        0
+      ],
+      "memory_after_close": {
+        "rss_bytes": 169336832,
+        "children": [
+          {
+            "pid": 14580,
+            "rss_bytes": 43823104
+          }
+        ],
+        "threads": 46,
+        "handles_or_fds": 868
+      },
+      "retained_plot_objects": 0,
+      "active_plot_workers": 0,
+      "active_preview_workers": 0,
+      "event_loop_delay": {
+        "count": 92,
+        "median_ms": 1.0039999999571592,
+        "p95_ms": 80.63960000639781,
+        "max_ms": 163.6858000222128
+      }
+    },
+    {
+      "iteration": 4,
+      "display_ms": 740.4001999821048,
+      "refresh_ms": [
+        107.32469998765737,
+        67.8957000200171
+      ],
+      "paint_ms": [
+        559.6201999869663
+      ],
+      "grids": [],
+      "line_samples": [
+        20000
+      ],
+      "capture": [
+        {
+          "run_id": 1,
+          "capture_ms": 8.894300000974908,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 13.363799982471392,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 8.78439997904934,
+          "rows": 20000,
+          "private_bytes": 520192
+        }
+      ],
+      "broker_queries": [
+        {
+          "run_id": 1,
+          "phase": "other",
+          "calls": 3,
+          "seconds": 0.030964799982029945,
+          "max_seconds": 0.013328100001672283
+        }
+      ],
+      "preceding_run_pending": false,
+      "preceding_capture_steps": [
+        0,
+        0
+      ],
+      "memory_after_close": {
+        "rss_bytes": 172544000,
+        "children": [
+          {
+            "pid": 14580,
+            "rss_bytes": 44056576
+          }
+        ],
+        "threads": 46,
+        "handles_or_fds": 995
+      },
+      "retained_plot_objects": 0,
+      "active_plot_workers": 0,
+      "active_preview_workers": 0,
+      "event_loop_delay": {
+        "count": 90,
+        "median_ms": 1.1967999982880428,
+        "p95_ms": 84.68739997828379,
+        "max_ms": 163.2250000059139
+      }
+    },
+    {
+      "iteration": 5,
+      "display_ms": 461.35769999818876,
+      "refresh_ms": [
+        300.71959999622777,
+        86.52469998924062
+      ],
+      "paint_ms": [
+        439.33670001570135
+      ],
+      "grids": [],
+      "line_samples": [
+        20000
+      ],
+      "capture": [
+        {
+          "run_id": 1,
+          "capture_ms": 18.600999988848343,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 9.672699990915135,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 18.049600010272115,
+          "rows": 20000,
+          "private_bytes": 520192
+        }
+      ],
+      "broker_queries": [
+        {
+          "run_id": 1,
+          "phase": "other",
+          "calls": 3,
+          "seconds": 0.046260900038760155,
+          "max_seconds": 0.018583199998829514
+        }
+      ],
+      "preceding_run_pending": false,
+      "preceding_capture_steps": [
+        0,
+        0
+      ],
+      "memory_after_close": {
+        "rss_bytes": 172171264,
+        "children": [
+          {
+            "pid": 14580,
+            "rss_bytes": 44412928
+          }
+        ],
+        "threads": 46,
+        "handles_or_fds": 1129
+      },
+      "retained_plot_objects": 0,
+      "active_plot_workers": 0,
+      "active_preview_workers": 0,
+      "event_loop_delay": {
+        "count": 83,
+        "median_ms": 1.4093000011052936,
+        "p95_ms": 88.67259999737144,
+        "max_ms": 169.4911999895703
+      }
+    },
+    {
+      "iteration": 6,
+      "display_ms": 490.20470000687055,
+      "refresh_ms": [
+        415.5517000181135,
+        174.41219999454916
+      ],
+      "paint_ms": [
+        465.68649998516776
+      ],
+      "grids": [],
+      "line_samples": [
+        20000
+      ],
+      "capture": [
+        {
+          "run_id": 1,
+          "capture_ms": 9.229500021319836,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 12.885000003734604,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 9.219300001859665,
+          "rows": 20000,
+          "private_bytes": 520192
+        }
+      ],
+      "broker_queries": [
+        {
+          "run_id": 1,
+          "phase": "other",
+          "calls": 3,
+          "seconds": 0.03127690003020689,
+          "max_seconds": 0.012865800003055483
+        }
+      ],
+      "preceding_run_pending": false,
+      "preceding_capture_steps": [
+        0,
+        0
+      ],
+      "memory_after_close": {
+        "rss_bytes": 172965888,
+        "children": [
+          {
+            "pid": 14580,
+            "rss_bytes": 44908544
+          }
+        ],
+        "threads": 46,
+        "handles_or_fds": 1266
+      },
+      "retained_plot_objects": 0,
+      "active_plot_workers": 0,
+      "active_preview_workers": 0,
+      "event_loop_delay": {
+        "count": 100,
+        "median_ms": 1.0078500001691282,
+        "p95_ms": 88.20829998352565,
+        "max_ms": 162.9524000256788
+      }
+    },
+    {
+      "iteration": 7,
+      "display_ms": 721.358600014355,
+      "refresh_ms": [
+        109.9058999971021,
+        154.38319998793304
+      ],
+      "paint_ms": [
+        539.8753999907058
+      ],
+      "grids": [],
+      "line_samples": [
+        20000
+      ],
+      "capture": [
+        {
+          "run_id": 1,
+          "capture_ms": 8.24220001231879,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 13.034000003244728,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 7.912500004749745,
+          "rows": 20000,
+          "private_bytes": 520192
+        }
+      ],
+      "broker_queries": [
+        {
+          "run_id": 1,
+          "phase": "other",
+          "calls": 3,
+          "seconds": 0.029127999994670972,
+          "max_seconds": 0.013012699986575171
+        }
+      ],
+      "preceding_run_pending": false,
+      "preceding_capture_steps": [
+        0,
+        0
+      ],
+      "memory_after_close": {
+        "rss_bytes": 173662208,
+        "children": [
+          {
+            "pid": 14580,
+            "rss_bytes": 44650496
+          }
+        ],
+        "threads": 46,
+        "handles_or_fds": 1392
+      },
+      "retained_plot_objects": 0,
+      "active_plot_workers": 0,
+      "active_preview_workers": 0,
+      "event_loop_delay": {
+        "count": 92,
+        "median_ms": 1.0279999789781868,
+        "p95_ms": 89.2190999968443,
+        "max_ms": 199.2891000211239
+      }
+    },
+    {
+      "iteration": 8,
+      "display_ms": 482.7015999762807,
+      "refresh_ms": [
+        171.90270000719465,
+        351.2001999770291
+      ],
+      "paint_ms": [
+        460.9385999792721
+      ],
+      "grids": [],
+      "line_samples": [
+        20000
+      ],
+      "capture": [
+        {
+          "run_id": 1,
+          "capture_ms": 9.691500017652288,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 8.862099988618866,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 12.549600010970607,
+          "rows": 20000,
+          "private_bytes": 520192
+        }
+      ],
+      "broker_queries": [
+        {
+          "run_id": 1,
+          "phase": "other",
+          "calls": 3,
+          "seconds": 0.031042900023749098,
+          "max_seconds": 0.012529600004199892
+        }
+      ],
+      "preceding_run_pending": false,
+      "preceding_capture_steps": [
+        0,
+        0
+      ],
+      "memory_after_close": {
+        "rss_bytes": 173797376,
+        "children": [
+          {
+            "pid": 14580,
+            "rss_bytes": 44986368
+          }
+        ],
+        "threads": 46,
+        "handles_or_fds": 1537
+      },
+      "retained_plot_objects": 0,
+      "active_plot_workers": 0,
+      "active_preview_workers": 0,
+      "event_loop_delay": {
+        "count": 97,
+        "median_ms": 1.0117000003810972,
+        "p95_ms": 89.121200008085,
+        "max_ms": 168.4635999938473
+      }
+    },
+    {
+      "iteration": 9,
+      "display_ms": 488.09820000315085,
+      "refresh_ms": [
+        319.99839999480173,
+        76.06110000051558
+      ],
+      "paint_ms": [
+        465.8536000060849
+      ],
+      "grids": [],
+      "line_samples": [
+        20000
+      ],
+      "capture": [
+        {
+          "run_id": 1,
+          "capture_ms": 10.122200008481741,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 13.00099998479709,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 8.970399998361245,
+          "rows": 20000,
+          "private_bytes": 520192
+        }
+      ],
+      "broker_queries": [
+        {
+          "run_id": 1,
+          "phase": "other",
+          "calls": 3,
+          "seconds": 0.03202900002361275,
+          "max_seconds": 0.012979599996469915
+        }
+      ],
+      "preceding_run_pending": false,
+      "preceding_capture_steps": [
+        0,
+        0
+      ],
+      "memory_after_close": {
+        "rss_bytes": 174714880,
+        "children": [
+          {
+            "pid": 14580,
+            "rss_bytes": 45518848
+          }
+        ],
+        "threads": 47,
+        "handles_or_fds": 1652
+      },
+      "retained_plot_objects": 0,
+      "active_plot_workers": 0,
+      "active_preview_workers": 0,
+      "event_loop_delay": {
+        "count": 86,
+        "median_ms": 1.4957999903708696,
+        "p95_ms": 92.677400020184,
+        "max_ms": 165.3387999779079
+      }
+    },
+    {
+      "iteration": 10,
+      "display_ms": 488.3735000039451,
+      "refresh_ms": [
+        416.9086000183597,
+        176.9817000022158
+      ],
+      "paint_ms": [
+        462.84409999498166
+      ],
+      "grids": [],
+      "line_samples": [
+        20000
+      ],
+      "capture": [
+        {
+          "run_id": 1,
+          "capture_ms": 8.778799994615838,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 11.554099997738376,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 7.951599982334301,
+          "rows": 20000,
+          "private_bytes": 520192
+        }
+      ],
+      "broker_queries": [
+        {
+          "run_id": 1,
+          "phase": "other",
+          "calls": 3,
+          "seconds": 0.02822769997874275,
+          "max_seconds": 0.011534799996297807
+        }
+      ],
+      "preceding_run_pending": false,
+      "preceding_capture_steps": [
+        0,
+        0
+      ],
+      "memory_after_close": {
+        "rss_bytes": 172863488,
+        "children": [
+          {
+            "pid": 14580,
+            "rss_bytes": 45854720
+          }
+        ],
+        "threads": 46,
+        "handles_or_fds": 597
+      },
+      "retained_plot_objects": 0,
+      "active_plot_workers": 0,
+      "active_preview_workers": 0,
+      "event_loop_delay": {
+        "count": 100,
+        "median_ms": 1.0335000063059852,
+        "p95_ms": 99.4456999853719,
+        "max_ms": 168.44809999223799
+      }
+    },
+    {
+      "iteration": 11,
+      "display_ms": 709.9341000139248,
+      "refresh_ms": [
+        233.43480000039563,
+        359.43219999899156
+      ],
+      "paint_ms": [
+        677.4590999993961
+      ],
+      "grids": [],
+      "line_samples": [
+        20000
+      ],
+      "capture": [
+        {
+          "run_id": 1,
+          "capture_ms": 13.526599999750033,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 8.33260000217706,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 17.786199983675033,
+          "rows": 20000,
+          "private_bytes": 520192
+        }
+      ],
+      "broker_queries": [
+        {
+          "run_id": 1,
+          "phase": "other",
+          "calls": 3,
+          "seconds": 0.0395839000120759,
+          "max_seconds": 0.017764799995347857
+        }
+      ],
+      "preceding_run_pending": false,
+      "preceding_capture_steps": [
+        0,
+        0
+      ],
+      "memory_after_close": {
+        "rss_bytes": 176095232,
+        "children": [
+          {
+            "pid": 14580,
+            "rss_bytes": 46469120
+          }
+        ],
+        "threads": 44,
+        "handles_or_fds": 743
+      },
+      "retained_plot_objects": 0,
+      "active_plot_workers": 0,
+      "active_preview_workers": 0,
+      "event_loop_delay": {
+        "count": 125,
+        "median_ms": 0.7052999956067652,
+        "p95_ms": 87.39849998732097,
+        "max_ms": 173.40310000348836
+      }
+    },
+    {
+      "iteration": 12,
+      "display_ms": 474.32159999152645,
+      "refresh_ms": [
+        309.73599999560975,
+        77.83689998905174
+      ],
+      "paint_ms": [
+        452.18399999430403
+      ],
+      "grids": [],
+      "line_samples": [
+        20000
+      ],
+      "capture": [
+        {
+          "run_id": 1,
+          "capture_ms": 9.752800018759444,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 12.187299987999722,
+          "rows": 20000,
+          "private_bytes": 520192
+        },
+        {
+          "run_id": 1,
+          "capture_ms": 9.068800020031631,
+          "rows": 20000,
+          "private_bytes": 520192
+        }
+      ],
+      "broker_queries": [
+        {
+          "run_id": 1,
+          "phase": "other",
+          "calls": 3,
+          "seconds": 0.030948200030252337,
+          "max_seconds": 0.012166600005002692
+        }
+      ],
+      "preceding_run_pending": false,
+      "preceding_capture_steps": [
+        0,
+        0
+      ],
+      "memory_after_close": {
+        "rss_bytes": 175767552,
+        "children": [
+          {
+            "pid": 14580,
+            "rss_bytes": 48095232
+          }
+        ],
+        "threads": 44,
+        "handles_or_fds": 869
+      },
+      "retained_plot_objects": 0,
+      "active_plot_workers": 0,
+      "active_preview_workers": 0,
+      "event_loop_delay": {
+        "count": 83,
+        "median_ms": 1.1598999937996268,
+        "p95_ms": 90.2497999870684,
+        "max_ms": 160.86379998363554
+      }
+    }
+  ],
+  "display_summary": {
+    "count": 12,
+    "median_ms": 489.2891000054078,
+    "p95_ms": 975.902899983339,
+    "max_ms": 975.902899983339
+  },
+  "refresh_summary": {
+    "count": 24,
+    "median_ms": 179.83030001050793,
+    "p95_ms": 415.5517000181135,
+    "max_ms": 416.9086000183597
+  },
+  "event_loop_delay": {
+    "count": 1203,
+    "median_ms": 0.9405000112019479,
+    "p95_ms": 87.75290000834502,
+    "max_ms": 1201.8292000086512
+  },
+  "source_before": {
+    "": {
+      "sha256": "1adae260afd28ce605eadd862eb414e0ad78ae8b1a2240180ce8ea677dc560e8",
+      "bytes": 80547840,
+      "mtime_ns": 1794921159512060800,
+      "device": 440295231338715487,
+      "inode": 17169973579553331
+    },
+    "-wal": null,
+    "-journal": null
+  },
+  "protected_files_unchanged": true
+}

@@ -44,6 +44,7 @@ dev = [
     "coverage>=7.12",
     "mypy>=1.14,<2.0",
     "pillow>=11.0",
+    "psutil>=7.0",
     "pytest>=8.2",
     "pytest-cov>=7.0",
     "pytest-timeout>=2.3",
@@ -110,6 +111,9 @@ platform = "linux"
 check_untyped_defs = true
 follow_imports = "silent"
 files = [
+    "src/qplot/windows/_plot_lifetime.py",
+    "src/qplot/windows/_widgets/_preview_controller.py",
+    "src/qplot/windows/_widgets/_preview_ui.py",
     "src/qplot/datahandling/volume.py",
     "src/qplot/tools/volume_cuts.py",
     "src/qplot/tools/volume_worker.py",

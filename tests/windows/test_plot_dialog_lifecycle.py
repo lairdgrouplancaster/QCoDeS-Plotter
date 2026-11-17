@@ -168,7 +168,7 @@ def test_database_or_application_close_closes_plot_editors(dialog_plot, close_ac
         wait_for(lambda: window._shutdown_ready)
     app.processEvents()
     assert window.windows == []
-    assert all(not dialog.isVisible() for dialog in dialogs)
+    assert all(sip.isdeleted(dialog) or not dialog.isVisible() for dialog in dialogs)
 
 
 @pytest.mark.parametrize("dialog_plot", ["line"], indirect=True)

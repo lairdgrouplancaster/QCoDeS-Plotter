@@ -446,7 +446,11 @@ def select_nondefault_run_and_finish_previews(window):
     )
     assert len(matches) == 1
     target_guid = matches[0].guid
-    window.RunList.setCurrentItem(matches[0])
+    # This setup requires one selected run, independent of modifiers left by
+    # earlier QTest mouse/key events in the shared QApplication.
+    window.RunList.setCurrentItem(
+        matches[0], 0, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+    )
     wait_for(
         lambda: (
             window.selected_run_id == target_run_id

@@ -7,6 +7,7 @@ All operations run on the GUI thread.
 
 from typing import Any
 
+from ._plot_lifetime import retire_closed_plot
 from ._refresh_interval import refresh_interval_value, set_refresh_interval
 
 
@@ -60,4 +61,6 @@ class SourceConsumerRegistration:
                 pass
             self._interval_signal = None
             self._interval_slot = None
+        if remaining == 0:
+            retire_closed_plot(self.source)
         return remaining

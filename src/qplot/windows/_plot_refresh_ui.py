@@ -44,6 +44,10 @@ class PlotRefreshUi:
         self.window = window
         self._callbacks: dict[int, _WorkerCallbacks] = {}
 
+    @property
+    def has_pending_workers(self) -> bool:
+        return bool(self._callbacks)
+
     def create_worker(self, request: PlotRefreshRequest) -> Any:
         window = self.window
         kwargs = {
