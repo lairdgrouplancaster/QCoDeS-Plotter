@@ -58,6 +58,7 @@ from qplot.windows._database_load_state import DatabaseLoadSession
 from qplot.windows._dataset_handle import database_file_identity
 from tests._database_load_fakes import seed_load
 from tests._window_lifecycle import close_main_window
+from tests.support.heatmap_resolution import set_resolution
 from tests.support.heatmap_viewport import set_viewport
 from tests.support.windows.plot_integration import (
     _UnavailableTrustedRequest as _UnavailableTrustedRequest,
@@ -1211,7 +1212,7 @@ def test_real_plot2d_csv_exports_only_current_downsampled_grid(
         heatmap_window._update_heatmap_geometry()
         heatmap_window._render_heatmap()
         set_viewport(heatmap_window, _large_heatmap_sql_mode=True)
-        heatmap_window._heatmap_downsample_info = {
+        set_resolution(heatmap_window, {
             "source_grid_columns": full_x.size,
             "source_grid_rows": full_y.size,
             "grid_columns": current_x.size,
@@ -1221,7 +1222,7 @@ def test_real_plot2d_csv_exports_only_current_downsampled_grid(
                 "x": (float(current_x[0]), float(current_x[-1])),
                 "y": (float(current_y[0]), float(current_y[-1])),
             },
-        }
+        })
 
         assert current_grid.size == current_x.size * current_y.size
         assert current_grid.size < full_grid.size

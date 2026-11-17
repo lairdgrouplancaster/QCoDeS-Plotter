@@ -279,6 +279,22 @@ Busy publications retain pending intent, including an explicit return to the
 full view. Hidden overlay sources remain usable until their final consumer
 releases them. Window observations of viewport state are read-only.
 
+`tools/heatmap_resolution.py` converts processing metadata into an immutable
+`HeatmapResolutionReport` and formats its summary and details. Source rows,
+display cells, estimates, sampling, averaging and interpolation remain distinct.
+Missing or invalid counts stay unknown. Fallback grid-size comparisons never
+infer sampling or interpolation, and a cropped view alone is not evidence of
+reduced resolution. Full-resolution volume planes and frozen slices retain their
+explicit resolution status.
+
+`windows/_heatmap_resolution_state.py` stages the report with its
+`RefreshPublication`. Only a committed result replaces the accepted explanation;
+a cleared failed display or retired source has no warning. Nested publications
+cannot overwrite a newer report. `_heatmap_resolution_ui.py` owns the warning
+button and dialogue, updates an open explanation after a commit and dismisses it
+when no report applies. The plot window supplies existing in-memory observations
+and coordinates publication; reporting does not acquire data or query a database.
+
 `src/qplot/windows/_dataset_handle.py` defines the small `DatasetHandle`
 structure used by the main window and plot windows to track an open dataset,
 its active plot-window user count, and any delayed-release timer.

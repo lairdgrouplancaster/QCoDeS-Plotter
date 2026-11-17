@@ -4,11 +4,12 @@ import pytest
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
+from qplot.tools.heatmap_resolution import HeatmapResolutionReport
+from qplot.windows._heatmap_resolution_ui import HeatmapResolutionUi
 from qplot.windows._plot_feedback import PlotWindowFeedbackMixin
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._preferences import PreferencesDialog
 from qplot.windows.main import MainWindow
-from qplot.windows.plot2d import plot2d
 from tests._window_lifecycle import close_main_window
 from tests.support.windows.plot_integration import configure_temp_qplot
 
@@ -18,20 +19,18 @@ class DialogOwner(PlotWindowFeedbackMixin, qtw.QMainWindow):
 
     show_preferences_dialog = plotWidget.show_preferences_dialog
     open_custom_plot_area_size_dialog = plotWidget.open_custom_plot_area_size_dialog
-    show_heatmap_downsample_dialog = plot2d.show_heatmap_downsample_dialog
-    _new_heatmap_downsample_dialog = plot2d._new_heatmap_downsample_dialog
-    _heatmap_downsample_dialog_message = plot2d._heatmap_downsample_dialog_message
-    _heatmap_downsample_dialog_text = plot2d._heatmap_downsample_dialog_text
-    _format_heatmap_count = staticmethod(plot2d._format_heatmap_count)
-    _format_heatmap_axis_range = staticmethod(plot2d._format_heatmap_axis_range)
-    _open_heatmap_limit_preferences = plot2d._open_heatmap_limit_preferences
 
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.visible = True
-        self._heatmap_downsample_info = {"source_sampled": True}
+        self.widget = qtw.QWidget(self)
+        self.resolution_ui = HeatmapResolutionUi(self)
+        self.resolution_ui.sync(HeatmapResolutionReport(sampled=True))
         self.resize_requests = []
+
+    def show_heatmap_downsample_dialog(self):
+        self.resolution_ui.show()
 
     def _current_plot_area_size(self):
         return QtCore.QSize(640, 480)

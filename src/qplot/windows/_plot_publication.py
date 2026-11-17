@@ -39,7 +39,7 @@ class PlotSnapshot:
     def capture(cls, state: MutableMapping[str, Any], extra: tuple[str, ...]) -> PlotSnapshot:
         names = (
             "_live", "_qplot_display_synchronized", "_qplot_display_uses_direct_sql",
-            "_heatmap_full_resolution", "axis_data", "axis_param", "dataGrid",
+            "axis_data", "axis_param", "dataGrid",
             "display_param", "complex_samples", "last_ds_len",
         ) + extra
         return cls(tuple(SavedPlotField(name, name in state, state.get(name)) for name in names))

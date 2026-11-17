@@ -110,7 +110,7 @@ A local Windows run cannot substitute for those platform results.
 
 ## Static analysis
 
-The explicit mypy targets in `pyproject.toml` cover 174 of the 209 application
+The explicit mypy targets in `pyproject.toml` cover 177 of the 212 application
 modules. The other 35 have individual reasons in `[tool.qplot.typing.deferred]`.
 `follow_imports = "silent"` allows mypy to use imported types while suppressing
 diagnostics from modules outside the explicit targets; this is partial coverage,
@@ -268,6 +268,15 @@ on close or source rejection, and retained plots after selecting another
 database. They check rendered values and preservation of source artefacts.
 `test_heatmap_layer_integration.py` also checks that a hidden SQL source can
 reload while retained and cancels pending viewport work on final removal.
+
+`tools/test_heatmap_resolution.py` checks immutable reporting facts, conservative
+fallbacks, missing metadata, cropped views and explanatory wording without
+constructing windows. `windows/test_heatmap_resolution_state.py` covers report
+publication outcomes. The real SQL cases in
+`windows/test_heatmap_resolution_integration.py` check open dialogue updates,
+failed renders and retries, nested newer publications, full-resolution transitions
+and source rejection, retaining protected-source artefact assertions. The shared
+SQL heatmap fixture lives in `tests/support/windows/sql_heatmap.py`.
 
 Consolidate tests that protect the same behaviour with the same setup into
 clearly named parametrised cases. Keep independent expected values and oracles.

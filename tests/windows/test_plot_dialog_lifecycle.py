@@ -117,7 +117,7 @@ def test_plot_close_hides_detached_panels(dialog_plot, panel_name):
 @pytest.mark.parametrize("dialog_plot", ["downsample"], indirect=True)
 def test_plot_close_rejects_active_downsample_dialog(dialog_plot):
     window, plot, app, _guids = dialog_plot
-    assert plot._heatmap_downsample_info is not None
+    assert plot._heatmap_resolution_report is not None
     observations = []
 
     def close_plot_from_active_dialog():

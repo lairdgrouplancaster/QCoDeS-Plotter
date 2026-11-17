@@ -463,6 +463,8 @@ def test_cuts_follow_pin_processed_depth_and_csv(tmp_path, main):
 
 def test_freeze_is_independent_and_supports_operations_and_cuts(tmp_path, main):
     window, errors = main
+    # The plane has six cells; the complete volume has eighteen samples.
+    window.config.config["runtime_settings"]["max_full_heatmap_points"] = 6
     path = tmp_path / "freeze.db"
     guid = build_volume(path)
     assert window.load_file(str(path))
@@ -470,13 +472,17 @@ def test_freeze_is_independent_and_supports_operations_and_cuts(tmp_path, main):
     window.openPlot(guid)
     wait_for(lambda: bool(window.windows))
     source = window.windows[0]
-    wait_for(lambda: loaded(source))
+    wait_for(lambda: loaded(source) or bool(errors))
+    assert not errors
     source.freeze_slice()
     wait_for(lambda: len(window.windows) == 2 or bool(errors))
     assert not errors
     frozen = window.windows[1]
     wait_for(lambda: loaded(frozen) or bool(errors))
     assert not errors
+    for plot in (source, frozen):
+        assert plot._heatmap_resolution_report is None
+        assert plot.heatmap_downsample_button.isHidden()
     original = frozen.dataGrid.copy()
     source.select_slice(2)
     wait_for(lambda: loaded(source) and source._depth_value == 4.)
@@ -495,6 +501,8 @@ def test_freeze_is_independent_and_supports_operations_and_cuts(tmp_path, main):
     frozen.refreshWindow(force=True)
     wait_for(lambda: loaded(frozen) and frozen.worker.operations)
     np.testing.assert_allclose(np.asarray(frozen.dataGrid, float).mean(axis=1), 0, atol=1e-12)
+    assert frozen._heatmap_resolution_report is None
+    assert frozen.heatmap_downsample_button.isHidden()
     frozen.openSweep("h")
     wait_for(lambda: len(window.windows) == 3 or bool(errors))
     assert not errors
