@@ -63,8 +63,8 @@ def test_plot_close_closes_owned_editor(dialog_plot, editor):
     plot.close()
     app.processEvents()
     assert window.windows == []
-    assert not plot.isVisible()
-    assert not dialog.isVisible()
+    assert sip.isdeleted(plot) or not plot.isVisible()
+    assert sip.isdeleted(dialog) or not dialog.isVisible()
 
 
 def _detach_panel(panel, app):
@@ -110,8 +110,8 @@ def test_plot_close_hides_detached_panels(dialog_plot, panel_name):
     app.processEvents()
 
     assert window.windows == []
-    assert not plot.isVisible()
-    assert not panel.isVisible()
+    assert sip.isdeleted(plot) or not plot.isVisible()
+    assert sip.isdeleted(panel) or not panel.isVisible()
 
 
 @pytest.mark.parametrize("dialog_plot", ["downsample"], indirect=True)

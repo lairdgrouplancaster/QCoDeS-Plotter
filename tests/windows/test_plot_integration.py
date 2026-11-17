@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import qcodes
-from PyQt6 import QtCore
+from PyQt6 import QtCore, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter
 from qcodes.dataset import (
@@ -2288,7 +2288,8 @@ def test_replaced_background_plot_does_not_switch_current_database(
         assert source_plot not in window.windows
         assert source_handle.closed
         assert source_plot._merged_trace_users == 0
-        assert not source_plot.monitor.isActive()
+        wait_for(lambda: sip.isdeleted(source_plot))
+        assert sip.isdeleted(source_plot.monitor)
         assert target_plot in window.windows
         np.testing.assert_array_equal(target_plot.line.getData()[1], [10.0, 11.0])
         assert window.fileTextbox.text() == str(database_b)

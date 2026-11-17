@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from PyQt6 import QtCore
+from PyQt6 import QtCore, sip
 from PyQt6 import QtWidgets as qtw
 from qcodes.dataset import (
     Measurement,
@@ -145,8 +145,10 @@ def test_close_confirmation_includes_live_auto_plot(
             if accept:
                 assert window.windows == []
                 assert original._closed and late._closed
-                assert not original.isVisible() and not late.isVisible()
-                assert not original.monitor.isActive() and not late.monitor.isActive()
+                assert all(sip.isdeleted(plot) or not plot.isVisible()
+                           for plot in (original, late))
+                assert all(sip.isdeleted(plot.monitor) or not plot.monitor.isActive()
+                           for plot in (original, late))
             else:
                 assert window.windows == [original, late]
                 assert not original._closed and not late._closed
