@@ -243,6 +243,8 @@ configured Desktop location even when it is redirected to OneDrive. Use
 `--no-desktop-shortcut` to omit it. Existing desktop files and shortcuts are
 never overwritten; if the name is already in use, move that item or use the
 option to omit the shortcut.
+On Windows, setup creates a small `qPlot.exe` launcher with the qPlot icon
+embedded, so **Opens with** in file properties displays the application icon.
 Both use qPlot's rounded-square red Coulomb-peak icon, which also appears on the
 running application's windows where supported by the desktop. On macOS the
 running application's Dock label is **qPlot**, including when started from a

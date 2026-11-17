@@ -88,6 +88,16 @@ def test_foreign_launcher_is_rejected_before_any_write(tmp_path, registry):
     assert registry.keys == before
 
 
+def test_previous_script_launcher_can_be_removed(tmp_path, registry):
+    put(registry, COMMAND, "", associations._previous_windows_command(tmp_path))
+    put(registry, ICON, "", "installed.ico,0")
+    put(registry, OPEN_WITH, associations._PROGID, "")
+    associations._windows_associations(tmp_path, remove=True)
+    assert COMMAND not in registry.keys
+    assert ICON not in registry.keys
+    assert associations._PROGID not in registry.keys[OPEN_WITH]
+
+
 def test_backup_read_failure_prevents_all_mutation(tmp_path, registry, monkeypatch):
     original_open = registry.OpenKey
 

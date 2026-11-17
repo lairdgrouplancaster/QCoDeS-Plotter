@@ -26,6 +26,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = [
+    "distlib==0.4.4; sys_platform == 'win32'",
     "qplotter-native==1.0.1",
     "apsw==3.53.4.0",
     "jsonschema>=4.23.0",

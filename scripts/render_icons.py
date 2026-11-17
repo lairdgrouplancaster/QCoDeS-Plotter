@@ -51,6 +51,9 @@ def main() -> None:
         master.save(ASSETS / f"{stem}.png")
         master.save(
             ASSETS / f"{stem}.ico",
+            # Older Windows icon consumers misread PNG-compressed frames.
+            # Keep every size as a 32-bit DIB, including its alpha channel.
+            bitmap_format="bmp",
             sizes=[(size, size) for size in ICO_SIZES],
             append_images=[
                 render(stem, size, small=size == 16, windows_ico=True)

@@ -56,6 +56,8 @@ def fake_tools(monkeypatch):
 
     monkeypatch.setattr(desktop.subprocess, "run", run)
     monkeypatch.setattr(desktop, "_windows_shortcut", shortcut)
+    monkeypatch.setattr(desktop, "create_windows_executable",
+                        lambda destination, python: (destination / "qPlot.exe").write_bytes(b"test launcher"))
     monkeypatch.setattr(desktop, "_notify_windows_shell", lambda: None)
     return calls
 
@@ -168,11 +170,8 @@ def test_windows_shortcut_and_unicode(tmp_path, monkeypatch, fake_tools, isolate
     monkeypatch.setenv("SystemRoot", r"C:\Windows")
     destination = tmp_path / "qPlot Ω space"
     desktop.setup(destination)
-    script = (destination / "launch.vbs").read_text(encoding="utf-16")
-    assert str(destination) in script
-    assert "WScript.Arguments" in script
-    assert "shell.Run(command, 0, True)" in script
-    assert "cmd.exe" not in script
+    assert (destination / "qPlot.exe").is_file()
+    assert not (destination / "launch.vbs").exists()
     command, _options = fake_tools[0]
     assert command == ["IShellLinkW", str(destination)]
     assert associations._windows_command(destination).endswith(' "%1"')
@@ -504,11 +503,12 @@ def test_bootstrap_reports_missing_environment(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(sys.platform != "win32", reason="native Windows launcher tools")
 def test_native_windows_shortcut_and_arguments(tmp_path, isolated_desktop):
+    import time
+
     destination = tmp_path / "qPlot Ω space"
     desktop.setup(destination)
     output = tmp_path / "result.json"
-    # Batch mode prevents script errors from opening an invisible modal dialog
-    # in the noninteractive Windows runner. Keep the real WScript parser.
+    # Exercise the real native launcher without opening a measurement database.
     (destination / "bootstrap.py").write_text(
         "import json, sys\nfrom pathlib import Path\n"
         f"Path({str(output)!r}).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n",
@@ -516,10 +516,13 @@ def test_native_windows_shortcut_and_arguments(tmp_path, isolated_desktop):
     )
     for args in ([], [str(tmp_path / "測定 O'Brien %data & x.db")]):
         result = subprocess.run(
-            ["wscript.exe", "//B", "//nologo", str(destination / "launch.vbs"), *args],
+            [str(destination / "qPlot.exe"), *args],
             cwd=tmp_path, capture_output=True, timeout=20,
         )
         assert result.returncode == 0, (result.stdout, result.stderr)
+        deadline = time.monotonic() + 10
+        while not output.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
         assert output.is_file(), (result.stdout, result.stderr)
         assert json.loads(output.read_text(encoding="utf-8")) == args
         output.unlink()
@@ -586,9 +589,7 @@ def test_native_windows_shortcut_and_arguments(tmp_path, isolated_desktop):
         if initialized in (0, 1):
             ole.CoUninitialize()
     # Also execute the shortcut itself: its saved arguments must preserve the
-    # Unicode launcher path, not just the directly invoked VBS script above.
-    import time
-
+    # Unicode launcher path, not just the directly invoked executable above.
     os.startfile(desktop_link)
     deadline = time.monotonic() + 10
     while not output.exists() and time.monotonic() < deadline:
