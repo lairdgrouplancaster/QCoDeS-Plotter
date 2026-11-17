@@ -62,3 +62,25 @@ def test_close_inside_publication_waits_for_callback_to_unwind(tmp_path, monkeyp
         wait_for(lambda: deleted(plot))
         assert checked == [True]
         assert not window._plot_workers
+
+
+def test_close_inside_completion_feedback_waits_for_callback_to_unwind(tmp_path, monkeypatch):
+    with live_view(tmp_path, monkeypatch, 0.) as (_window, open_plot):
+        plot = open_plot("signal_a")
+        observations = []
+
+        def close_on_completion():
+            if observations:
+                return
+            observations.append("closing")
+            plot.close()
+            loop = QtCore.QEventLoop()
+            QtCore.QTimer.singleShot(75, loop.quit)
+            loop.exec()
+            observations.append(sip.isdeleted(plot))
+
+        plot.end_wait.connect(close_on_completion)
+        assert plot.load_data()
+        wait_for(lambda: len(observations) == 2)
+        assert observations == ["closing", False]
+        wait_for(lambda: deleted(plot))

@@ -4,7 +4,7 @@
     "platform": "Windows-11-10.0.26200-SP0",
     "python": "3.14.8",
     "qt_platform": "offscreen",
-    "application_sha256": "6f86574e93674b126900e8787a1f6e3b252d6b8def0ed2affd35732df7dab8ff",
+    "application_sha256": "e0ca5aec5cc47dd875a3df5555db8ab46b75e4649814e85ef07c7e1ae6d0b819",
     "packages": {
       "qcodes": "0.63.0",
       "numpy": "2.5.4",
@@ -15,7 +15,7 @@
     }
   },
   "database_bytes": 80547840,
-  "database_open_ms": 510.4849000053946,
+  "database_open_ms": 399.0150000026915,
   "run_id": 1,
   "preceding_run": null,
   "refreshes": 2,
@@ -26,13 +26,13 @@
   "results": [
     {
       "iteration": 1,
-      "display_ms": 975.902899983339,
+      "display_ms": 912.3254000151064,
       "refresh_ms": [
-        157.456800021464,
-        182.67890001880005
+        138.37279999279417,
+        190.04049999057315
       ],
       "paint_ms": [
-        951.6366999887396
+        887.0146000117529
       ],
       "grids": [],
       "line_samples": [
@@ -41,19 +41,19 @@
       "capture": [
         {
           "run_id": 1,
-          "capture_ms": 695.517700019991,
+          "capture_ms": 633.3803999878,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 8.758300013141707,
+          "capture_ms": 9.82889998704195,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 8.644700021250173,
+          "capture_ms": 8.79339998937212,
           "rows": 20000,
           "private_bytes": 520192
         }
@@ -63,8 +63,8 @@
           "run_id": 1,
           "phase": "other",
           "calls": 7,
-          "seconds": 0.5821858000126667,
-          "max_seconds": 0.23113020000164397
+          "seconds": 0.5519125999999233,
+          "max_seconds": 0.19964360000449233
         }
       ],
       "preceding_run_pending": false,
@@ -73,35 +73,35 @@
         0
       ],
       "memory_after_close": {
-        "rss_bytes": 167018496,
+        "rss_bytes": 169029632,
         "children": [
           {
-            "pid": 14580,
-            "rss_bytes": 41431040
+            "pid": 95344,
+            "rss_bytes": 42336256
           }
         ],
-        "threads": 46,
-        "handles_or_fds": 626
+        "threads": 47,
+        "handles_or_fds": 627
       },
       "retained_plot_objects": 0,
       "active_plot_workers": 0,
       "active_preview_workers": 0,
       "event_loop_delay": {
-        "count": 123,
-        "median_ms": 0.6716000009328127,
-        "p95_ms": 34.02930001378991,
-        "max_ms": 125.10959999985062
+        "count": 124,
+        "median_ms": 0.872500017285347,
+        "p95_ms": 34.346600014250726,
+        "max_ms": 134.82330001192167
       }
     },
     {
       "iteration": 2,
-      "display_ms": 493.6264999851119,
+      "display_ms": 442.21140001900494,
       "refresh_ms": [
-        267.1346999995876,
-        185.80090001341887
+        250.36180001916364,
+        182.72130002151243
       ],
       "paint_ms": [
-        472.36590000102296
+        421.1080000095535
       ],
       "grids": [],
       "line_samples": [
@@ -110,19 +110,19 @@
       "capture": [
         {
           "run_id": 1,
-          "capture_ms": 14.984700013883412,
+          "capture_ms": 12.200700002722442,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 13.380700023844838,
+          "capture_ms": 12.639099993975833,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 9.389600018039346,
+          "capture_ms": 9.001699974760413,
           "rows": 20000,
           "private_bytes": 520192
         }
@@ -132,8 +132,8 @@
           "run_id": 1,
           "phase": "other",
           "calls": 3,
-          "seconds": 0.037697100022342056,
-          "max_seconds": 0.014968400006182492
+          "seconds": 0.03378529998008162,
+          "max_seconds": 0.012618000007933006
         }
       ],
       "preceding_run_pending": false,
@@ -142,35 +142,35 @@
         0
       ],
       "memory_after_close": {
-        "rss_bytes": 168128512,
+        "rss_bytes": 166977536,
         "children": [
           {
-            "pid": 14580,
-            "rss_bytes": 40869888
+            "pid": 95344,
+            "rss_bytes": 42586112
           }
         ],
-        "threads": 46,
-        "handles_or_fds": 746
+        "threads": 47,
+        "handles_or_fds": 748
       },
       "retained_plot_objects": 0,
       "active_plot_workers": 0,
       "active_preview_workers": 0,
       "event_loop_delay": {
-        "count": 88,
-        "median_ms": 0.9599999996135011,
-        "p95_ms": 79.99530001892708,
-        "max_ms": 173.85699999635108
+        "count": 91,
+        "median_ms": 1.0165999794844538,
+        "p95_ms": 72.86880000378005,
+        "max_ms": 157.40060001029633
       }
     },
     {
       "iteration": 3,
-      "display_ms": 476.93219999200664,
+      "display_ms": 467.582700017374,
       "refresh_ms": [
-        144.28229999612086,
-        302.38229999667965
+        216.78480002447031,
+        71.04089998756535
       ],
       "paint_ms": [
-        453.58200001646765
+        441.3866999966558
       ],
       "grids": [],
       "line_samples": [
@@ -179,19 +179,19 @@
       "capture": [
         {
           "run_id": 1,
-          "capture_ms": 10.018100001616403,
+          "capture_ms": 15.966900013154373,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 10.070900025311857,
+          "capture_ms": 8.789499988779426,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 10.11040000594221,
+          "capture_ms": 9.278999990783632,
           "rows": 20000,
           "private_bytes": 520192
         }
@@ -201,8 +201,8 @@
           "run_id": 1,
           "phase": "other",
           "calls": 3,
-          "seconds": 0.03014179997262545,
-          "max_seconds": 0.010090900002978742
+          "seconds": 0.033977600018261,
+          "max_seconds": 0.015949000022374094
         }
       ],
       "preceding_run_pending": false,
@@ -211,35 +211,35 @@
         0
       ],
       "memory_after_close": {
-        "rss_bytes": 169336832,
+        "rss_bytes": 167940096,
         "children": [
           {
-            "pid": 14580,
-            "rss_bytes": 43823104
+            "pid": 95344,
+            "rss_bytes": 44347392
           }
         ],
-        "threads": 46,
-        "handles_or_fds": 868
+        "threads": 47,
+        "handles_or_fds": 840
       },
       "retained_plot_objects": 0,
       "active_plot_workers": 0,
       "active_preview_workers": 0,
       "event_loop_delay": {
-        "count": 92,
-        "median_ms": 1.0039999999571592,
-        "p95_ms": 80.63960000639781,
-        "max_ms": 163.6858000222128
+        "count": 72,
+        "median_ms": 2.7480999944964424,
+        "p95_ms": 84.3422999989707,
+        "max_ms": 166.63280002307147
       }
     },
     {
       "iteration": 4,
-      "display_ms": 740.4001999821048,
+      "display_ms": 472.6039000088349,
       "refresh_ms": [
-        107.32469998765737,
-        67.8957000200171
+        297.6642000139691,
+        73.33399998606183
       ],
       "paint_ms": [
-        559.6201999869663
+        451.49219999439083
       ],
       "grids": [],
       "line_samples": [
@@ -248,19 +248,19 @@
       "capture": [
         {
           "run_id": 1,
-          "capture_ms": 8.894300000974908,
+          "capture_ms": 11.205499991774559,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 13.363799982471392,
+          "capture_ms": 9.306799998739734,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 8.78439997904934,
+          "capture_ms": 12.222700024722144,
           "rows": 20000,
           "private_bytes": 520192
         }
@@ -270,8 +270,8 @@
           "run_id": 1,
           "phase": "other",
           "calls": 3,
-          "seconds": 0.030964799982029945,
-          "max_seconds": 0.013328100001672283
+          "seconds": 0.0326739999873098,
+          "max_seconds": 0.01220100000500679
         }
       ],
       "preceding_run_pending": false,
@@ -280,35 +280,35 @@
         0
       ],
       "memory_after_close": {
-        "rss_bytes": 172544000,
+        "rss_bytes": 169369600,
         "children": [
           {
-            "pid": 14580,
-            "rss_bytes": 44056576
+            "pid": 95344,
+            "rss_bytes": 43900928
           }
         ],
-        "threads": 46,
-        "handles_or_fds": 995
+        "threads": 47,
+        "handles_or_fds": 961
       },
       "retained_plot_objects": 0,
       "active_plot_workers": 0,
       "active_preview_workers": 0,
       "event_loop_delay": {
-        "count": 90,
-        "median_ms": 1.1967999982880428,
-        "p95_ms": 84.68739997828379,
-        "max_ms": 163.2250000059139
+        "count": 83,
+        "median_ms": 1.1332999949809164,
+        "p95_ms": 84.31230000336654,
+        "max_ms": 165.470399990445
       }
     },
     {
       "iteration": 5,
-      "display_ms": 461.35769999818876,
+      "display_ms": 448.67250000243075,
       "refresh_ms": [
-        300.71959999622777,
-        86.52469998924062
+        353.9044000208378,
+        66.56120001571253
       ],
       "paint_ms": [
-        439.33670001570135
+        426.85429999255575
       ],
       "grids": [],
       "line_samples": [
@@ -317,19 +317,19 @@
       "capture": [
         {
           "run_id": 1,
-          "capture_ms": 18.600999988848343,
+          "capture_ms": 8.586200012359768,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 9.672699990915135,
+          "capture_ms": 14.707199996337295,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 18.049600010272115,
+          "capture_ms": 11.422999989008531,
           "rows": 20000,
           "private_bytes": 520192
         }
@@ -339,8 +339,8 @@
           "run_id": 1,
           "phase": "other",
           "calls": 3,
-          "seconds": 0.046260900038760155,
-          "max_seconds": 0.018583199998829514
+          "seconds": 0.03465769998729229,
+          "max_seconds": 0.01468730001943186
         }
       ],
       "preceding_run_pending": false,
@@ -349,35 +349,35 @@
         0
       ],
       "memory_after_close": {
-        "rss_bytes": 172171264,
+        "rss_bytes": 171339776,
         "children": [
           {
-            "pid": 14580,
-            "rss_bytes": 44412928
+            "pid": 95344,
+            "rss_bytes": 44531712
           }
         ],
-        "threads": 46,
-        "handles_or_fds": 1129
+        "threads": 47,
+        "handles_or_fds": 1079
       },
       "retained_plot_objects": 0,
       "active_plot_workers": 0,
       "active_preview_workers": 0,
       "event_loop_delay": {
-        "count": 83,
-        "median_ms": 1.4093000011052936,
-        "p95_ms": 88.67259999737144,
-        "max_ms": 169.4911999895703
+        "count": 84,
+        "median_ms": 1.1240000114776194,
+        "p95_ms": 83.66180002689362,
+        "max_ms": 161.10690000117756
       }
     },
     {
       "iteration": 6,
-      "display_ms": 490.20470000687055,
+      "display_ms": 478.9116000174545,
       "refresh_ms": [
-        415.5517000181135,
-        174.41219999454916
+        393.7997000175528,
+        192.0041000121273
       ],
       "paint_ms": [
-        465.68649998516776
+        456.9752000097651
       ],
       "grids": [],
       "line_samples": [
@@ -386,19 +386,19 @@
       "capture": [
         {
           "run_id": 1,
-          "capture_ms": 9.229500021319836,
+          "capture_ms": 11.313999973936006,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 12.885000003734604,
+          "capture_ms": 8.772400004090741,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 9.219300001859665,
+          "capture_ms": 8.53990000905469,
           "rows": 20000,
           "private_bytes": 520192
         }
@@ -408,8 +408,8 @@
           "run_id": 1,
           "phase": "other",
           "calls": 3,
-          "seconds": 0.03127690003020689,
-          "max_seconds": 0.012865800003055483
+          "seconds": 0.028566300024976954,
+          "max_seconds": 0.011293199990177527
         }
       ],
       "preceding_run_pending": false,
@@ -418,35 +418,35 @@
         0
       ],
       "memory_after_close": {
-        "rss_bytes": 172965888,
+        "rss_bytes": 171270144,
         "children": [
           {
-            "pid": 14580,
-            "rss_bytes": 44908544
+            "pid": 95344,
+            "rss_bytes": 43892736
           }
         ],
-        "threads": 46,
-        "handles_or_fds": 1266
+        "threads": 47,
+        "handles_or_fds": 1212
       },
       "retained_plot_objects": 0,
       "active_plot_workers": 0,
       "active_preview_workers": 0,
       "event_loop_delay": {
-        "count": 100,
-        "median_ms": 1.0078500001691282,
-        "p95_ms": 88.20829998352565,
-        "max_ms": 162.9524000256788
+        "count": 106,
+        "median_ms": 0.7823500002268702,
+        "p95_ms": 80.51839998573996,
+        "max_ms": 158.63469997770153
       }
     },
     {
       "iteration": 7,
-      "display_ms": 721.358600014355,
+      "display_ms": 461.1762000131421,
       "refresh_ms": [
-        109.9058999971021,
-        154.38319998793304
+        281.5761000092607,
+        192.75749998632818
       ],
       "paint_ms": [
-        539.8753999907058
+        439.8319000029005
       ],
       "grids": [],
       "line_samples": [
@@ -455,19 +455,19 @@
       "capture": [
         {
           "run_id": 1,
-          "capture_ms": 8.24220001231879,
+          "capture_ms": 12.466499989386648,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 13.034000003244728,
+          "capture_ms": 13.364300015382469,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 7.912500004749745,
+          "capture_ms": 8.968400012236089,
           "rows": 20000,
           "private_bytes": 520192
         }
@@ -477,8 +477,8 @@
           "run_id": 1,
           "phase": "other",
           "calls": 3,
-          "seconds": 0.029127999994670972,
-          "max_seconds": 0.013012699986575171
+          "seconds": 0.03473200000007637,
+          "max_seconds": 0.013334699993720278
         }
       ],
       "preceding_run_pending": false,
@@ -487,35 +487,35 @@
         0
       ],
       "memory_after_close": {
-        "rss_bytes": 173662208,
+        "rss_bytes": 174997504,
         "children": [
           {
-            "pid": 14580,
-            "rss_bytes": 44650496
+            "pid": 95344,
+            "rss_bytes": 44220416
           }
         ],
-        "threads": 46,
-        "handles_or_fds": 1392
+        "threads": 48,
+        "handles_or_fds": 1340
       },
       "retained_plot_objects": 0,
       "active_plot_workers": 0,
       "active_preview_workers": 0,
       "event_loop_delay": {
-        "count": 92,
-        "median_ms": 1.0279999789781868,
-        "p95_ms": 89.2190999968443,
-        "max_ms": 199.2891000211239
+        "count": 91,
+        "median_ms": 0.8585999987553805,
+        "p95_ms": 81.27380000427365,
+        "max_ms": 157.1306999924127
       }
     },
     {
       "iteration": 8,
-      "display_ms": 482.7015999762807,
+      "display_ms": 469.4206000131089,
       "refresh_ms": [
-        171.90270000719465,
-        351.2001999770291
+        113.26770001323894,
+        353.94929998437874
       ],
       "paint_ms": [
-        460.9385999792721
+        439.38450000132434
       ],
       "grids": [],
       "line_samples": [
@@ -524,19 +524,19 @@
       "capture": [
         {
           "run_id": 1,
-          "capture_ms": 9.691500017652288,
+          "capture_ms": 19.67290000175126,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 8.862099988618866,
+          "capture_ms": 12.965100002475083,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 12.549600010970607,
+          "capture_ms": 8.815899986075237,
           "rows": 20000,
           "private_bytes": 520192
         }
@@ -546,8 +546,8 @@
           "run_id": 1,
           "phase": "other",
           "calls": 3,
-          "seconds": 0.031042900023749098,
-          "max_seconds": 0.012529600004199892
+          "seconds": 0.041392400016775355,
+          "max_seconds": 0.01965480000944808
         }
       ],
       "preceding_run_pending": false,
@@ -556,35 +556,35 @@
         0
       ],
       "memory_after_close": {
-        "rss_bytes": 173797376,
+        "rss_bytes": 174403584,
         "children": [
           {
-            "pid": 14580,
-            "rss_bytes": 44986368
+            "pid": 95344,
+            "rss_bytes": 44941312
           }
         ],
-        "threads": 46,
-        "handles_or_fds": 1537
+        "threads": 47,
+        "handles_or_fds": 1462
       },
       "retained_plot_objects": 0,
       "active_plot_workers": 0,
       "active_preview_workers": 0,
       "event_loop_delay": {
-        "count": 97,
-        "median_ms": 1.0117000003810972,
-        "p95_ms": 89.121200008085,
-        "max_ms": 168.4635999938473
+        "count": 84,
+        "median_ms": 0.928749994491227,
+        "p95_ms": 87.40070000407286,
+        "max_ms": 168.7326000048779
       }
     },
     {
       "iteration": 9,
-      "display_ms": 488.09820000315085,
+      "display_ms": 468.8472999841906,
       "refresh_ms": [
-        319.99839999480173,
-        76.06110000051558
+        104.25549998763017,
+        353.0272000061814
       ],
       "paint_ms": [
-        465.8536000060849
+        439.7772999946028
       ],
       "grids": [],
       "line_samples": [
@@ -593,19 +593,19 @@
       "capture": [
         {
           "run_id": 1,
-          "capture_ms": 10.122200008481741,
+          "capture_ms": 19.9097000004258,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 13.00099998479709,
+          "capture_ms": 12.370499985991046,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 8.970399998361245,
+          "capture_ms": 13.440600014291704,
           "rows": 20000,
           "private_bytes": 520192
         }
@@ -615,8 +615,8 @@
           "run_id": 1,
           "phase": "other",
           "calls": 3,
-          "seconds": 0.03202900002361275,
-          "max_seconds": 0.012979599996469915
+          "seconds": 0.0456584999919869,
+          "max_seconds": 0.019891400006599724
         }
       ],
       "preceding_run_pending": false,
@@ -625,35 +625,35 @@
         0
       ],
       "memory_after_close": {
-        "rss_bytes": 174714880,
+        "rss_bytes": 175407104,
         "children": [
           {
-            "pid": 14580,
-            "rss_bytes": 45518848
+            "pid": 95344,
+            "rss_bytes": 45027328
           }
         ],
         "threads": 47,
-        "handles_or_fds": 1652
+        "handles_or_fds": 1591
       },
       "retained_plot_objects": 0,
       "active_plot_workers": 0,
       "active_preview_workers": 0,
       "event_loop_delay": {
-        "count": 86,
-        "median_ms": 1.4957999903708696,
-        "p95_ms": 92.677400020184,
-        "max_ms": 165.3387999779079
+        "count": 87,
+        "median_ms": 1.0987000225577503,
+        "p95_ms": 85.32609998132102,
+        "max_ms": 147.32289999141358
       }
     },
     {
       "iteration": 10,
-      "display_ms": 488.3735000039451,
+      "display_ms": 486.39609999372624,
       "refresh_ms": [
-        416.9086000183597,
-        176.9817000022158
+        350.0839000043925,
+        198.99699999950826
       ],
       "paint_ms": [
-        462.84409999498166
+        464.00680000078864
       ],
       "grids": [],
       "line_samples": [
@@ -662,19 +662,19 @@
       "capture": [
         {
           "run_id": 1,
-          "capture_ms": 8.778799994615838,
+          "capture_ms": 10.81860001431778,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 11.554099997738376,
+          "capture_ms": 9.790300013264641,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 7.951599982334301,
+          "capture_ms": 10.88840002194047,
           "rows": 20000,
           "private_bytes": 520192
         }
@@ -684,8 +684,8 @@
           "run_id": 1,
           "phase": "other",
           "calls": 3,
-          "seconds": 0.02822769997874275,
-          "max_seconds": 0.011534799996297807
+          "seconds": 0.03143390000332147,
+          "max_seconds": 0.010868300014408305
         }
       ],
       "preceding_run_pending": false,
@@ -694,35 +694,35 @@
         0
       ],
       "memory_after_close": {
-        "rss_bytes": 172863488,
+        "rss_bytes": 176914432,
         "children": [
           {
-            "pid": 14580,
-            "rss_bytes": 45854720
+            "pid": 95344,
+            "rss_bytes": 46534656
           }
         ],
-        "threads": 46,
-        "handles_or_fds": 597
+        "threads": 47,
+        "handles_or_fds": 1728
       },
       "retained_plot_objects": 0,
       "active_plot_workers": 0,
       "active_preview_workers": 0,
       "event_loop_delay": {
-        "count": 100,
-        "median_ms": 1.0335000063059852,
-        "p95_ms": 99.4456999853719,
-        "max_ms": 168.44809999223799
+        "count": 99,
+        "median_ms": 0.8302000153344125,
+        "p95_ms": 82.68319999682717,
+        "max_ms": 157.22060000756755
       }
     },
     {
       "iteration": 11,
-      "display_ms": 709.9341000139248,
+      "display_ms": 676.0592000209726,
       "refresh_ms": [
-        233.43480000039563,
-        359.43219999899156
+        108.60369997681119,
+        170.6193000136409
       ],
       "paint_ms": [
-        677.4590999993961
+        506.0181000153534
       ],
       "grids": [],
       "line_samples": [
@@ -731,19 +731,19 @@
       "capture": [
         {
           "run_id": 1,
-          "capture_ms": 13.526599999750033,
+          "capture_ms": 9.075799986021593,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 8.33260000217706,
+          "capture_ms": 13.049100001808256,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 17.786199983675033,
+          "capture_ms": 8.453099988400936,
           "rows": 20000,
           "private_bytes": 520192
         }
@@ -753,8 +753,8 @@
           "run_id": 1,
           "phase": "other",
           "calls": 3,
-          "seconds": 0.0395839000120759,
-          "max_seconds": 0.017764799995347857
+          "seconds": 0.030518999992636964,
+          "max_seconds": 0.013029599998844787
         }
       ],
       "preceding_run_pending": false,
@@ -763,35 +763,35 @@
         0
       ],
       "memory_after_close": {
-        "rss_bytes": 176095232,
+        "rss_bytes": 175390720,
         "children": [
           {
-            "pid": 14580,
-            "rss_bytes": 46469120
+            "pid": 95344,
+            "rss_bytes": 46153728
           }
         ],
-        "threads": 44,
-        "handles_or_fds": 743
+        "threads": 46,
+        "handles_or_fds": 643
       },
       "retained_plot_objects": 0,
       "active_plot_workers": 0,
       "active_preview_workers": 0,
       "event_loop_delay": {
-        "count": 125,
-        "median_ms": 0.7052999956067652,
-        "p95_ms": 87.39849998732097,
-        "max_ms": 173.40310000348836
+        "count": 93,
+        "median_ms": 0.8387999935075641,
+        "p95_ms": 82.41289997589774,
+        "max_ms": 161.36129998834804
       }
     },
     {
       "iteration": 12,
-      "display_ms": 474.32159999152645,
+      "display_ms": 655.4762000159826,
       "refresh_ms": [
-        309.73599999560975,
-        77.83689998905174
+        116.25990000902675,
+        362.57550001027994
       ],
       "paint_ms": [
-        452.18399999430403
+        484.53720001270995
       ],
       "grids": [],
       "line_samples": [
@@ -800,19 +800,19 @@
       "capture": [
         {
           "run_id": 1,
-          "capture_ms": 9.752800018759444,
+          "capture_ms": 13.643200014485046,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 12.187299987999722,
+          "capture_ms": 12.80700002098456,
           "rows": 20000,
           "private_bytes": 520192
         },
         {
           "run_id": 1,
-          "capture_ms": 9.068800020031631,
+          "capture_ms": 9.266499982913956,
           "rows": 20000,
           "private_bytes": 520192
         }
@@ -822,8 +822,8 @@
           "run_id": 1,
           "phase": "other",
           "calls": 3,
-          "seconds": 0.030948200030252337,
-          "max_seconds": 0.012166600005002692
+          "seconds": 0.03565479998360388,
+          "max_seconds": 0.01362329997937195
         }
       ],
       "preceding_run_pending": false,
@@ -832,44 +832,44 @@
         0
       ],
       "memory_after_close": {
-        "rss_bytes": 175767552,
+        "rss_bytes": 174157824,
         "children": [
           {
-            "pid": 14580,
-            "rss_bytes": 48095232
+            "pid": 95344,
+            "rss_bytes": 46305280
           }
         ],
-        "threads": 44,
-        "handles_or_fds": 869
+        "threads": 45,
+        "handles_or_fds": 784
       },
       "retained_plot_objects": 0,
       "active_plot_workers": 0,
       "active_preview_workers": 0,
       "event_loop_delay": {
-        "count": 83,
-        "median_ms": 1.1598999937996268,
-        "p95_ms": 90.2497999870684,
-        "max_ms": 160.86379998363554
+        "count": 109,
+        "median_ms": 0.8004999929107726,
+        "p95_ms": 91.45899999770336,
+        "max_ms": 152.93220000807196
       }
     }
   ],
   "display_summary": {
     "count": 12,
-    "median_ms": 489.2891000054078,
-    "p95_ms": 975.902899983339,
-    "max_ms": 975.902899983339
+    "median_ms": 471.0122500109719,
+    "p95_ms": 912.3254000151064,
+    "max_ms": 912.3254000151064
   },
   "refresh_summary": {
     "count": 24,
-    "median_ms": 179.83030001050793,
-    "p95_ms": 415.5517000181135,
-    "max_ms": 416.9086000183597
+    "median_ms": 192.38079999922775,
+    "p95_ms": 362.57550001027994,
+    "max_ms": 393.7997000175528
   },
   "event_loop_delay": {
-    "count": 1203,
-    "median_ms": 0.9405000112019479,
-    "p95_ms": 87.75290000834502,
-    "max_ms": 1201.8292000086512
+    "count": 1157,
+    "median_ms": 0.8853999990969896,
+    "p95_ms": 83.64919998915866,
+    "max_ms": 1025.9708000032697
   },
   "source_before": {
     "": {

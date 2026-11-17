@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
@@ -28,25 +29,39 @@ class _WorkerCallbacks(QtCore.QObject):
 
     @QtCore.pyqtSlot(bool)
     def finished(self, finished: bool) -> None:
-        self.ui.window._refresh_controller().finish(self.session, finished)
+        with self.ui.worker_callback():
+            self.ui.window._refresh_controller().finish(self.session, finished)
 
     @QtCore.pyqtSlot(Exception)
     def error(self, error: Exception) -> None:
-        self.ui.window._refresh_controller().error(self.session, error)
+        with self.ui.worker_callback():
+            self.ui.window._refresh_controller().error(self.session, error)
 
     @QtCore.pyqtSlot(str)
     def status(self, message: str) -> None:
-        self.ui.window._refresh_controller().status(self.session, message)
+        with self.ui.worker_callback():
+            self.ui.window._refresh_controller().status(self.session, message)
 
 
 class PlotRefreshUi:
     def __init__(self, window: PlotRefreshMixin) -> None:
         self.window = window
         self._callbacks: dict[int, _WorkerCallbacks] = {}
+        self._callback_depth = 0
 
     @property
     def has_pending_workers(self) -> bool:
-        return bool(self._callbacks)
+        return bool(self._callbacks or self._callback_depth)
+
+    @contextmanager
+    def worker_callback(self) -> Iterator[None]:
+        # Completion releases the worker before emitting feedback. A nested
+        # event loop in that feedback must not delete the window mid-callback.
+        self._callback_depth += 1
+        try:
+            yield
+        finally:
+            self._callback_depth -= 1
 
     def create_worker(self, request: PlotRefreshRequest) -> Any:
         window = self.window

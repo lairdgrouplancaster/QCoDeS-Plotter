@@ -127,7 +127,6 @@ class ProcessShutdownFailSafe:
             self._append_supervisor_diagnostic(self._startup_diagnostic)
         client = self._supervisor_client
         if client is None:
-            self._activate_fallback()
             diagnostic = self._startup_diagnostic
             if diagnostic is None:
                 diagnostic = (
@@ -135,6 +134,7 @@ class ProcessShutdownFailSafe:
                     "only the in-process deadline fallback is armed"
                 )
                 self._append_supervisor_diagnostic(diagnostic)
+            self._activate_fallback()
             return diagnostic
 
         try:
@@ -144,13 +144,14 @@ class ProcessShutdownFailSafe:
                 "process shutdown supervisor ARM raised "
                 f"{type(error).__name__}: {error}"
             )
-        # The direct parent has either installed its immutable deadline or
-        # returned an exact failure by this point.  Install the independent
-        # GUI-local backstop before doing any diagnostic persistence.
-        self._activate_fallback()
         if arm_diagnostic:
             exact = str(arm_diagnostic)
             self._append_supervisor_diagnostic(exact)
+        # Record a known failure in memory before an expired-deadline watchdog
+        # can snapshot it. The independent backstop still starts before any
+        # diagnostic I/O, and the original deadlines remain unchanged.
+        self._activate_fallback()
+        if arm_diagnostic:
             return exact
         with self._lock:
             self._supervisor_acknowledged = True

@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import numpy as np
 import pytest
+from PyQt6 import sip
 
 from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows._widgets.dropbox import picker_1d
@@ -119,7 +120,7 @@ def test_cut_recolored_before_first_publication_can_close(heatmap):
     wait_for(lambda: not cut.worker.running)
     assert cut not in window.windows
     assert cut.sweep_id not in plot.sweep_lines
-    assert not cut.monitor.isActive()
+    assert sip.isdeleted(cut.monitor) or not cut.monitor.isActive()
 
 
 @pytest.mark.parametrize("cancel", [False, True], ids=["commit", "cancel"])

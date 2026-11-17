@@ -55,6 +55,7 @@ def memory_sample():
         try:
             children.append({"pid": child.pid, "rss_bytes": child.memory_info().rss})
         except psutil.NoSuchProcess:
+            # Helpers may finish between enumeration and RSS sampling.
             pass
     return {"rss_bytes": process.memory_info().rss, "children": children,
             "threads": process.num_threads(),

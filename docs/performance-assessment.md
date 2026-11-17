@@ -58,13 +58,13 @@ the recorded comparisons. The baseline is the application merged in PR #153
 | Observation | Baseline | Candidate |
 | --- | ---: | ---: |
 | Closed line plots still retained after 12 cycles | 12 | 0 |
-| Line-process RSS, first to final cycle | 162.4 ? 225.6 MiB | 159.3 ? 167.6 MiB |
-| Line-process RSS range over cycles 7?12 | 198.5?225.6 MiB | 164.9?167.9 MiB |
+| Line-process RSS, first to final cycle | 162.4 to 225.6 MiB | 161.2 to 166.1 MiB |
+| Line-process RSS range over cycles 7-12 | 198.5-225.6 MiB | 166.1-168.7 MiB |
 | Closed heatmaps still retained after 12 cycles | 12 | 0 |
-| Heatmap-process RSS, first to final cycle | 247.8 ? 375.1 MiB | 237.1 ? 239.8 MiB |
-| Heatmap-process RSS range over cycles 7?12 | 319.2?375.1 MiB | 237.4?239.9 MiB |
-| Warm line display / refresh median | 575 / 203 ms | 488 / 176 ms |
-| Warm heatmap display / refresh median | 390 / 97 ms | 380 / 84 ms |
+| Heatmap-process RSS, first to final cycle | 247.8 to 375.1 MiB | 240.7 to 243.1 MiB |
+| Heatmap-process RSS range over cycles 7-12 | 319.2-375.1 MiB | 242.5-244.6 MiB |
+| Warm line display / refresh median | 575 / 203 ms | 471 / 196 ms |
+| Warm heatmap display / refresh median | 390 / 97 ms | 380 / 83 ms |
 
 Warm timings exclude the first two cycles. This is one sequential comparison
 per workload, not a statistical claim of a speed-up. The clear result is the
@@ -73,27 +73,28 @@ its native Qt objects and signal closures alive. Deferred retirement now waits
 for the final consumer and refresh callback, then releases the native window.
 The plot refresh timer is also parented to its window. Real-window regressions
 reproduce the missing retirement on the baseline and protect retained overlays
-and closure during publication.
+and closure during publication or completion feedback, including nested event
+loops that must not dispose of a window while its callback is still running.
 
-The candidate's database-open times were 510 ms (line run) and 580 ms (heatmap
-run). The 10 ms event-loop probe had aggregate 95th-percentile lateness of 88 ms
-and 45 ms respectively. Its largest startup/load delays were about 1.2 s and
-1.1 s. Within the repeated cycles the maxima were 199 ms and 418 ms; the latter
+The candidate's database-open times were 399 ms in both runs. The 10 ms
+event-loop probe had aggregate 95th-percentile lateness of 84 ms for lines and
+47 ms for heatmaps. Its largest startup/load delays were about 1.0 s and
+1.1 s. Within the repeated cycles the maxima were 169 ms and 422 ms; the latter
 occurred in the first heatmap cycle, with subsequent heatmap maxima below
-173 ms. These observations leave room for future startup/responsiveness work
+194 ms. These observations leave room for future startup/responsiveness work
 if it matters in ordinary use, but do not justify another general refactor.
 
 No plot or snapshot-preview workers remained active at the sampled close
 boundaries. The trusted-reader helper remained alive as expected while the main
-database view was open; its sampled RSS stayed between 39?46 MiB for lines and
-61?69 MiB for heatmaps. All four runs completed normal shutdown and preserved
+database view was open; its sampled RSS stayed between 40-45 MiB for lines and
+64-68 MiB for heatmaps. All four runs completed normal shutdown and preserved
 protected source-file hashes and observations.
 
 Raw reports are committed under `docs/assets/benchmarks/2026-11-17/` as
 `baseline-line.json`, `baseline-heatmap.json`, `final-line.json` and
 `final-heatmap.json`. They are repository evidence, excluded from the published
 documentation site with the other JSON artefacts. The candidate application
-fingerprint is `6f86574e93674b126900e8787a1f6e3b252d6b8def0ed2affd35732df7dab8ff`.
+fingerprint is `e0ca5aec5cc47dd875a3df5555db8ab46b75e4649814e85ef07c7e1ae6d0b819`.
 Full platform tests remain separate correctness evidence; a local performance
 run cannot establish behaviour on another operating system. After the preview
 recovery and measured retention fixes, pause broad restructuring and make further
