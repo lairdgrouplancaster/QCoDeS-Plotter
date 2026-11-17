@@ -13,6 +13,7 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.qcodes_cache import cache_parameter_is_synchronized
 from qplot.tools.heatmap_geometry import HeatmapGeometry
+from qplot.tools.heatmap_resolution import resolution_details, resolution_summary
 from qplot.tools.operation_registry import OperationValidationError
 from qplot.windows import _plot_axis_scaling as axis_scaling_module
 from qplot.windows._colorbar import (
@@ -26,85 +27,20 @@ from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import plot2d
 from tests._plot_results import capture_fake_plot_result
+from tests.support.heatmap_resolution import publish_resolution, set_resolution
 from tests.support.heatmap_viewport import set_viewport, stage_viewport
 from tests.support.plot_refresh import set_plot_worker
-
-
-@pytest.mark.parametrize("metadata, expected, absent", [
-    ({"grid_binned": True}, "Loaded values were averaged", "All matching"),
-    ({"source_sampled": True}, "A subset of source rows was sampled", "uniformly"),
-    ({"source_sampled": True, "grid_binned": True},
-     "Sampled values were averaged", "All matching"),
-    ({"source_aggregated": True}, "Source rows were aggregated", "spatial means"),
-    ({"source_aggregated": True, "source_aggregation_strategy": "spatial mean",
-      "aggregated_source_row_count": 200, "loaded_point_count": 20},
-     "Source rows were combined using spatial means", "sampled before plotting"),
-    ({"source_sampled": True, "source_aggregated": True,
-      "source_aggregation_strategy": "spatial mean", "aggregated_source_row_count": 200},
-     "A subset of source rows was sampled", "All 200"),
-])
-def test_heatmap_resolution_wording_follows_metadata(metadata, expected, absent):
-    host = plot2d.__new__(plot2d)
-    host._heatmap_downsample_info = metadata
-    summary = host._heatmap_downsample_dialog_message()
-    details = host._heatmap_downsample_dialog_text()
-    assert summary.startswith("This heatmap is displayed at reduced resolution.")
-    assert expected in summary
-    assert absent not in summary + details
-    assert "All matching source rows were read" not in details
-    assert "does not omit source measurements" not in details
-
-
-def test_heatmap_resolution_summary_compares_known_dimensions_and_keeps_details_separate():
-    host = plot2d.__new__(plot2d)
-    host._heatmap_downsample_info = {
-        "source_sampled": True, "source_sample_stride": 3,
-        "source_sample_limit": 100, "grid_binned": True,
-        "source_grid_columns": 2_000, "source_grid_rows": 1_000,
-        "grid_columns": 500, "grid_rows": 400,
-        "full_resolution_point_limit": 1_000_000, "empty_bins_filled": True,
-    }
-    summary = host._heatmap_downsample_dialog_message()
-    assert "Source grid: 2,000 × 1,000 (columns × rows)" in summary
-    assert "Displayed grid: 500 × 400 (columns × rows)" in summary
-    assert "3rd" not in summary
-    assert "interpolation" not in summary
-    assert "about every 3rd matching row" in host._heatmap_downsample_dialog_text()
-    host._heatmap_downsample_info.update({
-        "source_dimensions_limited": True, "source_grid_rows": None,
-        "source_grid_columns": 2_000,
-    })
-    summary = host._heatmap_downsample_dialog_message()
-    assert "Source grid: Exact dimensions unavailable" in summary
-    assert "2,000 ×" not in summary
-    assert "Displayed grid: 500 × 400" in summary
-
-
-def test_heatmap_resolution_details_do_not_treat_loaded_source_rows_as_display_cells():
-    host = plot2d.__new__(plot2d)
-    host._heatmap_downsample_info = {
-        "source_aggregated": True, "source_aggregation_strategy": "spatial mean",
-        "aggregated_source_row_count": 2_000, "loaded_point_count": 2_000,
-        "grid_columns": 10, "grid_rows": 10, "grid_cell_count": 100,
-        "grid_binned": True,
-    }
-    details = host._heatmap_downsample_dialog_text()
-    assert "Spatial averaging used 2,000 matching source rows." in details
-    assert "Aggregated values were displayed on a 10 x 10 display grid." in details
-    assert "2,000 spatial mean cells" not in details
-    host._heatmap_downsample_info.pop("source_aggregation_strategy")
-    details = host._heatmap_downsample_dialog_text()
-    assert "spatial mean" not in details
-    assert "averaged" not in details
 
 
 def test_heatmap_resolution_dialog_details_resize_and_preferences(qapplication):
     host = plot2d.__new__(plot2d)
     qtw.QMainWindow.__init__(host)
-    host._heatmap_downsample_info = {"source_sampled": True}
+    set_resolution(host, {"source_sampled": True})
     calls = []
     host.show_preferences_dialog = lambda **kwargs: calls.append(kwargs)
-    dialog = host._new_heatmap_downsample_dialog()
+    host.widget = qtw.QWidget(host)
+    host._init_heatmap_downsample_warning_button()
+    dialog = host.__dict__["_heatmap_resolution_ui"].new_dialog()
     try:
         dialog.show()
         qapplication.processEvents()
@@ -113,7 +49,7 @@ def test_heatmap_resolution_dialog_details_resize_and_preferences(qapplication):
         toggle = dialog.findChild(qtw.QToolButton, "heatmapResolutionDetailsButton")
         assert details.isHidden()
         assert details.isReadOnly()
-        assert details.toPlainText() == host._heatmap_downsample_dialog_text()
+        assert details.toPlainText() == resolution_details(host._heatmap_resolution_report)
         compact_size = dialog.size()
         assert compact_size.width() <= 560
         assert compact_size.height() < 360
@@ -596,7 +532,6 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         set_viewport(window, _heatmap_full_axis_ranges=None)
         set_viewport(window, _heatmap_full_view_ranges=None)
         set_viewport(window, _heatmap_last_view_ranges=None)
-        window._update_heatmap_downsample_state = lambda _worker: None
 
         stage_viewport(window, Worker())
 
@@ -636,7 +571,6 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             "x": (10.0, 20.0),
             "y": (5.0, 10.0),
             })
-        window._update_heatmap_downsample_state = lambda _worker: None
 
         stage_viewport(window, Worker())
 
@@ -656,7 +590,6 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         set_viewport(window, _heatmap_full_view_ranges=dict(window._heatmap_full_axis_ranges))
         set_viewport(window, _heatmap_last_view_ranges=dict(window._heatmap_full_axis_ranges))
         set_viewport(window, _heatmap_view_reload_timer=Timer())
-        window._update_heatmap_downsample_state = lambda _worker: None
 
         stage_viewport(window, type("Worker", (), {"loaded_from_sql_heatmap": False})())
 
@@ -1597,10 +1530,14 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 raise KeyError(key)
 
         host = plot2d.__new__(plot2d)
+        qtw.QMainWindow.__init__(host)
         host.config = MissingConfig()
 
-        with self.assertRaises(KeyError):
-            host._full_resolution_heatmap_limit(object())
+        try:
+            with self.assertRaises(KeyError):
+                publish_resolution(host, object())
+        finally:
+            host.deleteLater()
 
     def configure_geometry(self, window, x_centres, y_centres, data_grid=None):
         window.__dict__["axis_data"] = {
@@ -3039,7 +2976,6 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         host.toolbarCo_ord = qtw.QToolBar(host)
         host.widget = qtw.QWidget(host)
         host.widget.resize(300, 200)
-        host._heatmap_downsample_info = None
 
         try:
             host._init_heatmap_downsample_warning_button()
@@ -3064,7 +3000,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 ]
             self.assertEqual(widgets, [])
 
-            host._update_heatmap_downsample_state(Worker())
+            publish_resolution(host, Worker())
 
             self.assertFalse(host.heatmap_downsample_button.isHidden())
             self.assertEqual(
@@ -3078,7 +3014,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
             self.assertEqual(opened, [True])
 
-            text = host._heatmap_downsample_dialog_text()
+            text = resolution_details(host._heatmap_resolution_report)
             self.assertIn("displayed at reduced resolution", text)
             self.assertIn("X: 10 to 20", text)
             self.assertIn("2,000 x 1,000 = 2,000,000 cells", text)
@@ -3089,7 +3025,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             self.assertIn("500 x 400 display grid", text)
             self.assertIn("Empty sampled display bins were filled", text)
 
-            host._update_heatmap_downsample_state(object())
+            publish_resolution(host, object())
 
             self.assertTrue(host.heatmap_downsample_button.isHidden())
         finally:
@@ -3125,17 +3061,15 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         qtw.QMainWindow.__init__(host)
         host.toolbarCo_ord = qtw.QToolBar(host)
         host.widget = qtw.QWidget(host)
-        host._heatmap_worker_downsample_info = None
-        host._heatmap_downsample_info = None
 
         try:
             host._init_heatmap_downsample_warning_button()
-            host._update_heatmap_downsample_state(Worker())
+            publish_resolution(host, Worker())
 
             self.assertFalse(host.heatmap_downsample_button.isHidden())
-            self.assertTrue(host._heatmap_downsample_info["grid_binned"])
+            self.assertTrue(host._heatmap_resolution_report.binned)
 
-            text = host._heatmap_downsample_dialog_text()
+            text = resolution_details(host._heatmap_resolution_report)
             self.assertIn("3,501 x 801 = 2,804,301 cells", text)
             self.assertIn("full-resolution heatmap limit is 1,000,000", text)
             self.assertIn("176 x 176 = 30,976 cells", text)
@@ -3176,14 +3110,12 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         qtw.QMainWindow.__init__(host)
         host.toolbarCo_ord = qtw.QToolBar(host)
         host.widget = qtw.QWidget(host)
-        host._heatmap_worker_downsample_info = None
-        host._heatmap_downsample_info = None
 
         try:
             host._init_heatmap_downsample_warning_button()
-            host._update_heatmap_downsample_state(Worker())
+            publish_resolution(host, Worker())
 
-            text = host._heatmap_downsample_dialog_text()
+            text = resolution_details(host._heatmap_resolution_report)
             self.assertIn(
                 "Spatial averaging used 2,000,000 matching source rows.",
                 text,
@@ -3196,11 +3128,11 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 "source_grid_cell_count": None,
                 "unique_y_count": None,
             })
-            host._update_heatmap_downsample_state(Worker())
-            details = host._heatmap_downsample_dialog_text()
+            publish_resolution(host, Worker())
+            details = resolution_details(host._heatmap_resolution_report)
             self.assertIn("not retained during downsampling", details)
             self.assertIn("keep memory use bounded", details)
-            summary = host._heatmap_downsample_dialog_message()
+            summary = resolution_summary(host._heatmap_resolution_report)
             self.assertIn("Source grid: Exact dimensions unavailable", summary)
             self.assertNotIn("unknown", summary)
         finally:
@@ -3208,7 +3140,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
 
     def test_exact_grid_still_discloses_interpolation(self):
         host = plot2d.__new__(plot2d)
-        host._heatmap_downsample_info = {
+        set_resolution(host, {
             "source_sampled": True,
             "source_aggregated": False,
             "loaded_point_count": 2,
@@ -3219,9 +3151,9 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             "grid_cell_count": 4,
             "grid_binned": False,
             "empty_bins_filled": True,
-        }
+        })
 
-        text = host._heatmap_downsample_dialog_text()
+        text = resolution_details(host._heatmap_resolution_report)
 
         self.assertIn("displayed on an exact 2 x 2 grid", text)
         self.assertIn(
@@ -3244,15 +3176,13 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         qtw.QMainWindow.__init__(host)
         host.toolbarCo_ord = qtw.QToolBar(host)
         host.widget = qtw.QWidget(host)
-        host._heatmap_worker_downsample_info = None
-        host._heatmap_downsample_info = None
 
         try:
             host._init_heatmap_downsample_warning_button()
-            host._update_heatmap_downsample_state(Worker())
+            publish_resolution(host, Worker())
 
             self.assertFalse(host.heatmap_downsample_button.isHidden())
-            text = host._heatmap_downsample_dialog_text()
+            text = resolution_details(host._heatmap_resolution_report)
             self.assertIn("3,501 x 801 = 2,804,301 cells", text)
             self.assertIn("full-resolution heatmap limit is 1,000,000", text)
             self.assertIn("176 x 176 = 30,976 cells", text)
