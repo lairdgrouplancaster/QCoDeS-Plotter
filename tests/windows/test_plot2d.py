@@ -26,6 +26,7 @@ from qplot.windows._plotWin import plotWidget
 from qplot.windows._subplots.subplot2d import sweeper
 from qplot.windows.plot2d import plot2d
 from tests._plot_results import capture_fake_plot_result
+from tests.support.heatmap_viewport import set_viewport, stage_viewport
 from tests.support.plot_refresh import set_plot_worker
 
 
@@ -225,9 +226,9 @@ def test_visible_reload_resolves_pending_auto_range_without_overriding_zoom(zoom
     window.vb = viewbox
     set_plot_worker(window, SimpleNamespace(running=False))
     window.param = SimpleNamespace(name="signal")
-    window._large_heatmap_sql_mode = True
-    window._heatmap_full_axis_ranges = {"x": (0.0, 2.0), "y": (0.0, 3.0)}
-    window._heatmap_last_view_ranges = None
+    set_viewport(window, _large_heatmap_sql_mode=True)
+    set_viewport(window, _heatmap_full_axis_ranges={"x": (0.0, 2.0), "y": (0.0, 3.0)})
+    set_viewport(window, _heatmap_last_view_ranges=None)
     window._has_plottable_heatmap_data = lambda: True
     loads = []
     window.load_data = lambda **kwargs: loads.append(kwargs)
@@ -554,10 +555,10 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
 
         window = plot2d.__new__(plot2d)
         window.vb = ViewBox()
-        window._heatmap_full_axis_ranges = {
+        set_viewport(window, _heatmap_full_axis_ranges={
             "x": (0.0, 10.0),
             "y": (0.0, 20.0),
-            }
+            })
 
         ranges = window._visible_heatmap_axis_ranges()
 
@@ -571,10 +572,10 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
 
         window = plot2d.__new__(plot2d)
         window.vb = ViewBox()
-        window._heatmap_full_axis_ranges = {
+        set_viewport(window, _heatmap_full_axis_ranges={
             "x": (0.0, 10.0),
             "y": (0.0, 20.0),
-            }
+            })
 
         self.assertIsNone(window._visible_heatmap_axis_ranges())
 
@@ -592,12 +593,12 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             "x": np.array([4.5, 14.5, 24.5, 34.5]),
             "y": np.array([3.25, 10.75, 18.25, 25.75]),
             }
-        window._heatmap_full_axis_ranges = None
-        window._heatmap_full_view_ranges = None
-        window._heatmap_last_view_ranges = None
+        set_viewport(window, _heatmap_full_axis_ranges=None)
+        set_viewport(window, _heatmap_full_view_ranges=None)
+        set_viewport(window, _heatmap_last_view_ranges=None)
         window._update_heatmap_downsample_state = lambda _worker: None
 
-        window._update_large_heatmap_state(Worker())
+        stage_viewport(window, Worker())
 
         self.assertEqual(
             window._heatmap_full_axis_ranges,
@@ -626,18 +627,18 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             "x": np.array([4.5, 14.5, 24.5, 34.5]),
             "y": np.array([3.25, 10.75, 18.25, 25.75]),
             }
-        window._heatmap_full_axis_ranges = {
+        set_viewport(window, _heatmap_full_axis_ranges={
             "x": (0.0, 39.0),
             "y": (0.0, 29.0),
-            }
-        window._heatmap_full_view_ranges = None
-        window._heatmap_last_view_ranges = {
+            })
+        set_viewport(window, _heatmap_full_view_ranges=None)
+        set_viewport(window, _heatmap_last_view_ranges={
             "x": (10.0, 20.0),
             "y": (5.0, 10.0),
-            }
+            })
         window._update_heatmap_downsample_state = lambda _worker: None
 
-        window._update_large_heatmap_state(Worker())
+        stage_viewport(window, Worker())
 
         self.assertIsNone(window._heatmap_last_view_ranges)
 
@@ -650,16 +651,14 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
                 self.stopped = True
 
         window = plot2d.__new__(plot2d)
-        window._large_heatmap_sql_mode = True
-        window._heatmap_full_axis_ranges = {"x": (0.0, 1.0), "y": (0.0, 1.0)}
-        window._heatmap_full_view_ranges = dict(window._heatmap_full_axis_ranges)
-        window._heatmap_last_view_ranges = dict(window._heatmap_full_axis_ranges)
-        window._heatmap_view_reload_timer = Timer()
+        set_viewport(window, _large_heatmap_sql_mode=True)
+        set_viewport(window, _heatmap_full_axis_ranges={"x": (0.0, 1.0), "y": (0.0, 1.0)})
+        set_viewport(window, _heatmap_full_view_ranges=dict(window._heatmap_full_axis_ranges))
+        set_viewport(window, _heatmap_last_view_ranges=dict(window._heatmap_full_axis_ranges))
+        set_viewport(window, _heatmap_view_reload_timer=Timer())
         window._update_heatmap_downsample_state = lambda _worker: None
 
-        window._update_large_heatmap_state(
-            type("Worker", (), {"loaded_from_sql_heatmap": False})()
-            )
+        stage_viewport(window, type("Worker", (), {"loaded_from_sql_heatmap": False})())
 
         self.assertFalse(window._large_heatmap_sql_mode)
         self.assertIsNone(window._heatmap_full_axis_ranges)
@@ -698,6 +697,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             )
 
         with patch.object(plotWidget, "refreshPlot", return_value=True):
+            window._publication_owner().begin(worker, window.__dict__, cache=None, parameter_name="signal")
             plot2d.refreshPlot(window, True, worker=worker)
 
         self.assertFalse(worker.running)
@@ -856,20 +856,20 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
 
         window = plot2d.__new__(plot2d)
         window.vb = ViewBox()
-        window._heatmap_view_reload_timer = Timer()
-        window._large_heatmap_sql_mode = True
-        window._heatmap_full_axis_ranges = {
+        set_viewport(window, _heatmap_view_reload_timer=Timer())
+        set_viewport(window, _large_heatmap_sql_mode=True)
+        set_viewport(window, _heatmap_full_axis_ranges={
             "x": (0.0, 39.0),
             "y": (0.0, 29.0),
-            }
-        window._heatmap_full_view_ranges = {
+            })
+        set_viewport(window, _heatmap_full_view_ranges={
             "x": (-0.5, 39.5),
             "y": (-0.5, 29.5),
-            }
-        window._heatmap_last_view_ranges = {
+            })
+        set_viewport(window, _heatmap_last_view_ranges={
             "x": (10.0, 20.0),
             "y": (5.0, 10.0),
-            }
+            })
         set_plot_worker(window, type("Worker", (), {"running": False})())
         window.param = type("Param", (), {"name": "signal"})()
         loads = []
@@ -898,15 +898,15 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
 
     def test_zooming_out_of_visible_range_reloads_full_large_heatmap(self):
         window = plot2d.__new__(plot2d)
-        window._large_heatmap_sql_mode = True
-        window._heatmap_full_axis_ranges = {
+        set_viewport(window, _large_heatmap_sql_mode=True)
+        set_viewport(window, _heatmap_full_axis_ranges={
             "x": (0.0, 39.0),
             "y": (0.0, 29.0),
-            }
-        window._heatmap_last_view_ranges = {
+            })
+        set_viewport(window, _heatmap_last_view_ranges={
             "x": (10.0, 20.0),
             "y": (5.0, 10.0),
-            }
+            })
         set_plot_worker(window, type("Worker", (), {"running": False})())
         window.param = type("Param", (), {"name": "signal"})()
         window._visible_heatmap_axis_ranges = lambda: None
@@ -928,12 +928,12 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             "y": (3.0, 7.0),
             }
         window = plot2d.__new__(plot2d)
-        window._large_heatmap_sql_mode = True
-        window._heatmap_full_axis_ranges = {
+        set_viewport(window, _large_heatmap_sql_mode=True)
+        set_viewport(window, _heatmap_full_axis_ranges={
             "x": (0.0, 10.0),
             "y": (0.0, 20.0),
-            }
-        window._heatmap_last_view_ranges = None
+            })
+        set_viewport(window, _heatmap_last_view_ranges=None)
         set_plot_worker(window, type("Worker", (), {"running": False})())
         window.param = type("Param", (), {"name": "signal"})()
         window._visible_heatmap_axis_ranges = lambda: requested_ranges
@@ -972,17 +972,17 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
 
         window = plot2d.__new__(plot2d)
         window.vb = ViewBox()
-        window._heatmap_view_reload_timer = Timer()
-        window._large_heatmap_sql_mode = True
-        window._heatmap_full_axis_ranges = {
+        set_viewport(window, _heatmap_view_reload_timer=Timer())
+        set_viewport(window, _large_heatmap_sql_mode=True)
+        set_viewport(window, _heatmap_full_axis_ranges={
             "x": (0.0, 39.0),
             "y": (0.0, 29.0),
-            }
-        window._heatmap_full_view_ranges = window._heatmap_full_axis_ranges
-        window._heatmap_last_view_ranges = {
+            })
+        set_viewport(window, _heatmap_full_view_ranges=window._heatmap_full_axis_ranges)
+        set_viewport(window, _heatmap_last_view_ranges={
             "x": (10.0, 20.0),
             "y": (5.0, 10.0),
-            }
+            })
         set_plot_worker(window, type("Worker", (), {"running": True})())
         window.param = type("Param", (), {"name": "signal"})()
         window._visible_heatmap_axis_ranges = lambda: None
@@ -1003,7 +1003,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
 
     def test_small_primary_still_synchronizes_large_secondary_viewports(self):
         window = plot2d.__new__(plot2d)
-        window._large_heatmap_sql_mode = False
+        set_viewport(window, _large_heatmap_sql_mode=False)
         synchronizations = []
         window._sync_secondary_heatmap_view_ranges = (
             lambda: synchronizations.append(True)

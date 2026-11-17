@@ -493,6 +493,8 @@ class FrozenLoader(loader):
 class FrozenSlice(plot2d):
     """A detached, already processed plane with normal 2D appearance/export."""
 
+    _uses_heatmap_viewport = False
+
     def __init__(self, dataset_key, param, source, config, threadPool, dataset_holder, **kwargs):
         axes = source.axis_options
         synthetic = ParamSpec(param.name, "numeric", label=source.display_param.label,
@@ -511,10 +513,6 @@ class FrozenSlice(plot2d):
 
     def _refresh_monitor_required(self, dataset=None):
         return False
-
-    def _update_large_heatmap_state(self, worker):
-        self._large_heatmap_sql_mode = False
-        self._update_heatmap_downsample_state(worker)
 
     def _update_plot_annotation(self):
         super()._update_plot_annotation()

@@ -22,6 +22,8 @@ class plot3d(plot2d):
     """One volume and one independently selectable, processed viewing plane."""
 
     cursor_has_depth = True
+    # Slice workers read full-resolution planes from their private index.
+    _uses_heatmap_viewport = False
     plane_changed = QtCore.pyqtSignal()
     _initial_load_message = "3D viewer ready; indexing recorded coordinates..."
     _extra_publication_fields = (
@@ -410,12 +412,6 @@ class plot3d(plot2d):
         if swapped != self.plot_axes_swapped():
             self.axis_dropdown["x"].setCurrentText(self.axis_options["y"])
         return True
-
-    def _update_large_heatmap_state(self, worker):
-        # Slice workers are full-resolution private-index reads; they do not
-        # use the 2D SQL spatial aggregation/reload path.
-        self._large_heatmap_sql_mode = False
-        self._update_heatmap_downsample_state(worker)
 
     def _prepare_plot_publication(self, worker, result):
         if result.slice_volume is not None:

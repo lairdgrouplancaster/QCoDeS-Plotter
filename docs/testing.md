@@ -110,7 +110,7 @@ A local Windows run cannot substitute for those platform results.
 
 ## Static analysis
 
-The explicit mypy targets in `pyproject.toml` cover 172 of the 207 application
+The explicit mypy targets in `pyproject.toml` cover 174 of the 209 application
 modules. The other 35 have individual reasons in `[tool.qplot.typing.deferred]`.
 `follow_imports = "silent"` allows mypy to use imported types while suppressing
 diagnostics from modules outside the explicit targets; this is partial coverage,
@@ -259,6 +259,15 @@ and completion callbacks. `test_volume_publication.py` verifies metadata recover
 and retry after dependent-view failures in volumes and cuts. These tests retain
 source-artefact assertions; sidecar-replacement tests also cover final completion
 before commit.
+
+`test_heatmap_viewport.py` covers range decisions, debounce ownership and staged
+publication outcomes without constructing windows. Real SQL heatmap cases in
+`test_heatmap_viewport_integration.py` exercise failed zoom/full-view rendering
+and retry, rapid changes during publication, nested newer results, cancellation
+on close or source rejection, and retained plots after selecting another
+database. They check rendered values and preservation of source artefacts.
+`test_heatmap_layer_integration.py` also checks that a hidden SQL source can
+reload while retained and cancels pending viewport work on final removal.
 
 Consolidate tests that protect the same behaviour with the same setup into
 clearly named parametrised cases. Keep independent expected values and oracles.

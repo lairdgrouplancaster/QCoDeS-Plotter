@@ -17,6 +17,7 @@ from qplot.windows._plot2d_layers import (
 from qplot.windows._plot_axis_scaling import PlotAxisScalingMixin
 from qplot.windows._plotWin import plotWidget
 from qplot.windows._refresh_interval import set_refresh_interval
+from tests.support.heatmap_viewport import set_viewport
 from tests.support.plot_refresh import set_plot_worker
 
 
@@ -550,7 +551,7 @@ def test_hidden_large_heatmap_source_tracks_host_viewport(
     applied_ranges = []
     scheduled = []
     host.vb = SimpleNamespace(viewRange=lambda: ((1.0, 2.0), (10.0, 20.0)))
-    source._large_heatmap_sql_mode = True
+    set_viewport(source, _large_heatmap_sql_mode=True)
     source.vb = SimpleNamespace(
         setRange=lambda **ranges: applied_ranges.append(ranges),
     )
@@ -574,7 +575,7 @@ def test_visible_large_heatmap_source_viewport_is_not_hijacked(tmp_path):
     applied_ranges = []
     scheduled = []
     host.vb = SimpleNamespace(viewRange=lambda: ((1.0, 2.0), (10.0, 20.0)))
-    source._large_heatmap_sql_mode = True
+    set_viewport(source, _large_heatmap_sql_mode=True)
     source.vb = SimpleNamespace(
         setRange=lambda **ranges: applied_ranges.append(ranges),
     )

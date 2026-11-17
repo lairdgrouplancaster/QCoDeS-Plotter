@@ -480,9 +480,6 @@ class HeatmapLayer:
             monitor = getattr(source, "monitor", None)
             if monitor is not None:
                 monitor.stop()
-            timer = source.__dict__.get("_heatmap_view_reload_timer")
-            if timer is not None:
-                timer.stop()
             cancel_refresh = getattr(source, "_cancel_plot_refresh", None)
             if callable(cancel_refresh):
                 cancel_refresh()
@@ -601,7 +598,7 @@ class Plot2DLayerMixin(PlotHost):
                                        transform.m31(), transform.m32(), transform.m33()))):
                     continue
                 if layer is self:
-                    self._heatmap_view_reload_timer.stop()
+                    self._viewport_controller().cancel_pending()
                     self._reject_heatmap_color_range(
                         message=HEATMAP_DISPLAY_RANGE_MESSAGE,
                         title="Unsupported heatmap coordinate range",
@@ -1041,7 +1038,7 @@ class Plot2DLayerMixin(PlotHost):
             source = getattr(candidate, "from_win", None)
             if (
                 source is None
-                or not source.__dict__.get("_large_heatmap_sql_mode", False)
+                or not getattr(source, "_large_heatmap_sql_mode", False)
                 or getattr(source, "visible", True)
             ):
                 continue
