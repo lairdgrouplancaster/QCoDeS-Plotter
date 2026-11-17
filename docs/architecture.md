@@ -291,7 +291,9 @@ explicit resolution status.
 `RefreshPublication`. Only a committed result replaces the accepted explanation;
 a cleared failed display or retired source has no warning. Nested publications
 cannot overwrite a newer report. `_heatmap_resolution_ui.py` owns the warning
-button and dialogue, updates an open explanation after a commit and dismisses it
+button and dialogue. Reports settle for hidden sources too, releasing completed
+workers and rollback snapshots without requiring a UI observer. The adapter
+updates an open explanation after a commit and dismisses it
 when no report applies. The plot window supplies existing in-memory observations
 and coordinates publication; reporting does not acquire data or query a database.
 

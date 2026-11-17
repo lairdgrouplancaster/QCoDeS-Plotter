@@ -1,10 +1,36 @@
 """Real heatmap warnings follow committed images, failures and source lifetime."""
 
+import gc
+import weakref
+
 import pytest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.tools.heatmap_resolution import resolution_details, resolution_summary
 from tests.support.windows.sql_heatmap import idle, sql_heatmap, subset, view
+
+
+def test_hidden_source_releases_completed_publication_snapshot(tmp_path, monkeypatch):
+    with sql_heatmap(tmp_path, monkeypatch, grid_cells=4) as (_window, plot):
+        assert "_heatmap_resolution_ui" not in plot.__dict__
+        owner = plot._publication_owner()
+        original = owner.begin
+        publications = []
+
+        def begin(*args, **kwargs):
+            publication = original(*args, **kwargs)
+            publications.append(weakref.ref(publication))
+            return publication
+
+        monkeypatch.setattr(owner, "begin", begin)
+        assert plot.load_data(force_sql_heatmap=True)
+        idle(plot)
+        gc.collect()
+        # The committed report must not retain the worker and rollback arrays,
+        # even when no warning widget or preview ever observes that report.
+        assert publications
+        assert all(reference() is None for reference in publications)
+        assert plot._heatmap_resolution_report is not None
 
 
 @pytest.mark.parametrize("failure_stage", ["_render_heatmap", "_complete_plot_publication"])

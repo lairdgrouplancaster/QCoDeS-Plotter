@@ -709,9 +709,12 @@ class plot2d(
         self._sync_heatmap_resolution_warning()
 
     def _sync_heatmap_resolution_warning(self) -> None:
+        # Hidden overlay sources have no warning widget. Settle their report
+        # too, so completed publications release workers and rollback arrays.
+        report = self._heatmap_resolution_report
         ui = self.__dict__.get("_heatmap_resolution_ui")
         if ui is not None:
-            ui.sync(self._heatmap_resolution_report)
+            ui.sync(report)
 
     def show_heatmap_downsample_dialog(self) -> None:
         self._sync_heatmap_resolution_warning()

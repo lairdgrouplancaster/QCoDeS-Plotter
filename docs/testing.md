@@ -275,8 +275,10 @@ constructing windows. `windows/test_heatmap_resolution_state.py` covers report
 publication outcomes. The real SQL cases in
 `windows/test_heatmap_resolution_integration.py` check open dialogue updates,
 failed renders and retries, nested newer publications, full-resolution transitions
-and source rejection, retaining protected-source artefact assertions. The shared
-SQL heatmap fixture lives in `tests/support/windows/sql_heatmap.py`.
+and source rejection, retaining protected-source artefact assertions. Hidden-source
+cases verify that completed publication snapshots are released even without
+warning controls. Their SQL heatmap fixture lives in
+`tests/support/windows/sql_heatmap.py`.
 
 Consolidate tests that protect the same behaviour with the same setup into
 clearly named parametrised cases. Keep independent expected values and oracles.
