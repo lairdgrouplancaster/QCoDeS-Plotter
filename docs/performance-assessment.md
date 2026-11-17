@@ -58,13 +58,13 @@ the recorded comparisons. The baseline is the application merged in PR #153
 | Observation | Baseline | Candidate |
 | --- | ---: | ---: |
 | Closed line plots still retained after 12 cycles | 12 | 0 |
-| Line-process RSS, first to final cycle | 162.4 to 225.6 MiB | 157.9 to 167.4 MiB |
-| Line-process RSS range over cycles 7-12 | 198.5-225.6 MiB | 165.3-168.5 MiB |
+| Line-process RSS, first to final cycle | 162.4 to 225.6 MiB | 157.3 to 164.3 MiB |
+| Line-process RSS range over cycles 7-12 | 198.5-225.6 MiB | 163.2-164.3 MiB |
 | Closed heatmaps still retained after 12 cycles | 12 | 0 |
-| Heatmap-process RSS, first to final cycle | 247.8 to 375.1 MiB | 247.2 to 252.3 MiB |
-| Heatmap-process RSS range over cycles 7-12 | 319.2-375.1 MiB | 247.8-252.3 MiB |
-| Warm line display / refresh median | 575 / 203 ms | 502 / 198 ms |
-| Warm heatmap display / refresh median | 390 / 97 ms | 379 / 93 ms |
+| Heatmap-process RSS, first to final cycle | 247.8 to 375.1 MiB | 240.9 to 243.0 MiB |
+| Heatmap-process RSS range over cycles 7-12 | 319.2-375.1 MiB | 240.8-243.0 MiB |
+| Warm line display / refresh median | 575 / 203 ms | 523 / 239 ms |
+| Warm heatmap display / refresh median | 390 / 97 ms | 390 / 89 ms |
 
 Warm timings exclude the first two cycles. This is one sequential comparison
 per workload, not a statistical claim of a speed-up. The clear result is the
@@ -76,25 +76,25 @@ reproduce the missing retirement on the baseline and protect retained overlays
 and closure during publication or completion feedback, including nested event
 loops that must not dispose of a window while its callback is still running.
 
-The candidate's database-open times were 520 ms for lines and 545 ms for heatmaps.
-The 10 ms event-loop probe had aggregate 95th-percentile lateness of 85 ms for lines
-and 41 ms for heatmaps. Its largest startup/load delays were about 1.1 s and
-1.0 s. Within the repeated cycles the maxima were 203 ms and 438 ms; the latter
+The candidate's database-open times were 531 ms for lines and 557 ms for heatmaps.
+The 10 ms event-loop probe had aggregate 95th-percentile lateness of 96 ms for lines
+and 41 ms for heatmaps. Its largest startup/load delays were about 1.0 s in both
+runs. Within the repeated cycles the maxima were 203 ms and 458 ms; the latter
 occurred in the first heatmap cycle, with subsequent heatmap maxima below
-216 ms. These observations leave room for future startup/responsiveness work
+193 ms. These observations leave room for future startup/responsiveness work
 if it matters in ordinary use, but do not justify another general refactor.
 
 No plot or snapshot-preview workers remained active at the sampled close
 boundaries. The trusted-reader helper remained alive as expected while the main
-database view was open; its sampled RSS stayed between 40-45 MiB for lines and
-61-64 MiB for heatmaps. All four runs completed normal shutdown and preserved
+database view was open; its sampled RSS stayed at about 40-45 MiB for lines and
+60-64 MiB for heatmaps. All four runs completed normal shutdown and preserved
 protected source-file hashes and observations.
 
 Raw reports are committed under `docs/assets/benchmarks/2026-11-17/` as
 `baseline-line.json`, `baseline-heatmap.json`, `final-line.json` and
 `final-heatmap.json`. They are repository evidence, excluded from the published
 documentation site with the other JSON artefacts. The candidate application
-fingerprint is `991f68789c0a4aa4ba7e21b89d7a513aa1d6bd294feaddca3248596f03988230`.
+fingerprint is `370234c83a5a6a14cb32d56866d8c252d78160d62fb63800d1df938ae6a8cd81`.
 Full platform tests remain separate correctness evidence; a local performance
 run cannot establish behaviour on another operating system. After the preview
 recovery and measured retention fixes, pause broad restructuring and make further

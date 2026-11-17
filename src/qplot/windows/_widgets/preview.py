@@ -3,6 +3,7 @@ import sqlite3
 import threading
 from collections import OrderedDict
 from time import monotonic
+from weakref import finalize
 
 import numpy as np
 from PyQt6 import QtCore, QtGui, sip
@@ -169,7 +170,9 @@ class PreviewTab(qtw.QWidget):
         self._database_binding: _PreviewDatabaseBinding | None = None
         controller = PreviewController(PreviewQtHost(self), max_workers=PREVIEW_MAX_ACTIVE_WORKERS)
         self._preview_controller = controller
-        self.destroyed.connect(lambda: controller.reset(close=True))
+        # Keep cleanup alive independently of widget/controller cycles. Native
+        # deletion and Python collection share the same one-shot cancellation.
+        self.destroyed.connect(finalize(self, controller.reset, close=True))
         self.current_guid = None
         self.run_metadata = {}
         self.cache = OrderedDict()

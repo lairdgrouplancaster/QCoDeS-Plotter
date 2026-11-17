@@ -446,7 +446,9 @@ remain visible to shutdown until their completion callbacks release them.
 `_preview_ui.py` supplies source validation, GUI-thread signal connections,
 parented timers and widget feedback. Its reference to the owning widget is weak,
 so the controller's destruction callback cannot retain that widget in a cycle.
-Widget destruction closes the controller and cancels retained work.
+One finaliser closes the controller and cancels retained work on either native
+widget destruction or Python collection. It keeps the cleanup callable alive
+while cyclic widget/controller ownership is collected, and runs only once.
 Numerical preview generation, cache policy
 and the trusted derived-data bridge remain separate from this ownership change.
 

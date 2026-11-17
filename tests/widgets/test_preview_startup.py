@@ -133,6 +133,9 @@ def test_deleting_widget_cancels_retained_preview_work(qapplication):
     qapplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
     assert controller.closed
     assert cancelled == [True]
+    del tab
+    gc.collect()
+    assert cancelled == [True]
 
 
 def test_preview_controller_does_not_retain_its_widget(qapplication):
@@ -145,4 +148,21 @@ def test_preview_controller_does_not_retain_its_widget(qapplication):
     gc.collect()
     assert reference() is None
     assert controller.closed
+    assert cancelled == [True]
+
+
+def test_collecting_cyclic_preview_ownership_cancels_retained_work(qapplication):
+    cancelled = []
+
+    def make_cycle():
+        tab = preview_module.PreviewTab()
+        tab._cycle = tab
+        worker = SimpleNamespace(controller=tab._preview_controller)
+        worker.cancel = lambda: cancelled.append(worker.controller.closed)
+        seed_preview_job(tab, "retained", worker)
+        return weakref.ref(tab)
+
+    reference = make_cycle()
+    gc.collect()
+    assert reference() is None
     assert cancelled == [True]
