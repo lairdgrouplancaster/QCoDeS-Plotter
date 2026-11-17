@@ -82,10 +82,10 @@ class _Executor:
         )
         watermark = TrustedQueryResult(("result_watermark",), ((1_000_000_000,),))
         windows = []
-        for index, query in enumerate(queries[4:]):
+        for index, _query in enumerate(queries[4:]):
             row_id = (
                 1_000_000_000
-                if "DESC" in query.sql.upper()
+                if index == len(queries[4:]) - 1
                 else min(1_000_000_000, index * 62_500_000 + 1)
             )
             windows.append(
@@ -157,7 +157,7 @@ def test_derived_extraction_is_indexed_bounded_and_prefix_consistent(
     batch = executor.batches[-1]
     sample_sql = tuple(query.sql.upper() for query in batch[4:])
     assert all(
-        ('"ID" > MAX(0,' in sql and "* ?)" in sql) or 'ORDER BY "ID" DESC' in sql
+        'WHERE "ID" IN (' in sql
         for sql in sample_sql
     )
     assert all("LIMIT 256" in sql for sql in sample_sql)
