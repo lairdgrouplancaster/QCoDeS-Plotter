@@ -856,10 +856,10 @@ class TrustedMetadataQueryAdapter:
         """Capture one renderable, bounded result prefix in a short transaction.
 
         The adapter cache is used only to choose a conservative set of columns
-        and indexed window starts.  The authoritative run identity, schema,
+        and indexed sample plans.  The authoritative run identity, schema,
         watermark, run-description facts, and samples are all re-read in one
-        repeatable-read batch.  Every sampling statement is a primary-key
-        keyset window; database size does not alter its row or cell budget.
+        repeatable-read batch. Every sampling statement uses primary-key
+        lookups; database size does not alter its row or cell budget.
         """
 
         if not isinstance(database_instance, DatabaseInstance):
@@ -1022,26 +1022,54 @@ class TrustedMetadataQueryAdapter:
             )
             if array_columns:
                 window_rows = TRUSTED_DERIVED_ARRAY_ROWS_PER_WINDOW
-            sample_queries.extend(
-                TrustedQuery(
-                    f"SELECT {array_selected} FROM {table} "
-                    f'WHERE "id" > MAX(0, (({maximum_expression} * ?) / '
-                    f"{TRUSTED_DERIVED_SAMPLE_WINDOWS}) - 1) "
-                    f'AND "id" <= {maximum_expression} '
-                    f'ORDER BY "id" LIMIT {window_rows}',
-                    (index,),
+            if not array_columns:
+                # Spread scalar samples across the entire captured prefix.
+                # Long contiguous windows create false quiet stretches when
+                # the renderer joins distant windows of a dense noise trace.
+                # Keep short neighbouring groups so interleaved QCoDeS
+                # outputs are represented even at a periodic sampling stride.
+                group_size = max(1, min(window_rows, sum(
+                    name in retained_columns for name in cached_measure_parameters
+                )))
+                sample_count = window_rows * (TRUSTED_DERIVED_SAMPLE_WINDOWS + 1)
+                grouped_count = (sample_count // group_size) * group_size
+                group_intervals = max(1, grouped_count // group_size - 1)
+                span = f"MAX(0, last_id - {group_size})"
+                sample_queries.extend(
+                    TrustedQuery(
+                        f'WITH extent(last_id) AS (SELECT COALESCE(MAX("id"), 0) FROM {table}), '
+                        f'samples(n) AS (VALUES {", ".join("(?)" for _ in range(window_rows))}) '
+                        f"SELECT {selected} FROM {table} WHERE \"id\" IN ("
+                        # Quotient/remainder arithmetic avoids overflowing a
+                        # SQLite integer when the result watermark is large.
+                        f"SELECT MIN(last_id, 1 + ({span} / {group_intervals}) * (n / {group_size}) "
+                        f"+ (({span} % {group_intervals}) * (n / {group_size})) / {group_intervals} "
+                        f"+ (n % {group_size})) FROM extent, samples WHERE last_id > 0 AND n < {grouped_count}) "
+                        f'ORDER BY "id" LIMIT {window_rows}',
+                        tuple(range(index * window_rows, (index + 1) * window_rows)),
+                    )
+                    for index in range(TRUSTED_DERIVED_SAMPLE_WINDOWS + 1)
                 )
-                for index in range(TRUSTED_DERIVED_SAMPLE_WINDOWS)
-            )
-            # Preserve the established 1D newest-edge sample even when the
-            # cached count was stale before this transaction began.
-            sample_queries.append(
-                TrustedQuery(
-                    f"SELECT {array_selected} FROM {table} "
-                    f'WHERE "id" <= {maximum_expression} ORDER BY "id" DESC '
-                    f"LIMIT {window_rows}"
+            else:
+                sample_queries.extend(
+                    TrustedQuery(
+                        f"SELECT {array_selected} FROM {table} "
+                        f'WHERE "id" > MAX(0, (({maximum_expression} * ?) / '
+                        f"{TRUSTED_DERIVED_SAMPLE_WINDOWS}) - 1) "
+                        f'AND "id" <= {maximum_expression} '
+                        f'ORDER BY "id" LIMIT {window_rows}',
+                        (index,),
+                    )
+                    for index in range(TRUSTED_DERIVED_SAMPLE_WINDOWS)
                 )
-            )
+                # Array records retain bounded windows and their newest edge.
+                sample_queries.append(
+                    TrustedQuery(
+                        f"SELECT {array_selected} FROM {table} "
+                        f'WHERE "id" <= {maximum_expression} ORDER BY "id" DESC '
+                        f"LIMIT {window_rows}"
+                    )
+                )
 
         incarnation = self._executor.incarnation
         data_version = self._executor.data_version()
