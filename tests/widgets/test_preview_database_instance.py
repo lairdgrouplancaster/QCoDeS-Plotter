@@ -55,6 +55,15 @@ def _start_selected_preview(database_source, metadata, *, size=40):
     return preview, thread_pool.started[0]
 
 
+def _start_selected_full_preview(database_source, metadata):
+    preview, thumbnail = _start_selected_preview(database_source, metadata)
+    thumbnail.run()
+    assert metadata["guid"] in preview.thumbnail_cache
+    _, full_preview = preview.thread_pool.started
+    assert full_preview.preview_size == preview.preview_size
+    return preview, full_preview
+
+
 def _open_wal_source(database_path: Path):
     writer = sqlite3.connect(database_path)
     assert writer.execute("PRAGMA journal_mode = WAL").fetchone() == ("wal",)
@@ -233,9 +242,8 @@ def test_preview_rejects_sidecar_swap_after_worker_before_ui_publication(
     metadata, _columns, _values = _preview_database(database_path, seed=13)
     writer = _open_wal_source(database_path)
     try:
-        preview, worker = _start_selected_preview(database_path, metadata)
+        preview, worker = _start_selected_full_preview(database_path, metadata)
         generation = preview.generation
-        worker.preview_size = preview.preview_size
         previews = generate_run_previews(
             worker.database_instance,
             metadata,
@@ -281,9 +289,8 @@ def test_preview_rechecks_sidecars_after_cache_mutation_before_signal(
     metadata, _columns, _values = _preview_database(database_path, seed=14)
     writer = _open_wal_source(database_path)
     try:
-        preview, worker = _start_selected_preview(database_path, metadata)
+        preview, worker = _start_selected_full_preview(database_path, metadata)
         generation = preview.generation
-        worker.preview_size = preview.preview_size
         previews = generate_run_previews(
             worker.database_instance,
             metadata,
@@ -333,9 +340,8 @@ def test_preview_rechecks_sidecars_after_ready_signal_before_selected_render(
     metadata, _columns, _values = _preview_database(database_path, seed=15)
     writer = _open_wal_source(database_path)
     try:
-        preview, worker = _start_selected_preview(database_path, metadata)
+        preview, worker = _start_selected_full_preview(database_path, metadata)
         generation = preview.generation
-        worker.preview_size = preview.preview_size
         previews = generate_run_previews(
             worker.database_instance,
             metadata,
@@ -390,9 +396,8 @@ def test_preview_rechecks_sidecars_after_selected_render(
     metadata, _columns, _values = _preview_database(database_path, seed=16)
     writer = _open_wal_source(database_path)
     try:
-        preview, worker = _start_selected_preview(database_path, metadata)
+        preview, worker = _start_selected_full_preview(database_path, metadata)
         generation = preview.generation
-        worker.preview_size = preview.preview_size
         previews = generate_run_previews(
             worker.database_instance,
             metadata,
