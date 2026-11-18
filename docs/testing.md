@@ -103,7 +103,15 @@ or `..\.venv\Scripts\python.exe` for a neighbouring environment. On macOS use
 that cache directory for each command.
 
 The existing GitHub CI workflow uses routine desktop validation for ordinary
-pull requests. For a broad test reorganisation, run it on the candidate branch
+pull requests. A PR confined to application code, ordinary tests or documentation
+runs the macOS ARM64 compiler-free installation check on Python 3.14. Changes to
+packaging, dependencies, the native or trusted reader, or CI run that check on
+Python 3.12, 3.13 and 3.14. The planner also uses all three when it cannot verify
+the changed paths. Both ARM64 full-suite partitions and all Python/PyQt
+compatibility checks still run on ordinary PRs. Pushes to `main` and full
+validation retain all three installation checks.
+
+For a broad test reorganisation, run CI on the candidate branch
 with **full-validation** enabled as well. That includes the complete Python
 matrix, Linux checks, combined coverage and source-distribution validation.
 A local Windows run cannot substitute for those platform results.

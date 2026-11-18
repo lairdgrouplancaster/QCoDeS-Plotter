@@ -852,7 +852,7 @@ class DatabaseActionsMixin:
 
 
     @QtCore.pyqtSlot()
-    def refreshMain(self, automatic=False):
+    def refreshMain(self, automatic=False, *, retry_preview=False):
         """
         On self.monitor timer or force refresh, check for new runs in Database
 
@@ -893,6 +893,8 @@ class DatabaseActionsMixin:
 
         current_instance = database_instance(database_path)
         self._database_refresher.start(database_path, current_instance)
+        if retry_preview and self._database_access_mode == SNAPSHOT_FALLBACK_MODE:
+            self.infoBox.preview.retry_failed_current_preview()
 
 
     @QtCore.pyqtSlot(int, str, object)

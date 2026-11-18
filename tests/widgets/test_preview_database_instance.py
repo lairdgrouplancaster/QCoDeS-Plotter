@@ -41,8 +41,8 @@ class _RecordingThreadPool:
         self.started.append(worker)
 
 
-def _start_selected_preview(database_source, metadata):
-    preview = PreviewTab(preview_size=40)
+def _start_selected_preview(database_source, metadata, *, size=40):
+    preview = PreviewTab(preview_size=size)
     thread_pool = _RecordingThreadPool()
     preview.thread_pool = thread_pool
     preview.set_database_runs(
@@ -53,6 +53,15 @@ def _start_selected_preview(database_source, metadata):
         type("Dataset", (), {"guid": metadata["guid"]})()
     )
     return preview, thread_pool.started[0]
+
+
+def _start_selected_full_preview(database_source, metadata):
+    preview, thumbnail = _start_selected_preview(database_source, metadata)
+    thumbnail.run()
+    assert metadata["guid"] in preview.thumbnail_cache
+    _, full_preview = preview.thread_pool.started
+    assert full_preview.preview_size == preview.preview_size
+    return preview, full_preview
 
 
 def _open_wal_source(database_path: Path):
@@ -233,9 +242,8 @@ def test_preview_rejects_sidecar_swap_after_worker_before_ui_publication(
     metadata, _columns, _values = _preview_database(database_path, seed=13)
     writer = _open_wal_source(database_path)
     try:
-        preview, worker = _start_selected_preview(database_path, metadata)
+        preview, worker = _start_selected_full_preview(database_path, metadata)
         generation = preview.generation
-        worker.preview_size = preview.preview_size
         previews = generate_run_previews(
             worker.database_instance,
             metadata,
@@ -281,9 +289,8 @@ def test_preview_rechecks_sidecars_after_cache_mutation_before_signal(
     metadata, _columns, _values = _preview_database(database_path, seed=14)
     writer = _open_wal_source(database_path)
     try:
-        preview, worker = _start_selected_preview(database_path, metadata)
+        preview, worker = _start_selected_full_preview(database_path, metadata)
         generation = preview.generation
-        worker.preview_size = preview.preview_size
         previews = generate_run_previews(
             worker.database_instance,
             metadata,
@@ -333,9 +340,8 @@ def test_preview_rechecks_sidecars_after_ready_signal_before_selected_render(
     metadata, _columns, _values = _preview_database(database_path, seed=15)
     writer = _open_wal_source(database_path)
     try:
-        preview, worker = _start_selected_preview(database_path, metadata)
+        preview, worker = _start_selected_full_preview(database_path, metadata)
         generation = preview.generation
-        worker.preview_size = preview.preview_size
         previews = generate_run_previews(
             worker.database_instance,
             metadata,
@@ -390,9 +396,8 @@ def test_preview_rechecks_sidecars_after_selected_render(
     metadata, _columns, _values = _preview_database(database_path, seed=16)
     writer = _open_wal_source(database_path)
     try:
-        preview, worker = _start_selected_preview(database_path, metadata)
+        preview, worker = _start_selected_full_preview(database_path, metadata)
         generation = preview.generation
-        worker.preview_size = preview.preview_size
         previews = generate_run_previews(
             worker.database_instance,
             metadata,
@@ -547,28 +552,38 @@ def test_preview_revalidates_after_read_before_cache_acceptance(tmp_path):
     assert _artifact_state(database_path) == replacement_state
 
 
+@pytest.mark.parametrize("size", [63, 64, 65])
 def test_unchanged_database_preview_is_cached_and_selected_without_source_writes(
-    tmp_path,
+    tmp_path, qapplication, request, size,
 ):
     database_path = tmp_path / "a.db"
     metadata, _columns, _values = _preview_database(database_path, seed=5)
     source_state = _artifact_state(database_path)
     accepted_instance = database_instance(database_path)
 
-    preview, worker = _start_selected_preview(accepted_instance, metadata)
+    preview, worker = _start_selected_preview(accepted_instance, metadata, size=size)
+    request.addfinalizer(preview.close)
+    preview.show()
     ready = []
     replacements = []
     preview.previewsReady.connect(lambda *args: ready.append(args))
     preview.databaseReplaced.connect(replacements.append)
+    guid = metadata["guid"]
+    # A plot request changes this active thumbnail's priority to a full-preview
+    # priority. Its original purpose must survive both reprioritisation and a
+    # full-preview preference equal to the thumbnail width.
+    preview.request_guids([guid])
+    assert preview._active_priorities[worker.generation, guid] == preview_module.PREVIEW_PLOTTED_PRIORITY
     worker.run()
 
-    guid = metadata["guid"]
     assert worker.database_instance is accepted_instance
     assert replacements == []
-    assert guid in preview.thumbnail_cache
+    assert preview.thumbnail_cache[guid][0]["image"].width() == 64
+    assert guid not in preview.cache
     assert len(preview.thread_pool.started) == 2
 
     preview.thread_pool.started[1].run()
+    qapplication.processEvents()
 
     assert len(ready) == 2
     assert ready[-1][0] == guid
@@ -576,7 +591,12 @@ def test_unchanged_database_preview_is_cached_and_selected_without_source_writes
     assert preview.cache[guid] == ready[-1][1]
     images = preview.findChildren(DraggablePreviewImageLabel)
     assert len(images) == 1
-    assert images[0].guid == guid
+    assert images[0].isVisible() and images[0].guid == guid
+    assert images[0].pixmap().width() == images[0].width() == size
+    preview.prioritize_runs(selected_run_ids=[metadata["run_id"]])
+    qapplication.processEvents()
+    assert len(preview.thread_pool.started) == len(ready) == 2
+    assert not (preview.active or preview.queue or preview._workers or preview._start_scheduled)
     assert _artifact_state(database_path) == source_state
 
 
