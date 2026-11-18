@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -93,27 +94,54 @@ def check_matrix(full_validation: bool) -> dict[str, list[dict[str, str]]]:
     return {"include": entries}
 
 
-def installation_matrix(full_validation: bool) -> dict[str, list[dict[str, str]]]:
+def application_only_pr(base_sha: str) -> bool:
+    """Narrow installation coverage only for a known application, test or docs diff."""
+    if not re.fullmatch(r"[0-9a-f]{40}", base_sha):
+        return False
+    # Disabling rename detection includes both paths when a file moves across
+    # the boundary. NUL termination also preserves unusual Git filenames.
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--no-renames", "--name-only", "-z", base_sha, "HEAD", "--"],
+            capture_output=True, check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return False
+    paths = os.fsdecode(result.stdout).split("\0")[:-1]
+    sensitive = (
+        "src/qplot/datahandling/trusted_", "src/qplot/datahandling/_trusted_",
+        "src/qplot/datahandling/readonly.py", "src/qplot/_version.py",
+        "src/qplot/_metadata.py", "src/qplot/_build_info.json",
+        "tests/infrastructure/", "tests/ci_timings.json", "tests/_ci_scheduling.py",
+    )
+    return bool(paths) and all(
+        path.startswith(("src/qplot/", "tests/", "docs/")) and not path.startswith(sensitive)
+        for path in paths
+    )
+
+
+def installation_matrix(full_validation: bool, *, application_only: bool = False) -> dict[str, list[dict[str, str]]]:
+    arm64_versions = PYTHON_VERSIONS[-1:] if application_only and not full_validation else PYTHON_VERSIONS
     platforms = [
-        ("macos-arm64", "macOS ARM64", "macos-latest"),
-        ("macos-intel", "macOS Intel", "macos-15-intel"),
-        ("windows-x64", "Windows x64", "windows-2025"),
+        ("macos-arm64", "macOS ARM64", "macos-latest", arm64_versions),
+        ("macos-intel", "macOS Intel", "macos-15-intel", PYTHON_VERSIONS),
+        ("windows-x64", "Windows x64", "windows-2025", PYTHON_VERSIONS),
     ]
     if full_validation:
-        platforms.insert(0, ("linux-x86_64", "Linux x86_64", "ubuntu-latest"))
+        platforms.insert(0, ("linux-x86_64", "Linux x86_64", "ubuntu-latest", PYTHON_VERSIONS))
     return {"include": [{
         "platform": platform,
         "os-name": name,
         "os": runner,
         "native-artifact": f"qplotter-native-{platform}",
         "python-version": version,
-    } for platform, name, runner in platforms for version in PYTHON_VERSIONS]}
+    } for platform, name, runner, versions in platforms for version in versions]}
 
 
-def platform_matrices(full_validation: bool) -> dict[str, dict]:
+def platform_matrices(full_validation: bool, *, application_only: bool = False) -> dict[str, dict]:
     """Keep each consumer dependent only on its own platform's native build."""
     checks = check_matrix(full_validation)["include"]
-    installations = installation_matrix(full_validation)["include"]
+    installations = installation_matrix(full_validation, application_only=application_only)["include"]
     return {
         platform: {
             "checks": {"include": [row for row in checks
@@ -126,14 +154,22 @@ def platform_matrices(full_validation: bool) -> dict[str, dict]:
 
 
 def main() -> None:
+    event = os.environ.get("GITHUB_EVENT_NAME", "")
     full_validation, reason = validation_mode(
-        os.environ.get("GITHUB_EVENT_NAME", ""),
+        event,
         os.environ.get("GITHUB_REF", ""),
         os.environ.get("QPLOT_FULL_VALIDATION", ""),
     )
+    application_only = (
+        not full_validation and event == "pull_request"
+        and application_only_pr(os.environ.get("QPLOT_PR_BASE_SHA", ""))
+    )
+    if application_only:
+        reason += f" ARM64 compiler-free installation runs on Python {PYTHON_VERSIONS[-1]} for this PR."
+    platforms = platform_matrices(full_validation, application_only=application_only)
     outputs = {
         "full-validation": str(full_validation).lower(),
-        "platforms": json.dumps(platform_matrices(full_validation), separators=(",", ":")),
+        "platforms": json.dumps(platforms, separators=(",", ":")),
         "reason": reason,
     }
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
