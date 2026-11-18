@@ -525,6 +525,21 @@ class FrozenSlice(plot2d):
             return capture
         return replace(capture, constants=(*self._frozen_metadata, *self._heatmap_csv_units()))
 
+    def _cut_complex_samples(self, role, fixed_index):
+        samples = self.complex_samples
+        if samples is None or samples.grid_indices is None:
+            return None
+        axis = 0 if role == "x" else 1
+        indices = samples.grid_indices[fixed_index, :] if axis == 0 else samples.grid_indices[:, fixed_index]
+        acquired = indices >= 0
+        source_indices = indices[acquired]
+        coordinates = self.axis_data[role].copy()
+        coordinates[acquired] = samples.coordinates[axis][source_indices]
+        # Processing can fill a displayed cell that has no recorded value.
+        values = np.full(indices.shape, np.nan, dtype=samples.values.dtype)
+        values[acquired] = samples.values[source_indices]
+        return ComplexSamples((coordinates,), (samples.parameters[axis],), values, samples.mode)
+
     def openSweep(self, side):
         if self.__dict__.get("dataGrid") is None or not self.dataGrid.size:
             return
@@ -536,6 +551,7 @@ class FrozenSlice(plot2d):
         param = ParamSpec(self.param.name, "numeric", label=self.display_param.label,
                          unit=self.display_param.unit, depends_on=[self.axis_param[role].name])
         result = replace(self.worker.result, dataGrid=None,
+                         complex_samples=self._cut_complex_samples(role, j if side == "h" else i),
                          axis_data={"x": self.axis_data[role].copy(), "y": values.copy()},
                          axis_param={"x": self.axis_param[role], "y": copy(self.display_param)})
         description = f"{self._frozen_description} · {fixed.name} = {coordinate} {fixed.unit}"
