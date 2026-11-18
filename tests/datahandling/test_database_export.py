@@ -22,6 +22,13 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def insert_embedded_run(writer, run_id, value):
+    table = f"results_{run_id}"
+    writer.execute("INSERT INTO runs(run_id, result_table_name) VALUES (?, ?)", (run_id, table))
+    writer.execute(f'CREATE TABLE "{table}" (value BLOB)')
+    writer.execute(f'INSERT INTO "{table}" VALUES (?)', (value,))
+
+
 @pytest.fixture
 def export_scratch(tmp_path, monkeypatch):
     folder = tmp_path / "private-exports"
@@ -36,13 +43,13 @@ def export_scratch(tmp_path, monkeypatch):
 def test_export_standalone_preserves_source(tmp_path, live):
     path = tmp_path / "source.db"
     writer = sqlite3.connect(path)
-    writer.execute("CREATE TABLE runs(run_id INTEGER PRIMARY KEY, value BLOB)")
-    writer.execute("INSERT INTO runs VALUES (196, ?)", (b"earlier",))
+    writer.execute("CREATE TABLE runs(run_id INTEGER PRIMARY KEY, result_table_name TEXT)")
+    insert_embedded_run(writer, 196, b"earlier")
     writer.commit()
     if live:
         writer.execute("PRAGMA journal_mode=WAL")
         writer.execute("PRAGMA wal_autocheckpoint=0")
-    writer.execute("INSERT INTO runs VALUES (197, ?)", (b"newest" * 100000,))
+    insert_embedded_run(writer, 197, b"newest" * 100000)
     writer.commit()
     protected = [path] + ([Path(str(path) + "-wal")] if live else [])
     before = {str(p): (digest(p), p.stat().st_mtime_ns) for p in protected}
@@ -255,7 +262,7 @@ def test_export_pipe_disconnect_is_reported_and_child_cleanup_completes(
 def test_existing_staging_contents_are_not_overwritten(tmp_path):
     source = tmp_path / "source.db"
     with closing(sqlite3.connect(source)) as writer, writer:
-        writer.execute("CREATE TABLE runs(run_id INTEGER)")
+        writer.execute("CREATE TABLE runs(run_id INTEGER, result_table_name TEXT)")
     before = source.read_bytes()
     with pytest.raises(ValueError, match="private staging"):
         export_database_copy(source, instance=database_instance(source), live=False,
@@ -320,8 +327,9 @@ def test_missing_selected_run_leaves_source_and_stage_unchanged(tmp_path, export
 def test_external_results_are_not_misrepresented_as_standalone(tmp_path):
     source = tmp_path / "source.db"
     with closing(sqlite3.connect(source)) as writer, writer:
-        writer.execute("CREATE TABLE runs(run_id INTEGER, raw_data_db_path TEXT)")
-        writer.execute("INSERT INTO runs VALUES (1, 'unavailable-external.db')")
+        writer.execute("CREATE TABLE runs(run_id INTEGER, result_table_name TEXT, raw_data_db_path TEXT)")
+        writer.execute("CREATE TABLE recorded_results(value BLOB)")
+        writer.execute("INSERT INTO runs VALUES (1, 'recorded_results', 'unavailable-external.db')")
     stage = tmp_path / "stage.db"
     stage.touch()
     with pytest.raises(RuntimeError, match="separate files"):
@@ -336,15 +344,16 @@ def test_writer_can_commit_during_export(tmp_path):
     try:
         writer.execute("PRAGMA journal_mode=WAL")
         writer.execute("PRAGMA wal_autocheckpoint=0")
-        writer.execute("CREATE TABLE runs(run_id INTEGER PRIMARY KEY, value BLOB)")
-        writer.execute("INSERT INTO runs VALUES (197, zeroblob(8000000))")
+        writer.execute("CREATE TABLE runs(run_id INTEGER PRIMARY KEY, result_table_name TEXT)")
+        insert_embedded_run(writer, 197, bytes(8_000_000))
         writer.commit()
         committed = False
 
         def progress(phase, completed, _total):
             nonlocal committed
             if phase == "Copying committed data" and completed > 0 and not committed:
-                writer.executemany("INSERT INTO runs VALUES (?, 'new')", [(198,), (199,)])
+                for run_id in (198, 199):
+                    insert_embedded_run(writer, run_id, b"new")
                 writer.commit()
                 committed = True
 
