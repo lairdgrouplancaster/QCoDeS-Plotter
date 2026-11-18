@@ -15,8 +15,10 @@ from pathlib import Path
 
 import numpy as np
 
+from qplot.datahandling.complex_data import contains_complex
 from qplot.datahandling.numeric_samples import (
     concatenate_record_samples,
+    integer_preserving_dtype,
     numeric_isfinite,
 )
 from qplot.tools.general import data2matrix
@@ -51,6 +53,7 @@ class VolumeStore:
         self.axes = {}
         self.latest = {}
         self.sample_count = 0
+        self.has_complex_samples = False
         self.invalid_coordinates = 0
         self._frames = OrderedDict()
         self._cache_lock = threading.Lock()
@@ -84,6 +87,8 @@ class VolumeStore:
                         valid &= np.isfinite(a)
                     store.invalid_coordinates += int(np.count_nonzero(~valid))
                     arrays = [a[valid] for a in arrays]
+                    if not store.has_complex_samples:
+                        store.has_complex_samples = contains_complex(arrays[3], check=check)
                     for name, values, known in zip(names, arrays[:3], coordinates, strict=True):
                         known.update(np.unique(values).tolist())
                         if len(known) > store.max_points:
@@ -174,15 +179,18 @@ class VolumeStore:
             x_values = np.fromiter((row[0] for row in rows), float)
             y_values = np.fromiter((row[1] for row in rows), float)
             parts = []
-            # Combine runs of one dtype to avoid an array object per sample.
+            # Decode uniform batches in bulk. For mixed records, use the same
+            # precision-preserving promotion within and across batches.
             for start in range(0, len(rows), 4096):
                 check()
                 batch = rows[start:start + 4096]
-                if len({row[3] for row in batch}) == 1:
+                dtypes = {row[3] for row in batch}
+                if len(dtypes) == 1:
                     parts.append(np.frombuffer(b"".join(row[2] for row in batch), dtype=batch[0][3]))
                 else:
-                    parts.append(np.asarray([np.frombuffer(row[2], dtype=row[3])[0].item()
-                                             for row in batch], dtype=object))
+                    dtype = integer_preserving_dtype(np.dtype(name) for name in dtypes)
+                    parts.append(np.fromiter((np.frombuffer(row[2], dtype=row[3])[0].item()
+                                              for row in batch), dtype=dtype, count=len(batch)))
             samples = concatenate_record_samples(parts)
             finite = numeric_isfinite(samples)
             np.add.at(counts, (np.searchsorted(ys, y_values[finite]),
