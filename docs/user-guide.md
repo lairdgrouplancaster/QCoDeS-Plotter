@@ -490,8 +490,9 @@ Complex measurements, including QCoDeS array samples, use the persistent
 preferences in **Preferences → Appearance**. **1D complex plots** can show
 magnitude, phase, Re or Im against the setpoint, or **Im vs Re** (Re horizontal,
 Im vertical). **Higher-dimensional complex plots** select magnitude, phase, Re
-or Im for heatmaps and 3D slices, retaining their usual setpoint axes. Both
-preferences default to magnitude; phase is in degrees. Applying a preference
+or Im for heatmaps and 3D slices, retaining their usual setpoint axes. The
+1D default is **Im vs Re** and the higher-dimensional default is **Magnitude**.
+Phase is in degrees. Applying a preference
 refreshes open plots, run-table thumbnails and the Preview pane. A small ℂ
 badge identifies complex measurements; its tooltip names the displayed
 component. Frozen snapshots retain their captured display.

@@ -66,11 +66,11 @@ def test_complex_previews_refresh_with_persistent_preferences(complex_window):
 def test_complex_line_modes_keep_original_cursor_and_setpoint(complex_window, mode):
     window, guid, params, values = complex_window
     plot = open_plot(window, guid, params["S11"])
-    np.testing.assert_allclose(plot.axis_data["y"], np.abs(values))
+    np.testing.assert_allclose(plot.axis_data["y"], values.imag)
     old_worker = plot.worker
     window.config.update(COMPLEX_1D_KEY, mode)
     window.apply_current_settings()
-    if mode != "magnitude":
+    if mode != "imag_vs_real":
         wait_for(lambda: plot.worker is not old_worker and not plot.worker.running)
     assert plot.worker.result is not None, plot._last_error_text
     x = values.real if mode == "imag_vs_real" else np.arange(4, 8)
@@ -125,15 +125,16 @@ def test_complex_preferences_persist_and_restore(tmp_path, monkeypatch):
     cfg = config()
     dialog = PreferencesDialog(cfg)
     try:
-        assert dialog.complex1dCombo.currentData() == "magnitude"
+        assert dialog.complex1dCombo.currentIndex() == 0
+        assert dialog.complex1dCombo.currentText() == "Im vs Re"
         assert dialog.complexNdCombo.currentData() == "magnitude"
-        dialog.complex1dCombo.setCurrentIndex(dialog.complex1dCombo.findData("imag_vs_real"))
+        dialog.complex1dCombo.setCurrentIndex(dialog.complex1dCombo.findData("magnitude"))
         dialog.complexNdCombo.setCurrentIndex(dialog.complexNdCombo.findData("phase"))
         assert dialog.apply_preferences()
         restored = config()
-        assert restored.get(COMPLEX_1D_KEY) == "imag_vs_real"
+        assert restored.get(COMPLEX_1D_KEY) == "magnitude"
         assert restored.get(COMPLEX_ND_KEY) == "phase"
-        assert dialog.default_preference_values()[COMPLEX_1D_KEY] == "magnitude"
+        assert dialog.default_preference_values()[COMPLEX_1D_KEY] == "imag_vs_real"
         assert dialog.complexNdCombo.findData("imag_vs_real") == -1
     finally:
         dialog.close()
@@ -214,7 +215,8 @@ def test_bundled_complex_preview_double_click_opens_plot(tmp_path, monkeypatch, 
         assert all(label.plot_supported for label in labels)
         assert all(label.property("complexDataset") for label in labels)
         assert all(label.pixmap() is not None and not label.pixmap().isNull() for label in labels)
-        assert all("ℂ" in label.toolTip() and "Magnitude" in label.toolTip() for label in labels)
+        projection = "Im vs Re" if run_name == "complex_response" else "Magnitude"
+        assert all("ℂ" in label.toolTip() and projection in label.toolTip() for label in labels)
         label = next(label for label in labels if label.parameter == "S11")
         previous = len(window.windows)
         QtTest.QTest.mouseClick(label, QtCore.Qt.MouseButton.LeftButton)

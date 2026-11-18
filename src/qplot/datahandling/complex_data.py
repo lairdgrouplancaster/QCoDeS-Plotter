@@ -12,7 +12,7 @@ COMPLEX_COMPONENT_OPTIONS = (
     ("Magnitude", "magnitude"), ("Phase (degrees)", "phase"),
     ("Re", "real"), ("Im", "imag"),
 )
-COMPLEX_1D_OPTIONS = (*COMPLEX_COMPONENT_OPTIONS, ("Im vs Re", "imag_vs_real"))
+COMPLEX_1D_OPTIONS = (("Im vs Re", "imag_vs_real"), *COMPLEX_COMPONENT_OPTIONS)
 
 
 def contains_complex(values, *, check=lambda: None):
