@@ -12,7 +12,11 @@ from qcodes.parameters import ManualParameter
 from qplot.windows import main as main_window
 from qplot.windows._plot_feedback import PlotWindowFeedbackMixin
 from tests._window_lifecycle import close_main_window
-from tests.support.windows.plot_integration import configure_temp_qplot, wait_for
+from tests.support.windows.plot_integration import (
+    configure_temp_qplot,
+    force_snapshot_fallback,
+    wait_for,
+)
 
 __all__ = [
     'assert_axis',
@@ -25,6 +29,9 @@ __all__ = [
 @pytest.fixture
 def merged_plots(tmp_path, monkeypatch, request):
     configure_temp_qplot(monkeypatch, tmp_path)
+    # These completed runs exercise trace rendering. Open their metadata from
+    # protected snapshots so setup does not depend on live-reader requests.
+    force_snapshot_fallback(monkeypatch)
     setup_errors = []
     monkeypatch.setattr(
         PlotWindowFeedbackMixin, "show_error",
@@ -68,10 +75,9 @@ def merged_plots(tmp_path, monkeypatch, request):
         assert not setup_errors
         plots = []
         for guid in guids:
-            prior_plot_count = len(window.windows)
             window.openPlot(guid=guid, show=True)
-            wait_for(lambda prior_plot_count=prior_plot_count: len(window.windows) > prior_plot_count)
-            plot = window.windows[-1]
+            assert not setup_errors
+            plot, = [candidate for candidate in window.windows if candidate._dataset_key.guid == guid]
             wait_for(lambda plot=plot: hasattr(plot, "axis_data") and not plot.worker.running)
             assert not setup_errors
             plot.monitor.stop()

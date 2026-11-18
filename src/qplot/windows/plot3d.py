@@ -846,10 +846,11 @@ class plot3d(plot2d):
         capture = super()._capture_heatmap_csv(layer)
         if layer is not None and layer is not self:
             return capture
-        metadata = self._slice_export_metadata()
+        metadata = self._slice_export_metadata(units=self._heatmap_csv_units())
         return replace(capture, constants=metadata)
 
-    def _slice_export_metadata(self):
+    def _slice_export_metadata(self, *, units=()):
+        """Capture the published plane's provenance. Detached plots supply their own units."""
         if self.slice_frame is None or self.volume is None:
             raise ValueError("No slice is ready to export.")
         name = self._displayed_depth_name()
@@ -857,9 +858,7 @@ class plot3d(plot2d):
                 ("slice_index", self.slice_frame.index), ("database", self._dataset_key.database_path),
                 ("run_guid", self._guid), ("source_revision", self.volume.revision),
                 ("slice_operations", str(self._applied_operation_state.entries)),
-                ("x_unit", self.axis_param["x"].unit), ("y_unit", self.axis_param["y"].unit),
-                ("value_unit", self.display_param.unit),
-                ("repeated_coordinate_policy", "finite mean"))
+                *units, ("repeated_coordinate_policy", "finite mean"))
 
     def freeze_slice(self):
         if self.slice_frame is None or self.worker.running:
