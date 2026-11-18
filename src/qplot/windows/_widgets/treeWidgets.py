@@ -2152,7 +2152,8 @@ class moreInfo(qtw.QTabWidget):
             "Detailed run metadata is deferred in snapshot fallback. "
             "Use an explicit plot or CSV action to materialise this run."
         )
-        self.clear()
+        # A detail update for the same row must not look like a reselection.
+        self.clear(keep_preview=self.preview.current_guid == run_metadata.get("guid"))
         self._set_trusted_overview(run_metadata)
         self._set_parameter_message("Detailed run metadata unavailable")
         self.preview.set_current_guid(run_metadata.get("guid"))
@@ -2239,13 +2240,14 @@ class moreInfo(qtw.QTabWidget):
         vertical_scroll_bar.setValue(vertical_scroll)
         horizontal_scroll_bar.setValue(horizontal_scroll)
 
-    def clear(self):
+    def clear(self, *, keep_preview=False):
         self.invalidate_trusted_full_values()
         self._trusted_detail_identity = None
         self.overview.setRowCount(0)
         self.parameters.clearSpans()
         self.parameters.setRowCount(0)
-        self.preview.clear_current_run()
+        if not keep_preview:
+            self.preview.clear_current_run()
         self.metadata.clear()
         self.snapshot.clear()
         self.raw.clear()

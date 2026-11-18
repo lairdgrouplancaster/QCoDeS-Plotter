@@ -42,6 +42,9 @@ jobs:
       platforms: ${{ steps.plan.outputs.platforms }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          # The PR merge commit and its parents are enough to compare the whole PR.
+          fetch-depth: 2
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -49,6 +52,7 @@ jobs:
         id: plan
         env:
           QPLOT_FULL_VALIDATION: ${{ inputs.full-validation || false }}
+          QPLOT_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python .github/scripts/ci_plan.py
 
   lint:

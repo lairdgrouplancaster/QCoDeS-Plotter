@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Protocol
 
 from qplot.diagnostics import log_exception
 
 PreviewKey = tuple[int, str]
+
+PREVIEW_REMAINING_PRIORITY = 0
+PREVIEW_PLOTTED_PRIORITY = 50
+PREVIEW_VISIBLE_PRIORITY = 100
+PREVIEW_SELECTED_PRIORITY = 125
+PREVIEW_SELECTED_THUMBNAIL_PRIORITY = 150
+
+
+def is_thumbnail_priority(priority: int) -> bool:
+    return priority in (PREVIEW_VISIBLE_PRIORITY, PREVIEW_SELECTED_THUMBNAIL_PRIORITY)
 
 
 @dataclass(eq=False)
@@ -21,6 +31,11 @@ class PreviewJob:
     starting: bool = True
     publishing: bool = False
     completion: tuple[Any, Any] | None = None
+    is_thumbnail: bool = field(init=False)
+
+    def __post_init__(self) -> None:
+        # Selection can reprioritise a running job, but its output is already decided.
+        self.is_thumbnail = is_thumbnail_priority(self.priority)
 
     @property
     def key(self) -> PreviewKey:

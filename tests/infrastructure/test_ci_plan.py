@@ -143,6 +143,66 @@ def test_installation_matrix_keeps_each_platform_and_python_pair(full):
         assert row["native-artifact"] == f"qplotter-native-{row['platform']}"
 
 
+@pytest.mark.parametrize("path", [
+    "pyproject.toml", "MANIFEST.in", "requirements/analysis.txt", "native/src/qplot_native/reader.c",
+    "src/qplot/datahandling/trusted_live.py", "src/qplot/datahandling/_trusted_live_helper.py",
+    ".github/workflows/ci.yml", ".github/scripts/ci_plan.py", "scripts/validate_compiler_free_install.py",
+    "tests/infrastructure/test_ci_plan.py", "tests/ci_timings.json", "src/qplot/_metadata.py", "new-build-config.toml",
+])
+def test_sensitive_path_among_application_changes_keeps_all_installations(monkeypatch, path):
+    diff = b"src/qplot/windows/plot3d.py\0" + path.encode() + b"\0"
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(args, 0, diff))
+    assert not plan.application_only_pr("a" * 40)
+
+
+def test_cli_uses_whole_pr_and_keeps_full_coverage_for_moved_packaging_inputs(tmp_path):
+    def git(*args):
+        return subprocess.run(
+            ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+             "-c", "commit.gpgsign=false", *args],
+            cwd=tmp_path, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+
+    def matrices(event, base_sha, override="false"):
+        output = tmp_path / "ci-output"
+        output.write_text("")
+        subprocess.run(
+            [sys.executable, str(SCRIPT)], cwd=tmp_path, check=True, capture_output=True,
+            env={**os.environ, "GITHUB_EVENT_NAME": event, "GITHUB_REF": "refs/pull/1/merge",
+                 "QPLOT_FULL_VALIDATION": override, "QPLOT_PR_BASE_SHA": base_sha, "GITHUB_OUTPUT": str(output)},
+        )
+        return json.loads(dict(line.split("=", 1) for line in output.read_text().splitlines())["platforms"])
+
+    git("init")
+    manifest = tmp_path / "MANIFEST.in"
+    manifest.write_text("include README.md\n")
+    git("add", "MANIFEST.in")
+    git("commit", "-m", "Base")
+    base = git("rev-parse", "HEAD")
+    app = tmp_path / "src/qplot"
+    app.mkdir(parents=True)
+    (app / "example.py").write_text("value = 1\n")
+    git("add", "src")
+    git("commit", "-m", "Application change")
+
+    expected = plan.platform_matrices(False)
+    assert matrices("push", base) == expected
+    assert matrices("pull_request", "0" * 40) == expected
+    assert matrices("pull_request", base, "true") == plan.platform_matrices(True)
+    reduced = matrices("pull_request", base)
+    arm_installations = reduced["macos-arm64"]["installations"]["include"]
+    assert [row["python-version"] for row in arm_installations] == ["3.14"]
+    assert arm_installations == [expected["macos-arm64"]["installations"]["include"][-1]]
+    reduced["macos-arm64"]["installations"] = expected["macos-arm64"]["installations"]
+    assert reduced == expected
+
+    git("mv", "MANIFEST.in", "src/qplot/moved.txt")
+    git("commit", "-m", "Move packaging input")
+    (app / "example.py").write_text("value = 2\n")
+    git("commit", "-am", "Another application change")
+    assert matrices("pull_request", base) == expected
+
+
 @pytest.mark.parametrize("event_name,ref,override,full", [
     ("push", "refs/heads/main", "false", False),
     ("pull_request", "refs/pull/1/merge", "false", False),
@@ -202,6 +262,8 @@ def test_workflow_offers_explicit_full_validation_and_keeps_release_gates():
     planning = ci.split("\n  ci-plan:\n", 1)[1].split("\n  lint:\n", 1)[0]
     assert "QPLOT_FULL_VALIDATION: ${{ inputs.full-validation || false }}" in planning
     assert "fetch-depth: 0" not in planning
+    assert "fetch-depth: 2" in planning
+    assert "QPLOT_PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}" in planning
     release = (workflows / "release.yml").read_text()
     validation = release.split("  validate:\n", 1)[1].split("  prepare:\n", 1)[0]
     assert "uses: ./.github/workflows/ci.yml" in validation

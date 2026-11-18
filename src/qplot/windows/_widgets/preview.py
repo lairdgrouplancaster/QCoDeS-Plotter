@@ -33,7 +33,15 @@ from qplot.datahandling.trusted_presentation import bounded_presentation_error
 from qplot.diagnostics import log_exception
 
 from .._dragdrop import make_run_previews_mime
-from ._preview_controller import PreviewController
+from ._preview_controller import (
+    PREVIEW_PLOTTED_PRIORITY,
+    PREVIEW_REMAINING_PRIORITY,
+    PREVIEW_SELECTED_PRIORITY,
+    PREVIEW_SELECTED_THUMBNAIL_PRIORITY,
+    PREVIEW_VISIBLE_PRIORITY,
+    PreviewController,
+    is_thumbnail_priority,
+)
 from ._preview_selection import (
     active_preview_labels,
     preview_key,
@@ -47,6 +55,7 @@ from ._run_formatting import preview_tooltip_text
 
 PREVIEW_SIZE = 200
 PREVIEW_THUMBNAIL_SIZE = 64
+PREVIEW_FAILURE_MESSAGE = "Preview failed. Reselect the run or press Refresh to retry."
 PREVIEW_BACKGROUND_COLOR = "#f4f7fb"
 UNLOADED_PREVIEW_STYLE = (
     "QLabel { color: #808080; border: 1px solid #a0a0a0;"
@@ -60,11 +69,6 @@ MAX_PREVIEW_DEPENDENCIES = 8_192
 PREVIEW_SAMPLES_PER_CELL = 4
 PREVIEW_ROWID_CHUNK = 900
 PREVIEW_FILL_EMPTY_MIN_COVERAGE = 0.75
-PREVIEW_REMAINING_PRIORITY = 0
-PREVIEW_VISIBLE_PRIORITY = 100
-PREVIEW_SELECTED_PRIORITY = 125
-PREVIEW_SELECTED_THUMBNAIL_PRIORITY = 150
-PREVIEW_PLOTTED_PRIORITY = 50
 PREVIEW_MAX_ACTIVE_WORKERS = 2
 PREVIEW_SQL_PROGRESS_OPCODES = 1_000
 PREVIEW_SELECTED_PROPERTY = "previewSelected"
@@ -514,7 +518,7 @@ class PreviewTab(qtw.QWidget):
                 if active_worker is not None:
                     self._preview_controller.cancel_worker(active_worker)
 
-            if queue_previews and guid == self.current_guid:
+            if queue_previews and guid == self.current_guid and guid not in self.thumbnail_errors:
                 self._enqueue(
                     guid,
                     priority=PREVIEW_REMAINING_PRIORITY,
@@ -527,13 +531,14 @@ class PreviewTab(qtw.QWidget):
         self.set_current_guid(getattr(dataset, "guid", None))
 
 
-    def set_current_guid(self, guid):
+    def set_current_guid(self, guid, *, retry_failed=False):
         """Select a preview by its plain run GUID without a DataSet object."""
         if not guid:
             self.clear_current_run()
             return
 
         guid = str(guid)
+        retry_failed = retry_failed or guid != self.current_guid
         self.current_guid = guid
         if self._trusted_derived_mode:
             if guid not in self.run_metadata:
@@ -551,31 +556,45 @@ class PreviewTab(qtw.QWidget):
             self._show_message("No preview available")
             return
 
+        thumbnail_error = self.thumbnail_errors.get(guid)
+        error = thumbnail_error or self.errors.get(guid)
+        if error:
+            if not retry_failed:
+                self._show_preview_failure(error)
+                return
+            self.thumbnail_errors.pop(guid, None)
+            self.errors.pop(guid, None)
+        priority = (
+            PREVIEW_SELECTED_PRIORITY if guid in self.thumbnail_cache
+            else PREVIEW_SELECTED_THUMBNAIL_PRIORITY
+        )
         if guid in self.cache:
             self._show_previews(self._cached_previews(guid))
-            return
-
-        if guid in self._plot_previews:
+            if not thumbnail_error:
+                return
+        elif guid in self._plot_previews:
             self._show_previews(list(self._plot_previews[guid].values()))
-            self._enqueue(guid, priority=PREVIEW_SELECTED_PRIORITY)
-            self._start_next()
-            return
-
-        if guid in self.errors:
-            self.errors.pop(guid, None)
-            self._show_message("Retrying preview...")
+            if not thumbnail_error:
+                priority = PREVIEW_SELECTED_PRIORITY
         else:
-            self._show_message("Generating preview...")
+            self._show_message("Retrying preview..." if error else "Generating preview...")
 
-        self._enqueue(
-            guid,
-            priority=(
-                PREVIEW_SELECTED_PRIORITY
-                if guid in self.thumbnail_cache
-                else PREVIEW_SELECTED_THUMBNAIL_PRIORITY
-                ),
-            )
+        self._enqueue(guid, priority=priority)
         self._start_next()
+
+    def retry_failed_current_preview(self):
+        guid = self.current_guid
+        if guid in self.thumbnail_errors or guid in self.errors:
+            self.set_current_guid(guid, retry_failed=True)
+
+    def _show_preview_failure(self, error):
+        guid = self.current_guid
+        if guid in self.cache:
+            self._show_previews(self._cached_previews(guid))
+        elif guid in self._plot_previews:
+            self._show_previews(list(self._plot_previews[guid].values()))
+        else:
+            self._show_message(PREVIEW_FAILURE_MESSAGE, error)
 
 
     def set_preview_active(self, active):
@@ -847,10 +866,7 @@ class PreviewTab(qtw.QWidget):
     def _enqueue(self, guid, priority=0, allow_active=False):
         if self._shutting_down:
             return
-        is_thumbnail = priority in (
-            PREVIEW_VISIBLE_PRIORITY,
-            PREVIEW_SELECTED_THUMBNAIL_PRIORITY,
-        )
+        is_thumbnail = is_thumbnail_priority(priority)
         if is_thumbnail and guid in self.thumbnail_cache:
             return
         if not is_thumbnail and guid in self.cache:
@@ -968,7 +984,7 @@ class PreviewTab(qtw.QWidget):
             self._database_was_replaced(worker.database_instance)
             return
 
-        is_thumbnail = worker.preview_size == PREVIEW_THUMBNAIL_SIZE
+        is_thumbnail = job.is_thumbnail
         if not is_thumbnail:
             self._explicit_guids.discard(guid)
         if error:
@@ -1016,12 +1032,9 @@ class PreviewTab(qtw.QWidget):
                 return
             self.database_instance = current_instance
 
-        if guid == self.current_guid and not is_thumbnail:
+        if guid == self.current_guid and (not is_thumbnail or error):
             if error:
-                if guid in self._plot_previews:
-                    self._show_previews(list(self._plot_previews[guid].values()))
-                else:
-                    self._show_message("Preview failed", str(error))
+                self._show_preview_failure(str(error))
             else:
                 self._show_previews(previews)
 
