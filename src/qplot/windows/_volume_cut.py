@@ -18,6 +18,7 @@ from qplot.tools.plot_result import capture_plot_result
 from qplot.tools.volume_cuts import extract_cut
 from qplot.tools.worker import loader
 
+from ._plot_csv_selection import selected_csv_measurements
 from ._small_dialogs import close_default, dialog_layout, resize_dialog
 from ._source_consumer import SourceConsumerRegistration
 from ._widgets import CopyableTableWidget
@@ -522,7 +523,7 @@ class FrozenSlice(plot2d):
         capture = super()._capture_heatmap_csv(layer)
         if layer is not None and layer is not self:
             return capture
-        return replace(capture, constants=self._frozen_metadata)
+        return replace(capture, constants=(*self._frozen_metadata, *self._heatmap_csv_units()))
 
     def openSweep(self, side):
         if self.__dict__.get("dataGrid") is None or not self.dataGrid.size:
@@ -538,8 +539,9 @@ class FrozenSlice(plot2d):
                          axis_data={"x": self.axis_data[role].copy(), "y": values.copy()},
                          axis_param={"x": self.axis_param[role], "y": copy(self.display_param)})
         description = f"{self._frozen_description} · {fixed.name} = {coordinate} {fixed.unit}"
+        metadata = (*self._frozen_metadata, (f"{fixed.name} ({fixed.unit})", coordinate))
         self.open_subplot.emit(FrozenLine, self._dataset_key,
-                               (param, result, description, self._frozen_metadata))
+                               (param, result, description, metadata))
 
 
 class FrozenLine(plot1d):
@@ -565,4 +567,14 @@ class FrozenLine(plot1d):
         _append_annotation(self, self._frozen_description)
 
     def _capture_line_csv(self, exporter, *, transformed=False):
-        return replace(super()._capture_line_csv(exporter, transformed=transformed), constants=self._frozen_metadata)
+        capture = super()._capture_line_csv(exporter, transformed=transformed)
+        selected = selected_csv_measurements(self, exporter)
+        items = self.lines.values() if selected is None else (entry.item for entry in selected)
+        if any(item is not self.line for item in items):
+            # Row-wide cut coordinates describe only the primary frozen trace.
+            return capture
+        parameter = self._trace_axis_parameter if transformed else self._trace_input_axis_parameter
+        x_unit = parameter(self.line, "x").unit
+        y_unit = parameter(self.line, "y").unit
+        return replace(capture, constants=(*self._frozen_metadata, ("x_unit", x_unit),
+                                          ("y_unit", y_unit), ("value_unit", y_unit)))

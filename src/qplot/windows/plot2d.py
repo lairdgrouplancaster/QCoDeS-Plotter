@@ -92,6 +92,10 @@ class plot2d(
         Plot2DSweepMixin.change_axis(self, key)
 
 
+    def _heatmap_csv_units(self) -> tuple[tuple[str, str], ...]:
+        return (("x_unit", self.axis_param["x"].unit), ("y_unit", self.axis_param["y"].unit),
+                ("value_unit", self.display_param.unit))
+
     def initAxes(self) -> None:
         """Keep axis-selection state; expose swaps through Appearance."""
         super().initAxes()
