@@ -515,7 +515,7 @@ class RunControlsMixin:
     def refresh_all(self):
         """Manually refresh the run table and each live plot source once."""
         refresh_plot_sources(self)
-        self.refreshMain()
+        self.refreshMain(retry_preview=True)
 
     @QtCore.pyqtSlot(float)
     def monitorIntervalChanged(self, interval):
