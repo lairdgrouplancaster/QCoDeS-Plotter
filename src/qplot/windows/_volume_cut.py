@@ -3,6 +3,7 @@
 from copy import copy
 from dataclasses import replace
 from html import escape
+from math import isfinite
 from typing import Any
 
 import numpy as np
@@ -274,19 +275,65 @@ class VolumeCut(plot1d):
         return True
 
     def _depth_moved(self):
-        if self.depth_marker is None:
+        if self.depth_marker is not None:
+            self._select_depth_at(self.depth_marker.value())
+
+    def _depth_dimension(self):
+        vertical = self.__dict__.get("axis_param", {}).get("y")
+        return "y" if getattr(vertical, "name", None) == self.selection.depth else "x"
+
+    def _depth_navigation_available(self):
+        return (self.source._depth_name() == self.selection.depth
+                and not self.line.opts.get("fftMode") and not self.line.opts.get("phasemapMode"))
+
+    def _select_depth_at(self, position):
+        if self._closed or self.source._closed or not self._depth_navigation_available():
             return
-        if (not self.line.opts.get("fftMode") and not self.line.opts.get("phasemapMode")
-                and self.source._depth_name() == self.selection.depth and not self.source._closed):
-            self.source.select_slice(self.volume.nearest_index(self.selection.depth, self.depth_marker.value()))
+        axis = self._axis_scale_axis_for_line(self.line, self._depth_dimension())
+        physical = self.view_to_data(axis, position)
+        if not isfinite(physical):
+            return
+        depths = self.volume.axes[self.selection.depth]
+        index = self.volume.nearest_index(self.selection.depth, physical)
+        if self._axis_scale_log_mode(axis):
+            index = max(index, int(np.searchsorted(depths, 0., side="right")))
+        if index < len(depths):
+            self.source.select_slice(index)
+
+    def _sync_depth_marker(self):
+        marker = self.depth_marker
+        if marker is None or self._closed:
+            return
+        target = self._marquee_viewbox()
+        current = marker.getViewBox()
+        if current is not target:
+            if current is not None:
+                current.removeItem(marker)
+            self._add_plot_overlay(marker, target)
+        dimension = self._depth_dimension()
+        axis = self._axis_scale_axis_for_line(self.line, dimension)
+        depth = self.source._depth_value
+        position = self.data_to_view(axis, depth) if depth is not None else np.nan
+        visible = self._depth_navigation_available() and isfinite(position)
+        marker.setVisible(visible)
+        if visible:
+            angle = 90 if dimension == "x" else 0
+            with QtCore.QSignalBlocker(marker):
+                if marker.angle != angle:
+                    marker.setAngle(angle)
+                marker.setValue(position)
+
+    def _sync_axis_scale_line_log_mode(self, trace_key, line):
+        super()._sync_axis_scale_line_log_mode(trace_key, line)
+        if line is self.line:
+            self._sync_depth_marker()
 
     def _curve_clicked(self, event):
         if self.depth_marker is None:
             return
         if event.button() == QtCore.Qt.MouseButton.LeftButton and self.plot.sceneBoundingRect().contains(event.scenePos()):
-            point = self.vb.mapSceneToView(event.scenePos())
-            self.depth_marker.setValue(point.x())
-            self._depth_moved()
+            point = self._marquee_viewbox().mapSceneToView(event.scenePos())
+            self._select_depth_at(point.x() if self._depth_dimension() == "x" else point.y())
 
     def _plane_changed(self):
         if self.selection.kind in ("h", "v"):
@@ -309,9 +356,7 @@ class VolumeCut(plot1d):
             self.slice_operation_state = self.source._applied_operation_state
             if self.selection.kind in ("h", "v") and not self.pin_slice.isChecked():
                 self.selection = replace(self.selection, depth_value=self.source._depth_value)
-        if self.depth_marker is not None and self.source._depth_name() == self.selection.depth:
-            with QtCore.QSignalBlocker(self.depth_marker):
-                self.depth_marker.setValue(self.source._depth_value or 0)
+        self._sync_depth_marker()
         self._sync_marker()
         signature = (self.volume, self.selection, self.slice_operation_state.entries,
                      self.source.worker.complex_mode)
@@ -419,8 +464,7 @@ class VolumeCut(plot1d):
 
     def _native_transform_labels_changed(self, _value=None):
         super()._native_transform_labels_changed(_value)
-        if self.depth_marker is not None:
-            self.depth_marker.setVisible(not self.line.opts.get("fftMode") and not self.line.opts.get("phasemapMode"))
+        self._sync_depth_marker()
 
     def closeEvent(self, event):
         if self in self.source._cuts:

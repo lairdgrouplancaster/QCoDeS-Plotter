@@ -461,6 +461,59 @@ def test_cuts_follow_pin_processed_depth_and_csv(tmp_path, main):
     assert not errors
 
 
+def test_depth_marker_tracks_physical_slice_when_cut_axis_is_logarithmic(tmp_path, main):
+    window, errors = main
+    path = tmp_path / "log-depth-marker.db"
+    guid = build_volume(path, gate_points=(-3., 0., 5., 125.))
+    assert window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(guid)
+    wait_for(lambda: bool(window.windows) and loaded(window.windows[0]))
+    source = window.windows[0]
+    source.axis_dropdown["x"].setCurrentText("field")
+    wait_for(lambda: loaded(source) and source._displayed_depth_name() == "gate")
+    source.select_slice(2)
+    wait_for(lambda: loaded(source) and source.slice_frame.depth == 5.)
+    source.openSweep("d")
+    wait_for(lambda: len(window.windows) == 2 and loaded(window.windows[1]))
+    cut = window.windows[1]
+    marker = cut.depth_marker
+    assert marker.isVisible() and marker.value() == 5.
+    cut.open_axis_scale_dialog("x")
+    log = cut._axis_scale_controls["x"].logCheck
+    log.click()
+    cut._axis_scale_dialog.close()
+    assert marker.isVisible() and marker.value() == pytest.approx(np.log10(5.))
+
+    # The parent navigator still offers zero. Its marker has no log position,
+    # but the cut's positive samples remain available for navigation.
+    source.select_slice(1)
+    wait_for(lambda: loaded(source) and source.slice_frame.depth == 0.)
+    assert not marker.isVisible()
+    cut.vb.setRange(xRange=(0., 3.), yRange=(0., 17_000.), padding=0.)
+    y = cut.line.getOriginalDataset()[1][-1]
+    scene = cut.vb.mapViewToScene(QtCore.QPointF(np.log10(125.), y))
+    pixel = cut.widget.mapFromScene(scene)
+    assert cut.widget.viewport().rect().contains(pixel)
+    QtTest.QTest.mouseClick(cut.widget.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=pixel)
+    wait_for(lambda: loaded(source) and source.slice_frame.depth == 125.)
+    assert marker.isVisible() and marker.value() == pytest.approx(np.log10(125.))
+
+    # A completed marker drag is also expressed in the line's view coordinates.
+    marker.setValue(np.log10(4.8))
+    marker.sigPositionChangeFinished.emit(marker)
+    wait_for(lambda: loaded(source) and source.slice_frame.depth == 5.)
+    assert marker.value() == pytest.approx(np.log10(5.))
+    cut.open_axis_scale_dialog("x")
+    log.click()
+    cut._axis_scale_dialog.close()
+    assert marker.value() == 5.
+    source.select_slice(0)
+    wait_for(lambda: loaded(source) and source.slice_frame.depth == -3.)
+    assert marker.isVisible() and marker.value() == -3.
+    assert not errors
+
+
 def test_freeze_is_independent_and_supports_operations_and_cuts(tmp_path, main):
     window, errors = main
     # The plane has six cells; the complete volume has eighteen samples.
