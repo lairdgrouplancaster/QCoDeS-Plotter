@@ -42,15 +42,38 @@ def test_dropped_heatmap_tracks_processed_colour_units(main, tmp_path, monkeypat
     window, errors = main
     monkeypatch.setitem(qcodes.config.core, "db_location", qcodes.config.core.db_location)
     path = tmp_path / "processed-layers.db"
-    _, guid, primary, secondary = _build_two_heatmap_database(path)
+    run_id, guid, primary, secondary = _build_two_heatmap_database(path)
+    window.show()
     assert window.load_file(str(path))
-    _wait_for(lambda: window._selected_run_guid == guid and not window._database_load_active)
-    plots = {}
-    for role, parameter in (("host", "signal_a"), ("source", "signal_b")):
-        window.open_preview_plot(parameter)
-        _wait_for(lambda: len(window.windows) > len(plots) and window.windows[-1]._qplot_display_synchronized)
-        plots[role] = window.windows[-1]
-    host, source = plots.values()
+    _wait_for(lambda: (
+        not window._database_load_active
+        and window._selected_run_guid == guid
+        and window.run_idBox.text() == str(run_id)
+        and window.plotRunButton.isEnabled()
+    ))
+    assert window.measurementBox.text() == "*"
+    window.plotRunButton.click()
+    try:
+        _wait_for(lambda: len(window.windows) == 2 and all(
+            hasattr(plot, "dataGrid") and plot._heatmap_geometry() is not None
+            and not plot.worker.running and plot.image.isVisible()
+            for plot in window.windows
+        ))
+    except AssertionError:
+        frames = [
+            (plot.param.name, plot._dataset_key.guid, np.shape(getattr(plot, "dataGrid", None)),
+             getattr(getattr(plot, "worker", None), "running", None))
+            for plot in window.windows
+        ]
+        pytest.fail(f"Expected signal_a and signal_b for {guid}. "
+                    f"Published (parameter, GUID, grid shape, worker running): {frames}. "
+                    f"Window errors: {errors}")
+    by_parameter = {plot.param.name: plot for plot in window.windows}
+    host, source = by_parameter["signal_a"], by_parameter["signal_b"]
+    plots = {"host": host, "source": source}
+    assert host._dataset_key.guid == source._dataset_key.guid == guid
+    np.testing.assert_array_equal(host.image.image, primary)
+    np.testing.assert_array_equal(source.image.image, secondary)
     _drop_heatmap(host, guid, source.param)
     _wait_for(lambda: source._trace_key in host.heatmaps)
     layer = host.heatmaps[source._trace_key]
