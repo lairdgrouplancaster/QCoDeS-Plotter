@@ -75,6 +75,12 @@ class CutLoader(loader):
             if operated is not None:
                 self.axis_data = {"x": operated[0], "y": operated[1]}
                 self.processing._apply_operation_metadata()
+            if self.axes_dict["y"] == self.selection.varying:
+                # Swapping the display preserves extraction, cut operations
+                # and the association between each coordinate and its value.
+                self.axis_data["x"], self.axis_data["y"] = self.axis_data["y"], self.axis_data["x"]
+                self.axis_param["x"], self.axis_param["y"] = self.axis_param["y"], self.axis_param["x"]
+                self.display_param = self.axis_param["y"]
             self.dataset_completed = self.volume.completed
             self.loaded_from_sql_heatmap = True
             self.dataset_length_at_start = self.volume.revision
@@ -282,8 +288,12 @@ class VolumeCut(plot1d):
         return "y" if getattr(vertical, "name", None) == self.selection.depth else "x"
 
     def _depth_navigation_available(self):
+        mapped_vertical_depth = self._depth_dimension() == "y" and (
+            self.line.opts.get("derivativeMode") or self.line.opts.get("subtractMeanMode")
+        )
         return (self.source._depth_name() == self.selection.depth
-                and not self.line.opts.get("fftMode") and not self.line.opts.get("phasemapMode"))
+                and not self.line.opts.get("fftMode") and not self.line.opts.get("phasemapMode")
+                and not mapped_vertical_depth)
 
     def _select_depth_at(self, position):
         if self._closed or self.source._closed or not self._depth_navigation_available():
@@ -427,7 +437,8 @@ class VolumeCut(plot1d):
             return capture
         if (self.selection.kind == "mean" and isinstance(capture, CsvColumns)
                 and len(capture.columns) == 2
-                and np.array_equal(capture.columns[0], self.__dict__.get("_coverage_depths", []))):
+                and np.array_equal(capture.columns[1 if self._depth_dimension() == "y" else 0],
+                                   self.__dict__.get("_coverage_depths", []))):
             capture = replace(capture, headers=(*capture.headers, "finite_cells"),
                               columns=(*capture.columns, self._coverage_counts.copy()))
         parameter = self._trace_axis_parameter if transformed else self._trace_input_axis_parameter

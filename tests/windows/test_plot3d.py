@@ -514,6 +514,61 @@ def test_depth_marker_tracks_physical_slice_when_cut_axis_is_logarithmic(tmp_pat
     assert not errors
 
 
+@pytest.mark.parametrize("kind", ["h", "v", "d", "mean"])
+def test_volume_cut_axis_exchange_survives_worker_publication(tmp_path, main, kind):
+    from pyqtgraph.exporters import CSVExporter
+
+    window, errors = main
+    path = tmp_path / "cut-axes.db"
+    guid = build_volume(path)
+    assert window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(guid)
+    wait_for(lambda: bool(window.windows) and loaded(window.windows[0]))
+    volume = window.windows[0]
+    if kind == "mean":
+        volume.marquee = QtCore.QRectF(-2., 0., 8., 4.)
+    volume.openSweep(kind)
+    wait_for(lambda: len(window.windows) == 2 and loaded(window.windows[1]))
+    cut = window.windows[1]
+    if kind == "h":
+        old = cut.worker
+        cut.oper_widget.restore_state(OperationsState((OperationEntry("line_derivative", None),), 1))
+        cut.refreshWindow(force=True)
+        wait_for(lambda: cut.worker is not old and loaded(cut))
+        # The writer's signal is a constant plus gate squared.
+        np.testing.assert_allclose(cut.line.getOriginalDataset()[1], [-2., 0., 5.], atol=1e-12)
+    coordinate, signal = (values.copy() for values in cut.line.getOriginalDataset())
+    assert cut.axis_param["x"].name == cut.selection.varying
+    assert cut.axis_param["y"].name == "signal"
+    for swapped in (True, False):
+        old = cut.worker
+        assert cut.set_plot_axes_swapped(swapped)
+        wait_for(lambda: cut.worker is not old and loaded(cut))
+        x, y = cut.line.getOriginalDataset()
+        np.testing.assert_array_equal(x, signal if swapped else coordinate)
+        np.testing.assert_array_equal(y, coordinate if swapped else signal)
+        expected_names = ("signal", cut.selection.varying) if swapped else (cut.selection.varying, "signal")
+        assert (cut.axis_param["x"].name, cut.axis_param["y"].name) == expected_names
+        assert cut.display_param.unit == cut.axis_param["y"].unit
+        capture = cut._capture_line_csv(CSVExporter(cut.plot))
+        np.testing.assert_array_equal(capture.columns[0], x)
+        np.testing.assert_array_equal(capture.columns[1], y)
+        metadata = dict(capture.constants)
+        signal_unit = "A/V" if kind == "h" else "A"
+        assert (metadata["x_unit"], metadata["value_unit"]) == (
+            (signal_unit, "V") if swapped else ("V", signal_unit)
+        )
+        assert metadata["run_guid"] == guid
+        if kind in ("d", "mean"):
+            assert cut.depth_marker.angle == (0 if swapped else 90)
+            assert cut.depth_marker.value() == volume.slice_frame.depth
+        if kind == "mean":
+            assert capture.headers[-1] == "finite_cells"
+            np.testing.assert_array_equal(capture.columns[-1], [6, 6, 6])
+    assert not errors
+
+
 def test_freeze_is_independent_and_supports_operations_and_cuts(tmp_path, main):
     window, errors = main
     # The plane has six cells; the complete volume has eighteen samples.
