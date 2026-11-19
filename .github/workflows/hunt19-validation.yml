@@ -1,0 +1,143 @@
+name: Hunt 19 desktop evidence
+on:
+  push:
+    branches: [investigate/hunt19]
+
+permissions:
+  contents: read
+
+jobs:
+  revision:
+    name: Resolve the investigation revision
+    runs-on: ubuntu-latest
+    outputs:
+      application: ${{ steps.resolve.outputs.application }}
+      repaired: ${{ steps.resolve.outputs.repaired }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/heads/investigate/hunt19
+          persist-credentials: false
+      - id: resolve
+        shell: bash
+        run: |
+          set -eu
+          app=$(git rev-parse HEAD)
+          if test -f .github/workflows/hunt19-validation.yml; then
+            app=ee171602e47adeff477fbdedf6474886b5b5bf46
+            echo "repaired=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "repaired=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "application=$app" >> "$GITHUB_OUTPUT"
+          echo "The application under test is $app" >> "$GITHUB_STEP_SUMMARY"
+
+  desktop:
+    name: ${{ matrix.qt }} application GUI
+    needs: revision
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            qt: cocoa
+          - os: ubuntu-24.04
+            qt: xcb
+          - os: ubuntu-24.04
+            qt: offscreen
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      QT_QPA_PLATFORM: ${{ matrix.qt }}
+      HUNT_SHA: ${{ needs.revision.outputs.application }}
+      PIP_ONLY_BINARY: apsw
+      MPLCONFIGDIR: /private/tmp/qplot-matplotlib-cache
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          path: probes
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.revision.outputs.application }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install Linux display services
+        if: matrix.qt == 'xcb'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libegl1 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-xinerama0 libxkbcommon-x11-0 xvfb xauth openbox
+          echo "MPLCONFIGDIR=$RUNNER_TEMP/mpl-cache" >> "$GITHUB_ENV"
+      - name: Prepare the Linux application suite backend
+        if: matrix.qt == 'offscreen'
+        run: |
+          echo "MPLCONFIGDIR=$RUNNER_TEMP/mpl-cache" >> "$GITHUB_ENV"
+          dpkg-query -W libegl1 || (sudo apt-get update -qq && sudo apt-get install -y libegl1)
+      - name: Install candidate and its pinned native reader
+        working-directory: candidate
+        run: |
+          python -m venv .venv-mac
+          .venv-mac/bin/python -m pip install ./native '.[dev]'
+      - name: Inspect and install the X11 wheel's shared libraries
+        if: matrix.qt == 'xcb'
+        working-directory: candidate
+        shell: bash
+        run: |
+          set -eu
+          plugin=$(find .venv-mac -name libqxcb.so -print -quit)
+          test -f "$plugin"
+          mkdir -p "$RUNNER_TEMP/desktop-evidence"
+          ldd "$plugin" | tee "$RUNNER_TEMP/desktop-evidence/ldd-before.txt"
+          sudo apt-get install -y --no-install-recommends libopengl0 libgl1 libglx0 libfontconfig1 libdbus-1-3 libice6 libsm6 libxi6 libx11-xcb1 libxext6 libxrender1 libxkbcommon0 libxcb-glx0 libxcb-xinput0 libxcb-image0 libxcb-randr0 libxcb-render-util0 libxcb-render0 libxcb-shape0 libxcb-shm0 libxcb-sync1 libxcb-xfixes0 libxcb-xkb1
+          ldd "$plugin" | tee "$RUNNER_TEMP/desktop-evidence/ldd-after.txt"
+          if grep -F 'not found' "$RUNNER_TEMP/desktop-evidence/ldd-after.txt"; then exit 1; fi
+      - name: Interact with the native depth editor and inspect its exported planes
+        working-directory: candidate
+        env:
+          PYTHONPATH: ${{ github.workspace }}/candidate/src:${{ github.workspace }}/candidate
+          HUNT_OUTPUT: ${{ runner.temp }}/desktop-evidence
+          XDG_CONFIG_HOME: ${{ runner.temp }}/qplot-config
+          XDG_CACHE_HOME: ${{ runner.temp }}/qplot-cache
+        shell: bash
+        run: |
+          set -e
+          test "$(git rev-parse HEAD)" = "$HUNT_SHA"
+          test "$(id -u)" != 0
+          args=(-m pytest -c pyproject.toml -o pythonpath= -p tests.conftest -p no:cacheprovider --confcutdir=../probes/.github/scripts -q -s --timeout=230 ../probes/.github/scripts/hunt19_native_depth.py)
+          if test "$QT_QPA_PLATFORM" = xcb; then
+            xvfb-run -a -s '-screen 0 1440x1000x24' bash -c 'openbox > "$RUNNER_TEMP/openbox.log" 2>&1 & QT_DEBUG_PLUGINS=1 .venv-mac/bin/python -c "from PyQt6.QtWidgets import QApplication; print(QApplication([]).platformName())" && exec "$@"' _ .venv-mac/bin/python "${args[@]}"
+          else
+            .venv-mac/bin/python "${args[@]}"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ matrix.qt }}-desktop-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/desktop-evidence
+          if-no-files-found: warn
+
+  standard-ci:
+    name: Start the repository's full CI on the verified branch
+    needs: revision
+    if: needs.revision.outputs.repaired == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/github-script@v8
+        env:
+          APP_SHA: ${{ needs.revision.outputs.application }}
+        with:
+          script: |
+            const repo = {owner: context.repo.owner, repo: context.repo.repo};
+            const ref = 'investigate/hunt19';
+            const tip = await github.rest.git.getRef({...repo, ref: 'heads/' + ref});
+            if (tip.data.object.sha !== process.env.APP_SHA) throw new Error('Branch advanced before dispatch');
+            await github.rest.actions.createWorkflowDispatch({...repo, workflow_id: 'ci.yml', ref, inputs: {'full-validation': 'true'}});
