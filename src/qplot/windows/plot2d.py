@@ -1068,6 +1068,11 @@ class plot2d(
         self.hover_pixel_outline.show()
 
 
+    def _marquee_move_edges(self) -> tuple[tuple[float, ...] | None, tuple[float, ...] | None]:
+        geometry = self._heatmap_geometry()
+        return (geometry.x.edges, geometry.y.edges) if geometry is not None else (None, None)
+
+
     def _snap_marquee_rect(self, rect: QtCore.QRectF) -> QtCore.QRectF:
         """
         Snap marquee edges to heatmap pixel boundaries.
