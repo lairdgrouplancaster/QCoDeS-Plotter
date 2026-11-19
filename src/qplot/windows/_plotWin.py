@@ -1827,7 +1827,7 @@ class plotWidget(
                 x_txt = self.format_cursor_number(x)
                 y_txt = self.format_cursor_number(y)
                 self.pos_labels["z"].setText(
-                    format_complex_cursor(self, z) if isinstance(z, complex)
+                    format_complex_cursor(self, z) if self.__dict__.get("complex_samples") is not None or isinstance(z, complex)
                     else self.format_cursor_number(z)
                 )
                 if hasattr(self, "show_hover_pixel_outline"):

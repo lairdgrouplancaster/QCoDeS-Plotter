@@ -195,22 +195,23 @@ class VolumeStore:
                     parts.append(np.fromiter((np.frombuffer(row[2], dtype=row[3])[0].item()
                                               for row in batch), dtype=dtype, count=len(batch)))
             samples = concatenate_record_samples(parts)
-            if self.has_complex_samples:
+            if any(np.dtype(name).kind == "c" for name in source_dtypes):
                 dtype = np.result_type(np.complex128, *(np.dtype(name) for name in source_dtypes))
                 samples = _complex_plane_samples(samples, dtype, check)
             finite = numeric_isfinite(samples)
             cells = (np.searchsorted(ys, y_values[finite]), np.searchsorted(xs, x_values[finite]))
             np.add.at(counts, cells, 1)
             if np.any(finite):
+                repeated = np.any(counts > 1)
                 if self.has_complex_samples:
-                    repeated = np.any(counts > 1)
-                    recorded_complex = _recorded_complex_grid(samples, finite, cells, counts.shape, repeated, check)
+                    recorded_complex = _latest_reading_grid(samples, finite, cells, counts.shape, repeated, check)
+                if recorded_complex is not None and not repeated:
                     values = recorded_complex
-                    if repeated:
-                        real = data2matrix(y_values[finite], x_values[finite], samples[finite].real, check_cancelled=check)
-                        imaginary = data2matrix(y_values[finite], x_values[finite], samples[finite].imag, check_cancelled=check)
-                        matrix = real + 1j * imaginary
-                        values = matrix.reindex(index=ys, columns=xs).to_numpy()
+                elif np.iscomplexobj(samples):
+                    real = data2matrix(y_values[finite], x_values[finite], samples[finite].real, check_cancelled=check)
+                    imaginary = data2matrix(y_values[finite], x_values[finite], samples[finite].imag, check_cancelled=check)
+                    matrix = real + 1j * imaginary
+                    values = matrix.reindex(index=ys, columns=xs).to_numpy()
                 else:
                     matrix = data2matrix(y_values[finite], x_values[finite], samples[finite], check_cancelled=check)
                     values = matrix.reindex(index=ys, columns=xs).to_numpy()
@@ -222,7 +223,7 @@ class VolumeStore:
             while len(self._frames) > 3 or sum(
                 f.values.size * (40 if f.values.dtype.kind == "O" else f.values.dtype.itemsize)
                 + f.counts.nbytes
-                + (f.recorded_complex.nbytes
+                + (f.recorded_complex.size * (40 if f.recorded_complex.dtype.kind == "O" else f.recorded_complex.dtype.itemsize)
                    if f.recorded_complex is not None and f.recorded_complex is not f.values else 0)
                 for f in self._frames.values()
             ) > 64 * 1024 * 1024:
@@ -238,9 +239,9 @@ def _interrupted(check):
         return 1
 
 
-def _recorded_complex_grid(samples, finite, cells, shape, repeated, check):
+def _latest_reading_grid(samples, finite, cells, shape, repeated, check):
     """Pick the latest finite visit, in acquisition order, for each cursor."""
-    grid = np.full(shape, np.nan, dtype=samples.dtype)
+    grid = np.full(shape, np.nan, dtype=object if samples.dtype.kind in "iub" else samples.dtype)
     if not repeated:
         grid[cells] = samples[finite]
         return grid

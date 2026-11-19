@@ -17,7 +17,10 @@ from qplot.datahandling.complex_data import (
     contains_complex,
     project_complex,
 )
-from qplot.datahandling.numeric_samples import concatenate_record_samples
+from qplot.datahandling.numeric_samples import (
+    concatenate_record_samples,
+    numeric_isfinite,
+)
 from qplot.datahandling.parameter_data import flatten_record_columns
 from qplot.datahandling.plot_progress import PlotProgress
 from qplot.datahandling.qcodes_cache import (
@@ -38,8 +41,23 @@ def processed_plane(frame, operations, param, axis_params, *, check=lambda: None
     """The same plane pipeline backs images, all cuts, and colour statistics."""
     check()
     display_param = copy(param)
-    if complex_mode is not None and contains_complex(frame.values):
-        frame = replace(frame, values=project_complex(frame.values, complex_mode))
+    if complex_mode is not None and (frame.recorded_complex is not None or contains_complex(frame.values)):
+        if np.iscomplexobj(frame.values):
+            projected = project_complex(frame.values, complex_mode)
+        elif complex_mode == "real":
+            projected = frame.values
+        elif complex_mode == "magnitude":
+            projected = np.abs(frame.values)
+        else:
+            # Purely real planes can retain exact integer or decimal values.
+            # Their phase needs only the sign, and their imaginary part is zero.
+            projected = np.zeros(frame.values.shape)
+            if complex_mode == "phase":
+                projected[np.signbit(frame.values.astype(float))] = 180.
+            elif complex_mode != "imag":
+                raise ValueError(f"Unknown complex display mode: {complex_mode}")
+            projected[~numeric_isfinite(frame.values)] = np.nan
+        frame = replace(frame, values=projected)
         display_param = complex_parameter(param, complex_mode)
     if not operations or not frame.values.size:
         return frame, display_param

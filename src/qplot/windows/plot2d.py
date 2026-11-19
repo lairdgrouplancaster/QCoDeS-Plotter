@@ -1005,8 +1005,9 @@ class plot2d(
             point = samples.cell_index(x_index, y_index)
             if point is None:
                 return None
+            value = samples.values[point]
             return (x_index, y_index, float(samples.coordinates[0][point]),
-                    float(samples.coordinates[1][point]), complex(samples.values[point]))
+                    float(samples.coordinates[1][point]), value.item() if isinstance(value, np.generic) else value)
         return (
             x_index,
             y_index,

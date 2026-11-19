@@ -6,6 +6,8 @@ from typing import Any
 
 import numpy as np
 
+from qplot.datahandling.numeric_samples import numeric_isfinite
+
 COMPLEX_1D_KEY = "user_preference.complex_1d"
 COMPLEX_ND_KEY = "user_preference.complex_nd"
 COMPLEX_COMPONENT_OPTIONS = (
@@ -83,7 +85,7 @@ class ComplexSamples:
             check()
             stop = min(start + 65_536, self.values.size)
             xs, ys = (np.asarray(axis[start:stop], dtype=float) for axis in self.coordinates)
-            valid = np.isfinite(xs) & np.isfinite(ys) & np.isfinite(self.values[start:stop])
+            valid = np.isfinite(xs) & np.isfinite(ys) & numeric_isfinite(self.values[start:stop])
             positions, distances = [], []
             for axis, values in ((x, xs), (y, ys)):
                 middle = axis[:-1] / 2 + axis[1:] / 2

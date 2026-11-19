@@ -12,7 +12,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 from qcodes.dataset.descriptions.param_spec import ParamSpec
 
-from qplot.datahandling.complex_data import ComplexSamples, contains_complex
+from qplot.datahandling.complex_data import ComplexSamples
 from qplot.datahandling.plot_progress import PlotProgress
 from qplot.tools.plot_csv import CsvColumns, HeatmapCsv
 from qplot.tools.plot_result import capture_plot_result
@@ -65,11 +65,10 @@ class CutLoader(loader):
                     self.volume, self.selection, (), self.source_param, self.source_params,
                     check=self._check_cancelled, cancelled=self.is_cancelled, recorded_samples=True,
                 )
-                if contains_complex(raw_values):
-                    self.complex_samples = ComplexSamples(
-                        (raw_x,), (self.source_params[self.selection.varying],),
-                        raw_values, self.source_complex_mode,
-                    )
+                self.complex_samples = ComplexSamples(
+                    (raw_x,), (self.source_params[self.selection.varying],),
+                    raw_values, self.source_complex_mode,
+                )
             self.axis_param = {"x": self.source_params[self.selection.varying], "y": copy(value_param)}
             self.display_param = copy(value_param)
             operated = self.processing.do_operations()

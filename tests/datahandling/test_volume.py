@@ -88,14 +88,21 @@ def test_complex_volume_accepts_exact_large_integer_and_rejects_rounding():
     zero = np.array([0.])
     one = np.array([1.])
     chunks = [(zero, zero, zero, np.array([large])), (zero, zero, one, np.array([4+3j])),
-              (one, zero, zero, np.array([large + 1]))]
+              (one, zero, zero, np.array([-large - 1])),
+              (one * 2, zero, zero, np.array([large + 1])), (one * 2, zero, one, np.array([4+3j]))]
     volume = VolumeStore.from_chunks(("depth", "bias", "gate"), chunks)
     try:
         frame = volume.plane("gate", "bias", 0)
         assert int(frame.recorded_complex[0, 0].real) == large
         assert frame.values[0, 1] == 4+3j
+        real = volume.plane("gate", "bias", 1)
+        assert real.recorded_complex[0, 0] == -large - 1
+        param = SimpleNamespace(name="s", label="signal", unit="Hz")
+        for mode, expected in (("real", -large-1), ("magnitude", large+1), ("imag", 0), ("phase", 180)):
+            projected, _ = processed_plane(real, (), param, {}, complex_mode=mode)
+            assert projected.values[0, 0] == expected and np.isnan(projected.values[0, 1])
         with pytest.raises(ValueError, match="represented exactly"):
-            volume.plane("gate", "bias", 1)
+            volume.plane("gate", "bias", 2)
     finally:
         volume.directory.cleanup()
 
