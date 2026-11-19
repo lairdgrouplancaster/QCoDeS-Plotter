@@ -106,8 +106,9 @@ def test_complex_measurement_actual_plot_error_export_and_recovery(tmp_path, mon
             assert plot.line.getData() == (None, None)
         else:
             assert plot.worker.result is not None, plot._last_error_text
-            np.testing.assert_array_equal(plot.axis_data["x"], x)
-            np.testing.assert_allclose(plot.axis_data["y"], np.abs(signal))
+            np.testing.assert_array_equal(plot.axis_data["x"], signal.real)
+            np.testing.assert_array_equal(plot.axis_data["y"], signal.imag)
+            np.testing.assert_array_equal(plot.complex_samples.coordinates[0], x)
             np.testing.assert_array_equal(plot.complex_samples.values, signal)
         assert plot._refresh_publication is None
 

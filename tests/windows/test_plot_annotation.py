@@ -90,8 +90,10 @@ def test_annotation_in_real_plot_and_svg(real_plot):
     assert not errors
 
 
-def test_annotation_mouse_selection_copies_text_without_copying_plot(real_plot):
+def test_annotation_mouse_selection_copies_text_without_copying_plot(real_plot, request):
     plot, _database, errors, _dimensions = real_plot
+    # QtTest's Copy shortcut can leave Ctrl held for the next window's input.
+    request.addfinalizer(lambda: QtTest.QTest.keyRelease(plot.widget.viewport(), QtCore.Qt.Key.Key_Control))
     item = plot.source_annotation.item
     original = item.toPlainText()
     image_copies = []

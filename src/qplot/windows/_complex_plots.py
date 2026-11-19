@@ -3,6 +3,8 @@
 import math
 from typing import Any
 
+import numpy as np
+
 from qplot.datahandling.complex_data import COMPLEX_1D_KEY, COMPLEX_ND_KEY
 
 
@@ -73,7 +75,8 @@ def show_complex_line_readout(window: Any, line: Any, index: int) -> bool:
             return True
     # An FFT bin has no unique recorded complex sample. Never present a
     # frequency-domain value as if it were a measurement from the source.
-    if getattr(line, "opts", {}).get("fftMode") or not 0 <= index < samples.values.size:
+    if (getattr(line, "opts", {}).get("fftMode") or not 0 <= index < samples.values.size
+            or not np.isfinite(samples.values[index])):
         window.pos_labels["x"].setText("—")
         window.pos_labels["y"].setText("—")
     else:

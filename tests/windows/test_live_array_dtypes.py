@@ -138,7 +138,8 @@ def test_live_planned_array_dtype_change(
                 assert write["signal"] == 4
                 for name, values in expected.items():
                     np.testing.assert_array_equal(full["signal"][name], values)
-                full_worker = loader(fresh.cache, params["signal"], params, {"x": "fast"})
+                full_worker = loader(fresh.cache, params["signal"], params, {"x": "fast"},
+                                     complex_mode="imag_vs_real")
                 finished, errors = [], []
                 full_worker.emitter.finished.connect(finished.append)
                 full_worker.emitter.errorOccurred.connect(errors.append)
@@ -175,12 +176,15 @@ def test_live_planned_array_dtype_change(
                     np.testing.assert_array_equal(current.data[name], values)
                     assert current.data[name].dtype == values.dtype
                     assert current.data[name].shape == (4,)
-                for axis, name in enumerate(("fast", "signal")):
-                    displayed = np.abs(expected[name]) if complex_update and name == "signal" else expected[name]
-                    np.testing.assert_array_equal(plot.line.getData()[axis], displayed)
-                    np.testing.assert_array_equal(plot.axis_data["xy"[axis]], full_worker.axis_data["xy"[axis]])
+                displayed_x, displayed_y = expected["fast"], expected["signal"]
                 if complex_update:
+                    displayed_x, displayed_y = expected["signal"].real, expected["signal"].imag
+                    np.testing.assert_array_equal(plot.complex_samples.coordinates[0], expected["fast"])
                     np.testing.assert_array_equal(plot.complex_samples.values, expected["signal"])
+                for axis in "xy":
+                    np.testing.assert_array_equal(plot.axis_data[axis], full_worker.axis_data[axis])
+                np.testing.assert_array_equal(plot.line.getData()[0], displayed_x)
+                np.testing.assert_array_equal(plot.line.getData()[1], displayed_y)
             for name, values in saved_arrays.items():
                 np.testing.assert_array_equal(prior.data[name], values)
             assert not any(isinstance(w.message, np.exceptions.ComplexWarning) for w in caught)

@@ -24,7 +24,7 @@ BIASES = (-3., 4.)
 FIELDS = (5., 8.)
 
 
-def write_volume(path, precisions, reverse):
+def write_volume(path, precisions, reverse, *, missing=None):
     initialise_or_create_database_at(str(path), journal_mode="DELETE")
     experiment = load_or_create_experiment("complex volume", "synthetic")
     expected = {}
@@ -42,6 +42,9 @@ def write_volume(path, precisions, reverse):
                 if bias == BIASES[1]:
                     # Both components differ from their binary32 rounding at this cell.
                     values[-1] += (1 - 1j) * 2.**-28
+                if missing is not None and missing[:2] == (field, bias):
+                    kept = delays != missing[2]
+                    delays, values = delays[kept], values[kept]
                 if precisions:
                     values = values.astype(precisions[BIASES.index(bias)])
                     saver.add_result(("field", np.full(delays.size, field)), ("bias", np.full(delays.size, bias)),
@@ -70,7 +73,7 @@ def hover(plot, x, y):
 
 
 def cursor_value(plot, role):
-    return complex(plot.pos_labels[role].text().replace(" ", "").replace("i", "j"))
+    return complex(plot.pos_labels[role].text().replace(" ", "").replace("−", "-").replace("i", "j"))
 
 
 def check_planes(plot, expected, mode):
@@ -146,3 +149,51 @@ def test_complex_volume_projection_cursor_and_export(main, tmp_path, monkeypatch
 
     check_csv(cut, tmp_path / "cut.csv", guid, coordinates, projected, monkeypatch)
     assert shown == value
+
+
+@pytest.mark.parametrize("swapped", [False, True], ids=["original-axes", "swapped-axes"])
+@pytest.mark.parametrize("horizontal", [False, True], ids=["vertical", "horizontal"])
+def test_frozen_complex_cut_cursor_identifies_only_acquired_cells(main, tmp_path, swapped, horizontal):
+    field, bias, delay = FIELDS[0], BIASES[1], DELAYS[1]
+    path = tmp_path / "incomplete.db"
+    guid, expected = write_volume(path, ("complex64", "complex128"), True, missing=(field, bias, delay))
+    window, errors = main
+    window.config.update(COMPLEX_ND_KEY, "imag")
+    assert window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active and window._selected_run_guid == guid)
+    window.plotRunButton.click()
+    wait_for(lambda: len(window.windows) == 1 and window.windows[0]._qplot_display_synchronized)
+    live = window.windows[0]
+    live.freeze_slice()
+    wait_for(lambda: len(window.windows) == 2 and window.windows[1]._qplot_display_synchronized)
+    frozen = window.windows[1]
+    if swapped:
+        frozen.set_plot_axes_swapped(True)
+        wait_for(lambda: frozen._qplot_display_synchronized and frozen.axis_param["x"].name == "bias")
+    assert np.isnan(frozen.dataGrid[1, 1])
+    fill_key = "fill_below" if swapped else "fill_right"
+    options = frozen.oper_widget.list_options
+    fill = next(options.item(i) for i in range(options.count())
+                if options.item(i).operation_row.spec.key == fill_key)
+    fill.input.click()
+    fill.operation_row.input.setText("1")
+    frozen.oper_widget.apply_but.click()
+    filled = expected[field, bias, DELAYS[0]].imag
+    wait_for(lambda: frozen._qplot_display_synchronized and frozen.dataGrid[1, 1] == filled)
+    frozen.show_hover_pixel_outline(1, 1)
+    frozen.openSweep("h" if horizontal else "v")
+    wait_for(lambda: len(window.windows) == 3 and window.windows[-1]._qplot_display_synchronized)
+    cut = window.windows[-1]
+    cut.force_all_axes_autoscale()
+    varies_delay = horizontal != swapped
+    coordinates = DELAYS if varies_delay else BIASES
+    source = expected[field, bias, DELAYS[0]] if varies_delay else expected[field, BIASES[0], delay]
+    hover(cut, coordinates[0], source.imag)
+    assert float(cut.pos_labels["x"].text()) == coordinates[0]
+    assert cursor_value(cut, "y") == source
+    assert cut.axis_data["y"][1] == filled
+    hover(cut, coordinates[1], filled)
+    assert [cut.pos_labels[axis].text() for axis in ("x", "y")] == ["—", "—"]
+    assert cut.complex_samples.values.shape == (len(coordinates),)
+    assert not np.shares_memory(cut.complex_samples.values, frozen.complex_samples.values)
+    assert not errors
