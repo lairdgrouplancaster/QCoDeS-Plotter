@@ -606,8 +606,21 @@ def test_post_arm_traffic_cannot_cancel_or_extend_first_deadline(
         from qplot import _shutdown_supervisor as supervisor
 
         client = supervisor.ShutdownSupervisorClient.from_environment().connect()
+        # The launcher can kill this child as soon as the first deadline expires.
+        Path(os.environ["_QPLOT_TEST_CHILD_PID_PATH"]).write_text(
+            str(os.getpid()), encoding="utf-8"
+        )
         first_deadline = time.monotonic() + 0.25
         later_deadline = first_deadline + 1.0
+        Path(os.environ["_QPLOT_TEST_RECORD_PATH"]).write_text(
+            json.dumps(
+                {
+                    "first_deadline": first_deadline,
+                    "later_deadline": later_deadline,
+                }
+            ),
+            encoding="utf-8",
+        )
         client._send_arm(first_deadline)
         channel = client._require_channel()
         mode = os.environ["_QPLOT_TEST_MODE"]
@@ -624,18 +637,6 @@ def test_post_arm_traffic_cannot_cancel_or_extend_first_deadline(
                     later_deadline,
                 )
             )
-        Path(os.environ["_QPLOT_TEST_CHILD_PID_PATH"]).write_text(
-            str(os.getpid()), encoding="utf-8"
-        )
-        Path(os.environ["_QPLOT_TEST_RECORD_PATH"]).write_text(
-            json.dumps(
-                {
-                    "first_deadline": first_deadline,
-                    "later_deadline": later_deadline,
-                }
-            ),
-            encoding="utf-8",
-        )
         sys.setswitchinterval(1000.0)
         while True:
             pass
