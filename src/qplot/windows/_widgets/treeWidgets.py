@@ -1462,7 +1462,7 @@ class RunList(qtw.QTreeWidget):
                 run.setData(
                     complete_col,
                     QtCore.Qt.ItemDataRole.UserRole,
-                    progress_percent_value(run.run_metadata),
+                    complete_cell_sort_value(run.run_metadata),
                 )
                 time_taken_col = self.cols.index("Duration")
                 run.setText(time_taken_col, format_time_taken_seconds(run.run_metadata))

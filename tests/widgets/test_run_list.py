@@ -483,6 +483,41 @@ class RunListTooltipTestCase(unittest.TestCase):
         self.assertEqual(treeWidgets.format_run_status(metadata), "Interrupted (40.0%)")
         self.assertEqual(treeWidgets.complete_cell_sort_value(metadata), 40.0)
 
+    def test_array_record_count_is_not_scientific_progress(self):
+        for exception, state in (
+            (None, "Running"), ("KeyboardInterrupt", "Interrupted"), ("OSError: test", "Failed")
+        ):
+            with self.subTest(state=state):
+                metadata = {
+                    "is_completed": exception is not None,
+                    "measurement_exception": exception,
+                    "setpoint_count": 12,
+                    "setpoint_count_source": "planned",
+                    "read_setpoint_count": None,
+                    "result_count": 2,
+                    "expected_results": 2 if exception else None,
+                    "expected_results_source": "observed" if exception else None,
+                }
+                self.assertEqual(treeWidgets.format_run_status(metadata), f"{state} (unknown)")
+                self.assertIsNone(treeWidgets.complete_cell_sort_value(metadata))
+                self.assertIn(f"{state} (unknown)", treeWidgets.run_tooltip_plain_text(metadata))
+
+    def test_failed_percentage_pairs_counts_with_their_own_plan(self):
+        metadata = {
+            "is_completed": True,
+            "measurement_exception": "OSError: acquisition stopped",
+            "setpoint_count": 10,
+            "setpoint_count_source": "planned",
+            "result_count": 6,
+            "expected_results": 20,
+            "expected_results_source": "planned",
+        }
+        self.assertEqual(treeWidgets.complete_cell_sort_value(metadata), 30)
+        self.assertEqual(treeWidgets.format_run_status(metadata), "Failed (30.0%)")
+        metadata["read_setpoint_count"] = 4
+        self.assertEqual(treeWidgets.complete_cell_sort_value(metadata), 40)
+        self.assertEqual(treeWidgets.format_run_status(metadata), "Failed (40.0%)")
+
     def test_interrupted_run_can_use_observed_setpoint_total(self):
         metadata = {
             "is_completed": True,
@@ -507,6 +542,7 @@ class RunListTooltipTestCase(unittest.TestCase):
             "is_completed": True,
             "measurement_exception": "Traceback...\nValueError: bad value\n",
             "result_count": 40,
+            "expected_results": 100,
             "setpoint_count": 100,
         }
 
@@ -632,6 +668,7 @@ class RunListTooltipTestCase(unittest.TestCase):
                 "ValueError: x < 2 & y > 1\n"
             ),
             "result_count": 40,
+            "expected_results": 100,
             "setpoint_count": 100,
         }
 
