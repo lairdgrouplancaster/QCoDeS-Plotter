@@ -218,6 +218,8 @@ class PlotAnnotationMixin(PlotHost):
             source = self if line is self.__dict__.get("line") else line.from_win
             sources.append(source)
         for layer in self.__dict__.get("heatmaps", {}).values():
+            if layer is not self and getattr(layer, "compatibility_error", None):
+                continue
             if self._heatmap_is_visible(layer) and self._heatmap_opacity(layer) > 0:
                 sources.append(self if layer is self else layer.from_win)
         # Keep the primary source first even when appearance rows are reordered.

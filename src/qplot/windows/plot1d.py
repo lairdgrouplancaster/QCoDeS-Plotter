@@ -80,6 +80,9 @@ class plot1d(Plot1DSnapMixin, MixedPlotMixin, plotWidget):
         return self._axis_scale_viewbox(self._axis_scale_axis_for_line(line, axis))
 
 
+    def _marquee_move_edges(self) -> tuple[npt.NDArray[np.float64] | None, None]:
+        return self._marquee_x_boundaries(), None
+
     def _snap_marquee_rect(self, rect: QtCore.QRectF) -> QtCore.QRectF:
         """
         Snap marquee X edges to the spaces between plotted data points.

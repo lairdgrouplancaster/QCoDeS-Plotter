@@ -1005,8 +1005,9 @@ class plot2d(
             point = samples.cell_index(x_index, y_index)
             if point is None:
                 return None
+            value = samples.values[point]
             return (x_index, y_index, float(samples.coordinates[0][point]),
-                    float(samples.coordinates[1][point]), complex(samples.values[point]))
+                    float(samples.coordinates[1][point]), value.item() if isinstance(value, np.generic) else value)
         return (
             x_index,
             y_index,
@@ -1065,6 +1066,11 @@ class plot2d(
 
         self.hover_pixel_outline.setRect(QtCore.QRectF(*cell_rect))
         self.hover_pixel_outline.show()
+
+
+    def _marquee_move_edges(self) -> tuple[tuple[float, ...] | None, tuple[float, ...] | None]:
+        geometry = self._heatmap_geometry()
+        return (geometry.x.edges, geometry.y.edges) if geometry is not None else (None, None)
 
 
     def _snap_marquee_rect(self, rect: QtCore.QRectF) -> QtCore.QRectF:

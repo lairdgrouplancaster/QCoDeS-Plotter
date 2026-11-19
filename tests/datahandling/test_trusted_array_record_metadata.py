@@ -61,6 +61,10 @@ def _assert_array_counts(fields, *, planned, dimensions=1):
     assert fields["read_setpoint_count"] is None
     assert fields["setpoint_count"] == (12 if planned else None)
     assert fields["setpoint_count_source"] == ("planned" if planned else None)
+    # Shapes plan scientific samples. A variable-width array may occupy a
+    # single result row, and only the completed physical count is observable.
+    assert fields["expected_results_source"] != "planned"
+    assert fields["expected_results"] in (None, fields["result_count"])
     expected_shape = ([12] if dimensions == 1 else [3, 4]) if planned else None
     assert fields["setpoint_shape"] == fields["point_shape"] == expected_shape
 

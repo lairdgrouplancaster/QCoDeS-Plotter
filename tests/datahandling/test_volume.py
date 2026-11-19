@@ -83,6 +83,30 @@ def test_region_mean_has_coverage_and_never_samples_nearest_cell(volume):
     assert np.all(np.isnan(trace))
 
 
+def test_complex_volume_accepts_exact_large_integer_and_rejects_rounding():
+    large = 2**60
+    zero = np.array([0.])
+    one = np.array([1.])
+    chunks = [(zero, zero, zero, np.array([large])), (zero, zero, one, np.array([4+3j])),
+              (one, zero, zero, np.array([-large - 1])),
+              (one * 2, zero, zero, np.array([large + 1])), (one * 2, zero, one, np.array([4+3j]))]
+    volume = VolumeStore.from_chunks(("depth", "bias", "gate"), chunks)
+    try:
+        frame = volume.plane("gate", "bias", 0)
+        assert int(frame.recorded_complex[0, 0].real) == large
+        assert frame.values[0, 1] == 4+3j
+        real = volume.plane("gate", "bias", 1)
+        assert real.recorded_complex[0, 0] == -large - 1
+        param = SimpleNamespace(name="s", label="signal", unit="Hz")
+        for mode, expected in (("real", -large-1), ("magnitude", large+1), ("imag", 0), ("phase", 180)):
+            projected, _ = processed_plane(real, (), param, {}, complex_mode=mode)
+            assert projected.values[0, 0] == expected and np.isnan(projected.values[0, 1])
+        with pytest.raises(ValueError, match="represented exactly"):
+            volume.plane("gate", "bias", 2)
+    finally:
+        volume.directory.cleanup()
+
+
 def test_sparse_pivot_is_bounded_and_work_cancellable():
     axis = np.arange(12, dtype=float)
     volume = VolumeStore.from_chunks(("d", "y", "x"), [(axis * 0, axis, axis, axis)], max_points=20)

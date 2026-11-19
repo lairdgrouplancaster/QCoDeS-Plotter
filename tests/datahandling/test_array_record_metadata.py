@@ -133,6 +133,8 @@ def test_live_mixed_array_and_scalar_trees_have_no_global_observed_count(
                 assert status["read_setpoint_count"] is None
                 assert status["setpoint_count"] == (6 if planned else None)
                 assert status["setpoint_shape"] == ([6] if planned else None)
+                assert status["expected_results"] is None
+                assert status["expected_results_source"] is None
                 assert _artifact_state(path, include_digest=False) == before
     finally:
         saver.dataset.conn.close()

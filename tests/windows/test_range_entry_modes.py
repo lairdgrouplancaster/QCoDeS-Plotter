@@ -8,6 +8,7 @@ import numpy as np
 import pyqtgraph as pg
 import pytest
 from PyQt6 import QtCore, QtTest, sip
+from PyQt6 import QtWidgets as qtw
 
 from tests.support.windows.axis_limit_precision import AxisLimitWindow
 from tests.support.windows.color_scale_locale import heatmap as _heatmap_fixture
@@ -121,6 +122,57 @@ def accept(first, second, values):
     first.setText(str(values[0]))
     second.setText(str(values[1]))
     QtTest.QTest.keyClick(first, QtCore.Qt.Key.Key_Return)
+
+
+def check_keyboard_range_edit(dialog, field, entry, current_limits, key):
+    dialog.activateWindow()
+    field.setFocus()
+    qtw.QApplication.processEvents()
+    assert field.hasFocus() and field.isVisible()
+    original = tuple(current_limits())
+    committed = QtTest.QSignalSpy(field.editingFinished)
+
+    field.selectAll()
+    QtTest.QTest.keyClicks(field, "1000")
+    QtTest.QTest.keyClick(field, key)
+    assert len(committed) == 1
+    assert tuple(current_limits()) == pytest.approx(original)
+    assert dialog.isVisible() and field.hasFocus()
+    assert field.text() == "1000"
+    assert entry.summary.isVisible()
+    assert "minimum below maximum" in entry.summary.text()
+
+    field.selectAll()
+    QtTest.QTest.keyClicks(field, "-7")
+    QtTest.QTest.keyClick(field, key)
+    assert len(committed) == 2
+    assert tuple(current_limits()) == pytest.approx((-7, original[1]))
+    assert dialog.isVisible() and field.hasFocus()
+    QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Tab)
+    assert dialog.isVisible() and not field.hasFocus()
+
+    close = dialog.findChild(qtw.QDialogButtonBox).button(qtw.QDialogButtonBox.StandardButton.Close)
+    close.setFocus()
+    QtTest.QTest.keyClick(close, QtCore.Qt.Key.Key_Return)
+    assert not dialog.isVisible()
+
+
+@pytest.mark.parametrize("key", [QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter])
+def test_axis_range_enter_preserves_the_editor(axis_window, key):
+    ui = axis_window._axis_scale_controls["x"]
+    check_keyboard_range_edit(
+        axis_window._axis_scale_dialog, ui.minText, ui.rangeEntry,
+        lambda: axis_window.vb.viewRange()[0], key,
+    )
+
+
+@pytest.mark.parametrize("heatmap_source", ["C"], indirect=True)
+@pytest.mark.parametrize("key", [QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter])
+def test_colour_range_enter_preserves_the_editor(heatmap, key):
+    check_keyboard_range_edit(
+        heatmap.colorbar_scale_dialog, heatmap.colorbar_min_text,
+        heatmap.colorbar_range_entry, heatmap.bar.levels, key,
+    )
 
 
 @pytest.mark.parametrize("axis", ["x", "y"])

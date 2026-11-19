@@ -1,6 +1,6 @@
 """Coordinate-bound cuts through the same processed planes as the viewer."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -29,13 +29,17 @@ class CutSelection:
 
 
 def extract_cut(volume, selection, operations, param, params, *, check=lambda: None,
-                cancelled=lambda: False, progress=lambda *_: None, complex_mode="magnitude"):
+                cancelled=lambda: False, progress=lambda *_: None, complex_mode="magnitude",
+                recorded_samples=False):
     axes = {"x": params[selection.x], "y": params[selection.y]}
     depths = volume.axes[selection.depth]
     display_param = param
 
     def plane(index):
         frame = volume.plane(selection.x, selection.y, index, check=check)
+        if recorded_samples:
+            return (replace(frame, values=frame.recorded_complex)
+                    if frame.recorded_complex is not None else frame), param
         return processed_plane(frame, operations, param, axes, check=check, cancelled=cancelled,
                                complex_mode=complex_mode)
 

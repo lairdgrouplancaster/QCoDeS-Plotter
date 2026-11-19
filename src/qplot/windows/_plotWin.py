@@ -981,6 +981,7 @@ class plotWidget(
         # popups can remain usable after this plot's dataset is retired.
         closed = getattr(self, "closed", None)
         if closed is not None:
+            closed.connect(self._release_axis_scale_links)
             for root in (self.vbMenu, self.plot.ctrlMenu):
                 if root is not None:
                     for menu in (root, *root.findChildren(qtw.QMenu)):
@@ -1826,7 +1827,7 @@ class plotWidget(
                 x_txt = self.format_cursor_number(x)
                 y_txt = self.format_cursor_number(y)
                 self.pos_labels["z"].setText(
-                    format_complex_cursor(self, z) if isinstance(z, complex)
+                    format_complex_cursor(self, z) if self.__dict__.get("complex_samples") is not None or isinstance(z, complex)
                     else self.format_cursor_number(z)
                 )
                 if hasattr(self, "show_hover_pixel_outline"):

@@ -69,6 +69,8 @@ def test_transposed_heatmap_promotion_remaps_operation_axes(mixed_plot, operatio
     _drop(target, runs["other_heatmap"])
     overlay = _added(target, runs["other_heatmap"])
     source = overlay.from_win
+    colour_source = source if target.operation_kind == "plot1d" else target
+    approved_units = (colour_source.display_param.unit, source.display_param.unit)
     if operation == "mean_then_clip":
         _process_source(source, "Subtract Row Mean")
         _process_source(source, "Limit Maximum", "0")
@@ -78,7 +80,15 @@ def test_transposed_heatmap_promotion_remaps_operation_axes(mixed_plot, operatio
     _wait_for(lambda: not target.worker.running)
     overlay.refresh(source_ready=True)
     assert overlay.source_axis_order() == ("y", "x")
-    expected = overlay.data_grid.copy()
+    expected = source.dataGrid.T.copy()
+    units = (colour_source.display_param.unit, source.display_param.unit)
+    visible = units[0] == units[1] or units == approved_units
+    assert overlay.image.isVisible() == visible
+    assert not overlay.heatmap_mesh.isVisible()
+    if visible:
+        np.testing.assert_array_equal(overlay.data_grid, expected)
+    else:
+        assert overlay.geometry is None and overlay.data_grid.size == 0
     replacement = target.remove_plot_items([_primary_entry(target)])
     _wait_for(lambda: not replacement.worker.running and not replacement._refresh_pending)
     np.testing.assert_array_equal(replacement.dataGrid, expected)

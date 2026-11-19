@@ -43,6 +43,7 @@ def typed_run_window(tmp_path, monkeypatch, qapplication):
             measurement.register_custom_parameter("signal", setpoints=("gate",))
             measurement.register_custom_parameter("reference", setpoints=("gate",))
             with measurement.run(write_in_background=False) as saver:
+                saver.dataset.add_metadata("calibration", f"Reference offset {offset}")
                 for value in (-3, -1, 2, 4, 9):
                     saver.add_result(("gate", value), ("signal", offset + value),
                                      ("reference", offset + value * value))

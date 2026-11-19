@@ -291,22 +291,26 @@ def func_with_input(func: OperationFunc, value: object) -> OperationFunc:
  
 
 class draggableListWidget(qtw.QListWidget):
-    """
-    QListWidgets have a know issue, when dragging the last time in the list 
-    below itself, the item contents gets deleted. This class impliments a work 
-    around to prevent that bug.
-    """
+    """Keep operation editors intact when a row is dropped back into its own slot."""
+
     def dragMoveEvent(self, event: QtGui.QDragMoveEvent | None) -> None:
         if event is None:
             return
 
-        target = self.row(self.itemAt(cast(Any, event).pos()))
+        target = self.row(self.itemAt(event.position().toPoint()))
         current = self.currentRow()
-        # Block drop below itself when it's the last item
-        if target == current + 1 or (current == self.count() - 1 and target == -1):
+        if current == self.count() - 1 and target == -1:
             event.ignore()
-        else:
-            super().dragMoveEvent(event)
+            return
+        super().dragMoveEvent(event)
+        # Qt decides whether the pointer is above or below the following row.
+        # Only a drop below it actually moves the operation down.
+        if (
+            target == current + 1
+            and event.isAccepted()
+            and self.dropIndicatorPosition() != self.DropIndicatorPosition.BelowItem
+        ):
+            event.ignore()
              
     @overload
     def addItem(self, item: qtw.QListWidgetItem | None) -> None: ...

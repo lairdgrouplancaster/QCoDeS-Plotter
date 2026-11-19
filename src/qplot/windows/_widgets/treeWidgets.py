@@ -1007,7 +1007,13 @@ class RunList(qtw.QTreeWidget):
         finally:
             self._resizing_columns = False
 
-    def _persist_column_widths(self):
+    def finish_pending_column_width_save(self) -> None:
+        """Save the user's last drag before the application event loop ends."""
+        if self._column_width_save_timer.isActive():
+            self._column_width_save_timer.stop()
+            self._persist_column_widths(notify=False)
+
+    def _persist_column_widths(self, *, notify: bool = True) -> None:
         if self._config is None or not self._manual_column_widths:
             return
 
@@ -1028,7 +1034,7 @@ class RunList(qtw.QTreeWidget):
                 self._manual_column_widths = True
 
         if persist_config_value(
-            self,
+            self if notify else None,
             self._config,
             RUN_TABLE_COLUMN_WIDTHS_KEY,
             persisted_widths,
@@ -1456,7 +1462,7 @@ class RunList(qtw.QTreeWidget):
                 run.setData(
                     complete_col,
                     QtCore.Qt.ItemDataRole.UserRole,
-                    progress_percent_value(run.run_metadata),
+                    complete_cell_sort_value(run.run_metadata),
                 )
                 time_taken_col = self.cols.index("Duration")
                 run.setText(time_taken_col, format_time_taken_seconds(run.run_metadata))
@@ -1900,7 +1906,7 @@ class moreInfo(qtw.QTabWidget):
 
         run_metadata = self._trusted_run_metadata(run_metadata)
         guid = run_metadata.get("guid")
-        self.clear()
+        self.clear(keep_preview=bool(guid) and self.preview.current_guid == guid)
         self._set_trusted_overview(run_metadata, parameters)
         self._set_trusted_parameters(
             tuple(parameters or ()),
@@ -1945,7 +1951,9 @@ class moreInfo(qtw.QTabWidget):
             if self._trusted_detail_identity == detail_identity
             else None
         )
-        self.clear()
+        # Same-run preview cards retain their selected measurement keys when
+        # they are redrawn. Clearing the preview first discards those keys.
+        self.clear(keep_preview=bool(preview_guid) and self.preview.current_guid == preview_guid)
         self._trusted_detail_identity = detail_identity
         self._trusted_full_values = {
             value.identifier: value for value in detail.presentation.full_values

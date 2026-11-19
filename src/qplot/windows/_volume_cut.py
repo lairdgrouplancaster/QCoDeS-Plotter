@@ -3,6 +3,7 @@
 from copy import copy
 from dataclasses import replace
 from html import escape
+from math import isfinite
 from typing import Any
 
 import numpy as np
@@ -11,7 +12,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 from qcodes.dataset.descriptions.param_spec import ParamSpec
 
-from qplot.datahandling.complex_data import ComplexSamples, contains_complex
+from qplot.datahandling.complex_data import ComplexSamples
 from qplot.datahandling.plot_progress import PlotProgress
 from qplot.tools.plot_csv import CsvColumns, HeatmapCsv
 from qplot.tools.plot_result import capture_plot_result
@@ -24,6 +25,13 @@ from ._source_consumer import SourceConsumerRegistration
 from ._widgets import CopyableTableWidget
 from .plot1d import plot1d
 from .plot2d import plot2d
+
+
+def _exports_only_cut(cut, exporter):
+    """Row-wide cut metadata belongs only to exports of that trace alone."""
+    selected = selected_csv_measurements(cut, exporter)
+    items = cut.lines.values() if selected is None else (entry.item for entry in selected)
+    return all(item is cut.line for item in items)
 
 
 class CutLoader(loader):
@@ -52,22 +60,27 @@ class CutLoader(loader):
                     "Extracting cut through slices", n, total, stage=2)),
             )
             self.axis_data = {"x": x, "y": y}
-            if self.volume.has_complex_samples:
+            if self.volume.has_complex_samples and self.selection.kind != "mean":
                 raw_x, raw_values, _, _ = extract_cut(
                     self.volume, self.selection, (), self.source_param, self.source_params,
-                    check=self._check_cancelled, cancelled=self.is_cancelled, complex_mode=None,
+                    check=self._check_cancelled, cancelled=self.is_cancelled, recorded_samples=True,
                 )
-                if contains_complex(raw_values):
-                    self.complex_samples = ComplexSamples(
-                        (raw_x,), (self.source_params[self.selection.varying],),
-                        raw_values, self.source_complex_mode,
-                    )
+                self.complex_samples = ComplexSamples(
+                    (raw_x,), (self.source_params[self.selection.varying],),
+                    raw_values, self.source_complex_mode,
+                )
             self.axis_param = {"x": self.source_params[self.selection.varying], "y": copy(value_param)}
             self.display_param = copy(value_param)
             operated = self.processing.do_operations()
             if operated is not None:
                 self.axis_data = {"x": operated[0], "y": operated[1]}
                 self.processing._apply_operation_metadata()
+            if self.axes_dict["y"] == self.selection.varying:
+                # Swapping the display preserves extraction, cut operations
+                # and the association between each coordinate and its value.
+                self.axis_data["x"], self.axis_data["y"] = self.axis_data["y"], self.axis_data["x"]
+                self.axis_param["x"], self.axis_param["y"] = self.axis_param["y"], self.axis_param["x"]
+                self.display_param = self.axis_param["y"]
             self.dataset_completed = self.volume.completed
             self.loaded_from_sql_heatmap = True
             self.dataset_length_at_start = self.volume.revision
@@ -267,19 +280,69 @@ class VolumeCut(plot1d):
         return True
 
     def _depth_moved(self):
-        if self.depth_marker is None:
+        if self.depth_marker is not None:
+            self._select_depth_at(self.depth_marker.value())
+
+    def _depth_dimension(self):
+        vertical = self.__dict__.get("axis_param", {}).get("y")
+        return "y" if getattr(vertical, "name", None) == self.selection.depth else "x"
+
+    def _depth_navigation_available(self):
+        mapped_vertical_depth = self._depth_dimension() == "y" and (
+            self.line.opts.get("derivativeMode") or self.line.opts.get("subtractMeanMode")
+        )
+        return (self.source._depth_name() == self.selection.depth
+                and not self.line.opts.get("fftMode") and not self.line.opts.get("phasemapMode")
+                and not mapped_vertical_depth)
+
+    def _select_depth_at(self, position):
+        if self._closed or self.source._closed or not self._depth_navigation_available():
             return
-        if (not self.line.opts.get("fftMode") and not self.line.opts.get("phasemapMode")
-                and self.source._depth_name() == self.selection.depth and not self.source._closed):
-            self.source.select_slice(self.volume.nearest_index(self.selection.depth, self.depth_marker.value()))
+        axis = self._axis_scale_axis_for_line(self.line, self._depth_dimension())
+        physical = self.view_to_data(axis, position)
+        if not isfinite(physical):
+            return
+        depths = self.volume.axes[self.selection.depth]
+        index = self.volume.nearest_index(self.selection.depth, physical)
+        if self._axis_scale_log_mode(axis):
+            index = max(index, int(np.searchsorted(depths, 0., side="right")))
+        if index < len(depths):
+            self.source.select_slice(index)
+
+    def _sync_depth_marker(self):
+        marker = self.depth_marker
+        if marker is None or self._closed:
+            return
+        target = self._marquee_viewbox()
+        current = marker.getViewBox()
+        if current is not target:
+            if current is not None:
+                current.removeItem(marker)
+            self._add_plot_overlay(marker, target)
+        dimension = self._depth_dimension()
+        axis = self._axis_scale_axis_for_line(self.line, dimension)
+        depth = self.source._depth_value
+        position = self.data_to_view(axis, depth) if depth is not None else np.nan
+        visible = self._depth_navigation_available() and isfinite(position)
+        marker.setVisible(visible)
+        if visible:
+            angle = 90 if dimension == "x" else 0
+            with QtCore.QSignalBlocker(marker):
+                if marker.angle != angle:
+                    marker.setAngle(angle)
+                marker.setValue(position)
+
+    def _sync_axis_scale_line_log_mode(self, trace_key, line):
+        super()._sync_axis_scale_line_log_mode(trace_key, line)
+        if line is self.line:
+            self._sync_depth_marker()
 
     def _curve_clicked(self, event):
         if self.depth_marker is None:
             return
         if event.button() == QtCore.Qt.MouseButton.LeftButton and self.plot.sceneBoundingRect().contains(event.scenePos()):
-            point = self.vb.mapSceneToView(event.scenePos())
-            self.depth_marker.setValue(point.x())
-            self._depth_moved()
+            point = self._marquee_viewbox().mapSceneToView(event.scenePos())
+            self._select_depth_at(point.x() if self._depth_dimension() == "x" else point.y())
 
     def _plane_changed(self):
         if self.selection.kind in ("h", "v"):
@@ -302,9 +365,7 @@ class VolumeCut(plot1d):
             self.slice_operation_state = self.source._applied_operation_state
             if self.selection.kind in ("h", "v") and not self.pin_slice.isChecked():
                 self.selection = replace(self.selection, depth_value=self.source._depth_value)
-        if self.depth_marker is not None and self.source._depth_name() == self.selection.depth:
-            with QtCore.QSignalBlocker(self.depth_marker):
-                self.depth_marker.setValue(self.source._depth_value or 0)
+        self._sync_depth_marker()
         self._sync_marker()
         signature = (self.volume, self.selection, self.slice_operation_state.entries,
                      self.source.worker.complex_mode)
@@ -372,14 +433,18 @@ class VolumeCut(plot1d):
 
     def _capture_line_csv(self, exporter, *, transformed=False):
         capture = super()._capture_line_csv(exporter, transformed=transformed)
+        if not _exports_only_cut(self, exporter):
+            return capture
         if (self.selection.kind == "mean" and isinstance(capture, CsvColumns)
                 and len(capture.columns) == 2
-                and np.array_equal(capture.columns[0], self.__dict__.get("_coverage_depths", []))):
+                and np.array_equal(capture.columns[1 if self._depth_dimension() == "y" else 0],
+                                   self.__dict__.get("_coverage_depths", []))):
             capture = replace(capture, headers=(*capture.headers, "finite_cells"),
                               columns=(*capture.columns, self._coverage_counts.copy()))
+        parameter = self._trace_axis_parameter if transformed else self._trace_input_axis_parameter
         return replace(capture, constants=(*self._displayed_cut_metadata,
-                                          ("x_unit", self.axis_param["x"].unit),
-                                          ("value_unit", self.display_param.unit)))
+                                          ("x_unit", parameter(self.line, "x").unit),
+                                          ("value_unit", parameter(self.line, "y").unit)))
 
     def show_coverage(self):
         if "_coverage_counts" not in self.__dict__:
@@ -409,8 +474,7 @@ class VolumeCut(plot1d):
 
     def _native_transform_labels_changed(self, _value=None):
         super()._native_transform_labels_changed(_value)
-        if self.depth_marker is not None:
-            self.depth_marker.setVisible(not self.line.opts.get("fftMode") and not self.line.opts.get("phasemapMode"))
+        self._sync_depth_marker()
 
     def closeEvent(self, event):
         if self in self.source._cuts:
@@ -584,10 +648,7 @@ class FrozenLine(plot1d):
 
     def _capture_line_csv(self, exporter, *, transformed=False):
         capture = super()._capture_line_csv(exporter, transformed=transformed)
-        selected = selected_csv_measurements(self, exporter)
-        items = self.lines.values() if selected is None else (entry.item for entry in selected)
-        if any(item is not self.line for item in items):
-            # Row-wide cut coordinates describe only the primary frozen trace.
+        if not _exports_only_cut(self, exporter):
             return capture
         parameter = self._trace_axis_parameter if transformed else self._trace_input_axis_parameter
         x_unit = parameter(self.line, "x").unit

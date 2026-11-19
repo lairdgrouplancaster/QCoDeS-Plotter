@@ -10,6 +10,7 @@ from itertools import islice
 from typing import Any, cast
 
 from qplot.datahandling._sqlite_identifiers import quote_identifier
+from qplot.datahandling.run_metadata import is_array_parameter
 from qplot.datahandling.trusted_live import (
     TrustedQueryResult,
 )
@@ -206,8 +207,7 @@ def array_parameter_names(run_description: dict[str, Any]) -> set[str]:
         return set()
     return {
         name for name, specification in parameters.items()
-        if isinstance(specification, dict)
-        and specification.get("paramtype", specification.get("type")) == "array"
+        if is_array_parameter(specification)
     }
 
 

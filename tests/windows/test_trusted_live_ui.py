@@ -3059,7 +3059,15 @@ def test_trusted_failed_explicit_plot_leaves_selection_with_no_dataset_cleanup(
     guid = "trusted-failed-action-guid"
     service = _FakeService(instance)
     harness = Harness(instance, service, guid)
-    dataset = NoPlottableDataset(guid, 7)
+    dataset_class = _ActionDataset if action_outcome == "plot-error" else NoPlottableDataset
+    dataset = dataset_class(guid, 7)
+    parameters = dataset.get_parameters()
+    dataset.paramspecs = {parameter.name: parameter for parameter in parameters}
+    dataset.description = SimpleNamespace(
+        interdeps=SimpleNamespace(
+            dependencies={parameter: parameter.depends_on_ for parameter in parameters},
+        ),
+    )
     del dataset.conn
     harness._trusted_plot_ready = {harness._current_dataset_key(guid): dataset}
     closed_datasets = []
@@ -3098,7 +3106,10 @@ def test_trusted_failed_explicit_plot_leaves_selection_with_no_dataset_cleanup(
                 harness.openRun()
         else:
             harness.openRun()
+            assert not harness.opened
+            assert harness.status_messages[-1] == ("No plottable parameters found for this run.", 5000)
 
+        assert harness.error_messages == []
         assert harness.ds is None
         assert harness._selected_dataset_key is None
         assert closed_datasets == [dataset]

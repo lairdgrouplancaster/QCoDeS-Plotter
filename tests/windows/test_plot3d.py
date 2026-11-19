@@ -287,6 +287,57 @@ def test_slice_navigation_all_planes_and_global_colours(tmp_path, main, array):
     assert_database_artifacts_unchanged_except_trusted_shm(path, before)
 
 
+@pytest.mark.parametrize("edit_reversed", [False, True], ids=["restore-transposed", "restore-last-edit"])
+def test_plane_state_follows_physical_axes_on_indirect_return(tmp_path, main, edit_reversed):
+    window, errors = main
+    path = tmp_path / "plane-settings.db"
+    guid = build_volume(path)
+    assert window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(guid)
+    wait_for(lambda: bool(window.windows) and loaded(window.windows[0]))
+    plot = window.windows[0]
+
+    def edit(mean, limit, rect, ranges):
+        entries = (OperationEntry(mean, None), OperationEntry("limit_maximum", limit))
+        plot.oper_widget.restore_state(OperationsState(entries, 1))
+        old = plot.worker
+        plot.oper_widget.apply_but.click()
+        wait_for(lambda: plot.worker is not old and loaded(plot))
+        plot.vb.setRange(xRange=ranges[0], yRange=ranges[1], padding=0)
+        plot.set_marquee_rect(rect)
+        return QtCore.QRectF(plot.marquee), plot.vb.viewRange()
+
+    def return_via_other_depth():
+        first = plot.axis_options["x"]
+        for role, name in (("x", "field"), ("y", "field"), ("y", first)):
+            old = plot.worker
+            plot.axis_dropdown[role].setCurrentText(name)
+            wait_for(lambda old=old: plot.worker is not old and loaded(plot))
+
+    limit = "11"
+    rect, ranges = edit("row_mean", limit, QtCore.QRectF(-2.1, -.1, 2.2, .2),
+                        [(-2.5, 1.5), (-1., 2.)])
+    return_via_other_depth()
+    if edit_reversed:
+        limit = "6"
+        rect, ranges = edit("column_mean", limit, QtCore.QRectF(2.9, 4.9, .2, .2),
+                            [(1., 4.), (3., 6.)])
+        return_via_other_depth()
+
+    mean = "row_mean" if edit_reversed else "column_mean"
+    entries = (OperationEntry(mean, None), OperationEntry("limit_maximum", limit))
+    assert plot.oper_widget.capture_state().entries == entries
+    assert plot._applied_operation_state.entries == entries
+    # The measured signal varies as gate squared at each fixed bias.
+    across_gate = np.array([4., 0., 25.]) - 29 / 3
+    grid = np.tile(np.minimum(across_gate, float(limit)), (2, 1))
+    np.testing.assert_allclose(plot.dataGrid, grid if edit_reversed else grid.T)
+    assert plot.marquee == QtCore.QRectF(rect.y(), rect.x(), rect.height(), rect.width())
+    np.testing.assert_allclose(plot.vb.viewRange(), ranges[::-1])
+    assert not errors
+
+
 def test_keyboard_cycles_visible_volume_probes_and_moves_selected_probe(tmp_path, main, qapplication):
     window, errors = main
     path = tmp_path / "volume.db"
@@ -458,6 +509,114 @@ def test_cuts_follow_pin_processed_depth_and_csv(tmp_path, main):
     assert "volume: 1 (signal)" in plot.source_annotation.text
     assert "slice index" not in plot.source_annotation.text
     assert "field =" not in plot.source_annotation.text
+    assert not errors
+
+
+def test_depth_marker_tracks_physical_slice_when_cut_axis_is_logarithmic(tmp_path, main):
+    window, errors = main
+    path = tmp_path / "log-depth-marker.db"
+    guid = build_volume(path, gate_points=(-3., 0., 5., 125.))
+    assert window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(guid)
+    wait_for(lambda: bool(window.windows) and loaded(window.windows[0]))
+    source = window.windows[0]
+    source.axis_dropdown["x"].setCurrentText("field")
+    wait_for(lambda: loaded(source) and source._displayed_depth_name() == "gate")
+    source.select_slice(2)
+    wait_for(lambda: loaded(source) and source.slice_frame.depth == 5.)
+    source.openSweep("d")
+    wait_for(lambda: len(window.windows) == 2 and loaded(window.windows[1]))
+    cut = window.windows[1]
+    marker = cut.depth_marker
+    assert marker.isVisible() and marker.value() == 5.
+    cut.open_axis_scale_dialog("x")
+    log = cut._axis_scale_controls["x"].logCheck
+    log.click()
+    cut._axis_scale_dialog.close()
+    assert marker.isVisible() and marker.value() == pytest.approx(np.log10(5.))
+
+    # The parent navigator still offers zero. Its marker has no log position,
+    # but the cut's positive samples remain available for navigation.
+    source.select_slice(1)
+    wait_for(lambda: loaded(source) and source.slice_frame.depth == 0.)
+    assert not marker.isVisible()
+    cut.vb.setRange(xRange=(0., 3.), yRange=(0., 17_000.), padding=0.)
+    y = cut.line.getOriginalDataset()[1][-1]
+    scene = cut.vb.mapViewToScene(QtCore.QPointF(np.log10(125.), y))
+    pixel = cut.widget.mapFromScene(scene)
+    assert cut.widget.viewport().rect().contains(pixel)
+    QtTest.QTest.mouseClick(cut.widget.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=pixel)
+    wait_for(lambda: loaded(source) and source.slice_frame.depth == 125.)
+    assert marker.isVisible() and marker.value() == pytest.approx(np.log10(125.))
+
+    # A completed marker drag is also expressed in the line's view coordinates.
+    marker.setValue(np.log10(4.8))
+    marker.sigPositionChangeFinished.emit(marker)
+    wait_for(lambda: loaded(source) and source.slice_frame.depth == 5.)
+    assert marker.value() == pytest.approx(np.log10(5.))
+    cut.open_axis_scale_dialog("x")
+    log.click()
+    cut._axis_scale_dialog.close()
+    assert marker.value() == 5.
+    source.select_slice(0)
+    wait_for(lambda: loaded(source) and source.slice_frame.depth == -3.)
+    assert marker.isVisible() and marker.value() == -3.
+    assert not errors
+
+
+@pytest.mark.parametrize("kind", ["h", "v", "d", "mean"])
+def test_volume_cut_axis_exchange_survives_worker_publication(tmp_path, main, kind):
+    from pyqtgraph.exporters import CSVExporter
+
+    window, errors = main
+    path = tmp_path / "cut-axes.db"
+    guid = build_volume(path)
+    assert window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(guid)
+    wait_for(lambda: bool(window.windows) and loaded(window.windows[0]))
+    volume = window.windows[0]
+    if kind == "mean":
+        volume.marquee = QtCore.QRectF(-2., 0., 8., 4.)
+    volume.openSweep(kind)
+    wait_for(lambda: len(window.windows) == 2 and loaded(window.windows[1]))
+    cut = window.windows[1]
+    if kind == "h":
+        old = cut.worker
+        cut.oper_widget.restore_state(OperationsState((OperationEntry("line_derivative", None),), 1))
+        cut.refreshWindow(force=True)
+        wait_for(lambda: cut.worker is not old and loaded(cut))
+        # The writer's signal is a constant plus gate squared.
+        np.testing.assert_allclose(cut.line.getOriginalDataset()[1], [-2., 0., 5.], atol=1e-12)
+    coordinate, signal = (values.copy() for values in cut.line.getOriginalDataset())
+    assert cut.axis_param["x"].name == cut.selection.varying
+    assert cut.axis_param["y"].name == "signal"
+    for swapped in (True, False):
+        old = cut.worker
+        assert cut.set_plot_axes_swapped(swapped)
+        wait_for(lambda old=old: cut.worker is not old and loaded(cut))
+        x, y = cut.line.getOriginalDataset()
+        np.testing.assert_array_equal(x, signal if swapped else coordinate)
+        np.testing.assert_array_equal(y, coordinate if swapped else signal)
+        expected_names = ("signal", cut.selection.varying) if swapped else (cut.selection.varying, "signal")
+        assert (cut.axis_param["x"].name, cut.axis_param["y"].name) == expected_names
+        assert cut.display_param.unit == cut.axis_param["y"].unit
+        capture = cut._capture_line_csv(CSVExporter(cut.plot))
+        np.testing.assert_array_equal(capture.columns[0], x)
+        np.testing.assert_array_equal(capture.columns[1], y)
+        metadata = dict(capture.constants)
+        signal_unit = "A/V" if kind == "h" else "A"
+        assert (metadata["x_unit"], metadata["value_unit"]) == (
+            (signal_unit, "V") if swapped else ("V", signal_unit)
+        )
+        assert metadata["run_guid"] == guid
+        if kind in ("d", "mean"):
+            assert cut.depth_marker.angle == (0 if swapped else 90)
+            assert cut.depth_marker.value() == volume.slice_frame.depth
+        if kind == "mean":
+            assert capture.headers[-1] == "finite_cells"
+            np.testing.assert_array_equal(capture.columns[-1], [6, 6, 6])
     assert not errors
 
 

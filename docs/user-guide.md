@@ -818,8 +818,11 @@ repeat counts shown; missing cells remain missing unless an explicit fill
 operation is applied.
 
 Scalar and compatible numeric array storage are supported, including nonuniform
-spacing, descending/snake sweeps and incomplete grids. Complex data and
-coordinates that cannot be displayed without rounding are refused explicitly.
+spacing, descending/snake sweeps and incomplete grids. In a complex volume,
+each plane uses the chosen complex projection, even when all its readings are
+real. At a repeated coordinate the displayed value is the projection of the
+complex mean. The cursor shows the most recent finite reading at that point.
+If a coordinate cannot be displayed without rounding, qPlot reports an error.
 Each plane's cell count and acquired sample count must fit
 `max_full_heatmap_points`; oversized planes report the limit instead of silently
 downsampling. The viewer builds a private disk index, caches a few planes and

@@ -11,6 +11,7 @@ from qplot.datahandling.dimensions import (
 from qplot.datahandling.export_data import (
     csv_dataframe,
     csv_scalar_columns,
+    dependent_measurement_params,
     exportable_measurement_params,
 )
 from qplot.datahandling.file_identity import (
@@ -42,8 +43,8 @@ from ._dataset_handle import (
 from ._dataset_registry import dataset_registry
 from ._export_names import suggested_export_filename
 from ._export_paths import choose_export_path
-from ._plot2d_layers import _heatmap_layer_compatibility, _window_display_unit
-from ._plot_drop_axes import plan_drop_axes
+from ._plot2d_layers import _heatmap_layer_compatibility
+from ._plot_drop_axes import plan_drop_axes, window_display_unit
 from ._plot_source_promotion import promote_plot_source
 from ._plot_tiling import place_plot_window
 from ._plotWin import plotWidget
@@ -1521,11 +1522,7 @@ class PlotActionsMixin:
             )
         action_dataset = self.ds
         try:
-            params = [
-                param
-                for param in action_dataset.get_parameters()
-                if param.depends_on != ""
-            ]
+            params = dependent_measurement_params(action_dataset)
             if index >= len(params):
                 self.show_status(f"Run has no parameter {index + 1}.", 5000)
                 return
@@ -1981,8 +1978,8 @@ class PlotActionsMixin:
         if not axes_from_drop and compatibility_error is not None:
             if compatibility_error == "the displayed value units do not match":
                 compatibility_error += (
-                    f" (source: {_window_display_unit(from_win) or 'unitless'};"
-                    f" target: {_window_display_unit(target_win) or 'unitless'})"
+                    f" (source: {window_display_unit(from_win) or 'unitless'};"
+                    f" target: {window_display_unit(target_win) or 'unitless'})"
                 )
             self.show_status(
                 f"Cannot add {parameter_name}; {compatibility_error}.",
@@ -2108,7 +2105,7 @@ class PlotActionsMixin:
         Returns the measurement parameters requested by the Measurement field.
 
         """
-        params = [param for param in dataset.get_parameters() if param.depends_on != ""]
+        params = dependent_measurement_params(dataset)
         names = self._selected_measurement_names(
             tuple(param.name for param in params),
             dataset.run_id,

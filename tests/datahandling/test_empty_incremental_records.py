@@ -1,6 +1,6 @@
 """Empty acquisitions cannot append unpaired setpoints to an unshaped cache."""
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 
 import numpy as np
 import pytest
@@ -9,11 +9,13 @@ from qcodes.dataset import (
     initialise_or_create_database_at,
     load_or_create_experiment,
 )
+from qcodes.dataset.sqlite.database import connect
 
 from qplot.datahandling import LoadFromDB
 from qplot.datahandling.LoadFromDB import load_param_data_from_db
 from qplot.datahandling.parameter_data import (
     flatten_record_columns,
+    get_parameter_data_for_one_paramtree,
     parameter_data_for_export,
 )
 from qplot.datahandling.qcodes_cache import (
@@ -23,6 +25,38 @@ from qplot.datahandling.qcodes_cache import (
 from qplot.datahandling.readonly import load_by_id_read_only
 from qplot.tools.worker import loader
 from tests.support.datahandling.trusted_plot import protected_state
+
+
+def test_active_run_with_diffraction_order_waits_for_its_own_samples(tmp_path):
+    path = tmp_path / "diffraction.db"
+    initialise_or_create_database_at(str(path), journal_mode="DELETE")
+    with closing(connect(str(path))) as writer:
+        experiment = load_or_create_experiment("Diffraction", "grating", conn=writer)
+        measurement = Measurement(exp=experiment)
+        measurement.register_custom_parameter("angle", unit="deg")
+        measurement.register_custom_parameter("order", setpoints=("angle",))
+        measurement.register_custom_parameter("intensity", setpoints=("angle",))
+        measurement.register_custom_parameter("temperature", unit="K")
+        with measurement.run(write_in_background=False) as saver:
+            for angle, intensity in ((4, 15), (7, 29), (9, 35)):
+                saver.add_result(("temperature", 270 + angle))
+                saver.add_result(("angle", angle), ("intensity", intensity))
+            saver.flush_data_to_database(block=True)
+            before = protected_state(path)
+            dataset = load_by_id_read_only(saver.run_id, str(path))
+            with closing(dataset.conn) as reader:
+                order, count = get_parameter_data_for_one_paramtree(
+                    reader, dataset.table_name, dataset.description, "order",
+                )
+                assert count == 0 and list(order) == ["order", "angle"]
+                assert all(column.size == 0 for column in order.values())
+                intensity, count = get_parameter_data_for_one_paramtree(
+                    reader, dataset.table_name, dataset.description, "intensity", start=2, end=3,
+                )
+                assert count == 2 and list(intensity) == ["intensity", "angle"]
+                np.testing.assert_array_equal(intensity["angle"], [7, 9])
+                np.testing.assert_array_equal(intensity["intensity"], [29, 35])
+            assert protected_state(path) == before
 
 
 @contextmanager

@@ -3,7 +3,9 @@
 
 import numpy as np
 import pytest
+from PyQt6 import QtCore
 
+from tests.support.windows.plot_integration import wait_for
 from tests.support.windows.typed_run_keyboard_launch import (
     _drain as _drain,
 )
@@ -16,6 +18,41 @@ from tests.support.windows.typed_run_keyboard_launch import (
 from tests.support.windows.typed_run_keyboard_launch import (
     typed_run_window as typed_run_window,
 )
+
+
+@pytest.mark.parametrize("route", ["button", "Key_Return"])
+def test_plot_action_preserves_selected_run_metadata(typed_run_window, route):
+    window, runs = typed_run_window
+    bridge = window._trusted_derived_bridge
+    tree = window.infoBox.metadata
+    window.infoBox.setCurrentWidget(tree)
+    window.measurementBox.setText("2")
+
+    def displayed_calibration():
+        items = tree.findItems("calibration", QtCore.Qt.MatchFlag.MatchRecursive)
+        return [item.text(1) for item in items]
+
+    def check_selected_run(run_id, guid, offset):
+        window.RunList.setCurrentItem(window.RunList._item_for_guid(guid))
+        wait_for(lambda: bridge._detail_display_guid == guid
+                 and not bridge.coordinator.active
+                 and not bridge.coordinator.snapshot().pending_count
+                 and not bridge.background_active())
+        expected = [f"Reference offset {offset}"]
+        assert displayed_calibration() == expected
+
+        window.run_idBox.setFocus()
+        _launch(window, route)
+        _drain(window)
+        assert [plot.ds.guid for plot in window.windows] == [guid]
+        assert displayed_calibration() == expected
+        assert window.infoBox._trusted_detail_identity == (run_id, guid)
+        window.windows[0].close()
+        wait_for(lambda: not window.windows)
+        assert displayed_calibration() == expected
+
+    for run in reversed(runs):
+        check_selected_run(*run)
 
 
 @pytest.mark.parametrize("route", ["Key_Return", "Key_Enter", "shortcut", "button"])

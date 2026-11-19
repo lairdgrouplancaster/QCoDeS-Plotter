@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Mapping, Sequence
@@ -100,6 +101,12 @@ class _FakeAdapter:
             self.query_failures -= 1
             raise OSError("exact first Job query failure")
         return self.active
+
+    def process_ids(self):
+        return []
+
+    def open_process_for_observation(self, pid):
+        raise AssertionError(f"unexpected process ID {pid}")
 
     def close_handle(self, handle):
         self.calls.append(("close_handle", handle))
@@ -415,6 +422,126 @@ def test_tree_wait_timeout_never_closes_or_extends_ownership() -> None:
     child.wait()
     child.wait_tree_empty()
     child.close_after_empty()
+
+
+def test_empty_accounting_waits_for_original_runtime_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _FakeAdapter()
+    child = _spawn(adapter)
+    process_table = {31: "runtime", 42: "foreign"}
+    runtime_signalled = False
+    opened = []
+    waited = []
+
+    def open_process(pid):
+        opened.append(pid)
+        return process_table.get(pid)
+
+    def wait_process(handle, milliseconds):
+        waited.append(handle)
+        if handle == "runtime":
+            assert milliseconds == 0
+            return runtime_signalled
+        assert handle == "process"
+        return adapter.signalled
+
+    monkeypatch.setattr(adapter, "process_ids", lambda: [31, 42, 53])
+    monkeypatch.setattr(adapter, "open_process_for_observation", open_process)
+    monkeypatch.setattr(adapter, "process_is_in_job", lambda h, job: h == "runtime")
+    monkeypatch.setattr(adapter, "wait_process", wait_process)
+    started = len(adapter.calls)
+    child.terminate_tree()
+    assert adapter.calls[started:] == [("terminate_job", "job", 70)]
+    assert not opened
+    assert child.wait() == 70
+    with pytest.raises(subprocess.TimeoutExpired):
+        child.wait_tree_empty(timeout=0.03)
+    with pytest.raises(jobs.WindowsShutdownJobError, match="active processes"):
+        child.close_after_empty()
+    assert ("close_handle", "runtime") not in adapter.calls
+    assert ("close_handle", "job") not in adapter.calls
+
+    process_table[31] = "reused"
+    runtime_signalled = True
+    child.wait_tree_empty(timeout=0.2)
+    child.close_after_empty()
+    assert sorted(opened) == [31, 42, 53]
+    assert set(waited) == {"process", "runtime"}
+    assert adapter.calls.count(("close_handle", "runtime")) == 1
+    assert adapter.calls.count(("close_handle", "foreign")) == 1
+    assert child.closed and child.returncode == 70
+
+
+def test_member_scan_deadline_and_close_failure_retain_progress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _FakeClock(40.0)
+    adapter = _FakeAdapter()
+    child = _spawn(adapter)
+    child.terminate_tree()
+    child.wait()
+    monkeypatch.setattr(jobs.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(adapter, "process_ids", lambda: [11, 22, 33])
+    opened = []
+
+    def open_process(pid):
+        opened.append(pid)
+        clock.now += 0.06
+        return pid
+
+    monkeypatch.setattr(adapter, "open_process_for_observation", open_process)
+    monkeypatch.setattr(adapter, "process_is_in_job", lambda handle, job: False)
+    adapter.close_failures = 1
+    with pytest.raises(subprocess.TimeoutExpired):
+        child.wait_tree_empty(timeout=0.05)
+    assert len(opened) == 1
+    assert child.failures == (
+        "Windows Job Object member settlement raised OSError: exact first handle close failure",
+    )
+    with pytest.raises(subprocess.TimeoutExpired):
+        child.wait_tree_empty(timeout=0.05)
+    assert len(opened) == 2
+    child.wait_tree_empty(timeout=0.2)
+    child.close_after_empty()
+    assert sorted(opened) == [11, 22, 33]
+    assert adapter.calls.count(("close_handle", opened[0])) == 2
+    for handle in opened[1:]:
+        assert adapter.calls.count(("close_handle", handle)) == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="requires native Windows process handles")
+def test_native_job_settlement_distinguishes_an_unrelated_live_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = jobs._CtypesWindowsJobAdapter()
+    child = jobs.spawn_contained(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        os.environ,
+        adapter=adapter,
+    )
+    try:
+        with monkeypatch.context() as patch:
+            # Windows can retire a member from accounting before it signals.
+            patch.setattr(adapter, "active_processes", lambda job: 0)
+            with pytest.raises(subprocess.TimeoutExpired):
+                child.wait_tree_empty(timeout=0.15)
+        assert not child.closed
+        assert child.poll() is None
+        assert {os.getpid(), child.pid} <= set(adapter.process_ids())
+        observer = adapter.open_process_for_observation(os.getpid())
+        assert observer is not None
+        try:
+            assert not adapter.process_is_in_job(observer, child._job_handle)
+            assert not adapter.wait_process(observer, 0)
+        finally:
+            adapter.close_handle(observer)
+    finally:
+        child.terminate_tree()
+        child.wait(timeout=10)
+        child.wait_tree_empty(timeout=10)
+        child.close_after_empty()
+    assert child.closed
 
 
 def test_absolute_deadline_observation_floors_wait_and_retains_natural_70_status(

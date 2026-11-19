@@ -6,15 +6,15 @@ broadcast nested dimensions and cannot represent all valid QCoDeS records.
 """
 
 from collections.abc import Callable
+from contextlib import closing
 from math import prod
 
 import numpy as np
 from qcodes.dataset.data_set import DataSet
-from qcodes.dataset.sqlite.queries import (
-    _expand_data_to_arrays,
-    _get_data_for_one_param_tree,
-)
+from qcodes.dataset.sqlite.queries import _expand_data_to_arrays
+from qcodes.dataset.sqlite.query_helpers import many_many
 
+from qplot.datahandling._sqlite_identifiers import quote_identifier
 from qplot.datahandling.numeric_samples import (
     concatenate_record_samples as concatenate_record_samples,
 )
@@ -218,12 +218,28 @@ def get_parameter_data_for_one_paramtree(
     Plotting and CSV both retain the precision of stored array samples.
     """
     check_cancelled()
-    records, specs, count = _get_data_for_one_param_tree(
-        conn, table_name, rundescriber.interdeps, output_param, start, end, None,
+    interdeps = rundescriber.interdeps
+    output, dependencies, inferences = interdeps.all_parameters_in_tree_by_group(
+        interdeps._id_to_paramspec[output_param],
     )
-    check_cancelled()
-    if specs[0].name != output_param:
+    if output.name != output_param:
         raise ValueError("The output parameter must be first in its parameter tree.")
+    specs = (output, *dependencies, *inferences)
+    names = tuple(spec.name for spec in specs)
+    columns = ", ".join(f"result.{quote_identifier(name)}" for name in names)
+    offset = max(start - 1, 0) if start is not None else 0
+    limit = max(end - offset, 0) if end is not None else -1
+    # QCoDeS's tree query leaves the output name bare in its non-NULL filter.
+    # A valid measurement name such as 'order' needs quoting there as well.
+    sql = (
+        f"SELECT {columns} FROM {quote_identifier(table_name)} AS result "
+        f"WHERE result.{quote_identifier(output.name)} IS NOT NULL "
+        "ORDER BY result.id LIMIT ? OFFSET ?"
+    )
+    with closing(conn.cursor()) as cursor:
+        cursor.execute(sql, (limit, offset))
+        records = many_many(cursor, *names)
+    check_cancelled()
 
     # Scalar text and one-element arrays can expand far beyond their stored
     # size. Check the complete projected tree before QCoDeS allocates any of
@@ -255,7 +271,7 @@ def get_parameter_data_for_one_paramtree(
             values, dtype, check_cancelled, preserve_integers=preserve_integers,
         )
     check_cancelled()
-    return data, count
+    return data, len(records)
 
 
 def parameter_data_for_export(dataset, parameter_name):

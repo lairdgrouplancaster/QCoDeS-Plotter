@@ -60,6 +60,9 @@ def layout_range_fields(layout, entry, manual, first, second, first_label, secon
     layout.addWidget(entry.summary, 3, 1, 1, 3)
     layout.setColumnStretch(1, 1)
     layout.setColumnStretch(2, 1)
+    # The fields process Return first, including their native edit signals.
+    # Catch the propagated key on their form before it reaches the dialog.
+    layout.parentWidget().installEventFilter(entry)
 
 
 def _center_span(lower: float, upper: float) -> tuple[float, float]:
@@ -231,6 +234,14 @@ class RangeEntry(qtw.QWidget):
 
     def minimumSizeHint(self) -> QtCore.QSize:
         return self.sizeHint()
+
+    def eventFilter(self, watched: QtCore.QObject | None, event: QtCore.QEvent | None) -> bool:
+        if (isinstance(event, QtGui.QKeyEvent) and event.type() == QtCore.QEvent.Type.KeyPress
+                and event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter)
+                and qtw.QApplication.focusWidget() in self._fields):
+            event.accept()
+            return True
+        return super().eventFilter(watched, event)
 
     def bind_auto_mode(
         self,

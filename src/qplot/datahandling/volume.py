@@ -33,7 +33,7 @@ class SliceFrame:
     depth: float | None
     index: int
     samples: int
-    raw_values: np.ndarray | None = None
+    recorded_complex: np.ndarray | None = None
 
 
 class VolumeStore:
@@ -166,7 +166,7 @@ class VolumeStore:
                 conn.set_progress_handler(lambda: _interrupted(check), 1000)
                 cursor = conn.execute(
                     f"SELECT {column[x]}, {column[y]}, value, dtype FROM samples "
-                    f"WHERE {column[depth_name]}=?", (depth,),
+                    f"WHERE {column[depth_name]}=? ORDER BY rowid", (depth,),
                 )
                 while batch := cursor.fetchmany(4096):
                     check()
@@ -174,17 +174,20 @@ class VolumeStore:
                     if len(rows) > self.max_points:
                         raise ValueError("This slice's acquired sample count exceeds max_full_heatmap_points.")
         counts = np.zeros((ys.size, xs.size), dtype=np.int64)
-        values = np.full(counts.shape, np.nan)
+        values = np.full(counts.shape, np.nan, dtype=complex if self.has_complex_samples else float)
+        recorded_complex = None
         if rows:
             x_values = np.fromiter((row[0] for row in rows), float)
             y_values = np.fromiter((row[1] for row in rows), float)
             parts = []
+            source_dtypes = set()
             # Decode uniform batches in bulk. For mixed records, use the same
             # precision-preserving promotion within and across batches.
             for start in range(0, len(rows), 4096):
                 check()
                 batch = rows[start:start + 4096]
                 dtypes = {row[3] for row in batch}
+                source_dtypes.update(dtypes)
                 if len(dtypes) == 1:
                     parts.append(np.frombuffer(b"".join(row[2] for row in batch), dtype=batch[0][3]))
                 else:
@@ -192,25 +195,37 @@ class VolumeStore:
                     parts.append(np.fromiter((np.frombuffer(row[2], dtype=row[3])[0].item()
                                               for row in batch), dtype=dtype, count=len(batch)))
             samples = concatenate_record_samples(parts)
+            if any(np.dtype(name).kind == "c" for name in source_dtypes):
+                dtype = np.result_type(np.complex128, *(np.dtype(name) for name in source_dtypes))
+                samples = _complex_plane_samples(samples, dtype, check)
             finite = numeric_isfinite(samples)
-            np.add.at(counts, (np.searchsorted(ys, y_values[finite]),
-                               np.searchsorted(xs, x_values[finite])), 1)
+            cells = (np.searchsorted(ys, y_values[finite]), np.searchsorted(xs, x_values[finite]))
+            np.add.at(counts, cells, 1)
             if np.any(finite):
-                if np.iscomplexobj(samples):
+                repeated = np.any(counts > 1)
+                if self.has_complex_samples:
+                    recorded_complex = _latest_reading_grid(samples, finite, cells, counts.shape, repeated, check)
+                if recorded_complex is not None and not repeated:
+                    values = recorded_complex
+                elif np.iscomplexobj(samples):
                     real = data2matrix(y_values[finite], x_values[finite], samples[finite].real, check_cancelled=check)
                     imaginary = data2matrix(y_values[finite], x_values[finite], samples[finite].imag, check_cancelled=check)
                     matrix = real + 1j * imaginary
+                    values = matrix.reindex(index=ys, columns=xs).to_numpy()
                 else:
                     matrix = data2matrix(y_values[finite], x_values[finite], samples[finite], check_cancelled=check)
-                values = matrix.reindex(index=ys, columns=xs).to_numpy()
+                    values = matrix.reindex(index=ys, columns=xs).to_numpy()
         check()
-        frame = SliceFrame(xs, ys, values, counts, depth, index, len(rows))
+        frame = SliceFrame(xs, ys, values, counts, depth, index, len(rows), recorded_complex)
         # Cache at most three planes and 64 MiB of approximate array storage.
         with self._cache_lock:
             self._frames[key] = frame
             while len(self._frames) > 3 or sum(
                 f.values.size * (40 if f.values.dtype.kind == "O" else f.values.dtype.itemsize)
-                + f.counts.nbytes for f in self._frames.values()
+                + f.counts.nbytes
+                + (f.recorded_complex.size * (40 if f.recorded_complex.dtype.kind == "O" else f.recorded_complex.dtype.itemsize)
+                   if f.recorded_complex is not None and f.recorded_complex is not f.values else 0)
+                for f in self._frames.values()
             ) > 64 * 1024 * 1024:
                 self._frames.popitem(last=False)
         return frame
@@ -222,3 +237,38 @@ def _interrupted(check):
         return 0
     except InterruptedError:
         return 1
+
+
+def _latest_reading_grid(samples, finite, cells, shape, repeated, check):
+    """Pick the latest finite visit, in acquisition order, for each cursor."""
+    grid = np.full(shape, np.nan, dtype=object if samples.dtype.kind in "iub" else samples.dtype)
+    if not repeated:
+        grid[cells] = samples[finite]
+        return grid
+    latest = np.full(shape, -1, dtype=np.intp)
+    positions = np.flatnonzero(finite)
+    for start in range(0, positions.size, 65_536):
+        check()
+        batch = slice(start, start + 65_536)
+        np.maximum.at(latest, (cells[0][batch], cells[1][batch]), positions[batch])
+    present = latest >= 0
+    grid[present] = samples[latest[present]]
+    return grid
+
+
+def _complex_plane_samples(samples, dtype, check):
+    """Promote all records of a complex volume without rounding an integer reading."""
+    if samples.dtype.kind not in "iuO":
+        return samples.astype(dtype, copy=False)
+    result = np.empty(samples.shape, dtype=dtype)
+    for start in range(0, samples.size, 4096):
+        check()
+        batch = slice(start, start + 4096)
+        original = samples[batch]
+        result[batch] = original
+        if samples.dtype.kind in "iu" and samples.dtype.itemsize < 8:
+            continue
+        for value, promoted in zip(original, result[batch], strict=True):
+            if isinstance(value, (int, np.integer)) and int(value) != int(promoted.real):
+                raise ValueError("A recorded integer cannot be represented exactly in this complex volume.")
+    return result
