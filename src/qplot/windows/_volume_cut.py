@@ -377,9 +377,10 @@ class VolumeCut(plot1d):
                 and np.array_equal(capture.columns[0], self.__dict__.get("_coverage_depths", []))):
             capture = replace(capture, headers=(*capture.headers, "finite_cells"),
                               columns=(*capture.columns, self._coverage_counts.copy()))
+        parameter = self._trace_axis_parameter if transformed else self._trace_input_axis_parameter
         return replace(capture, constants=(*self._displayed_cut_metadata,
-                                          ("x_unit", self.axis_param["x"].unit),
-                                          ("value_unit", self.display_param.unit)))
+                                          ("x_unit", parameter(self.line, "x").unit),
+                                          ("value_unit", parameter(self.line, "y").unit)))
 
     def show_coverage(self):
         if "_coverage_counts" not in self.__dict__:
