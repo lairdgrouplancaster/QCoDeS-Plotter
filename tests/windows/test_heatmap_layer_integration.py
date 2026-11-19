@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pyqtgraph as pg
 import pytest
 import qcodes
 from PyQt6 import QtWidgets as qtw
@@ -40,6 +41,9 @@ from tests.support.windows.plot3d import main as main
 @pytest.mark.parametrize("changed_plot", ["host", "source"])
 def test_dropped_heatmap_tracks_processed_colour_units(main, tmp_path, monkeypatch, changed_plot):
     window, errors = main
+    # The first heatmap builds Matplotlib's font cache on the GUI thread while
+    # constructing its colour menu. Prepare it before timing plot publication.
+    pg.colormap.listMaps(source="matplotlib")
     monkeypatch.setitem(qcodes.config.core, "db_location", qcodes.config.core.db_location)
     path = tmp_path / "processed-layers.db"
     run_id, guid, primary, secondary = _build_two_heatmap_database(path)
