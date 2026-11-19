@@ -51,19 +51,30 @@ def csv_dataframe(
     return pd.concat(frames, axis=1) if frames else pd.DataFrame()
 
 
+def dependent_measurement_params(dataset):
+    """Number plottable outputs in the run description's dependency order."""
+    specs = dataset.paramspecs
+    return [specs[output.name] for output in dataset.description.interdeps.dependencies]
+
+
 def exportable_measurement_params(dataset):
     """Return dependent values, then standalone values, in run order."""
-    parameters = dataset.get_parameters()
+    dependent = dependent_measurement_params(dataset)
     setpoint_names = {
         name
-        for param in parameters
+        for param in dependent
         for name in param.depends_on_
     }
-    dependent = [param for param in parameters if param.depends_on_]
     standalone = [
-        param for param in parameters
+        param for param in dataset.get_parameters()
         if not param.depends_on_ and param.name not in setpoint_names
     ]
+    if len(standalone) > 1:
+        # QCoDeS reconstructs independent channels from a set. The run table
+        # numbers them in the order recorded in runs.parameters.
+        recorded = (dataset.parameters or "").split(",")
+        order = {name: index for index, name in enumerate(recorded)}
+        standalone.sort(key=lambda param: order.get(param.name, len(order)))
     return dependent + standalone
 
 

@@ -11,6 +11,7 @@ from qplot.datahandling.dimensions import (
 from qplot.datahandling.export_data import (
     csv_dataframe,
     csv_scalar_columns,
+    dependent_measurement_params,
     exportable_measurement_params,
 )
 from qplot.datahandling.file_identity import (
@@ -1521,11 +1522,7 @@ class PlotActionsMixin:
             )
         action_dataset = self.ds
         try:
-            params = [
-                param
-                for param in action_dataset.get_parameters()
-                if param.depends_on != ""
-            ]
+            params = dependent_measurement_params(action_dataset)
             if index >= len(params):
                 self.show_status(f"Run has no parameter {index + 1}.", 5000)
                 return
@@ -2108,7 +2105,7 @@ class PlotActionsMixin:
         Returns the measurement parameters requested by the Measurement field.
 
         """
-        params = [param for param in dataset.get_parameters() if param.depends_on != ""]
+        params = dependent_measurement_params(dataset)
         names = self._selected_measurement_names(
             tuple(param.name for param in params),
             dataset.run_id,

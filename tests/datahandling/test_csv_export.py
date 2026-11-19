@@ -49,6 +49,37 @@ def contents(path):
         return list(csv.DictReader(stream))
 
 
+@pytest.mark.parametrize("trusted", [False, True], ids=["snapshot", "trusted"])
+def test_numbered_exports_follow_recorded_measurement_order(tmp_path, trusted):
+    names = ("shield", "mixing", "plate", "helium", "absorber", "cooling")
+    values = {name: 100 + index for index, name in enumerate(names)}
+    parameters = [
+        ("gate", "numeric", (), ()), ("signal", "numeric", ("gate",), ()),
+        ("basis", "numeric", ("gate",), ()), ("converted", "numeric", ("gate",), ("basis",)),
+    ]
+    parameters.extend((name, "numeric", (), ()) for name in names)
+    records = [{"gate": 3, "signal": 9}, {"gate": 7, "basis": 11, "converted": 42},
+               *({name: value} for name, value in values.items())]
+    with source(tmp_path, parameters, records, trusted=trusted) as (path, saver, service, before):
+        # The chooser lists dependent measurements in declaration order,
+        # even when one is an inference basis for another measurement.
+        recorded = saver.dataset.parameters.split(",")
+        expected = ["signal", "basis", "converted", *(name for name in recorded if name in values)]
+        expected_rows = {
+            "signal": {"signal": "9.0", "gate": "3.0"},
+            "basis": {"basis": "11.0", "gate": "7.0", "converted": "42.0"},
+            "converted": {"converted": "42.0", "gate": "7.0", "basis": "11.0"},
+            **{name: {name: str(float(value))} for name, value in values.items()},
+        }
+        for index, name in enumerate(expected, start=1):
+            target = tmp_path / f"run_{saver.dataset.run_id}_{name}.csv"
+            receipt = export_raw_csv(target, database_path=path, guid=saver.dataset.guid,
+                                     measurement_index=index, service=service)
+            assert receipt.parameter_names == (name,)
+            assert contents(target) == [expected_rows[name]]
+        assert protected_state(path) == before
+
+
 def forbid_snapshot(monkeypatch):
     def forbidden(*args, **kwargs):
         pytest.fail("Trusted CSV export attempted a whole-database snapshot")

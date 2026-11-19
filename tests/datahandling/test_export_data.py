@@ -15,7 +15,12 @@ def test_export_parameters_keep_dependents_then_standalone_measurements():
     current = SimpleNamespace(name="current", depends_on_=("gate",))
     temperature = SimpleNamespace(name="temperature", depends_on_=())
     voltage = SimpleNamespace(name="voltage", depends_on_=("gate",))
-    dataset = SimpleNamespace(get_parameters=lambda: [temperature, axis, current, voltage])
+    parameters = [temperature, axis, current, voltage]
+    dataset = SimpleNamespace(
+        get_parameters=lambda: parameters,
+        paramspecs={param.name: param for param in parameters},
+        description=SimpleNamespace(interdeps=SimpleNamespace(dependencies=(current, voltage))),
+    )
 
     assert exportable_measurement_params(dataset) == [current, voltage, temperature]
 

@@ -6,6 +6,7 @@ import pytest
 from qplot.windows._csv_filenames import CSV_FILENAME_FORMAT_KEY, csv_filename
 from qplot.windows._dataset_handle import DatasetKey
 from qplot.windows._plot_actions import PlotActionsMixin
+from qplot.windows._run_csv_export import _filename_names
 from tests.support.windows.preferences import FakeConfig
 
 
@@ -40,3 +41,12 @@ def test_missing_metadata_preserves_current_suggestion():
     cfg = FakeConfig()
     cfg.values[CSV_FILENAME_FORMAT_KEY] = "qcodes"
     assert csv_filename(cfg, "run_7_signal.csv", guid="guid", captured_run_id=None) == "run_7_signal.csv"
+
+
+@pytest.mark.parametrize("metadata", [
+    {},
+    {"measure_parameters": ["sensor"], "parameters_truncated": True},
+])
+def test_unavailable_numbered_channel_uses_ordinal_filename(metadata):
+    window = SimpleNamespace(_run_metadata_for_id=lambda _run_id: metadata)
+    assert _filename_names(window, None, 1, 7) == ("measurement_1",)
