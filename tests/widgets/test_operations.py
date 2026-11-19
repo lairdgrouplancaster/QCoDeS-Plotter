@@ -1,5 +1,6 @@
 import unittest
 from decimal import Decimal
+from unittest.mock import patch
 
 import numpy as np
 from PyQt6 import QtCore, QtGui
@@ -7,6 +8,7 @@ from PyQt6 import QtWidgets as qtw
 
 from qplot.tools.operation_registry import OperationValidationError, operation_specs_for
 from qplot.windows._widgets.operations import (
+    draggableListWidget,
     operations_options_1d,
     operations_options_2d,
     operations_widget,
@@ -27,6 +29,34 @@ class OperationsPanelTestCase(unittest.TestCase):
             if item.label == label:
                 return item
         raise self.failureException(f"Operation option not found: {label}")
+
+    def test_internal_drag_uses_viewport_coordinates_and_preserves_the_last_row(self):
+        operations = draggableListWidget()
+        self.addCleanup(operations.deleteLater)
+        operations.addItems(["Limit Maximum", "Differentiate"])
+        operations.setCurrentRow(1)
+        operations.show()
+        first = operations.visualItemRect(operations.item(0)).center()
+        below = operations.viewport().rect().bottomLeft()
+        self.assertIs(operations.itemAt(first), operations.item(0))
+        self.assertIsNone(operations.itemAt(below))
+        mime = QtCore.QMimeData()
+
+        def drag_at(point):
+            event = QtGui.QDragMoveEvent(
+                point, QtCore.Qt.DropAction.MoveAction, mime,
+                QtCore.Qt.MouseButton.LeftButton, QtCore.Qt.KeyboardModifier.NoModifier,
+            )
+            event.accept()
+            operations.dragMoveEvent(event)
+            return event
+
+        with patch.object(qtw.QListWidget, "dragMoveEvent") as forward:
+            allowed_move = drag_at(first)
+            forward.assert_called_once_with(allowed_move)
+            forward.reset_mock()
+            self.assertFalse(drag_at(below).isAccepted())
+            forward.assert_not_called()
 
     def test_operations_panel_layout_is_installed_once(self):
         messages = []

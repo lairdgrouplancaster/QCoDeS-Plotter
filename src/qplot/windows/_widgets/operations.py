@@ -300,7 +300,7 @@ class draggableListWidget(qtw.QListWidget):
         if event is None:
             return
 
-        target = self.row(self.itemAt(cast(Any, event).pos()))
+        target = self.row(self.itemAt(event.position().toPoint()))
         current = self.currentRow()
         # Block drop below itself when it's the last item
         if target == current + 1 or (current == self.count() - 1 and target == -1):
