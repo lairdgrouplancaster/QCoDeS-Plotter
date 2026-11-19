@@ -21,6 +21,38 @@ def displayed_axis_parameter(window: Any, axis: str) -> Any:
     return getattr(window, "param_dict", {}).get(name)
 
 
+def window_display_unit(window: Any) -> str | None:
+    """Return the displayed dependent-value unit without reopening the source."""
+    try:
+        state = window.__dict__
+    except (AttributeError, RuntimeError):
+        state = {}
+    parameter = state.get("display_param") or state.get("param")
+    if parameter is None:
+        try:
+            parameter = getattr(window, "display_param", None) or getattr(window, "param", None)
+        except RuntimeError:
+            parameter = None
+    unit = getattr(parameter, "unit", None)
+    return None if unit is None else str(unit).strip()
+
+
+def heatmap_colour_units(target: Any, source: Any) -> tuple[str | None, str | None]:
+    """The first heatmap owns the colour scale on a line-primary plot."""
+    if getattr(target, "operation_kind", None) == "plot1d":
+        first = next(iter(target.__dict__.get("heatmaps", {}).values()), None)
+        target = source if first is None else first.from_win
+    return window_display_unit(target), window_display_unit(source)
+
+
+def heatmap_colour_unit_error(target_unit: str | None, source_unit: str | None) -> str | None:
+    if target_unit is None or source_unit is None:
+        return "the displayed value units are unavailable"
+    if target_unit != source_unit:
+        return "the displayed value units do not match"
+    return None
+
+
 @dataclass(frozen=True)
 class _AxisIdentity:
     name: Any
@@ -147,6 +179,7 @@ class DropAxisPlan:
     x_side: str
     y_side: str
     incompatible: tuple[str, ...]
+    colour_unit_override: tuple[str | None, str | None] | None = None
 
     def approve(self, target: Any, source: Any) -> bool:
         if not self.incompatible or not target.config.get(CONFIRM_INCOMPATIBLE_AXES_KEY):
@@ -228,17 +261,13 @@ def plan_drop_axes(target: Any, source: Any) -> DropAxisPlan:
     plan = max(candidates, key=lambda candidate: candidate.priority).plan
     heatmaps = target.__dict__.get("heatmaps", {})
     if getattr(source, "operation_kind", None) == "plot2d" and heatmaps:
-        first = next(iter(heatmaps.values()))
-        color_source = target if first is target else first.from_win
-        target_parameter = getattr(color_source, "display_param", None) or color_source.param
-        source_parameter = getattr(source, "display_param", None) or source.param
-        target_unit = getattr(target_parameter, "unit", None)
-        source_unit = getattr(source_parameter, "unit", None)
-        if target_unit is None or source_unit is None or str(target_unit).strip() != str(source_unit).strip():
+        units = heatmap_colour_units(target, source)
+        if heatmap_colour_unit_error(*units):
+            target_unit, source_unit = units
             plan = DropAxisPlan(plan.axis_order, plan.x_side, plan.y_side, plan.incompatible + (
                 f"The colour scale units do not match (source: {source_unit or 'unitless'}; "
                 f"plot: {target_unit or 'unitless'}).",
-            ))
+            ), units)
     return plan
 
 

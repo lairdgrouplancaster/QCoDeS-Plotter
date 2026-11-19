@@ -37,7 +37,12 @@ from ._plot_appearance import (
     reordered_rows,
     visibility_opacity_row,
 )
-from ._plot_drop_axes import DroppedAxisMapping, displayed_axis_parameter
+from ._plot_drop_axes import (
+    DroppedAxisMapping,
+    displayed_axis_parameter,
+    heatmap_colour_unit_error,
+    heatmap_colour_units,
+)
 from ._plot_host import PlotHost
 from ._plot_refresh import plot_refresh_required
 from ._refresh_interval import refresh_interval_value
@@ -82,29 +87,6 @@ def _heatmap_axis_order(
     return None
 
 
-def _window_display_unit(window: Any) -> str | None:
-    """Return a plot's currently rendered dependent-value unit, when known."""
-
-    try:
-        state = window.__dict__
-    except (AttributeError, RuntimeError):
-        state = {}
-    parameter = state.get("display_param") or state.get("param")
-    if parameter is None:
-        try:
-            parameter = getattr(window, "display_param", None) or getattr(
-                window,
-                "param",
-                None,
-            )
-        except RuntimeError:
-            parameter = None
-    if parameter is None:
-        return None
-    unit = getattr(parameter, "unit", None)
-    return None if unit is None else str(unit or "").strip()
-
-
 def _window_axis_unit(window: Any, parameter_name: str) -> str | None:
     """Return one independent parameter's unit without opening its dataset."""
 
@@ -142,12 +124,9 @@ def _heatmap_layer_compatibility(
     if axis_order is None:
         return None, "the heatmap axes do not match"
 
-    parent_value_unit = _window_display_unit(parent)
-    source_value_unit = _window_display_unit(source)
-    if parent_value_unit is None or source_value_unit is None:
-        return None, "the displayed value units are unavailable"
-    if parent_value_unit != source_value_unit:
-        return None, "the displayed value units do not match"
+    unit_error = heatmap_colour_unit_error(*heatmap_colour_units(parent, source))
+    if unit_error is not None:
+        return None, unit_error
 
     for parent_axis, source_axis in zip(("x", "y"), axis_order, strict=True):
         parameter_name = str(parent_options[parent_axis])
@@ -173,9 +152,11 @@ class HeatmapLayer:
         opacity: float = DEFAULT_OVERLAY_OPACITY,
         z_value: float = _FIRST_OVERLAY_Z_VALUE,
         axis_order: tuple[str, str] | None = None,
+        colour_unit_override: tuple[str | None, str | None] | None = None,
     ) -> None:
         self.parent = parent
         self.from_win = from_win
+        self.colour_unit_override = colour_unit_override
         self._dropped_axis_mapping = (
             DroppedAxisMapping(parent, from_win, axis_order)
             if axis_order is not None else None
@@ -275,9 +256,15 @@ class HeatmapLayer:
         self._disconnect_pending_end_wait()
         self.running = plot_refresh_required(self.from_win)
 
-        axis_order = self.source_axis_order()
-        if axis_order is None:
-            _order, compatibility_error = _heatmap_layer_compatibility(self.parent, self.from_win)
+        if self._dropped_axis_mapping is None:
+            axis_order, compatibility_error = _heatmap_layer_compatibility(self.parent, self.from_win)
+        else:
+            axis_order = self._dropped_axis_mapping.axis_order()
+            units = heatmap_colour_units(self.parent, self.from_win)
+            compatibility_error = None if units == self.colour_unit_override else heatmap_colour_unit_error(*units)
+            if axis_order is None:
+                compatibility_error = "the heatmap axes do not match"
+        if compatibility_error is not None or axis_order is None:
             self._report_compatibility_error(compatibility_error)
             self._clear_data()
             if sync_colorbar:
@@ -933,6 +920,7 @@ class Plot2DLayerMixin(PlotHost):
                 opacity=DEFAULT_OVERLAY_OPACITY,
                 z_value=z_value,
                 axis_order=None if axis_plan is None else axis_plan.axis_order,
+                colour_unit_override=None if axis_plan is None else axis_plan.colour_unit_override,
             )
             self.heatmaps[trace_key] = layer
             self._heatmap_axis_assignments[trace_key] = {

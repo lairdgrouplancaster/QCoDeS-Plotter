@@ -43,8 +43,8 @@ from ._dataset_handle import (
 from ._dataset_registry import dataset_registry
 from ._export_names import suggested_export_filename
 from ._export_paths import choose_export_path
-from ._plot2d_layers import _heatmap_layer_compatibility, _window_display_unit
-from ._plot_drop_axes import plan_drop_axes
+from ._plot2d_layers import _heatmap_layer_compatibility
+from ._plot_drop_axes import plan_drop_axes, window_display_unit
 from ._plot_source_promotion import promote_plot_source
 from ._plot_tiling import place_plot_window
 from ._plotWin import plotWidget
@@ -1978,8 +1978,8 @@ class PlotActionsMixin:
         if not axes_from_drop and compatibility_error is not None:
             if compatibility_error == "the displayed value units do not match":
                 compatibility_error += (
-                    f" (source: {_window_display_unit(from_win) or 'unitless'};"
-                    f" target: {_window_display_unit(target_win) or 'unitless'})"
+                    f" (source: {window_display_unit(from_win) or 'unitless'};"
+                    f" target: {window_display_unit(target_win) or 'unitless'})"
                 )
             self.show_status(
                 f"Cannot add {parameter_name}; {compatibility_error}.",

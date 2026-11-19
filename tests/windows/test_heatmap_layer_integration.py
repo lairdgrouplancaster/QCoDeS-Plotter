@@ -9,6 +9,10 @@ from qplot.windows import main as main_window
 from qplot.windows._database_detail_state import detail_channel
 from qplot.windows._dataset_handle import TraceKey
 from tests._window_lifecycle import close_main_window
+from tests.support.windows.differentiation_integration import (
+    apply_operations,
+    operation_option,
+)
 from tests.support.windows.heatmap_layer_integration import (
     _assert_reader_artifact_invariant as _assert_reader_artifact_invariant,
 )
@@ -30,6 +34,61 @@ from tests.support.windows.heatmap_layer_integration import (
 from tests.support.windows.heatmap_layer_integration import (
     _wait_for as _wait_for,
 )
+from tests.support.windows.plot3d import main as main
+
+
+@pytest.mark.parametrize("changed_plot", ["host", "source"])
+def test_dropped_heatmap_tracks_processed_colour_units(main, tmp_path, monkeypatch, changed_plot):
+    window, errors = main
+    monkeypatch.setitem(qcodes.config.core, "db_location", qcodes.config.core.db_location)
+    path = tmp_path / "processed-layers.db"
+    _, guid, primary, secondary = _build_two_heatmap_database(path)
+    assert window.load_file(str(path))
+    _wait_for(lambda: window._selected_run_guid == guid and not window._database_load_active)
+    plots = {}
+    for role, parameter in (("host", "signal_a"), ("source", "signal_b")):
+        window.open_preview_plot(parameter)
+        _wait_for(lambda: len(window.windows) > len(plots) and window.windows[-1]._qplot_display_synchronized)
+        plots[role] = window.windows[-1]
+    host, source = plots.values()
+    _drop_heatmap(host, guid, source.param)
+    _wait_for(lambda: source._trace_key in host.heatmaps)
+    layer = host.heatmaps[source._trace_key]
+    np.testing.assert_array_equal(layer.image.image, secondary)
+    assert layer.from_win is source and source._merged_trace_users == 1
+    opacity = layer.opacity
+
+    changed = plots[changed_plot]
+    differentiate = operation_option(changed, "dz/dx").input
+    differentiate.click()
+    assert apply_operations(changed)[1:] == ([True], [])
+    assert changed.display_param.unit == "nA/mV"
+    assert host.image.isVisible()
+    np.testing.assert_allclose(host.image.image, 1 if changed is host else primary)
+    assert not layer.image.isVisible() and not layer.heatmap_mesh.isVisible()
+    assert len(host._heatmap_colorbar_data_arrays()) == 1
+    assert "Signal A" in host.source_annotation.text and "Signal B" not in host.source_annotation.text
+    host.open_colorbar_scale_dialog()
+    host.colorbar_auto_radio.click()
+    expected_limits = (0.999999, 1.000001) if changed is host else (primary.min(), primary.max())
+    np.testing.assert_allclose(host.bar.levels(), expected_limits)
+    host.colorbar_scale_dialog.close()
+    assert layer.visible and layer.opacity == opacity and source._merged_trace_users == 1
+
+    differentiate.click()
+    assert apply_operations(changed)[1:] == ([True], [])
+    assert changed.display_param.unit == "nA"
+    assert layer.image.isVisible() and not layer.heatmap_mesh.isVisible()
+    np.testing.assert_array_equal(layer.image.image, secondary)
+    np.testing.assert_array_equal(host.image.image, primary)
+    host.open_colorbar_scale_dialog()
+    host.colorbar_auto_radio.click()
+    np.testing.assert_allclose(host.bar.levels(), (primary.min(), secondary.max()))
+    host.colorbar_scale_dialog.close()
+    assert "Signal A" in host.source_annotation.text and "Signal B" in host.source_annotation.text
+    assert host.heatmaps[source._trace_key] is layer and layer.opacity == opacity
+    assert host.remove_heatmap(trace_key=source._trace_key)
+    assert source._merged_trace_users == 0 and not errors
 
 
 @pytest.mark.parametrize("sql_source", [False, True], ids=["array", "sql"])
