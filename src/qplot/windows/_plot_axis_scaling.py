@@ -878,6 +878,7 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
                     or not isinstance(window, PlotAxisScalingMixin)
                     or "vb" not in window.__dict__
                     or "plot" not in window.__dict__
+                    or window.__dict__.get("_closed", False)
                     or not window.isVisible()
                 ):
                     continue
@@ -904,6 +905,28 @@ class PlotAxisScalingMixin(_PlotAxisScalingBase):
         if index < 0:
             index = ui.linkCombo.findData(linked_target)
         ui.linkCombo.setCurrentIndex(max(index, 0))
+
+    def _release_axis_scale_links(self) -> None:
+        """Detach other plots from this window before its axes are hidden or deleted."""
+        targets = {self._axis_scale_viewbox(spec.name) for spec in _AXIS_SPECS}
+        target_choices = tuple(view.name or ref(view) for view in targets)
+        for window in qtw.QApplication.topLevelWidgets():
+            if window is self or not isinstance(window, PlotAxisScalingMixin):
+                continue
+            for axis, controls in window.__dict__.get("_axis_scale_controls", {}).items():
+                view = window._axis_scale_viewbox(axis)
+                dimension = window._axis_scale_axis_number(axis)
+                if view.linkedView(dimension) in targets:
+                    view.linkView(dimension, None)
+                # Touch only the chooser. A full range sync discards pending
+                # edits, and removing the selected row could link its neighbour.
+                combo = controls.linkCombo
+                with QtCore.QSignalBlocker(combo):
+                    if combo.currentData() in target_choices:
+                        combo.setCurrentIndex(0)
+                    for row in range(combo.count() - 1, 0, -1):
+                        if combo.itemData(row) in target_choices:
+                            combo.removeItem(row)
 
     def _axis_scale_bound_item_groups(
         self,
