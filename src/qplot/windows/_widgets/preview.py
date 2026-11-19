@@ -1976,7 +1976,7 @@ def _preview_2d(
 
 
 def render_displayed_plot_preview(worker, parameter, size):
-    """Render one unmodified plot from its already loaded arrays."""
+    """Render loaded plot data in the acquisition's preview orientation."""
 
     axes = list(getattr(parameter, "depends_on_", ()) or ())
     if len(axes) not in (1, 2):
@@ -1984,10 +1984,16 @@ def render_displayed_plot_preview(worker, parameter, size):
     axis_data = getattr(worker, "axis_data", None)
     if not isinstance(axis_data, dict):
         return None
+    # The last setpoint is horizontal in a run preview, even if the plot
+    # places it on Y. An Im vs Re plot has the measured parameter on both axes.
+    vertical_param = getattr(worker, "axis_param", {}).get("y")
+    swapped = getattr(vertical_param, "name", None) == axes[-1]
     size = int(size)
     if len(axes) == 1:
         x = np.asarray(axis_data.get("x", []), dtype=float).ravel()
         y = np.asarray(axis_data.get("y", []), dtype=float).ravel()
+        if swapped:
+            x, y = y, x
         count = min(x.size, y.size)
         if count == 0:
             return None
@@ -2006,6 +2012,8 @@ def render_displayed_plot_preview(worker, parameter, size):
         grid = np.asarray(getattr(worker, "dataGrid", []), dtype=float)
         if grid.ndim != 2 or not grid.size or not np.isfinite(grid).any():
             return None
+        if swapped:
+            grid = grid.T
         # The plot worker may have a high resolution grid; bound the reuse
         # work before the preview's spatial reduction runs on the GUI thread.
         max_axis = max(1, 4 * size)
