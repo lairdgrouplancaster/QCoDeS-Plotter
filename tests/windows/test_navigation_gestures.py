@@ -9,8 +9,9 @@ from PyQt6 import QtCore, QtGui, QtTest, QtWidgets
 from qplot.windows._commands import _PlotKeyFocusFilter, create_action
 from qplot.windows._plot2d_layers import Plot2DLayerMixin
 from qplot.windows._plot2d_sweeps import Plot2DSweepMixin
-from qplot.windows._plot_marquee import PlotMarqueeMixin
+from qplot.windows._plot_marquee import PlotMarqueeMixin, _moved_interval
 from qplot.windows._subplots.subplot1d import custom_viewbox
+from tests.support.windows.mixed_plot_drops import mixed_plot as mixed_plot
 
 
 class Drag:
@@ -242,15 +243,74 @@ def test_shift_marquee_move_locks_initial_axis_and_releases(first, second, expec
     owner = SimpleNamespace(
         marquee=original,
         _marquee_viewbox=lambda: SimpleNamespace(mapViewToScene=lambda p: p),
-        set_marquee_rect=Mock(),
+        _marquee_move_edges=lambda: (None, None),
+        _draw_marquee_rect=Mock(),
     )
     PlotMarqueeMixin.begin_marquee_drag(owner, QtCore.QPointF(0, 0), "move")
     shift = QtCore.Qt.KeyboardModifier.ShiftModifier
     PlotMarqueeMixin.drag_marquee_to(owner, QtCore.QPointF(*first), shift)
     PlotMarqueeMixin.drag_marquee_to(owner, QtCore.QPointF(*second), shift)
-    owner.set_marquee_rect.assert_called_with(original.translated(*expected))
+    owner._draw_marquee_rect.assert_called_with(original.translated(*expected))
     PlotMarqueeMixin.drag_marquee_to(owner, QtCore.QPointF(*second))
-    owner.set_marquee_rect.assert_called_with(original.translated(*second))
+    owner._draw_marquee_rect.assert_called_with(original.translated(*second))
+
+
+def test_dragging_inside_marquee_preserves_snapped_sample_count(mixed_plot, qapplication):
+    _main, plot, _runs = mixed_plot
+    heatmap = hasattr(plot, "dataGrid")
+    plot.resize(850, 600)
+    plot.show()
+    plot.activateWindow()
+    viewbox = plot._marquee_viewbox()
+    viewbox.setRange(xRange=(-1, 3), yRange=(0, 30) if heatmap else (-1, 3), padding=0)
+    qapplication.processEvents()
+    viewport = plot.widget.viewport()
+    start = QtCore.QPointF(0, 10 if heatmap else 1)
+    modifier = QtCore.Qt.KeyboardModifier
+    button = QtCore.Qt.MouseButton
+
+    def drag(dx, dy, keys):
+        # Select one X sample and, for the heatmap, one Y sample.
+        plot.set_marquee_rect(QtCore.QRectF(-0.2, start.y() - 1, 0.4, 2))
+        original = QtCore.QRectF(plot.marquee)
+        anchor = start + QtCore.QPointF(-0.15 if keys == modifier.NoModifier else 0.15, 0)
+        first, last = [plot.widget.mapFromScene(viewbox.mapViewToScene(point))
+                       for point in (anchor, anchor + QtCore.QPointF(dx, dy))]
+        QtTest.QTest.mouseMove(viewport, first)
+        QtTest.QTest.mousePress(viewport, button.LeftButton, keys, pos=first)
+        QtTest.QTest.qWait(30)  # Allow a new drag through the scene's mouse-move rate limit.
+        move = QtGui.QMouseEvent(
+            QtCore.QEvent.Type.MouseMove, QtCore.QPointF(last),
+            QtCore.QPointF(viewport.mapToGlobal(last)), button.NoButton, button.LeftButton, keys,
+        )
+        qapplication.sendEvent(viewport, move)
+        assert plot.current_marquee_drag_mode() == "move"
+        QtTest.QTest.mouseRelease(viewport, button.LeftButton, keys, pos=last)
+        return original
+
+    original = drag(0.2, 1 if heatmap else 0.2, modifier.NoModifier)
+    assert (plot.marquee.left(), plot.marquee.right()) == (-0.5, 0.5)
+    if heatmap:
+        assert plot.marquee == original
+        np.testing.assert_array_equal(plot._marquee_selected_data(), [[10]])
+    else:
+        assert plot.marquee.height() == pytest.approx(original.height())
+        assert plot.marquee.top() == pytest.approx(original.top() + 0.2, abs=0.03)
+    original = drag(0.9, 1 if heatmap else 0.1, modifier.ShiftModifier)
+    assert plot.marquee == original.translated(1, 0)
+    if heatmap:
+        np.testing.assert_array_equal(plot._marquee_selected_data(), [[11]])
+
+
+def test_marquee_move_uses_nearest_whole_block_on_irregular_axis():
+    edges = (-1000., -1., 0.1, 4., 10., 19.)
+    # The same two cells can occupy different physical widths after translation.
+    assert _moved_interval(edges, -1., 5., 4.) == (0.1, 9.9)
+    assert _moved_interval(edges, -1., 5., 200.) == (4., 15.)
+    left, width = _moved_interval(edges, -1., 5., -1000.)
+    assert left == -1000.
+    assert left + width == pytest.approx(0.1)
+    assert left + width <= edges[2]
 
 
 def test_default_drag_selects_and_inside_drag_moves(qapplication):

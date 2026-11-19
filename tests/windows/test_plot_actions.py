@@ -2,6 +2,7 @@
 
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import qcodes
@@ -175,6 +176,8 @@ def test_dataset_presence_guards_do_not_evaluate_dataset_truthiness(tmp_path):
 
     class RaisingDataset:
         guid = "raising-dataset"
+        paramspecs = {"y": Parameter()}
+        description = SimpleNamespace(interdeps=SimpleNamespace(dependencies=(paramspecs["y"],)))
 
         def __bool__(self):
             raise AssertionError("Dataset presence must not evaluate __bool__")
@@ -183,7 +186,7 @@ def test_dataset_presence_guards_do_not_evaluate_dataset_truthiness(tmp_path):
             raise AssertionError("Dataset presence must not evaluate __len__")
 
         def get_parameters(self):
-            return [Parameter()]
+            return list(self.paramspecs.values())
 
     harness = _ActionHarness(tmp_path / "presence.db", RaisingDataset())
 
@@ -195,6 +198,28 @@ def test_dataset_presence_guards_do_not_evaluate_dataset_truthiness(tmp_path):
     assert len(harness.plot_calls) == 3
     assert harness.load_calls == []
     assert harness.export_calls == [(harness._selected_dataset_key, "y")]
+
+
+def test_measurement_field_and_shortcut_follow_declared_output_order(tmp_path):
+    path = tmp_path / "inference.db"
+    initialise_or_create_database_at(str(path), journal_mode="DELETE")
+    experiment = load_or_create_experiment("Numbered outputs", sample_name="sample")
+    try:
+        measurement = Measurement(exp=experiment)
+        measurement.register_custom_parameter("gate")
+        measurement.register_custom_parameter("reference", setpoints=("gate",))
+        measurement.register_custom_parameter("sensor", setpoints=("gate",))
+        measurement.register_custom_parameter("corrected", setpoints=("gate",), basis=("sensor",))
+        with measurement.run(write_in_background=False) as saver:
+            saver.add_result(("gate", 1), ("reference", 9), ("sensor", 7), ("corrected", 11))
+        dataset = saver.dataset
+        harness = _ActionHarness(path, dataset)
+        harness.measurementBox = _Field("1")
+        assert [p.name for p in harness._selected_measurement_params(dataset)] == ["reference"]
+        harness.open_param_by_index(0)
+        assert [p.name for p in harness.plot_calls[-1][1]["params"]] == ["reference"]
+    finally:
+        experiment.conn.close()
 
 
 def test_selected_action_guards_keep_none_behavior(tmp_path):

@@ -83,6 +83,9 @@ class ShutdownCoordinator:
         """Start only after the main window has confirmed the user's request."""
         window = self.window
         self._arm_deadline()
+        run_table = getattr(window, "RunList", None)
+        if run_table is not None:
+            run_table.finish_pending_column_width_save()
         self._cancel_background_work()
         self._invalidate_database_publications()
         stop_refresh_timer = getattr(window, "_stop_automatic_refresh_timer", None)

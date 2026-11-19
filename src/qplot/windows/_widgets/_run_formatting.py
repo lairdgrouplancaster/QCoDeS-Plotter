@@ -2,6 +2,10 @@ import html
 from datetime import datetime
 
 from qplot.datahandling.dimensions import MAX_SUPPORTED_PLOT_DIMENSIONS
+from qplot.datahandling.measurement_exception import (
+    final_diagnostic_line,
+    is_keyboard_interrupt,
+)
 
 
 def preview_title(parameter, axes, *, rich_text=False):
@@ -106,8 +110,7 @@ def run_is_complete(metadata):
 
 
 def run_was_interrupted(metadata):
-    exception = metadata.get("measurement_exception")
-    return exception is not None and "KeyboardInterrupt" in str(exception).strip()
+    return is_keyboard_interrupt(metadata.get("measurement_exception"))
 
 
 def run_failed(metadata):
@@ -121,10 +124,7 @@ def run_failed(metadata):
 
 def measurement_exception_summary(metadata, maximum_length=200):
     exception = str(metadata.get("measurement_exception") or "")
-    summary = next(
-        (line.strip() for line in reversed(exception.splitlines()) if line.strip()),
-        "",
-    )
+    summary = final_diagnostic_line(exception, maximum_length + 1)
     if len(summary) > maximum_length:
         return f"{summary[: maximum_length - 1]}…"
     return summary
@@ -193,9 +193,14 @@ def setpoint_progress_percent_value(metadata):
     if percent is not None:
         return percent
 
-    # The cheap detail pass exposes result-row progress before the distinct
-    # setpoint query completes. Both counts include the same measurement
-    # multiplicity, so their ratio is a valid early setpoint-progress value.
+    return _planned_result_progress_percent(metadata)
+
+
+def _planned_result_progress_percent(metadata):
+    # Scalar acquisitions can report row progress before setpoints have been
+    # verified. The actual final row count does not establish a planned total.
+    if metadata.get("expected_results_source") == "observed":
+        return None
     return _progress_percent_value(
         metadata,
         metadata.get("result_count"),
@@ -212,15 +217,9 @@ def format_setpoint_progress_percent(metadata):
 
 
 def interrupted_progress_percent_value(metadata):
-    expected = None
     if metadata.get("setpoint_count_source") != "observed":
-        expected = metadata.get("setpoint_count")
-    if not expected and metadata.get("expected_results_source") != "observed":
-        expected = metadata.get("expected_results")
-    count = metadata.get("read_setpoint_count")
-    if count is None:
-        count = metadata.get("result_count")
-    return _progress_percent_value(metadata, count, expected, maximum=100)
+        return setpoint_progress_percent_value(metadata)
+    return _planned_result_progress_percent(metadata)
 
 
 def _progress_percent_value(metadata, count, expected, maximum=None):

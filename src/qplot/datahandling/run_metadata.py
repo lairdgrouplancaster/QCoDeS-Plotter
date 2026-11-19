@@ -376,10 +376,28 @@ def _expected_results_from_shapes(run_description, measure_parameters):
     return expected
 
 
+def is_array_parameter(specification: object) -> bool:
+    return isinstance(specification, dict) and (
+        specification.get("paramtype", specification.get("type")) == "array"
+    )
+
+
 def _bounded_expected_results_from_shapes(run_description, measure_parameters):
     shapes = run_description.get("shapes")
     if not isinstance(shapes, dict) or not measure_parameters:
         return None, False
+
+    interdependencies = run_description.get("interdependencies_")
+    if isinstance(interdependencies, dict):
+        declarations = interdependencies.get("parameters", {})
+        if not isinstance(declarations, dict):
+            return None, False
+        if len(declarations) > TRUSTED_PRESENTATION_MAX_PARAMETERS:
+            return None, True
+        # A shape describes samples; an array record can hold any number of
+        # them. This also prevents inferring a row total for mixed runs.
+        if any(is_array_parameter(spec) for spec in declarations.values()):
+            return None, False
 
     sizes = {}
     truncated = False
@@ -402,7 +420,6 @@ def _bounded_expected_results_from_shapes(run_description, measure_parameters):
             return None, truncated
         sizes[parameter] = size
 
-    interdependencies = run_description.get("interdependencies_")
     inferences = (
         interdependencies.get("inferences", {})
         if isinstance(interdependencies, dict) else {}
@@ -470,10 +487,6 @@ def _shape_size(shape):
         return math.prod(int(size) for size in dimensions)
     except (TypeError, ValueError):
         return None
-
-
-def _is_keyboard_interrupt(value):
-    return bool(value and "KeyboardInterrupt" in str(value))
 
 
 def _run_is_complete(metadata):

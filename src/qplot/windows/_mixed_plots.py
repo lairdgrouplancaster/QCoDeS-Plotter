@@ -9,7 +9,7 @@ from ._plot1d_traces import Plot1DTraceMixin
 from ._plot2d_colorbar import Plot2DColorbarMixin
 from ._plot2d_layers import Plot2DLayerMixin
 from ._plot_data_viewbox import PlotDataViewBox, coordinate_viewbox
-from ._plot_drop_axes import plot_axis_entries
+from ._plot_drop_axes import plot_axis_entries, window_display_unit
 from ._plot_host import PlotHost
 from ._plot_source_promotion import source_promotion_operation_error
 
@@ -407,15 +407,23 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
         return getattr(source, "display_param", None) or source.param
 
     def _sync_heatmap_colorbar_items(self, *, rescale=False):
-        self._update_plot_annotation()
         line_host = self.operation_kind == "plot1d"
         if line_host:
             layers = self.__dict__.get("heatmaps", {})
             if not layers:
+                self._update_plot_annotation()
                 bar = self.__dict__.get("bar")
                 if bar is not None:
                     bar.hide()
                 return
+            # This window has no heatmap of its own. When the first source's
+            # colour unit changes, its peers must recheck the shared scale.
+            unit = window_display_unit(next(iter(layers.values())).from_win)
+            if unit != self.__dict__.get("_shared_heatmap_unit"):
+                self._shared_heatmap_unit = unit
+                for layer in layers.values():
+                    layer.refresh(sync_colorbar=False)
+        self._update_plot_annotation()
         if "bar" not in self.__dict__ and self._data_colorbar_levels() is not None:
             if line_host:
                 self._colorbar_manual_levels = None

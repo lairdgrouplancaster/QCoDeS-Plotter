@@ -1508,7 +1508,8 @@ class TrustedDerivedQtBridge(QtCore.QObject):
     @staticmethod
     def _work_formats(preview_size: int, complex_1d="magnitude", complex_nd="magnitude") -> dict[TrustedWorkKind, WorkFormat]:
         return {
-            TrustedWorkKind.METADATA: WorkFormat(TRUSTED_DERIVED_RENDERER_VERSION),
+            # Earlier metadata could treat a planned array shape as a result-row count.
+            TrustedWorkKind.METADATA: WorkFormat(f"{TRUSTED_DERIVED_RENDERER_VERSION}-run-metadata-v2"),
             TrustedWorkKind.THUMBNAIL: WorkFormat(
                 TRUSTED_DERIVED_RENDERER_VERSION,
                 RenderingOptions.from_mapping(

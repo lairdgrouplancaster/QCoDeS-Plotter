@@ -2857,9 +2857,6 @@ class DatabaseActionsMixin:
 
         selected = DatabaseActionsMixin._prepare_selected_run_state(self, guid, run_id, item)
         generation, metadata = selected.generation, selected.metadata
-        set_loading = getattr(self.infoBox, "set_trusted_run_loading", None)
-        if callable(set_loading):
-            set_loading(metadata)
         bridge = getattr(self, "_trusted_derived_bridge", None)
         if bridge is None:
             self._prioritize_database_detail_runs([run_id])
@@ -2890,6 +2887,8 @@ class DatabaseActionsMixin:
                 )
             return True
         if bridge is not None:
+            # The bridge renders the loading state for a new selection and
+            # preserves the published detail when the same run is selected again.
             bridge.select_run(str(guid))
             return True
 

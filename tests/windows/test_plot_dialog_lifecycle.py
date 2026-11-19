@@ -8,10 +8,49 @@ from PyQt6 import QtCore, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.datahandling.plot_progress import PlotProgress
+from qplot.windows._widgets.treeWidgets import RUN_TABLE_COLUMN_WIDTHS_KEY
 from tests.support.windows.plot_dialog_lifecycle import (
     dialog_plot as dialog_plot,
 )
 from tests.support.windows.plot_integration import wait_for
+
+
+@pytest.mark.parametrize("dialog_plot", ["line"], indirect=True)
+@pytest.mark.parametrize("mode", ["automatic", "manual", "unwritable"])
+def test_quit_preserves_the_run_table_width_choice(dialog_plot, monkeypatch, mode):
+    window, _plot, _app, _guids = dialog_plot
+    table = window.RunList
+    column = table.cols.index("ID")
+    assert window.config.get(RUN_TABLE_COLUMN_WIDTHS_KEY) == []
+    attempts = []
+    modal_errors = []
+    update = window.config.update
+
+    def record_update(key, value):
+        if key == RUN_TABLE_COLUMN_WIDTHS_KEY:
+            attempts.append(value[column])
+            if mode == "unwritable":
+                raise PermissionError("Read-only test settings")
+        return update(key, value)
+
+    monkeypatch.setattr(window.config, "update", record_update)
+    monkeypatch.setattr(qtw.QMessageBox, "exec", lambda box: modal_errors.append(box.windowTitle()) or 0)
+    width = table.columnWidth(column) + 53
+    if mode != "automatic":
+        # Keep the edit pending through shutdown even on slower CI workers.
+        table._column_width_save_timer.setInterval(60_000)
+        table.header().resizeSection(column, width)
+        assert table.columnWidth(column) == width
+        assert table._column_width_save_timer.isActive()
+    window.quit_application()
+    wait_for(lambda: window._shutdown_ready)
+    saved = type(window.config)().get(RUN_TABLE_COLUMN_WIDTHS_KEY)
+    assert attempts == ([] if mode == "automatic" else [width])
+    assert not modal_errors
+    if mode == "manual":
+        assert saved and saved[column] == width
+    else:
+        assert saved == []
 
 
 @pytest.mark.parametrize("dialog_plot", ["line"], indirect=True)

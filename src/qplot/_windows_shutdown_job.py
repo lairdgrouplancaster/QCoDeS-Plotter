@@ -6,10 +6,9 @@ with respect to Job Object membership: ``PROC_THREAD_ATTRIBUTE_JOB_LIST``
 places the suspended GUI in the retained job as part of ``CreateProcessW``.
 The initial thread is resumed only after membership has been verified.
 
-No production operation opens or terminates a process by PID.  The PID is
-retained only for authenticated protocol comparison and diagnostics; all
-liveness, status, and termination operations use the original process and job
-handles.
+Termination and direct-child status use the original job and process handles.
+During final settlement, process IDs are used to open read-only handles.
+Only a handle confirmed to belong to the retained job is waited on.
 """
 
 from __future__ import annotations
@@ -53,6 +52,10 @@ _WAIT_OBJECT_0 = 0x00000000
 _WAIT_TIMEOUT = 0x00000102
 _WAIT_FAILED = 0xFFFFFFFF
 _ERROR_INSUFFICIENT_BUFFER = 122
+_ERROR_ACCESS_DENIED = 5
+_ERROR_INVALID_PARAMETER = 87
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_SYNCHRONIZE = 0x100000
 
 _STD_INPUT_HANDLE = -10
 _STD_OUTPUT_HANDLE = -11
@@ -99,6 +102,10 @@ class _JobAdapter(Protocol):
     def terminate_process(self, process_handle: Any, exit_code: int) -> None: ...
 
     def active_processes(self, job_handle: Any) -> int: ...
+
+    def process_ids(self) -> list[int]: ...
+
+    def open_process_for_observation(self, pid: int) -> Any | None: ...
 
     def close_handle(self, handle: Any) -> None: ...
 
@@ -177,6 +184,9 @@ class WindowsContainedProcess:
         self._process_handle: Any | None = process_handle
         self._thread_handle: Any | None = thread_handle
         self._deferred_handles = list(deferred_handles)
+        self._settlement_pids: list[int] | None = None
+        self._settlement_handle: Any | None = None
+        self._settlement_member = False
         self.pid = int(pid)
         self.args = [os.fsdecode(argument) for argument in argv]
         self.returncode: int | None = None
@@ -434,13 +444,37 @@ class WindowsContainedProcess:
     def tree_active(self) -> bool:
         """Report whether any process in the retained nested job tree is active."""
 
-        job_handle = self._require_job_handle()
-        while True:
-            try:
-                return int(self._adapter.active_processes(job_handle)) != 0
-            except BaseException as error:
-                self._record_failure("Windows Job Object liveness query", error)
-                time.sleep(_RETRY_INTERVAL_SECONDS)
+        return self._tree_active_until(None, None)
+
+    def _members_still_settling(self, job_handle: Any, deadline: float | None) -> bool:
+        # The job's accounting and PID list can both be empty before a dying
+        # interpreter signals. At zero there are no executing members left to
+        # create new children. Inspect one system snapshot, keeping the exact
+        # handle across timeouts, retries and PID reuse.
+        if self._settlement_pids is None:
+            self._settlement_pids = self._adapter.process_ids()
+        while self._settlement_pids:
+            if self._settlement_handle is None:
+                self._settlement_handle = self._adapter.open_process_for_observation(
+                    self._settlement_pids[-1]
+                )
+            handle = self._settlement_handle
+            if handle is not None:
+                if not self._settlement_member:
+                    self._settlement_member = self._adapter.process_is_in_job(
+                        handle, job_handle
+                    )
+                if self._settlement_member and not self._adapter.wait_process(
+                    handle, 0
+                ):
+                    return True
+                self._adapter.close_handle(handle)
+                self._settlement_handle = None
+                self._settlement_member = False
+            self._settlement_pids.pop()
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+        return bool(self._settlement_pids)
 
     def _tree_active_until(
         self,
@@ -449,10 +483,14 @@ class WindowsContainedProcess:
     ) -> bool:
         job_handle = self._require_job_handle()
         while True:
+            operation = "Windows Job Object liveness query"
             try:
-                return int(self._adapter.active_processes(job_handle)) != 0
+                if self._adapter.active_processes(job_handle):
+                    return True
+                operation = "Windows Job Object member settlement"
+                return self._members_still_settling(job_handle, deadline)
             except BaseException as error:
-                self._record_failure("Windows Job Object liveness query", error)
+                self._record_failure(operation, error)
                 remaining = _remaining_timeout(deadline)
                 if remaining is not None and remaining <= 0.0:
                     assert timeout is not None
@@ -805,6 +843,14 @@ class _CtypesWindowsJobAdapter:
             ctypes.POINTER(wintypes.DWORD),
         )
         kernel32.QueryInformationJobObject.restype = wintypes.BOOL
+        kernel32.K32EnumProcesses.argtypes = (
+            ctypes.POINTER(wintypes.DWORD),
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        )
+        kernel32.K32EnumProcesses.restype = wintypes.BOOL
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
         kernel32.InitializeProcThreadAttributeList.argtypes = (
             ctypes.c_void_p,
             wintypes.DWORD,
@@ -1160,6 +1206,34 @@ class _CtypesWindowsJobAdapter:
         ):
             raise self._last_error()
         return int(information.ActiveProcesses)
+
+    def process_ids(self) -> list[int]:
+        capacity = 512
+        while True:
+            pids = (wintypes.DWORD * capacity)()
+            size = ctypes.sizeof(pids)
+            used = wintypes.DWORD()
+            if not self._kernel32.K32EnumProcesses(pids, size, ctypes.byref(used)):
+                raise self._last_error()
+            if used.value < size:
+                return pids[: used.value // ctypes.sizeof(wintypes.DWORD)]
+            capacity *= 2
+
+    def open_process_for_observation(self, pid: int) -> Any | None:
+        handle = self._kernel32.OpenProcess(
+            _PROCESS_QUERY_LIMITED_INFORMATION | _SYNCHRONIZE, False, pid
+        )
+        if handle:
+            return handle
+        error = self._last_error()
+        # Protected system processes cannot be members of this private qPlot
+        # job. A process that disappeared since enumeration is already settled.
+        if getattr(error, "winerror", None) in (
+            _ERROR_ACCESS_DENIED,
+            _ERROR_INVALID_PARAMETER,
+        ):
+            return None
+        raise error
 
     def close_handle(self, handle: Any) -> None:
         if not self._kernel32.CloseHandle(handle):

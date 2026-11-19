@@ -1,7 +1,10 @@
+from bisect import bisect_left
 from collections.abc import Callable
-from math import isfinite
+from math import isfinite, nextafter
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
+import numpy as np
+import numpy.typing as npt
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
@@ -24,6 +27,41 @@ from ._widgets import CopyableTableWidget
 _MarqueeHandle = Literal["nw", "n", "ne", "e", "se", "s", "sw", "w"]
 _MarqueeDragMode = Literal["new", "move", "nw", "n", "ne", "e", "se", "s", "sw", "w"]
 _MarqueeAction = Callable[[], bool]
+_CellEdges = tuple[float, ...] | npt.NDArray[np.float64]
+
+
+def _nearest_position(count: int, position: Callable[[int], float], value: float) -> int:
+    upper = bisect_left(range(count), value, key=position)
+    if upper == 0 or upper == count:
+        return min(upper, count - 1)
+    return upper - 1 if value - position(upper - 1) <= position(upper) - value else upper
+
+
+def _moved_interval(
+        edges: _CellEdges | None, low: float, span: float, delta: float,
+        ) -> tuple[float, float]:
+    """Return the translated lower edge and span in displayed coordinates."""
+    if delta == 0:
+        return low, span
+    if edges is None:
+        return low + delta, span
+
+    high = low + span
+    start = _nearest_position(len(edges), edges.__getitem__, low)
+    stop = _nearest_position(len(edges), edges.__getitem__, high)
+    width = max(1, stop - start)
+
+    def centre(index: int) -> float:
+        return float(edges[index]) / 2 + float(edges[index + width]) / 2
+
+    # Feasible blocks keep every selected cell, including at the ends of an
+    # irregular axis. Their centres are ordered, so no full scan is required.
+    index = _nearest_position(len(edges) - width, centre, low / 2 + high / 2 + delta)
+    left, right = float(edges[index]), float(edges[index + width])
+    span = right - left
+    # QRectF reconstructs its high edge by addition. Do not let rounding
+    # include the next cell when the selection is used for statistics.
+    return left, nextafter(span, 0.) if left + span > right else span
 
 
 class _MarqueeDragState(TypedDict):
@@ -32,6 +70,7 @@ class _MarqueeDragState(TypedDict):
     mode: _MarqueeDragMode
     rect: QtCore.QRectF | None
     move_axis: Literal["x", "y"] | None
+    move_edges: tuple[_CellEdges | None, _CellEdges | None]
 
 
 if TYPE_CHECKING:
@@ -132,6 +171,10 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
 
         return self._marquee_viewbox()
 
+    def _marquee_move_edges(self) -> tuple[_CellEdges | None, _CellEdges | None]:
+        """Return displayed cell boundaries for axes that snap during a move."""
+        return None, None
+
     def _marquee_axis_assignment_changed(self) -> None:
         """Discard old coordinates and move decorations to their new owner."""
 
@@ -181,6 +224,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             "mode": mode,
             "rect": QtCore.QRectF(self.marquee) if self.marquee is not None else None,
             "move_axis": None,
+            "move_edges": self._marquee_move_edges() if mode == "move" else (None, None),
             }
 
         if mode == "new":
@@ -218,7 +262,11 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
                     delta.setX(0)
             else:
                 state["move_axis"] = None
-            rect.translate(delta)
+            x_edges, y_edges = state["move_edges"]
+            left, width = _moved_interval(x_edges, rect.left(), rect.width(), delta.x())
+            bottom, height = _moved_interval(y_edges, rect.top(), rect.height(), delta.y())
+            self._draw_marquee_rect(QtCore.QRectF(left, bottom, width, height))
+            return
         else:
             rect = QtCore.QRectF(state["rect"])
             offset = state.get("handle_offset", QtCore.QPointF())
@@ -588,7 +636,9 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             self.clear_marquee()
             return
 
-        rect = snapped
+        self._draw_marquee_rect(snapped)
+
+    def _draw_marquee_rect(self, rect: QtCore.QRectF) -> None:
         self.marquee = QtCore.QRectF(rect)
         self.marquee_highlight.setRect(rect)
         self.marquee_outline.setRect(rect)

@@ -8,6 +8,10 @@ from PyQt6 import QtCore, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter
 
+from tests.support.windows.differentiation_integration import (
+    apply_operations,
+    operation_option,
+)
 from tests.support.windows.heatmap_layer_integration import (
     _wait_for,
 )
@@ -590,6 +594,42 @@ def test_appearance_warns_for_colorscale_even_on_spare_axes(mixed_plot, monkeypa
         kind, key = dialog._row_entry(row)
         if key != layer.from_win._trace_key:
             assert _axis_warning_item(dialog, kind, key).icon().isNull()
+
+
+def test_approved_colour_units_survive_only_the_original_mismatch(mixed_plot, monkeypatch):
+    _window, host, runs = mixed_plot
+    warnings = []
+
+    def approve(box):
+        warnings.append(box.text())
+        return qtw.QMessageBox.StandardButton.Ok
+
+    monkeypatch.setattr(qtw.QMessageBox, "exec", approve)
+    colour_source = host
+    if host.operation_kind == "plot1d":
+        _window.openPlot(guid=runs["heatmap"].guid)
+        _wait_for(lambda: len(_window.windows) == 2 and _window.windows[-1]._qplot_display_synchronized)
+        _drop(host, runs["heatmap"])
+        colour_source = _added(host, runs["heatmap"]).from_win
+    _drop(host, runs["other_heatmap"])
+    layer = _added(host, runs["other_heatmap"])
+    assert len(warnings) == 1 and "colour scale units do not match" in warnings[0]
+    assert host._heatmap_axis_sides(layer) == ("Top", "Right")
+    assert (colour_source.display_param.unit, layer.from_win.display_param.unit) == ("A", "V")
+    original_grid = layer.image.image.copy()
+    differentiate = operation_option(colour_source, "dz/dx").input
+    differentiate.click()
+    assert apply_operations(colour_source)[1:] == ([True], [])
+    assert colour_source.display_param.unit == "A/V"
+    assert not layer.image.isVisible() and not layer.heatmap_mesh.isVisible()
+    assert host._heatmap_axis_sides(layer) == ("Top", "Right")
+    assert layer.from_win._merged_trace_users == 1
+
+    differentiate.click()
+    assert apply_operations(colour_source)[1:] == ([True], [])
+    assert colour_source.display_param.unit == "A" and layer.image.isVisible()
+    np.testing.assert_array_equal(layer.image.image, original_grid)
+    assert len(warnings) == 1
 
 
 def test_shared_appearance_list_adds_removes_and_reorders_both_types(mixed_plot, monkeypatch):

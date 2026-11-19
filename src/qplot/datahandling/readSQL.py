@@ -10,6 +10,7 @@ from qcodes.dataset.sqlite.database import get_DB_location
 from qplot.datahandling._sqlite_identifiers import (
     quote_identifier_text as _sqlite_identifier,
 )
+from qplot.datahandling.measurement_exception import is_keyboard_interrupt
 from qplot.datahandling.readonly import (
     qcodes_read_only_connection,
     sqlite_read_only_connection,
@@ -20,7 +21,6 @@ from qplot.datahandling.run_metadata import (
 from qplot.datahandling.run_metadata import (
     _add_completed_observed_result_count,
     _add_run_basic_fields,
-    _is_keyboard_interrupt,
     _json_dict,
     _parameter_dependencies,
     _point_shape_from_setpoint_shape,
@@ -1319,7 +1319,7 @@ def _add_run_detail_fields(
     _add_completed_observed_result_count(metadata)
     if include_read_setpoint_count and (
         not bool(metadata.get("is_completed"))
-        or _is_keyboard_interrupt(metadata.get("measurement_exception"))
+        or is_keyboard_interrupt(metadata.get("measurement_exception"))
     ):
         if observed_setpoints is None:
             observed_setpoints = _run_setpoint_observation(
@@ -1893,7 +1893,7 @@ def get_run_status(
         ):
             status[field] = shape_metadata.get(field)
 
-        if not bool(value[2]) or _is_keyboard_interrupt(
+        if not bool(value[2]) or is_keyboard_interrupt(
             status.get("measurement_exception")
         ):
             if observed_setpoints is None:

@@ -1261,6 +1261,31 @@ def test_steady_state_put_does_not_rescan_cache_directory(
     assert calls <= 2
 
 
+@pytest.mark.parametrize("entry_limit", [4, 3, 2])
+def test_insertion_reads_only_entries_it_needs_to_evict(tmp_path, monkeypatch, entry_limit):
+    root = tmp_path / "cache"
+    initial = cache_module.TrustedDerivedDiskCache(root)
+    for index in (1, 2, 3):
+        assert initial.put(_key(index), _payload(str(index)))
+    existing = sorted(root.glob("*.qdc"), key=lambda path: (path.stat().st_mtime_ns, path.name))
+    assert len(existing) == 3
+    expected_evictions = set(existing[:4 - entry_limit])
+    read_entries = set()
+    original_open = Path.open
+
+    def record_open(path, mode="r", *args, **kwargs):
+        if mode == "rb" and path in existing:
+            read_entries.add(path)
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", record_open)
+    cache = cache_module.TrustedDerivedDiskCache(root, max_entries=entry_limit)
+    assert cache.put(_key(4), _payload("four"))
+    assert read_entries == expected_evictions
+    assert {path for path in existing if not path.exists()} == expected_evictions
+    assert cache.get(_key(4)) == _payload("four")
+
+
 def test_surrogate_cache_key_degrades_to_miss(tmp_path: Path) -> None:
     instance = DatabaseInstance("/data/\ud800.db", "/data/\ud800.db", (7, 11))
     key = TrustedCacheWorkKey(

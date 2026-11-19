@@ -285,6 +285,62 @@ def _measurement_database(tmp_path):
     return source
 
 
+def _start_export_when_released(release, *args):
+    assert release.wait(20)
+    database_export._backup_child(*args)
+
+
+@pytest.mark.parametrize("run_ids", [(1,), (999,)], ids=["completed", "child-error"])
+def test_export_collects_messages_from_child_exiting_after_empty_poll(
+    tmp_path, monkeypatch, export_scratch, run_ids,
+):
+    source = _measurement_database(tmp_path)
+    before = source.read_bytes()
+    stage = tmp_path / "stage.db"
+    stage.touch()
+    context = multiprocessing.get_context("spawn")
+    release = context.Event()
+    phases = []
+
+    def pipe(**kwargs):
+        receive, send = context.Pipe(**kwargs)
+
+        def poll(timeout):
+            ready = receive.poll(timeout)
+            if not release.is_set():
+                assert not ready
+                child, = (p for p in multiprocessing.active_children()
+                          if p.name == "qplot-database-export")
+                release.set()
+                child.join(20)
+                assert child.exitcode == 0
+            return ready
+
+        return SimpleNamespace(poll=poll, recv=receive.recv, close=receive.close), send
+
+    monkeypatch.setattr(database_export, "_backup_child", partial(_start_export_when_released, release))
+    monkeypatch.setattr(database_export, "multiprocessing", SimpleNamespace(
+        get_context=lambda _mode: SimpleNamespace(Pipe=pipe, Process=context.Process),
+    ))
+
+    def export():
+        export_database_copy(stage, instance=database_instance(source), live=False, run_ids=run_ids,
+                             cancelled=lambda: False, progress=lambda phase, *_: phases.append(phase))
+
+    if run_ids == (1,):
+        export()
+        with closing(sqlite3.connect(stage.as_uri() + "?mode=ro&immutable=1", uri=True)) as copy:
+            assert copy.execute("SELECT run_id FROM runs").fetchall() == [(1,)]
+        assert "Checking standalone database" in phases
+    else:
+        with pytest.raises(RuntimeError, match="selected runs are no longer present"):
+            export()
+        assert stage.read_bytes() == b""
+    assert "Copying committed data" in phases
+    assert source.read_bytes() == before
+    assert not list(export_scratch.iterdir())
+
+
 def test_real_qcodes_copy_preserves_metadata_and_measurements(tmp_path):
     from qplot.datahandling.readonly import load_by_id_read_only
 

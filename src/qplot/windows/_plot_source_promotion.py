@@ -43,7 +43,7 @@ def _remaining_datasets(
             item = owner.heatmaps[key]
             sides = owner._heatmap_axis_sides(item)
             order = ("x", "y") if item is owner else item.source_axis_order() or ("x", "y")
-            plan = DropAxisPlan(order, sides[0], sides[1], ())
+            plan = DropAxisPlan(order, sides[0], sides[1], (), getattr(item, "colour_unit_override", None))
             datasets.append(_DatasetAppearance(
                 kind, key, owner if item is owner else item.from_win, plan,
                 opacity=owner._heatmap_opacity(item), visible=owner._heatmap_is_visible(item),

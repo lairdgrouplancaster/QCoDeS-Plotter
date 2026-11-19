@@ -837,8 +837,11 @@ replacement; faults are misses or uncached results. Defaults cap an entry at
 16 MiB, the
 cache at 256 MiB and 2,048 entries. An initial inventory above the 4,096-file
 recovery window is not accepted as healthy: qPlot-owned remnants are purged
-under the job deadline before insertion. Later insertions use an in-memory
-index and heap instead of rescanning. POSIX roots and files are normalised to
+under the job deadline before insertion. Later insertions use the SQLite
+inventory to calculate capacity and select the oldest entries for eviction.
+qPlot verifies all proposed victims before removing any and rechecks ownership
+at removal. Entries kept in the cache retain their normal read-time integrity
+checks. POSIX roots and files are normalised to
 0700 and 0600. A cache root inside, containing, or equal to the selected
 database directory is disabled. Restart-unique service namespaces deliberately
 prevent unproved cross-session hits.

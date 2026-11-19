@@ -60,9 +60,12 @@ def run_export_request(window):
 def _filename_names(window, key, selector, run_id):
     if isinstance(selector, (tuple, list)):
         return tuple(selector)
-    names = tuple(window._run_metadata_for_id(run_id).get("measure_parameters") or ())
+    metadata = window._run_metadata_for_id(run_id)
+    names = tuple(metadata.get("measure_parameters") or ())
     if isinstance(selector, int):
-        return (names[selector - 1],) if selector <= len(names) else (f"measurement_{selector}",)
+        if selector <= len(names) and not metadata.get("parameters_truncated"):
+            return (names[selector - 1],)
+        return (f"measurement_{selector}",)
     return names or ("all",)
 
 
