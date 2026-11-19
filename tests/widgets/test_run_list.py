@@ -1,3 +1,4 @@
+import traceback
 import unittest
 from unittest.mock import patch
 
@@ -6,6 +7,10 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 from PyQt6.QtTest import QTest
 
+from qplot.datahandling.trusted_presentation import (
+    TRUSTED_PRESENTATION_MAX_FIELD_VALUE_BYTES,
+    bounded_selected_run_fields,
+)
 from qplot.windows._widgets import treeWidgets
 from qplot.windows._widgets.preview import (
     DraggablePreviewImageLabel,
@@ -508,6 +513,64 @@ class RunListTooltipTestCase(unittest.TestCase):
         self.assertEqual(treeWidgets.format_complete_cell(metadata), "Failed")
         self.assertEqual(treeWidgets.format_run_status(metadata), "Failed (40.0%)")
         self.assertEqual(treeWidgets.complete_cell_sort_value(metadata), 40.0)
+
+    def test_terminal_exception_survives_bounded_run_publication(self):
+        fault = "TimeoutError: No trigger; KeyboardInterrupt is available for manual abort."
+        frame = '  File "meter.py", line 3, in read\n    read_trigger()\n'
+        for depth in (1, 24):
+            for terminal, expected in (
+                ("TimeoutError: Trigger expired", "Failed"),
+                (fault, "Failed"),
+                ("KeyboardInterrupt", "Interrupted"),
+            ):
+                with self.subTest(depth=depth, terminal=terminal):
+                    recorded = "Traceback (most recent call last):\n" + depth * frame + terminal + "\n"
+                    fields = dict(bounded_selected_run_fields({
+                        "completed_timestamp": 12.0,
+                        "measurement_exception": recorded,
+                    }))
+                    self.assertLessEqual(
+                        len(fields["measurement_exception"].encode()),
+                        TRUSTED_PRESENTATION_MAX_FIELD_VALUE_BYTES,
+                    )
+                    self.assertTrue(treeWidgets.format_run_state(fields).startswith(expected))
+                    tooltip = treeWidgets.run_tooltip_text(fields)
+                    if expected == "Failed":
+                        self.assertIn(terminal, tooltip)
+
+    def test_terminal_exception_type_excludes_causes_message_lines_and_notes(self):
+        for error, expected in (
+            (ValueError("Trigger fault\nKeyboardInterrupt"), "Failed"),
+            (KeyboardInterrupt("Stop requested"), "Interrupted"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                error.add_note("Operator log: KeyboardInterrupt")
+                try:
+                    try:
+                        raise KeyboardInterrupt("Earlier event")
+                    except KeyboardInterrupt as cause:
+                        raise error from cause
+                except (ValueError, KeyboardInterrupt) as caught:
+                    recorded = "".join(traceback.format_exception(caught))
+                fields = {"measurement_exception": recorded}
+                for published in (fields, dict(bounded_selected_run_fields(fields))):
+                    self.assertTrue(treeWidgets.format_run_state(published).startswith(expected))
+
+    def test_oversized_multiline_fault_preserves_final_diagnosis_and_terminal_type(self):
+        frame = '  File "bridge.py", line 10, in read\n    wait_for_lock()\n'
+        recorded = "Traceback (most recent call last):\n" + frame
+        for diagnosis in ("CAL-913: sense resistor disconnected", "KeyboardInterrupt"):
+            with self.subTest(diagnosis=diagnosis):
+                exception = recorded + "ValueError: " + "µ" * 700 + "\n" + diagnosis + "\n"
+                fields = {"measurement_exception": exception}
+                published = dict(bounded_selected_run_fields(fields))
+                self.assertLessEqual(
+                    len(published["measurement_exception"].encode()),
+                    TRUSTED_PRESENTATION_MAX_FIELD_VALUE_BYTES,
+                )
+                for metadata in (fields, published):
+                    self.assertTrue(treeWidgets.format_run_state(metadata).startswith("Failed"))
+                    self.assertIn(diagnosis, treeWidgets.run_tooltip_text(metadata))
 
     def test_completed_run_without_exception_uses_completed_label(self):
         self.assertEqual(

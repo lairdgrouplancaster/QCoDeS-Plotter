@@ -7,6 +7,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, TypeAlias
 
+from qplot.datahandling.measurement_exception import (
+    exception_header,
+    final_diagnostic_line,
+)
+
 TRUSTED_PRESENTATION_MAX_DEPTH = 16
 TRUSTED_PRESENTATION_MAX_CONTAINER_ITEMS = 2_048
 TRUSTED_PRESENTATION_MAX_RENDERED_NODES = 512
@@ -842,6 +847,23 @@ def bounded_presentation_error(value: object) -> str:
     return bounded
 
 
+def _bounded_measurement_exception(text: str) -> tuple[str, bool]:
+    limit = TRUSTED_PRESENTATION_MAX_FIELD_VALUE_BYTES
+    if len(text) <= limit and len(text.encode("utf-8", errors="replace")) <= limit:
+        return text, False
+    # Full tracebacks remain available in Raw. Keep the fault and its type in
+    # the run table even if the stack itself would exhaust this field's budget.
+    header = exception_header(text, limit + 1)
+    diagnostic = final_diagnostic_line(text, limit + 1)
+    if diagnostic == header:
+        return _truncate_utf8(header, limit)[0], True
+    # A long multiline instrument message can end with the precise cause. Keep
+    # its final line separate from the terminal type used to classify the run.
+    name = _truncate_utf8(header.partition(":")[0], limit // 2)[0]
+    remaining = limit - len(name.encode("utf-8", errors="replace")) - 1
+    return name + "\n" + _truncate_utf8(diagnostic, remaining)[0], True
+
+
 def bounded_selected_run_fields(
     fields: Mapping[str, object],
 ) -> FrozenPresentationFields:
@@ -853,7 +875,12 @@ def bounded_selected_run_fields(
     for name in _SELECTED_RUN_FIELDS[:TRUSTED_PRESENTATION_MAX_RUN_FIELDS]:
         if name not in fields:
             continue
-        bounded, was_truncated = _bounded_field_value(fields[name])
+        value = fields[name]
+        bounded: PresentationValue
+        if name == "measurement_exception" and isinstance(value, str):
+            bounded, was_truncated = _bounded_measurement_exception(value)
+        else:
+            bounded, was_truncated = _bounded_field_value(value)
         field_bytes = len(name.encode("utf-8")) + _presentation_value_bytes(bounded)
         if (
             retained_bytes + field_bytes

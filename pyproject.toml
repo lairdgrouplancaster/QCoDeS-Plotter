@@ -152,6 +152,7 @@ files = [
     "src/qplot/datahandling/database.py",
     "src/qplot/datahandling/file_identity.py",
     "src/qplot/datahandling/LoadFromDB.py",
+    "src/qplot/datahandling/measurement_exception.py",
     "src/qplot/datahandling/dimensions.py",
     "src/qplot/datahandling/qcodes_compat.py",
     "src/qplot/datahandling/qcodes_cache.py",

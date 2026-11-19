@@ -472,10 +472,6 @@ def _shape_size(shape):
         return None
 
 
-def _is_keyboard_interrupt(value):
-    return bool(value and "KeyboardInterrupt" in str(value))
-
-
 def _run_is_complete(metadata):
     return bool(metadata.get("completed_timestamp") or metadata.get("is_completed"))
 

@@ -2,6 +2,10 @@ import html
 from datetime import datetime
 
 from qplot.datahandling.dimensions import MAX_SUPPORTED_PLOT_DIMENSIONS
+from qplot.datahandling.measurement_exception import (
+    final_diagnostic_line,
+    is_keyboard_interrupt,
+)
 
 
 def preview_title(parameter, axes, *, rich_text=False):
@@ -106,8 +110,7 @@ def run_is_complete(metadata):
 
 
 def run_was_interrupted(metadata):
-    exception = metadata.get("measurement_exception")
-    return exception is not None and "KeyboardInterrupt" in str(exception).strip()
+    return is_keyboard_interrupt(metadata.get("measurement_exception"))
 
 
 def run_failed(metadata):
@@ -121,10 +124,7 @@ def run_failed(metadata):
 
 def measurement_exception_summary(metadata, maximum_length=200):
     exception = str(metadata.get("measurement_exception") or "")
-    summary = next(
-        (line.strip() for line in reversed(exception.splitlines()) if line.strip()),
-        "",
-    )
+    summary = final_diagnostic_line(exception, maximum_length + 1)
     if len(summary) > maximum_length:
         return f"{summary[: maximum_length - 1]}…"
     return summary
