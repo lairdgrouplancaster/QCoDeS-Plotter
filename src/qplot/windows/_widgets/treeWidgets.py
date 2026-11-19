@@ -1007,7 +1007,13 @@ class RunList(qtw.QTreeWidget):
         finally:
             self._resizing_columns = False
 
-    def _persist_column_widths(self):
+    def finish_pending_column_width_save(self) -> None:
+        """Save the user's last drag before the application event loop ends."""
+        if self._column_width_save_timer.isActive():
+            self._column_width_save_timer.stop()
+            self._persist_column_widths(notify=False)
+
+    def _persist_column_widths(self, *, notify: bool = True) -> None:
         if self._config is None or not self._manual_column_widths:
             return
 
@@ -1028,7 +1034,7 @@ class RunList(qtw.QTreeWidget):
                 self._manual_column_widths = True
 
         if persist_config_value(
-            self,
+            self if notify else None,
             self._config,
             RUN_TABLE_COLUMN_WIDTHS_KEY,
             persisted_widths,
