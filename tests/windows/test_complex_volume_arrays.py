@@ -24,7 +24,7 @@ BIASES = (-3., 4.)
 FIELDS = (5., 8.)
 
 
-def write_volume(path, precisions, reverse, *, missing=None):
+def write_volume(path, precisions, reverse, *, missing=None, revisit=None):
     initialise_or_create_database_at(str(path), journal_mode="DELETE")
     experiment = load_or_create_experiment("complex volume", "synthetic")
     expected = {}
@@ -54,6 +54,10 @@ def write_volume(path, precisions, reverse, *, missing=None):
                     for delay, value in zip(delays, values, strict=True):
                         saver.add_result(("field", field), ("bias", bias), ("delay", delay), ("signal", value))
                 expected.update(((field, bias, d), v) for d, v in zip(delays, values, strict=True))
+            if revisit is not None:
+                field, bias, delay, value = revisit
+                for reading in (value, complex(np.nan, np.nan)):
+                    saver.add_result(("field", field), ("bias", bias), ("delay", delay), ("signal", reading))
         dataset = saver.dataset
         try:
             if records:
@@ -196,4 +200,52 @@ def test_frozen_complex_cut_cursor_identifies_only_acquired_cells(main, tmp_path
     assert [cut.pos_labels[axis].text() for axis in ("x", "y")] == ["—", "—"]
     assert cut.complex_samples.values.shape == (len(coordinates),)
     assert not np.shares_memory(cut.complex_samples.values, frozen.complex_samples.values)
+    assert not errors
+
+
+def test_duplicate_complex_cursor_and_region_mean(main, tmp_path):
+    field, bias, delay = FIELDS[0], BIASES[1], DELAYS[1]
+    last = -17 - 24j
+    path = tmp_path / "revisits.db"
+    guid, source = write_volume(path, None, True, revisit=(field, bias, delay, last))
+    window, errors = main
+    window.config.update(COMPLEX_ND_KEY, "imag")
+    assert window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active and window._selected_run_guid == guid)
+    window.plotRunButton.click()
+    wait_for(lambda: len(window.windows) == 1 and window.windows[0]._qplot_display_synchronized)
+    live = window.windows[0]
+    displayed = (source[field, bias, delay].imag + last.imag) / 2
+    assert live.slice_frame.depth == field and live.slice_frame.counts[1, 1] == 2
+    live.freeze_slice()
+    wait_for(lambda: len(window.windows) == 2 and window.windows[-1]._qplot_display_synchronized)
+    frozen = window.windows[-1]
+    for parent in (live, frozen):
+        assert parent.dataGrid[1, 1] == displayed
+        hover(parent, delay, bias)
+        assert cursor_value(parent, "z") == last
+        for kind in (("h", "v", "d") if parent is live else ("h", "v")):
+            hover(parent, delay, bias)
+            before = len(window.windows)
+            parent.openSweep(kind)
+            wait_for(lambda before=before: len(window.windows) == before + 1 and window.windows[-1]._qplot_display_synchronized)
+            cut = window.windows[-1]
+            coordinate = {"h": delay, "v": bias, "d": field}[kind]
+            index, = np.flatnonzero(cut.axis_data["x"] == coordinate)
+            assert cut.axis_data["y"][index] == displayed
+            cut.force_all_axes_autoscale()
+            hover(cut, coordinate, displayed)
+            assert cursor_value(cut, "y") == last
+    live.set_marquee_rect(QtCore.QRectF(DELAYS[0], BIASES[0], DELAYS[-1]-DELAYS[0], BIASES[-1]-BIASES[0]))
+    before = len(window.windows)
+    live.openSweep("mean")
+    wait_for(lambda: len(window.windows) == before + 1 and window.windows[-1]._qplot_display_synchronized)
+    region = window.windows[-1]
+    expected = np.mean([displayed if (b, d) == (bias, delay) else source[field, b, d].imag
+                        for b, d in product(BIASES, DELAYS)])
+    assert region.axis_data["y"][0] == pytest.approx(expected)
+    region.force_all_axes_autoscale()
+    hover(region, field, expected)
+    assert "recorded complex value" not in region.cursor_readout.toolTip()
+    assert region.complex_samples is None
     assert not errors

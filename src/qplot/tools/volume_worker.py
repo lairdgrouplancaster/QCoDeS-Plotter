@@ -39,7 +39,7 @@ def processed_plane(frame, operations, param, axis_params, *, check=lambda: None
     check()
     display_param = copy(param)
     if complex_mode is not None and contains_complex(frame.values):
-        frame = replace(frame, raw_values=frame.values, values=project_complex(frame.values, complex_mode))
+        frame = replace(frame, values=project_complex(frame.values, complex_mode))
         display_param = complex_parameter(param, complex_mode)
     if not operations or not frame.values.size:
         return frame, display_param
@@ -202,11 +202,11 @@ class VolumeLoader(loader):
             index = volume.nearest_index(depth_name, value) if value is not None else self.depth_index
             self._progress = PlotProgress("Loading 2D slice", stage=2)
             frame = volume.plane(x, y, index, check=self._check_cancelled)
-            if contains_complex(frame.values):
+            if frame.recorded_complex is not None:
                 xs, ys = np.meshgrid(frame.x, frame.y)
                 self.complex_samples = ComplexSamples(
                     (xs.ravel(), ys.ravel()), (self.param_dict[x], self.param_dict[y]),
-                    frame.values.ravel(), self.complex_mode,
+                    frame.recorded_complex.ravel(), self.complex_mode,
                 )
             self.axis_param = {axis: self.param_dict[name] for axis, name in (("x", x), ("y", y))}
             frame, self.display_param = processed_plane(

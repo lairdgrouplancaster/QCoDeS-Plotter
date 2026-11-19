@@ -60,10 +60,10 @@ class CutLoader(loader):
                     "Extracting cut through slices", n, total, stage=2)),
             )
             self.axis_data = {"x": x, "y": y}
-            if self.volume.has_complex_samples:
+            if self.volume.has_complex_samples and self.selection.kind != "mean":
                 raw_x, raw_values, _, _ = extract_cut(
                     self.volume, self.selection, (), self.source_param, self.source_params,
-                    check=self._check_cancelled, cancelled=self.is_cancelled, complex_mode=None,
+                    check=self._check_cancelled, cancelled=self.is_cancelled, recorded_samples=True,
                 )
                 if contains_complex(raw_values):
                     self.complex_samples = ComplexSamples(
