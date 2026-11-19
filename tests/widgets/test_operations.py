@@ -58,6 +58,34 @@ class OperationsPanelTestCase(unittest.TestCase):
             self.assertFalse(drag_at(below).isAccepted())
             forward.assert_not_called()
 
+    def test_drag_below_the_following_operation_allows_moving_down(self):
+        operations = draggableListWidget()
+        self.addCleanup(operations.deleteLater)
+        # Constructed events have no native drag source. Use the standard Qt
+        # list MIME data so the view still calculates its actual drop indicator.
+        operations.setDragDropMode(qtw.QAbstractItemView.DragDropMode.DragDrop)
+        operations.addItems(["Limit Maximum", "Differentiate", "Limit Minimum"])
+        operations.setCurrentRow(0)
+        operations.show()
+        mime = operations.mimeData([operations.currentItem()])
+        drag = (QtCore.Qt.DropAction.MoveAction, mime, QtCore.Qt.MouseButton.LeftButton,
+                QtCore.Qt.KeyboardModifier.NoModifier)
+        successor = operations.visualItemRect(operations.item(1))
+        below = QtCore.QPoint(successor.center().x(), successor.bottom() - 1)
+        above = QtCore.QPoint(below.x(), successor.top() + 1)
+        enter = QtGui.QDragEnterEvent(below, *drag)
+        operations.viewportEvent(enter)
+        self.assertTrue(enter.isAccepted())
+
+        move_down = QtGui.QDragMoveEvent(below, *drag)
+        operations.viewportEvent(move_down)
+        self.assertTrue(move_down.isAccepted())
+        self.assertEqual(operations.dropIndicatorPosition(), operations.DropIndicatorPosition.BelowItem)
+
+        stay_in_place = QtGui.QDragMoveEvent(above, *drag)
+        operations.viewportEvent(stay_in_place)
+        self.assertFalse(stay_in_place.isAccepted())
+
     def test_operations_panel_layout_is_installed_once(self):
         messages = []
 
