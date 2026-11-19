@@ -544,7 +544,7 @@ def test_volume_cut_axis_exchange_survives_worker_publication(tmp_path, main, ki
     for swapped in (True, False):
         old = cut.worker
         assert cut.set_plot_axes_swapped(swapped)
-        wait_for(lambda: cut.worker is not old and loaded(cut))
+        wait_for(lambda old=old: cut.worker is not old and loaded(cut))
         x, y = cut.line.getOriginalDataset()
         np.testing.assert_array_equal(x, signal if swapped else coordinate)
         np.testing.assert_array_equal(y, coordinate if swapped else signal)
