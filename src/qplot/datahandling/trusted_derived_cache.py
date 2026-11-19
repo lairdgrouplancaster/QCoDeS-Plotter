@@ -1292,11 +1292,20 @@ class TrustedDerivedDiskCache:
                 or count != len(inventory)
             ):
                 raise _CacheIndexCorrupt("The cache inventory bounds are invalid.")
-            validated_inventory: list[tuple[str, int, Path, _ArtifactProof | None]] = []
+            victims: list[tuple[str, _ArtifactProof | None]] = []
+            projected_count = count
+            projected_total = total
             for name, entry_size in inventory:
                 cancel_check()
                 if type(entry_size) is not int or entry_size < 0:
                     raise _CacheIndexCorrupt("A cache inventory size is invalid.")
+                if (
+                    projected_count <= self.max_entries
+                    and projected_total <= self.max_total_bytes
+                ) or name == exclude:
+                    continue
+                # Verify every proposed eviction before removing the first.
+                # Entries retained by both quotas need no content read here.
                 path = self._validated_artifact_path(
                     name,
                     temporary=False,
@@ -1307,19 +1316,7 @@ class TrustedDerivedDiskCache:
                     proof = self._prove_framed_artifact(path, temporary=False)
                 except FileNotFoundError:
                     proof = None
-                validated_inventory.append((cast(str, name), entry_size, path, proof))
-            victims: list[tuple[str, Path, _ArtifactProof | None]] = []
-            projected_count = count
-            projected_total = total
-            for name, entry_size, path, proof in validated_inventory:
-                if (
-                    projected_count <= self.max_entries
-                    and projected_total <= self.max_total_bytes
-                ):
-                    break
-                if exclude is not None and name == exclude:
-                    continue
-                victims.append((name, path, proof))
+                victims.append((name, proof))
                 projected_count -= 1
                 projected_total -= entry_size
             if (
@@ -1329,7 +1326,7 @@ class TrustedDerivedDiskCache:
                 if not in_transaction:
                     connection.rollback()
                 return False
-            for name, _path, proof in victims:
+            for name, proof in victims:
                 cancel_check()
                 if proof is not None:
                     self._unlink_proven_artifact(
