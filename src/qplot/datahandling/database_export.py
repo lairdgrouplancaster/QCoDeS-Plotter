@@ -188,6 +188,11 @@ def export_database_copy(filename, *, instance, live, cancelled, progress,
                 check()
                 try:
                     message_ready = receive.poll(0.05)
+                    if not message_ready and not process.is_alive():
+                        # The child may have sent its final messages after the timed poll.
+                        message_ready = receive.poll(0)
+                        if not message_ready:
+                            raise RuntimeError("The database export process stopped unexpectedly.")
                     if message_ready:
                         message = receive.recv()
                 except (EOFError, OSError) as error:
@@ -204,8 +209,6 @@ def export_database_copy(filename, *, instance, live, cancelled, progress,
                         progress("Checking standalone database", 0, None)
                     else:
                         progress("Copying committed data", message[1], message[2] or None)
-                elif not process.is_alive():
-                    raise RuntimeError("The database export process stopped unexpectedly.")
                 elif time.monotonic() - last_message > 60:
                     raise TimeoutError("Database export stopped responding. Pause acquisition and retry.")
             process.join(2)
