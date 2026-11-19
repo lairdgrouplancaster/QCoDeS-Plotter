@@ -511,7 +511,10 @@ def test_native_windows_shortcut_and_arguments(tmp_path, isolated_desktop):
     # Exercise the real native launcher without opening a measurement database.
     (destination / "bootstrap.py").write_text(
         "import json, sys\nfrom pathlib import Path\n"
-        f"Path({str(output)!r}).write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n",
+        f"output = Path({str(output)!r})\n"
+        "pending = output.with_suffix('.tmp')\n"
+        "pending.write_text(json.dumps(sys.argv[1:]), encoding='utf-8')\n"
+        "pending.replace(output)\n",
         encoding="utf-8",
     )
     for args in ([], [str(tmp_path / "測定 O'Brien %data & x.db")]):
