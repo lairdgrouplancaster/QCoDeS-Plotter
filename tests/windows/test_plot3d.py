@@ -287,6 +287,57 @@ def test_slice_navigation_all_planes_and_global_colours(tmp_path, main, array):
     assert_database_artifacts_unchanged_except_trusted_shm(path, before)
 
 
+@pytest.mark.parametrize("edit_reversed", [False, True], ids=["restore-transposed", "restore-last-edit"])
+def test_plane_state_follows_physical_axes_on_indirect_return(tmp_path, main, edit_reversed):
+    window, errors = main
+    path = tmp_path / "plane-settings.db"
+    guid = build_volume(path)
+    assert window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(guid)
+    wait_for(lambda: bool(window.windows) and loaded(window.windows[0]))
+    plot = window.windows[0]
+
+    def edit(mean, limit, rect, ranges):
+        entries = (OperationEntry(mean, None), OperationEntry("limit_maximum", limit))
+        plot.oper_widget.restore_state(OperationsState(entries, 1))
+        old = plot.worker
+        plot.oper_widget.apply_but.click()
+        wait_for(lambda: plot.worker is not old and loaded(plot))
+        plot.vb.setRange(xRange=ranges[0], yRange=ranges[1], padding=0)
+        plot.set_marquee_rect(rect)
+        return QtCore.QRectF(plot.marquee), plot.vb.viewRange()
+
+    def return_via_other_depth():
+        first = plot.axis_options["x"]
+        for role, name in (("x", "field"), ("y", "field"), ("y", first)):
+            old = plot.worker
+            plot.axis_dropdown[role].setCurrentText(name)
+            wait_for(lambda old=old: plot.worker is not old and loaded(plot))
+
+    limit = "11"
+    rect, ranges = edit("row_mean", limit, QtCore.QRectF(-2.1, -.1, 2.2, .2),
+                        [(-2.5, 1.5), (-1., 2.)])
+    return_via_other_depth()
+    if edit_reversed:
+        limit = "6"
+        rect, ranges = edit("column_mean", limit, QtCore.QRectF(2.9, 4.9, .2, .2),
+                            [(1., 4.), (3., 6.)])
+        return_via_other_depth()
+
+    mean = "row_mean" if edit_reversed else "column_mean"
+    entries = (OperationEntry(mean, None), OperationEntry("limit_maximum", limit))
+    assert plot.oper_widget.capture_state().entries == entries
+    assert plot._applied_operation_state.entries == entries
+    # The measured signal varies as gate squared at each fixed bias.
+    across_gate = np.array([4., 0., 25.]) - 29 / 3
+    grid = np.tile(np.minimum(across_gate, float(limit)), (2, 1))
+    np.testing.assert_allclose(plot.dataGrid, grid if edit_reversed else grid.T)
+    assert plot.marquee == QtCore.QRectF(rect.y(), rect.x(), rect.height(), rect.width())
+    np.testing.assert_allclose(plot.vb.viewRange(), ranges[::-1])
+    assert not errors
+
+
 def test_keyboard_cycles_visible_volume_probes_and_moves_selected_probe(tmp_path, main, qapplication):
     window, errors = main
     path = tmp_path / "volume.db"

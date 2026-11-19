@@ -366,8 +366,6 @@ class plot3d(plot2d):
             return
         previous = self._axis_selection
         old_pair = (previous["x"], previous["y"])
-        view = self.vb.viewRange()
-        self._plane_states[old_pair] = (self.oper_widget.capture_state(), self.marquee, view)
         other = "y" if key == "x" else "x"
         if self.axis_dropdown[key].currentText() == self.axis_dropdown[other].currentText():
             with QtCore.QSignalBlocker(self.axis_dropdown[other]):
@@ -376,20 +374,24 @@ class plot3d(plot2d):
         pair = (current["x"], current["y"])
         if pair == old_pair:
             return
-        if pair == old_pair[::-1]:
-            state = self.oper_widget.capture_state(transpose=True)
-            rect = self.marquee
-            rect = None if rect is None else QtCore.QRectF(rect.y(), rect.x(), rect.height(), rect.width())
-            ranges = view[::-1]
-        else:
-            state, rect, ranges = self._plane_states.get(pair, (OperationsState((), 0), None, None))
+        # Either orientation must restore the last edits to this physical plane.
+        view = self.vb.viewRange()
+        rect = self.marquee
+        self._plane_states[old_pair] = (self.oper_widget.capture_state(), rect, view)
+        transposed_rect = None if rect is None else QtCore.QRectF(rect.y(), rect.x(), rect.height(), rect.width())
+        self._plane_states[old_pair[::-1]] = (
+            self.oper_widget.capture_state(transpose=True), transposed_rect, view[::-1],
+        )
+        state, rect, ranges = self._plane_states.get(pair, (OperationsState((), 0), None, None))
+        if pair != old_pair[::-1]:
             self.plane_changed.emit()
         self.oper_widget.restore_state(state)
         self._update_operation_labels()
         self._axis_selection = current
         self.clear_marquee()
         if rect is not None:
-            self.set_marquee_rect(rect)
+            # The previous plane's grid is still displayed until navigation completes.
+            self._draw_marquee_rect(rect)
         if ranges is not None:
             self.vb.setRange(xRange=ranges[0], yRange=ranges[1], padding=0)
         else:
