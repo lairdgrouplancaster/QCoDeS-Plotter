@@ -1906,7 +1906,7 @@ class moreInfo(qtw.QTabWidget):
 
         run_metadata = self._trusted_run_metadata(run_metadata)
         guid = run_metadata.get("guid")
-        self.clear()
+        self.clear(keep_preview=bool(guid) and self.preview.current_guid == guid)
         self._set_trusted_overview(run_metadata, parameters)
         self._set_trusted_parameters(
             tuple(parameters or ()),
@@ -1951,7 +1951,9 @@ class moreInfo(qtw.QTabWidget):
             if self._trusted_detail_identity == detail_identity
             else None
         )
-        self.clear()
+        # Same-run preview cards retain their selected measurement keys when
+        # they are redrawn. Clearing the preview first discards those keys.
+        self.clear(keep_preview=bool(preview_guid) and self.preview.current_guid == preview_guid)
         self._trusted_detail_identity = detail_identity
         self._trusted_full_values = {
             value.identifier: value for value in detail.presentation.full_values

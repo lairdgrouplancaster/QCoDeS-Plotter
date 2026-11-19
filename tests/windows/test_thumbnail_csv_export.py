@@ -125,6 +125,61 @@ def test_selected_run_preview_context_exports_each_selected_measurement(
     _assert_measurement_files(window, runs, targets, folder)
 
 
+@pytest.mark.parametrize("publication", ["bounded metadata", "full detail"])
+def test_preview_export_selection_survives_progressive_run_details(
+        typed_run_window, tmp_path, monkeypatch, publication):
+    window, runs = typed_run_window
+    preview = window.infoBox.preview
+    window.infoBox.setCurrentWidget(preview)
+    run_id, guid, _offset = runs[0]
+    bridge = window._trusted_derived_bridge
+    coordinator = bridge.coordinator
+    wait_for(lambda: bridge._detail_display_guid == runs[1][1]
+             and not coordinator.active and not coordinator.snapshot().pending_count, 45)
+    deliver = coordinator._on_selected_detail
+    held = []
+
+    def delay_current_detail(packet):
+        if packet.run_guid == guid:
+            held.append(packet)
+        else:
+            deliver(packet)
+
+    monkeypatch.setattr(coordinator, "_on_selected_detail", delay_current_detail)
+    select_one = QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect
+    window.RunList.setCurrentItem(window.RunList._item_for_guid(guid), 0, select_one)
+    wait_for(lambda: window._selected_run_guid == guid)
+    wait_for(lambda: held, 40)
+    wait_for(lambda: guid in preview.cache and guid in bridge._metadata_by_guid)
+    wait_for(lambda: not coordinator.active and not coordinator.snapshot().pending_count, 40)
+    targets = ((guid, "signal"), (guid, "reference"))
+    _select_labels([_label(preview, name) for _, name in targets])
+
+    if publication == "bounded metadata":
+        window.updateSelected(guid)
+    else:
+        for packet in held:
+            deliver(packet)
+        assert window.infoBox._trusted_detail_identity == (run_id, guid)
+
+    assert window.RunList.currentItem().guid == preview.current_guid == guid
+    wait_for(lambda: {v.parameter for v in preview.preview_selection_labels() if v.isVisible()}
+             == {"signal", "reference"})
+    assert all(_label(preview, name)._selected for _, name in targets)
+    folder = tmp_path / "selected-previews"
+    folder.mkdir()
+    _choose_folder(monkeypatch, folder)
+    _export_context_selection(monkeypatch, _label(preview, "reference"))
+    _assert_measurement_files(window, runs, targets, folder)
+
+    other_guid = runs[1][1]
+    window.RunList.setCurrentItem(window.RunList._item_for_guid(other_guid), 0, select_one)
+    wait_for(lambda: preview.current_guid == other_guid and other_guid in preview.cache)
+    wait_for(lambda: {v.parameter for v in preview.preview_selection_labels() if v.isVisible()}
+             == {"signal", "reference"})
+    assert all(not _label(preview, name)._selected for _, name in targets)
+
+
 @pytest.mark.parametrize("cancel_at", ["folder", "second-replacement"])
 def test_thumbnail_export_cancel_approves_every_file_before_starting(
         typed_run_window, tmp_path, monkeypatch, cancel_at):
