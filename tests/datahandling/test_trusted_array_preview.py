@@ -209,3 +209,60 @@ def test_complex_nyquist_preview_still_validates_recorded_coordinate_lengths():
     payload = render_trusted_derived_payload(observation, TrustedWorkKind.THUMBNAIL, options)
     assert payload["status"] == "unsupported"
     assert "sizes differ" in payload["description"]
+
+
+@pytest.mark.parametrize("mode, dimensions", [
+    ("imag_vs_real", 1), ("imag", 1), ("phase", 2), ("magnitude", 2), ("real", 2),
+])
+@pytest.mark.parametrize("reverse", [False, True], ids=["real-first", "complex-first"])
+def test_mixed_packets_share_the_measurement_projection(mode, dimensions, reverse):
+    observation = _observation(dimensions=dimensions)
+    params = tuple(replace(param, paramtype="array") for param in observation.parameters)
+    real = np.array([-9, 8, 19], dtype=np.int64)
+    nonreal = np.array([3 + 4j, 1 - 6j, 5 + 15j])
+    signal = np.concatenate((real, nonreal))
+    x = np.array([2, 3, 5, 2, 3, 5])
+    axes = [x] if dimensions == 1 else [np.repeat([7, 13], 3), x]
+    if mode == "imag_vs_real":
+        reference_axes, values = [signal.real], signal.imag
+    else:
+        reference_axes = axes
+        values = {"real": signal.real, "imag": signal.imag, "magnitude": np.abs(signal),
+                  "phase": np.angle(signal, deg=True)}[mode]
+
+    def observation_for(columns, packets):
+        rows = []
+        for idx in ((1, 0) if reverse else (0, 1)):
+            chunk = slice(3 * idx, 3 * (idx + 1))
+            rows.append((len(rows) + 1, *(_blob(axis[chunk]) for axis in columns), _blob(packets[idx])))
+        return replace(observation, parameters=params, sample_rows=tuple(rows), validated_2d_layouts=())
+
+    key = "complex_1d" if dimensions == 1 else "complex_nd"
+    opts = RenderingOptions.from_mapping({key: mode, "width": 64, "height": 64})
+    source = observation_for(axes, (real, nonreal))
+    reference = observation_for(reference_axes, (values[:3], values[3:]))
+    actual = render_trusted_derived_payload(source, TrustedWorkKind.PREVIEW, opts)
+    expected = render_trusted_derived_payload(reference, TrustedWorkKind.PREVIEW, opts)
+    assert actual["status"] == expected["status"] == "ok"
+    image = dict(actual["images"][0])
+    assert image["sampled_points"] == 6 and image["complex_mode"] == mode
+    assert image["bytes"] == dict(expected["images"][0])["bytes"]
+
+
+def test_mixed_magnitude_distinguishes_adjacent_signed_minimum_readings():
+    observation = _observation(dimensions=2)
+    params = tuple(replace(param, paramtype="array") for param in observation.parameters)
+    base = 2**63
+    axes = (_blob([0, 1]), _blob([0, 1]))
+    real = np.array([-base, 1 - base], dtype=np.int64)
+    source = replace(observation, parameters=params, validated_2d_layouts=(), sample_rows=(
+        (1, *axes, _blob(real)), (2, _blob([1]), _blob([0]), _blob([complex(base)])),
+    ))
+    reference = replace(source, sample_rows=(
+        (1, *axes, _blob(np.array([base, base - 1], dtype=np.uint64))),
+        (2, _blob([1]), _blob([0]), _blob(np.array([base], dtype=np.uint64))),
+    ))
+    actual = render_trusted_derived_payload(source, TrustedWorkKind.PREVIEW)
+    expected = render_trusted_derived_payload(reference, TrustedWorkKind.PREVIEW)
+    assert actual["status"] == expected["status"] == "ok"
+    assert dict(actual["images"][0])["bytes"] == dict(expected["images"][0])["bytes"]

@@ -55,15 +55,53 @@ def render_array_preview(observation, dependencies, dependent, width, height, ch
     )
 
 
+def _decoded_records(sample_rows, indexes, check):
+    """Validate shapes and the total sample budget before retaining decoded views."""
+    expanded_count = 0
+    for row in sample_rows:
+        check()
+        if any(row[index] is None for index in indexes):
+            continue
+        columns = [_decode(row[index], allow_complex=position == len(indexes) - 1)
+                   for position, index in enumerate(indexes)]
+        # QCoDeS expands scalar storage and singleton arrays to the largest
+        # acquired array. Scalar storage does not make an empty array record
+        # into one sample. Index singleton cells below without allocating the
+        # repeated arrays; the sample budget applies to their expanded extent.
+        array_sizes = [column.size for source, column in zip(indexes, columns, strict=True)
+                       if isinstance(row[source], bytes)]
+        # The selected output is first in QCoDeS' tree. A scalar output is
+        # initially expanded to the first array dependency. An empty output
+        # contributes no samples even when its setpoints are singleton arrays.
+        first_size = (columns[-1].size if isinstance(row[indexes[-1]], bytes)
+                      else array_sizes[0] if array_sizes else 1)
+        size = 0 if first_size == 0 else max(array_sizes, default=1)
+        if any(column.size not in (1, size) for column in columns):
+            raise _UnsupportedNumericData("Array measurement and setpoint sizes differ.")
+        expanded_count += size
+        if expanded_count > MAX_SAMPLES:
+            raise _UnsupportedNumericData("The array preview exceeds its sample budget.")
+        yield columns, size
+
+
+def _project_preview_values(values, mode):
+    if values.dtype.kind in "biu":
+        # Integer packets alongside complex packets can exceed binary64's
+        # precision. The magnitude of the signed minimum also exceeds int64.
+        if mode == "real":
+            return values
+        if mode == "magnitude":
+            return np.abs(values.astype(object)) if values.dtype.kind == "i" else values
+    return project_complex(values, mode)
+
+
 def render_array_samples(sample_columns, sample_rows, dependencies, dependent,
                          width, height, check, *, complex_mode="magnitude"):
     """Render bounded primitive/NPY samples without owning a database handle."""
     indexes = [sample_columns.index(name)
                for name in (*dependencies, dependent)]
     points = []
-    expanded_count = 0
     exact_sample_bytes = 0
-    complex_measurement = False
 
     def preview_number(value):
         nonlocal exact_sample_bytes
@@ -85,44 +123,24 @@ def render_array_samples(sample_columns, sample_rows, dependencies, dependent,
             return exact
         return int(value) if isinstance(value, (bool, int)) else _finite_number(value)
 
-    for row in sample_rows:
+    records = list(_decoded_records(sample_rows, indexes, check))
+    complex_measurement = any(np.iscomplexobj(columns[-1]) for columns, _ in records)
+    for columns, size in records:
         check()
-        if any(row[index] is None for index in indexes):
-            continue
-        columns = [_decode(row[index], allow_complex=position == len(indexes) - 1)
-                   for position, index in enumerate(indexes)]
-        # QCoDeS expands scalar storage and singleton arrays to the largest
-        # acquired array. Scalar storage does not make an empty array record
-        # into one sample. Index singleton cells below without allocating the
-        # repeated arrays; the sample budget applies to their expanded extent.
-        array_sizes = [column.size for source, column in zip(indexes, columns, strict=True)
-                       if isinstance(row[source], bytes)]
-        # The selected output is first in QCoDeS' tree. A scalar output is
-        # initially expanded to the first array dependency. An empty output
-        # contributes no samples even when its setpoints are singleton arrays.
-        first_size = (columns[-1].size if isinstance(row[indexes[-1]], bytes)
-                      else array_sizes[0] if array_sizes else 1)
-        size = 0 if first_size == 0 else max(array_sizes, default=1)
-        if any(column.size not in (1, size) for column in columns):
-            raise _UnsupportedNumericData("Array measurement and setpoint sizes differ.")
-        if np.iscomplexobj(columns[-1]):
-            complex_measurement = True
+        if complex_measurement:
             values = columns[-1]
             if len(dependencies) == 1 and complex_mode == "imag_vs_real":
-                columns[0] = project_complex(values, "real")
-                columns[-1] = project_complex(values, "imag")
+                columns[0] = _project_preview_values(values, "real")
+                columns[-1] = _project_preview_values(values, "imag")
             else:
-                columns[-1] = project_complex(values, complex_mode)
-        expanded_count += size
-        if expanded_count > MAX_SAMPLES:
-            raise _UnsupportedNumericData("The array preview exceeds its sample budget.")
+                columns[-1] = _project_preview_values(values, complex_mode)
         for index in range(size):
             if index % 128 == 0:
                 check()
             # NPY Boolean arrays are numeric acquired samples. Preserve
             # integers too: rounding before grouping can merge adjacent
             # recorded coordinates above float64's integer precision.
-            record_samples = (column[0 if column.size == 1 else index].item()
+            record_samples = (column.item(0 if column.size == 1 else index)
                               for column in columns)
             values = tuple(preview_number(value) for value in record_samples)
             if all(value is not None for value in values[:-1]):
