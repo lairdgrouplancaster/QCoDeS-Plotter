@@ -26,6 +26,13 @@ from .plot1d import plot1d
 from .plot2d import plot2d
 
 
+def _exports_only_cut(cut, exporter):
+    """Row-wide cut metadata belongs only to exports of that trace alone."""
+    selected = selected_csv_measurements(cut, exporter)
+    items = cut.lines.values() if selected is None else (entry.item for entry in selected)
+    return all(item is cut.line for item in items)
+
+
 class CutLoader(loader):
     def __init__(self, *args, volume, selection, slice_operations, source_param,
                  source_params, source_complex_mode="magnitude", **kwargs):
@@ -372,14 +379,17 @@ class VolumeCut(plot1d):
 
     def _capture_line_csv(self, exporter, *, transformed=False):
         capture = super()._capture_line_csv(exporter, transformed=transformed)
+        if not _exports_only_cut(self, exporter):
+            return capture
         if (self.selection.kind == "mean" and isinstance(capture, CsvColumns)
                 and len(capture.columns) == 2
                 and np.array_equal(capture.columns[0], self.__dict__.get("_coverage_depths", []))):
             capture = replace(capture, headers=(*capture.headers, "finite_cells"),
                               columns=(*capture.columns, self._coverage_counts.copy()))
+        parameter = self._trace_axis_parameter if transformed else self._trace_input_axis_parameter
         return replace(capture, constants=(*self._displayed_cut_metadata,
-                                          ("x_unit", self.axis_param["x"].unit),
-                                          ("value_unit", self.display_param.unit)))
+                                          ("x_unit", parameter(self.line, "x").unit),
+                                          ("value_unit", parameter(self.line, "y").unit)))
 
     def show_coverage(self):
         if "_coverage_counts" not in self.__dict__:
@@ -584,10 +594,7 @@ class FrozenLine(plot1d):
 
     def _capture_line_csv(self, exporter, *, transformed=False):
         capture = super()._capture_line_csv(exporter, transformed=transformed)
-        selected = selected_csv_measurements(self, exporter)
-        items = self.lines.values() if selected is None else (entry.item for entry in selected)
-        if any(item is not self.line for item in items):
-            # Row-wide cut coordinates describe only the primary frozen trace.
+        if not _exports_only_cut(self, exporter):
             return capture
         parameter = self._trace_axis_parameter if transformed else self._trace_input_axis_parameter
         x_unit = parameter(self.line, "x").unit

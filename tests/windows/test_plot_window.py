@@ -3638,6 +3638,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             window.top_vb.deleteLater()
             window.right_vb.deleteLater()
             widget.deleteLater()
+            window.deleteLater()
+            qtw.QApplication.sendPostedEvents(window, QtCore.QEvent.Type.DeferredDelete)
+        self.assertTrue(sip.isdeleted(window))
 
     def test_axis_scale_rejects_non_finite_and_reversed_manual_ranges(self):
         window = plotWidget.__new__(plotWidget)

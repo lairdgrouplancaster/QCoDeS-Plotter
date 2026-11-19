@@ -981,6 +981,7 @@ class plotWidget(
         # popups can remain usable after this plot's dataset is retired.
         closed = getattr(self, "closed", None)
         if closed is not None:
+            closed.connect(self._release_axis_scale_links)
             for root in (self.vbMenu, self.plot.ctrlMenu):
                 if root is not None:
                     for menu in (root, *root.findChildren(qtw.QMenu)):
