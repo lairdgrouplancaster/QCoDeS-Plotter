@@ -334,6 +334,7 @@ class TrustedMetadataQueryAdapter:
         # Capture before the watermark and pages.  A writer commit during any
         # later bootstrap query therefore changes the next data_version and is
         # reconciled by the first incremental refresh.
+        bootstrap_incarnation = self._executor.incarnation
         baseline = self._executor.data_version()
         watermark = self._maximum_run_id()
         self._runs.clear()
@@ -349,7 +350,9 @@ class TrustedMetadataQueryAdapter:
         self._last_run_id = 0
         self._pending_watermark = watermark
         self._data_version = baseline
-        self._data_version_incarnation = self._executor.incarnation
+        self._data_version_incarnation = (
+            bootstrap_incarnation if bootstrap_incarnation == self._executor.incarnation else None
+        )
         self._bootstrap_reconciliation_pending = True
         return TrustedBootstrapResult(
             watermark,
@@ -438,6 +441,13 @@ class TrustedMetadataQueryAdapter:
             )
 
         watermark = self._maximum_run_id()
+        unchanged_bootstrap_source = (
+            self._bootstrap_reconciliation_pending
+            and not schema_may_have_changed
+            and not publication_reconciliation
+            and prior == watermark == self._last_run_id
+            and incarnation == self._executor.incarnation
+        )
         self._pending_watermark = max(prior, watermark)
         # Keep the value captured before paging.  A commit during pagination
         # remains observable on the next explicit refresh and cannot be lost.
@@ -450,6 +460,7 @@ class TrustedMetadataQueryAdapter:
             current_version,
             True,
             incarnation,
+            unchanged_bootstrap_source,
         )
 
     def basic_run_page(

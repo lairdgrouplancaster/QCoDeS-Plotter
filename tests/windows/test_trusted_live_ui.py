@@ -488,7 +488,8 @@ def test_refresh_commit_uses_sidecar_baseline_promoted_by_preflight(
         harness.dispose()
 
 
-def test_trusted_refresh_updates_selected_completed_row_and_reloads_detail():
+@pytest.mark.parametrize("unchanged_bootstrap", [False, True])
+def test_trusted_refresh_updates_selected_completed_row_and_reloads_detail(unchanged_bootstrap):
     class Harness(database_actions.DatabaseActionsMixin):
         def __init__(self) -> None:
             seed_load(self, publication_active=False)
@@ -505,7 +506,12 @@ def test_trusted_refresh_updates_selected_completed_row_and_reloads_detail():
                         "measure_parameters": ["signal"],
                         "is_completed": True,
                         "result_count": 10,
-                    }
+                    },
+                    8: {
+                        "guid": "finishing-guid",
+                        "is_completed": False,
+                        "result_count": 3,
+                    },
                 }
             )
             self.reselected = []
@@ -525,22 +531,29 @@ def test_trusted_refresh_updates_selected_completed_row_and_reloads_detail():
             return "empty"
 
     harness = Harness()
+    invalidated = []
+    harness._trusted_derived_bridge = SimpleNamespace(source_changed=invalidated.extend)
     status = {
         "guid": "selected-guid",
         "is_completed": True,
-        "result_count": 15,
+        "result_count": 10 if unchanged_bootstrap else 15,
     }
     try:
-        assert harness.RunList.watching == []
+        assert [item.guid for item in harness.RunList.watching] == ["finishing-guid"]
 
         harness._apply_database_refresh_result(
             {},
-            {"selected-guid": status},
+            {"selected-guid": status, "finishing-guid": {"is_completed": True, "result_count": 4}},
+            unchanged_bootstrap_source=unchanged_bootstrap,
         )
 
         item = harness.RunList._item_for_guid("selected-guid")
         assert item is not None
-        assert item.run_metadata["result_count"] == 15
+        assert item.run_metadata["result_count"] == status["result_count"]
+        assert harness.RunList.watching == []
+        # A run can finish after the unchanged bootstrap header was read.
+        # Its final status still needs to refresh its derived data.
+        assert set(invalidated) == ({8} if unchanged_bootstrap else {7, 8})
         assert harness.reselected == ["selected-guid"]
     finally:
         harness.RunList.deleteLater()
@@ -1412,7 +1425,7 @@ def test_trusted_refresh_callback_rechecks_after_final_view_publication(tmp_path
             self.applied = []
             self.reloads = []
 
-        def _apply_database_refresh_result(self, new_runs, statuses) -> None:
+        def _apply_database_refresh_result(self, new_runs, statuses, **_kwargs) -> None:
             self.applied.append((dict(new_runs), dict(statuses)))
             self.RunList.visible = {
                 **dict(new_runs),

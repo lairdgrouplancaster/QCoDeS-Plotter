@@ -1068,7 +1068,10 @@ class DatabaseActionsMixin:
 
         if not is_current():
             return
-        self._apply_database_refresh_result(new_runs, statuses)
+        self._apply_database_refresh_result(
+            new_runs, statuses,
+            unchanged_bootstrap_source=getattr(session.worker, "unchanged_bootstrap_source", False) is True,
+        )
         if not is_current():
             return
         if DatabaseActionsMixin._reload_if_worker_database_instance_changed(
@@ -1080,10 +1083,11 @@ class DatabaseActionsMixin:
             return
 
 
-    def _apply_database_refresh_result(self, new_runs, statuses):
+    def _apply_database_refresh_result(self, new_runs, statuses, *, unchanged_bootstrap_source=False):
         if DatabaseActionsMixin._database_generation_transaction_blocks_path(self):
             return
         updated_runs = self.RunList.checkWatching(statuses) or {}
+        unchanged_completed_run = None
         update_runs = getattr(self.RunList, "updateRuns", None)
         run_id_for_guid = getattr(self.RunList, "run_id_for_guid", None)
         if callable(update_runs) and callable(run_id_for_guid):
@@ -1102,12 +1106,19 @@ class DatabaseActionsMixin:
                 metadata = dict(status)
                 metadata.setdefault("guid", str(guid))
                 remaining_statuses[run_id] = metadata
+                # Watched runs were handled above, including any that finished
+                # after the header was read. Only the extra completed selection
+                # can receive cheap field enrichment without a source change.
+                if (unchanged_bootstrap_source and metadata.get("is_completed")
+                        and guid == getattr(self, "_selected_run_guid", None)):
+                    unchanged_completed_run = run_id
             updated_runs.update(update_runs(remaining_statuses))
         if updated_runs:
             if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
                 bridge = getattr(self, "_trusted_derived_bridge", None)
-                if bridge is not None:
-                    bridge.source_changed(tuple(updated_runs))
+                changed = tuple(run_id for run_id in updated_runs if run_id != unchanged_completed_run)
+                if bridge is not None and changed:
+                    bridge.source_changed(changed)
             else:
                 self.infoBox.preview.add_runs(updated_runs)
                 prioritize_previews = getattr(self, "_prioritize_preview_runs", None)

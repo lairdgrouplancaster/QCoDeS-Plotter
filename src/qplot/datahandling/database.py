@@ -528,6 +528,7 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
         self.trusted_service = trusted_service
         self._require_publication_ack = bool(require_publication_ack)
         self._derived_coordinator_owned = bool(derived_coordinator_owned)
+        self.unchanged_bootstrap_source = False
         self._new_runs_publication_ack = threading.Event()
         self._new_runs_publication_lock = threading.Lock()
         self._new_runs_publication_error: BaseException | None = None
@@ -700,6 +701,7 @@ class DatabaseRefreshWorker(_InterruptibleSqlWorker, QtCore.QRunnable):
                 )
                 status.update(expensive.as_dict())
             statuses[str(guid)] = status
+        self.unchanged_bootstrap_source = header.unchanged_bootstrap_source
         return new_runs, statuses
 
 
