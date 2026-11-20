@@ -201,6 +201,9 @@ class TrustedRefreshResult:
     data_version: int
     data_version_changed: bool
     helper_incarnation: int
+    # The mandatory first reconciliation can publish cheap table fields
+    # without a writer commit since the bootstrap version was captured.
+    unchanged_bootstrap_source: bool = False
 
 
 @dataclass(frozen=True, slots=True)

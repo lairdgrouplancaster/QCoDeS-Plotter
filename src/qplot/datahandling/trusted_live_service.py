@@ -1546,7 +1546,10 @@ class TrustedLiveReadService(TrustedDerivedReadService):
             # The previous header may have accepted the writer's final commit
             # before a watched status failed. Reconcile those statuses even
             # when SQLite's data_version has not changed again.
-            result = replace(cast(TrustedRefreshResult, result), data_version_changed=True)
+            result = replace(
+                cast(TrustedRefreshResult, result), data_version_changed=True,
+                unchanged_bootstrap_source=False,
+            )
         for request_id in tuple(operation.subscribers):
             state = self._requests.get(request_id)
             if state is None or state.done.is_set():

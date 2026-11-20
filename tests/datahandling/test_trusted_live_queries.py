@@ -392,6 +392,7 @@ def test_refresh_reconciles_same_version_when_data_version_respawns_helper(tmp_p
     assert refresh.data_version == bootstrap.data_version == 17
     assert refresh.helper_incarnation == bootstrap.helper_incarnation + 1
     assert refresh.data_version_changed
+    assert not refresh.unchanged_bootstrap_source
     assert (refresh.prior_run_id_watermark, refresh.run_id_watermark) == (1, 1)
     assert any(
         batch[0].sql == 'SELECT * FROM "runs" WHERE 0' for batch in executor.batches
@@ -479,6 +480,7 @@ def test_commit_during_multi_page_bootstrap_is_discovered_once_on_first_refresh(
         first_refresh.run_id_watermark,
     )
     assert first_refresh.data_version_changed
+    assert not first_refresh.unchanged_bootstrap_source
     assert (
         first_refresh.prior_run_id_watermark,
         first_refresh.run_id_watermark,
@@ -717,6 +719,7 @@ def test_refresh_skips_unchanged_version_and_never_duplicates_new_runs(tmp_path)
     # bootstrap paging, even when SQLite reports the same numeric version.
     reconciliation = adapter.refresh_new_runs()
     assert reconciliation.data_version_changed
+    assert reconciliation.unchanged_bootstrap_source
     assert reconciliation.prior_run_id_watermark == 2
     assert reconciliation.run_id_watermark == 2
     executor.clear_history()

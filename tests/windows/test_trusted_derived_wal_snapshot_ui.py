@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ from tests.support.datahandling.trusted_live import (
     _assert_protected_artifacts_unchanged,
     _stable_artifact_state,
 )
+from tests.support.windows.plot3d import main as main
 from tests.windows._trusted_derived_wal_ui import (
     _prepare_live_database,
     _process_until,
@@ -30,6 +32,63 @@ from tests.windows._trusted_derived_wal_ui import (
 )
 
 pytestmark = pytest.mark.timeout(180)
+
+
+def test_first_refresh_preserves_browsing_but_snapshot_edit_replaces_it(main, tmp_path):
+    window, errors = main
+    path = tmp_path / "refresh.db"
+    writer = _prepare_live_database(path, "opening")
+    dataset = None
+    try:
+        experiment = load_or_create_experiment("snapshot", "contacts", conn=writer)
+        parameter = ManualParameter("voltage")
+        station = Station(parameter, default=False)
+        station.metadata["contacts"] = {f"pin{i}": i for i in range(180)}
+        measurement = Measurement(exp=experiment, station=station)
+        measurement.register_parameter(parameter)
+        with measurement.run(write_in_background=False) as saver:
+            saver.add_result((parameter, 1.0))
+        dataset = saver.dataset
+        window.spinBox.setValue(0.0)
+        window.show()
+        assert window.load_database_path(str(path))
+        tree = window.infoBox.snapshot
+        window.infoBox.setCurrentWidget(tree)
+        _process_until(lambda: not window._database_load_active and
+                       window._selected_run_guid == dataset.guid and
+                       window._trusted_derived_bridge._detail_display_guid == dataset.guid)
+        prefix = "/Snapshot/station/metadata"
+        _process_until(lambda: any(item.text(0) == "metadata" for item in _tree_items(tree)))
+        _tree_item_for_path(tree, prefix).setExpanded(True)
+        _process_until(lambda: any(item.text(0) == "contacts" for item in _tree_items(tree)))
+        _tree_item_for_path(tree, prefix + "/contacts").setExpanded(True)
+        _process_until(lambda: any(item.text(0) == "Load more…" for item in _tree_items(tree)))
+        more = next(item for item in _tree_items(tree) if item.text(0) == "Load more…")
+        tree.itemActivated.emit(more, 0)
+        _process_until(lambda: any(item.text(0) == "pin179" for item in _tree_items(tree)))
+        token = tree.snapshotSessionToken
+
+        window.refreshMain()
+        _process_until(lambda: not window._database_refresh_active and not
+                       window._trusted_derived_bridge.background_active())
+        assert tree.snapshotSessionToken == token
+        assert _tree_item_for_path(tree, prefix + "/contacts").isExpanded()
+        assert _tree_item_for_path(tree, prefix + "/contacts/pin179").text(1) == "179"
+
+        # A real writer may change the snapshot without appending results or
+        # changing the run's completion/measurement counts.
+        dataset.add_snapshot(json.dumps({"station": {"updated_contact": "source B"}}),
+                             overwrite=True)
+        window.refreshMain()
+        _process_until(lambda: any(item.text(0) == "updated_contact" for item in _tree_items(tree)))
+        assert tree.snapshotSessionToken != token
+        assert _tree_item_for_path(tree, "/Snapshot/station/updated_contact").text(1) == "source B"
+        assert not any(item.text(0) == "pin179" for item in _tree_items(tree))
+        assert not errors
+    finally:
+        if dataset is not None and dataset.conn is not writer:
+            dataset.conn.close()
+        writer.close()
 
 
 def test_real_qcodes_large_snapshot_is_paged_beyond_old_node_limit(
