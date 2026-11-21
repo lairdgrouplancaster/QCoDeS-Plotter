@@ -255,6 +255,32 @@ class TrustedReadRequest(Generic[_ResultT]):
         return cast(_ResultT, self._state.result)
 
 
+def wait_for_trusted_read(request, check_cancelled, on_progress=None):
+    """Wait in a worker, cancelling its subscription if the caller stops."""
+    previous = None
+    try:
+        while True:
+            check_cancelled()
+            observed = request.progress
+            if on_progress is not None and observed is not None and observed != previous:
+                on_progress(observed)
+                previous = observed
+            try:
+                result = request.wait(0.05)
+            except TimeoutError:
+                if not request.done:
+                    continue
+                # Completion can race the timed wait. Read the terminal result
+                # instead of mistaking that polling timeout for a failed read;
+                # a real request deadline still propagates from this wait.
+                result = request.wait(0)
+            check_cancelled()
+            return result
+    finally:
+        if not request.done:
+            request.cancel()
+
+
 class _BrokerQueryExecutor:
     """Expose supervisor operations while publishing the exact active job."""
 

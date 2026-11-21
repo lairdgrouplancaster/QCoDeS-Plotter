@@ -53,13 +53,20 @@ class ThemePalette:
 
 _STYLESHEET_TEMPLATE = Template(
     """
-    QMainWindow, QDialog, QColorDialog {
+    QMainWindow, QDialog, QColorDialog, QWidget#plotExportDialog {
+        color: $text;
         background-color: $window_bg;
     }
     QMainWindow, QDialog, QWidget {
         font-size: 10pt;
     }
-    QLabel {
+    QGroupBox, QGroupBox::title {
+        color: $text;
+    }
+    QGroupBox:disabled, QGroupBox::title:disabled {
+        color: $disabled_text;
+    }
+    QWidget#aspectRatioLink, QLabel {
         color: $text;
     }
     QLabel:disabled {
@@ -293,6 +300,10 @@ _STYLESHEET_TEMPLATE = Template(
     QRadioButton::indicator:!checked {
         background-color: transparent;
     }
+    QSplitter#plotAppearanceSplitter::handle:horizontal {
+        background-color: $splitter;
+        width: 4px;
+    }
     QSplitter::handle:vertical {
         background-color: $splitter;
         height: 6px;
@@ -395,6 +406,13 @@ _STYLESHEET_TEMPLATE = Template(
     QTableWidget::item:hover {
         background-color: $table_hover_bg;
         color: $text_strong;
+    }
+    QTableWidget#plotAppearanceTable:focus, QComboBox#defaultTraceStylePreferenceCombo:focus {
+        border-color: $accent;
+    }
+    QTableWidget#plotAppearanceTable::item:disabled {
+        background-color: $panel_bg;
+        color: $disabled_text;
     }
     QTreeView::branch {
         background: transparent;

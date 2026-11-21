@@ -109,6 +109,7 @@ class _AspectRatioLink(qtw.QWidget):
     def __init__(self):
         super().__init__()
         self.setFixedSize(20, 24)
+        self.setObjectName("aspectRatioLink")
         self.setAccessibleName("Aspect ratio locked")
         self.setToolTip("Width and height stay linked to preserve the plot's aspect ratio.")
 

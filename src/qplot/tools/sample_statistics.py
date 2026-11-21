@@ -62,16 +62,16 @@ def finite_sum_is_zero(values, *, check_cancelled=lambda: None):
     return total == 0
 
 
+def _checked_samples(values, check_cancelled):
+    for index, value in enumerate(values.flat):
+        if index % 1024 == 0:
+            check_cancelled()
+        yield value
+
+
 def finite_mean(values, *, check_cancelled=lambda: None):
     """Mean finite recorded samples, retaining integer and decimal precision."""
     values = np.asarray(values)
-
-    def samples():
-        for index, value in enumerate(values.flat):
-            if index % 1024 == 0:
-                check_cancelled()
-            yield value
-
     # Extended floats also lose recorded residuals when math.fsum converts
     # each input to a Python float before summing. Reuse exact binary totals.
     if values.dtype.kind in "iuO" or (values.dtype.kind == "f" and values.dtype.itemsize > 8):
@@ -85,15 +85,15 @@ def finite_mean(values, *, check_cancelled=lambda: None):
                 # A finite extended mean may exceed the display float range.
                 # Retain the ordinary float path's signed infinity result.
                 return math.inf if total > 0 else -math.inf
-        return float(sum((sample_fraction(v) for v in samples()), Fraction()) / values.size)
+        return float(sum((sample_fraction(v) for v in _checked_samples(values, check_cancelled)), Fraction()) / values.size)
     try:
-        return math.fsum(samples()) / values.size
+        return math.fsum(_checked_samples(values, check_cancelled)) / values.size
     except OverflowError:
         # The sum can exceed float's range even though its mean cannot.
-        return float(sum((Fraction(float(v)) for v in samples()), Fraction()) / values.size)
+        return float(sum((Fraction(float(v)) for v in _checked_samples(values, check_cancelled)), Fraction()) / values.size)
 
 
-def finite_standard_deviation(values):
+def finite_standard_deviation(values, *, check_cancelled=lambda: None):
     """Population deviation with subtraction before conversion and scaling."""
     values = np.asarray(values).ravel()
     # Subtract extended floating anchors before narrowing to display precision,
@@ -104,7 +104,11 @@ def finite_standard_deviation(values):
             if values.dtype.kind in "iu":
                 # Python-integer subtraction cannot wrap at signed/unsigned
                 # endpoints and converts only the already-centered values.
-                shifted = (values.astype(object) - anchor.numerator).astype(float)
+                shifted = np.empty(values.shape, dtype=float)
+                for start in range(0, values.size, 65536):
+                    check_cancelled()
+                    block = slice(start, start + 65536)
+                    shifted[block] = values[block].astype(object) - anchor.numerator
             else:
                 def difference(value):
                     if isinstance(value, (int, np.integer)):
@@ -115,7 +119,10 @@ def finite_standard_deviation(values):
                         return float(sample_fraction(value) - anchor)
                     return (numerator * anchor.denominator - anchor.numerator * denominator) / (
                         denominator * anchor.denominator)
-                shifted = np.fromiter((difference(v) for v in values), dtype=float, count=values.size)
+                shifted = np.fromiter(
+                    (difference(v) for v in _checked_samples(values, check_cancelled)),
+                    dtype=float, count=values.size,
+                )
         except OverflowError:
             shifted = np.full(values.shape, np.inf)
     else:
@@ -131,6 +138,6 @@ def finite_standard_deviation(values):
         if scale == 0:
             return 0.
         normalized = shifted / scale
-    centered = normalized - finite_mean(normalized)
-    variance = math.fsum(float(v) * float(v) for v in centered) / values.size
+    centered = normalized - finite_mean(normalized, check_cancelled=check_cancelled)
+    variance = math.fsum(float(v) * float(v) for v in _checked_samples(centered, check_cancelled)) / values.size
     return math.sqrt(variance) * scale

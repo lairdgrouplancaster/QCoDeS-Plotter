@@ -12,8 +12,8 @@ from qplot.datahandling.readonly import DatabaseInstanceChangedError
 from qplot.datahandling.trusted_live_service import TRUSTED_LIVE_MODE
 from qplot.diagnostics import log_exception
 
+from ._csv_batch_review import CsvFilenameReview
 from ._export_names import suggested_export_filename
-from ._export_paths import approve_export_path
 from ._export_tasks import export_task_manager, start_export_task
 
 
@@ -285,8 +285,7 @@ def export_selected_previews(window, targets):
 
 def _queue_csv_batch(window, requests, folder, generation, *, name_measurements=False):
     """Approve every exact output and bind every source before queuing work."""
-    planned = []
-    names_seen = set()
+    proposed = []
     try:
         if generation != getattr(window, "_database_load_generation", None):
             window.show_status("Batch CSV export cancelled because the database changed.", 5000)
@@ -302,22 +301,15 @@ def _queue_csv_batch(window, requests, folder, generation, *, name_measurements=
                 stem, ext = os.path.splitext(default)
                 if not stem.endswith(f"_{measurement}"):
                     default = f"{stem}_{measurement}{ext}"
-            filename = os.path.join(folder, os.path.basename(default))
-            normalized = os.path.normcase(os.path.realpath(filename)).casefold()
-            stem, ext = os.path.splitext(filename)
-            ordinal = 2
-            while normalized in names_seen:
-                filename = f"{stem}_{ordinal}{ext}"
-                normalized = os.path.normcase(os.path.realpath(filename)).casefold()
-                ordinal += 1
-            names_seen.add(normalized)
-            destination = approve_export_path(
-                window, filename, replace_title="Replace CSV File?", file_description="CSV file",
-            )
-            if destination is None:
-                window.show_status("Batch CSV export cancelled before starting.", 5000)
+            source = f"Run {run_id} · " + (", ".join(selector) if selector else "All measurements")
+            proposed.append((source, os.path.basename(default)))
+        review = CsvFilenameReview(window, folder, proposed)
+        try:
+            if review.exec() != qtw.QDialog.DialogCode.Accepted:
                 return
-            planned.append((key, run_id, selector, destination))
+            planned = [(*requests[row], target) for row, target in review.approved]
+        finally:
+            review.deleteLater()
         if generation != getattr(window, "_database_load_generation", None):
             window.show_status("Batch CSV export cancelled because the database changed.", 5000)
             return

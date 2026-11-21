@@ -196,7 +196,7 @@ def approve_export_path(
     existing_target_validator: Callable[[str], Any] | None = None,
 ) -> ExportDestinationTransaction | None:
     """Capture one selected path and explicitly confirm its exact target."""
-    destination = _capture_export_destination(
+    destination = inspect_export_destination(
         parent,
         os.path.abspath(filename),
         existing_target_validator=existing_target_validator,
@@ -230,7 +230,7 @@ def prepare_export_destination(
         filename = normalize_export_path(filename, required_suffix)
     else:
         filename = os.path.abspath(filename)
-    destination = _capture_export_destination(
+    destination = inspect_export_destination(
         owner,
         filename,
         existing_target_validator=existing_target_validator,
@@ -631,12 +631,13 @@ def _collect_owner_database_sources(
         pass
 
 
-def _capture_export_destination(
+def inspect_export_destination(
     owner: object | None,
     filename: str,
     *,
-    existing_target_validator: Callable[[str], Any] | None,
+    existing_target_validator: Callable[[str], Any] | None = None,
 ) -> ExportDestinationTransaction:
+    """Inspect an exact candidate without granting replacement consent."""
     filename = os.path.abspath(filename)
     _ensure_windows_export_path_is_unambiguous(filename)
     parent_path = os.path.dirname(filename)
@@ -688,14 +689,14 @@ def _ensure_target_is_not_protected(
         protected_files.logical_paths | protected_files.resolved_paths
     )
     protected_aliases = {
-        _filesystem_alias_key(protected_path)
+        export_path_alias_key(protected_path)
         for protected_path in protected_paths
     }
     if (
         logical_path in protected_paths
         or resolved_path in protected_paths
-        or _filesystem_alias_key(logical_path) in protected_aliases
-        or _filesystem_alias_key(resolved_path) in protected_aliases
+        or export_path_alias_key(logical_path) in protected_aliases
+        or export_path_alias_key(resolved_path) in protected_aliases
     ):
         raise UnsafeExportDestinationError(
             "The selected export path refers to an input database or one of "
@@ -790,7 +791,7 @@ def _read_export_candidate_header(
     return header
 
 
-def _filesystem_alias_key(filename: str) -> str:
+def export_path_alias_key(filename: str) -> str:
     """Return a conservative key for case/Unicode-equivalent path aliases.
 
     ``normcase`` alone does not model case-insensitive macOS volumes, and

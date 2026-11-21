@@ -131,7 +131,10 @@ class ShutdownCoordinator:
                 self._publish_diagnostics()
 
     def _cancel_background_work(self) -> None:
+        from ._statistics_task import cancel_statistics
+
         window = self.window
+        cancel_statistics(window)
         # Fence queued refresh timeouts before asking any worker to cancel.
         window._automatic_refresh_shutdown = True
         stop_refresh_timer = getattr(window, "_stop_automatic_refresh_timer", None)

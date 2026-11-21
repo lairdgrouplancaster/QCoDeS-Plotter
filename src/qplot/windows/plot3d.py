@@ -773,9 +773,7 @@ class plot3d(plot2d):
 
     def _marquee_stats_text(self):
         text = super()._marquee_stats_text()
-        selected = self._marquee_selected_data()
-        count = int(np.count_nonzero(numeric_isfinite(selected))) if selected is not None else 0
-        return f"{self._slice_description()}\n{count} finite cells\n{text}" if text else text
+        return f"Slice: {self._slice_description()}\n{text}" if text else text
 
     def _add_marquee_color_context_action(self, menu):
         action = super()._add_marquee_color_context_action(menu)

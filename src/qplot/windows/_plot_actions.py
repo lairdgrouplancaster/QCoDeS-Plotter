@@ -1160,43 +1160,21 @@ class PlotActionsMixin:
             self._show_preview_stats(self._current_dataset_key(guid), parameter_name)
 
     def _show_preview_stats(self, dataset_key, parameter_name):
-        from ._dataset_statistics import dataset_statistics_text
-        from ._plot_marquee import new_statistics_dialog
+        from ._statistics_task import start_statistics
 
-        if not PlotActionsMixin._generation_gate_allows_action(
-                self, operation="generating statistics"):
+        if not self._generation_gate_allows_action(operation="generating statistics"):
             return
-        dataset = None
         try:
-            dataset_key = self._bind_one_shot_dataset_key(dataset_key)
-            dataset = self._load_run_csv_dataset(dataset_key)
-            data = parameter_data_for_export(dataset, parameter_name)
-            columns = csv_scalar_columns(data, parameter_name)
-            stats_text = dataset_statistics_text(
-                columns, parameter_name,
-                setpoint_names=dataset.paramspecs[parameter_name].depends_on_,
-            )
-            self._require_run_csv_source_current(dataset_key)
-        except DatabaseInstanceChangedError as err:
-            self._handle_run_csv_source_replaced(dataset_key)
-            self.show_error("Statistics Failed", "Could not read the measurement.", str(err))
-            return
+            key = self._bind_one_shot_dataset_key(dataset_key)
+            service = None
+            if getattr(self, "_database_access_mode", None) == TRUSTED_LIVE_MODE:
+                service = getattr(self, "_trusted_read_service", None)
+                if (service is None or service.database_instance.logical_path != key.database_path
+                        or service.database_instance.identity != key.database_identity):
+                    raise DatabaseInstanceChangedError("The live statistics reader is no longer available.")
+            start_statistics(self, key, parameter_name, service)
         except Exception as err:
-            log_exception("Dataset statistics failed", err, __name__)
             self.show_error("Statistics Failed", "Could not read the measurement.", str(err))
-            return
-        finally:
-            if dataset is not None:
-                close_dataset_connection(dataset)
-
-        if stats_text is None:
-            self.show_status("No finite data points in this measurement.", 5000)
-            return
-        dialog = new_statistics_dialog(self, stats_text, "Dataset stats")
-        dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
 
 
     @QtCore.pyqtSlot(str)

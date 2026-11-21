@@ -29,6 +29,7 @@ from .file_identity import (
     logical_database_path,
 )
 from .readonly import DatabaseInstanceChangedError, load_by_guid_read_only
+from .trusted_live_service import wait_for_trusted_read
 
 _ROW_PAGE_SIZE = 128
 _SAMPLE_CHUNK_SIZE = 8192
@@ -74,29 +75,10 @@ def _never_cancelled() -> bool:
 
 
 def _wait_request(request, check_cancelled, progress):
-    previous = None
-    try:
-        while True:
-            check_cancelled()
-            observed = request.progress
-            if observed is not None and observed != previous:
-                progress(observed.phase.replace("plot", "export"),
-                         observed.completed, observed.total)
-                previous = observed
-            try:
-                result = request.wait(0.05)
-            except TimeoutError:
-                if not request.done:
-                    continue
-                # Completion can race the timed wait. Read the terminal result
-                # instead of mistaking that polling timeout for a failed read;
-                # a real request deadline still propagates from this wait.
-                result = request.wait(0)
-            check_cancelled()
-            return result
-    finally:
-        if not request.done:
-            request.cancel()
+    def report(observed):
+        progress(observed.phase.replace("plot", "export"), observed.completed, observed.total)
+
+    return wait_for_trusted_read(request, check_cancelled, report)
 
 
 def _selected_parameters(dataset, parameter_names, measurement_index):

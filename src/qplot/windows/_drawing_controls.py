@@ -25,22 +25,25 @@ def colour_swatch_icon(colour, width=38):
     painter.setBrush(QtGui.QBrush(QtGui.QColor(colour)))
     painter.drawRoundedRect(1, 1, width - 2, 14, 2, 2)
     painter.end()
-    return QtGui.QIcon(pixmap)
+    icon = QtGui.QIcon(pixmap)
+    for mode in (QtGui.QIcon.Mode.Disabled, QtGui.QIcon.Mode.Selected):
+        icon.addPixmap(pixmap, mode)
+    return icon
 
 
-def line_style_icon(style, palette, width=54):
+def _line_style_pixmap(style, colour, width):
     pixmap = QtGui.QPixmap(width, 16)
     pixmap.fill(QtCore.Qt.GlobalColor.transparent)
     painter = QtGui.QPainter(pixmap)
     painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-    pen = QtGui.QPen(palette.color(QtGui.QPalette.ColorRole.Text))
+    pen = QtGui.QPen(colour)
     pen.setWidthF(2.0)
     pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
     pen.setStyle(dict(LINE_STYLES).get(style, QtCore.Qt.PenStyle.SolidLine))
     painter.setPen(pen)
     painter.drawLine(4, pixmap.height() // 2, pixmap.width() - 4, pixmap.height() // 2)
     painter.end()
-    return QtGui.QIcon(pixmap)
+    return pixmap
 
 
 class DrawingSizeSpinBox(qtw.QDoubleSpinBox):
@@ -111,6 +114,30 @@ class IconPreviewCombo(qtw.QComboBox):
         painter = qtw.QStylePainter(self)
         painter.drawComplexControl(qtw.QStyle.ComplexControl.CC_ComboBox, option)
         painter.drawControl(qtw.QStyle.ControlElement.CE_ComboBoxLabel, option)
+
+
+class LineStyleCombo(IconPreviewCombo):
+    """Draw the style sample using the foreground of its own themed control."""
+
+    def __init__(self, name):
+        super().__init__(name, preview_renderer=self._preview)
+        for style, _pen_style in LINE_STYLES:
+            self.addItem(self._preview(style, 54), style, style)
+
+    def _preview(self, name, width):
+        palette = self.palette()
+        ink = palette.text().color()
+        icon = QtGui.QIcon(_line_style_pixmap(name, ink, width))
+        selected = palette.highlightedText().color()
+        icon.addPixmap(_line_style_pixmap(name, selected, width), QtGui.QIcon.Mode.Selected)
+        disabled = palette.color(QtGui.QPalette.ColorGroup.Disabled, QtGui.QPalette.ColorRole.Text)
+        icon.addPixmap(_line_style_pixmap(name, disabled, width), QtGui.QIcon.Mode.Disabled)
+        return icon
+
+    def showPopup(self):
+        for index in range(self.count()):
+            self.setItemIcon(index, self._preview(self.itemData(index), 54))
+        super().showPopup()
 
 
 class ColourSwatchCombo(IconPreviewCombo):

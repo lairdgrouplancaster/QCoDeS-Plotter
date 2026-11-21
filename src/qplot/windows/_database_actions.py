@@ -668,7 +668,9 @@ class DatabaseActionsMixin:
 
         """
         from ._export_tasks import cancel_owner_exports
+        from ._statistics_task import cancel_statistics
 
+        cancel_statistics(self)
         cancel_owner_exports(self)
         cancel_auto_plot(self)
         self._database_loader.invalidate()
@@ -1775,7 +1777,9 @@ class DatabaseActionsMixin:
             return True
 
         from ._export_tasks import cancel_owner_exports
+        from ._statistics_task import cancel_statistics
 
+        cancel_statistics(self)
         cancel_owner_exports(self)
         DatabaseActionsMixin._cancel_database_refresh(self)
         DatabaseActionsMixin._cancel_database_info(self)

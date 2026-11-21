@@ -94,7 +94,7 @@ def _csv_scalar_samples(values):
     return np.asarray(samples, dtype=object)
 
 
-def csv_scalar_columns(param_data, output_param=None):
+def csv_scalar_columns(param_data, output_param=None, *, check_cancelled=lambda: None):
     """Align samples within each QCoDeS record before joining records."""
     arrays = {name: np.asarray(values) for name, values in param_data.items()}
     if not arrays:
@@ -112,6 +112,7 @@ def csv_scalar_columns(param_data, output_param=None):
 
     chunks: dict[str, list[np.ndarray]] = {name: [] for name in arrays}
     for record in zip(*arrays.values(), strict=True):
+        check_cancelled()
         samples = {
             name: _csv_scalar_samples(values)
             for name, values in zip(arrays, record, strict=True)

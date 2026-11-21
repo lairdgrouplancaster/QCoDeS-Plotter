@@ -512,38 +512,41 @@ class TransactionalGuiTestCase(unittest.TestCase):
         self.assertEqual(harness.applied, 1)
         self.assertEqual(harness.closed_database, 1)
 
-    def test_preferences_failure_rolls_back_widgets_and_success_still_applies(self):
+    def test_preferences_keep_complete_draft_when_ok_or_apply_fails(self):
+        from qplot.configuration.fonts import FONT_SIZE_KEY
+
         dialog = PreferencesDialog(self.config)
-        notifications = []
+        dialog.show()
         applied = []
         dialog.preferencesApplied.connect(lambda: applied.append(True))
-        dialog.themeCombo.setCurrentIndex(dialog.themeCombo.findData("dark"))
-        dialog.previewSizeSpin.setValue(300)
-
+        font = dialog.fontSizeSpin.value()
+        threads = dialog.maxThreadsSpin.value()
+        dialog.tabs.setCurrentIndex(1)
+        dialog.fontSizeSpin.setValue(font + 1)
+        self.assertTrue(dialog.apply_button.isEnabled())
+        dialog.fontSizeSpin.setValue(font)
+        self.assertFalse(dialog.apply_button.isEnabled())
+        dialog.fontSizeSpin.setValue(font + 1)
+        dialog.tabs.setCurrentIndex(4)
+        dialog.maxThreadsSpin.setValue(threads + 1)
+        draft = dialog.preference_values()
         try:
-            with (
-                patch.object(
-                    qtw.QMessageBox,
-                    "exec",
-                    lambda box: notifications.append(box.text()) or 0,
-                    ),
-                self.failing_save(self.config),
-                ):
-                self.assertFalse(dialog.apply_preferences())
-
-            self.assertEqual(dialog.themeCombo.currentData(), "light")
-            self.assertEqual(dialog.previewSizeSpin.value(), 200)
-            self.assertEqual(self.config.get("user_preference.theme"), "light")
-            self.assertEqual(self.disk_value("GUI.preview_size"), 200)
-            self.assertEqual(applied, [])
-            self.assertEqual(len(notifications), 1)
-            self.assertIn("previous setting is still active", notifications[0])
-
-            dialog.themeCombo.setCurrentIndex(dialog.themeCombo.findData("dark"))
-            dialog.previewSizeSpin.setValue(300)
-            self.assertTrue(dialog.apply_preferences())
-            self.assertEqual(self.disk_value("user_preference.theme"), "dark")
-            self.assertEqual(self.disk_value("GUI.preview_size"), 300)
+            with patch.object(qtw.QMessageBox, "exec", return_value=0) as notice, self.failing_save(self.config):
+                for button in (qtw.QDialogButtonBox.StandardButton.Apply, qtw.QDialogButtonBox.StandardButton.Ok):
+                    dialog.buttonBox.button(button).click()
+                    self.assertTrue(dialog.isVisible())
+                    self.assertEqual(dialog.preference_values(), draft)
+                    self.assertTrue(dialog.apply_button.isEnabled())
+                    self.assertEqual(self.config.get(FONT_SIZE_KEY), font)
+                    self.assertEqual(self.disk_value("runtime_settings.max_threads"), threads)
+                    self.assertEqual(applied, [])
+                self.assertEqual(notice.call_count, 2)
+            dialog.apply_button.click()
+            self.assertEqual(self.disk_value(FONT_SIZE_KEY), font + 1)
+            self.assertEqual(self.config.get("runtime_settings.max_threads"), threads + 1)
+            self.assertFalse(dialog.apply_button.isEnabled())
+            dialog._accept_preferences()
+            self.assertFalse(dialog.isVisible())
             self.assertEqual(applied, [True])
         finally:
             dialog.deleteLater()

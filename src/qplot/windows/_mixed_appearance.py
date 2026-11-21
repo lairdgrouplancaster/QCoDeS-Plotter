@@ -86,7 +86,6 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
             header.setSectionResizeMode(self._COL_WARNING, qtw.QHeaderView.ResizeMode.Fixed)
             header.resizeSection(self._COL_WARNING, 28)
         self.table.setToolTip("Data at the top is drawn on top. Drag rows to change the drawing order.")
-        self.setStyleSheet(self.styleSheet().replace("traceAppearanceTable", "plotAppearanceTable"))
         self.heatmap_controls = _HeatmapControls(self)
         self.controls_stack = AppearanceControlsStack(self)
         self.controls_stack.setObjectName("plotAppearanceControls")
