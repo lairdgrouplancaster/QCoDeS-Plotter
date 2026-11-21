@@ -274,12 +274,12 @@ def get_parameter_data_for_one_paramtree(
     return data, len(records)
 
 
-def parameter_data_for_export(dataset, parameter_name):
+def parameter_data_for_export(dataset, parameter_name, *, check_cancelled=_check_noop):
     """Read DB-backed trees locally; in-memory datasets provide their own data."""
     if isinstance(dataset, DataSet):
         data, _ = get_parameter_data_for_one_paramtree(
             dataset.conn, dataset.table_name, dataset.description, parameter_name,
-            preserve_integers=True,
+            preserve_integers=True, check_cancelled=check_cancelled,
         )
         return data
     return dataset.get_parameter_data(parameter_name).get(parameter_name, {})

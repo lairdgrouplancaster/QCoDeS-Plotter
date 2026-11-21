@@ -21,6 +21,15 @@ class AxisQuantity:
         )
 
 
+def quantity_text(parameter):
+    name = getattr(parameter, "name", "")
+    label = getattr(parameter, "label", "") or name
+    if name and name != label:
+        label = f"{label} ({name})"
+    unit = getattr(parameter, "unit", "")
+    return f"{label} [{unit or 'no unit recorded'}]" if label else ""
+
+
 def _unit_operand(unit: str) -> str:
     return f"({unit})" if any(char in unit for char in "/ *") else unit
 

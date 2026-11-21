@@ -28,13 +28,12 @@ from ._commands import create_action
 from ._config_persistence import persist_config_values
 from ._csv_filenames import CSV_FILENAME_FORMAT_KEY, CSV_FILENAME_FORMAT_OPTIONS
 from ._drawing_controls import (
-    LINE_STYLES,
     TRACE_COLOR_PALETTE,
     ColourSwatchCombo,
     DrawingSizeSpinBox,
     IconPreviewCombo,
+    LineStyleCombo,
     colour_swatch_icon,
-    line_style_icon,
 )
 from ._plot_annotation import SHOW_SOURCE_ANNOTATION_KEY
 from ._plot_tiling import PLOT_TILE_COLUMNS_KEY, PLOT_TILE_ROWS_KEY
@@ -211,9 +210,9 @@ class _PreferenceBinding:
         else:
             control.setValue(float(value))
 
-    def track_edits(self, edited_keys: set[str]) -> None:
+    def track_edits(self, on_edit) -> None:
         def mark_edited(_value):
-            edited_keys.add(self.key)
+            on_edit(self.key)
 
         control = self.control
         if isinstance(control, _PreferenceColourMapButton):
@@ -401,7 +400,7 @@ class PreferencesDialog(qtw.QDialog):
         )
         self._edited_preference_keys: set[str] = set()
         for binding in self._bindings:
-            binding.track_edits(self._edited_preference_keys)
+            binding.track_edits(self._preference_edited)
         self.load_from_config()
 
     def _build_ui(self):
@@ -437,6 +436,7 @@ class PreferencesDialog(qtw.QDialog):
         apply_button = self.buttonBox.button(qtw.QDialogButtonBox.StandardButton.Apply)
         if apply_button is None:
             raise RuntimeError("Preferences dialog Apply button is not available.")
+        self.apply_button = apply_button
         apply_button.clicked.connect(self.apply_preferences)
         apply_button.setToolTip("Save and apply these preferences without closing this dialog.")
         for standard_button, tooltip in (
@@ -685,17 +685,11 @@ class PreferencesDialog(qtw.QDialog):
         self.defaultTraceWidthSpin.setDecimals(1)
         self.defaultTraceWidthSpin.setSingleStep(0.5)
         self.defaultTraceWidthSpin.setSuffix(" px")
-        self.defaultTraceWidthSpin.setKeyboardTracking(False)
         self.defaultTraceWidthSpin.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed)
         self.defaultTraceWidthSpin.setToolTip("Line width for newly created traces, including traces added to existing plots.")
-        self.defaultTraceStyleCombo = IconPreviewCombo(
-            "Default trace line style",
-            preview_renderer=lambda name, width: line_style_icon(name, self.palette(), width),
-        )
+        self.defaultTraceStyleCombo = LineStyleCombo("Default trace line style")
         self.defaultTraceStyleCombo.setObjectName("defaultTraceStylePreferenceCombo")
         self.defaultTraceStyleCombo.setIconSize(QtCore.QSize(32, 16))
-        for name, _pen_style in LINE_STYLES:
-            self.defaultTraceStyleCombo.addItem(line_style_icon(name, self.palette()), name, name)
         self.defaultTraceRow = qtw.QWidget(tab)
         trace_layout = qtw.QHBoxLayout(self.defaultTraceRow)
         trace_layout.setContentsMargins(0, 0, 0, 0)
@@ -975,6 +969,11 @@ class PreferencesDialog(qtw.QDialog):
             })
         self._loaded_control_values = self.preference_values()
         self._edited_preference_keys.clear()
+        self.apply_button.setEnabled(False)
+
+    def _preference_edited(self, key):
+        self._edited_preference_keys.add(key)
+        self.apply_button.setEnabled(bool(self._changed_values()))
 
     def set_preference_values(self, values):
         """Load values without recording programmatic updates as edits."""
@@ -1001,32 +1000,32 @@ class PreferencesDialog(qtw.QDialog):
         schema = self.config.schema["properties"][section]["properties"][name]
         return deepcopy(schema["default"])
 
-    def apply_preferences(self):
-        """
-        Persists the dialog values and emits preferencesApplied on success.
-
-        """
-        control_values = self.preference_values()
+    def _changed_values(self):
         # Display precision and text normalization may differ from valid saved
         # values. Only an actual edit may replace those exact saved values.
-        changed_values = {
+        return {
             key: value
-            for key, value in control_values.items()
+            for key, value in self.preference_values().items()
             if self.config.get(key) != value and (
                 key in self._edited_preference_keys
                 or value != self._loaded_control_values[key]
                 )
             }
-        if changed_values and not persist_config_values(
+
+    def apply_preferences(self):
+        changed_values = self._changed_values()
+        if not changed_values:
+            return True
+        if not persist_config_values(
                 self,
                 self.config,
                 changed_values,
                 "the preferences",
-                self.load_from_config,
                 ):
             return False
 
-        self._loaded_control_values = control_values
+        self.apply_button.setEnabled(False)
+        self._loaded_control_values = self.preference_values()
         self._edited_preference_keys.clear()
         self.preferencesApplied.emit()
         return True
@@ -1050,6 +1049,7 @@ class PreferencesDialog(qtw.QDialog):
         # Reset is explicit consent to defaults, even when the old value had
         # the same rounded representation in its control.
         self._edited_preference_keys.update(PREFERENCE_KEYS)
+        self.apply_button.setEnabled(bool(self._changed_values()))
         return True
 
     def choose_default_load_path(self):

@@ -302,6 +302,10 @@ class config:
                 fp.flush()
                 os.fsync(fp.fileno())
             if file_mode is not None:
+                # Windows refuses to replace a read-only target. Keep the
+                # private staging file removable when that replacement fails.
+                if os.name == "nt":
+                    file_mode |= stat.S_IWRITE
                 os.chmod(temporary_path, file_mode)
             ensure_safe_auxiliary_path(path)
             os.replace(temporary_path, path)

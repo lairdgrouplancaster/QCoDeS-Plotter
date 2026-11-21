@@ -6,6 +6,9 @@ from PyQt6 import QtWidgets as qtw
 from qplot.windows._dataset_statistics import dataset_statistics_text
 from qplot.windows._plot_marquee import new_statistics_dialog
 from qplot.windows._widgets.preview import PreviewImageLabel
+from tests.support.windows.typed_run_keyboard_launch import (
+    typed_run_window as typed_run_window,
+)
 
 
 def test_statistics_include_all_samples_and_ignore_nonfinite():
@@ -62,50 +65,6 @@ def test_thumbnail_action_and_shared_dialog(monkeypatch):
     label.close()
 
 
-def test_stats_action_releases_reader_before_showing_dialog(monkeypatch):
-    from types import SimpleNamespace
-
-    from qplot.windows import _plot_actions, _plot_marquee
-
-    events = []
-    dataset = SimpleNamespace(paramspecs={'signal': SimpleNamespace(depends_on_=['x'])})
-    key = SimpleNamespace(guid='run')
-
-    class Host(_plot_actions.PlotActionsMixin):
-        def _bind_one_shot_dataset_key(self, requested):
-            assert requested is key
-            return key
-
-        def _load_run_csv_dataset(self, requested):
-            events.append('load')
-            return dataset
-
-        def _require_run_csv_source_current(self, requested):
-            events.append('validate')
-
-    class Dialog:
-        def setAttribute(self, *args):
-            pass
-
-        def show(self):
-            events.append('show')
-
-        def raise_(self):
-            pass
-
-        def activateWindow(self):
-            pass
-
-    monkeypatch.setattr(_plot_actions, 'parameter_data_for_export',
-                        lambda ds, name: {'x': np.arange(3), name: np.array([1., 2., 3.])})
-    monkeypatch.setattr(_plot_actions, 'close_dataset_connection',
-                        lambda ds: events.append('close'))
-    monkeypatch.setattr(_plot_marquee, 'new_statistics_dialog',
-                        lambda *args: Dialog())
-    Host()._show_preview_stats(key, 'signal')
-    assert events == ['load', 'validate', 'close', 'show']
-
-
 @pytest.mark.parametrize('heatmap', [False, True], ids=['line', 'heatmap'])
 @pytest.mark.parametrize('arrays', [False, True], ids=['scalar', 'ragged-array'])
 @pytest.mark.parametrize('basis_type', ['numeric', 'text', 'complex'])
@@ -120,9 +79,10 @@ def test_inferred_statistics_use_declared_setpoints(
         load_or_create_experiment,
     )
 
-    from qplot.datahandling.readonly import load_by_id_read_only
     from qplot.windows import _plot_actions, _plot_marquee
+    from qplot.windows._dataset_handle import DatasetKey
     from tests.support.windows.complex_line_data import database_state
+    from tests.support.windows.plot_integration import wait_for
 
     path = (tmp_path / 'inferred-statistics.db').resolve()
     initialise_or_create_database_at(str(path), journal_mode='DELETE')
@@ -152,25 +112,14 @@ def test_inferred_statistics_use_declared_setpoints(
                     saver.dataset.add_results([values])
                 else:
                     saver.add_result(*values.items())
-            run_id = saver.run_id
+            guid = saver.dataset.guid
     finally:
         saver.dataset.conn.close()
         experiment.conn.close()
     before = database_state(path)
-    dialogs, errors, readers = [], [], []
+    dialogs, errors = [], []
 
     class Host(_plot_actions.PlotActionsMixin, qtw.QWidget):
-        def _bind_one_shot_dataset_key(self, key):
-            return key
-
-        def _load_run_csv_dataset(self, key):
-            dataset = load_by_id_read_only(run_id, str(path))
-            readers.append(dataset)
-            return dataset
-
-        def _require_run_csv_source_current(self, key):
-            pass
-
         def show_error(self, *args):
             errors.append(args)
 
@@ -182,24 +131,27 @@ def test_inferred_statistics_use_declared_setpoints(
     monkeypatch.setattr(_plot_marquee, 'new_statistics_dialog', capture_dialog)
     host = Host()
     try:
-        host._show_preview_stats(object(), 'converted')
+        host.threadPool = QtCore.QThreadPool(host)
+        host._show_preview_stats(DatasetKey(str(path), guid), 'converted')
+        wait_for(lambda: dialogs or errors)
         assert not errors
         assert len(dialogs) == 1
-        assert dialogs[0][1] == '\n'.join([
-            '3 points',
+        assert '3 finite values of 3 recorded samples' in dialogs[0][1]
+        assert f'Run: 1 ({guid})' in dialogs[0][1]
+        assert 'Measurement: converted' in dialogs[0][1]
+        assert [line for line in dialogs[0][1].splitlines() if ' range:' in line or
+                line.startswith(('Average:', 'Standard deviation:', 'Max:', 'Min:'))] == [
             'X range: 100 to 102',
             'Y range: 0.000 to 2.00' if heatmap else 'Y range: 10.0 to 12.0',
             'Average: 11.0',
             'Standard deviation: 8.16e-01',
             'Max: 12.0',
             'Min: 10.0',
-        ])
+        ]
     finally:
         for dialog, _ in dialogs:
             dialog.close()
         host.close()
-        for dataset in readers:
-            dataset.conn.close()
     assert database_state(path) == before
 
 
@@ -393,3 +345,98 @@ def test_statistics_keep_exactly_zero_means(recorded_statistics_columns, samples
         text = dataset_statistics_text(recorded, 'signal', setpoint_names=('x',))
         assert 'Average: 0.000\n' in text
         np.testing.assert_array_equal(recorded['signal'], samples)
+
+def test_whole_measurement_report_uses_trusted_reader_and_copies_context(typed_run_window, monkeypatch):
+    from qplot.datahandling import readonly
+    from tests.support.windows.plot_integration import wait_for
+
+    window, runs = typed_run_window
+    run_id, guid, _ = runs[0]
+    service = window._trusted_read_service
+    assert service is not None
+    original = service.submit_plot_prefix
+    reads = []
+
+    def capture(dataset):
+        reads.append(dataset.guid)
+        return original(dataset)
+
+    monkeypatch.setattr(service, "submit_plot_prefix", capture)
+    monkeypatch.setattr(readonly, "load_by_guid_read_only", lambda *a, **kw: pytest.fail("snapshot fallback"))
+    window.show_run_preview_stats(guid, "signal")
+    def report():
+        return next((d for d in window.findChildren(qtw.QDialog)
+                     if d.windowTitle() == "Measurement statistics" and d.findChild(qtw.QTableWidget)), None)
+
+    wait_for(report)
+    dialog = report()
+    next(b for b in dialog.findChild(qtw.QDialogButtonBox).buttons() if b.text() == "Copy").click()
+    text = qtw.QApplication.clipboard().text()
+    assert reads == [guid]
+    assert f"Run: {run_id} ({guid})" in text and "Measurement: signal" in text
+    assert "5 finite values of 5 recorded samples" in text
+    dialog.close()
+
+
+@pytest.mark.parametrize("cancel_at", ["button", "database close", "database switch", "window close"])
+def test_statistics_cancel_during_calculation_retires_publication(typed_run_window, monkeypatch, tmp_path, cancel_at):
+    import threading
+    import time
+
+    from qplot.windows import _dataset_statistics
+    from tests.support.windows.plot_integration import (
+        build_synthetic_database,
+        wait_for,
+    )
+
+    window, runs = typed_run_window
+    _, guid, _ = runs[0]
+    replacement = tmp_path / "other.db"
+    if cancel_at == "database switch":
+        build_synthetic_database(replacement)
+    entered, ended = threading.Event(), threading.Event()
+
+    def calculating(values, *, check_cancelled):
+        try:
+            entered.set()
+            while True:
+                check_cancelled()
+                time.sleep(.005)
+        finally:
+            ended.set()
+    monkeypatch.setattr(_dataset_statistics, "finite_mean", calculating)
+    window.show_run_preview_stats(guid, "signal")
+    wait_for(entered.is_set)
+    if cancel_at == "button":
+        window._statistics_progress.findChild(qtw.QPushButton).click()
+    elif cancel_at == "database close":
+        window.close_current_database()
+    elif cancel_at == "database switch":
+        assert window.load_file(str(replacement))
+        wait_for(lambda: not window._database_load_active)
+    else:
+        window.close()
+    wait_for(ended.is_set)
+    assert window._statistics_progress is None
+    assert not any(d.isVisible() for d in window.findChildren(qtw.QTableWidget, "statisticsTable"))
+
+
+def test_large_record_keeps_gui_responsive_through_whole_measurement_statistics(tmp_path, monkeypatch):
+    from tests.support.windows.numeric_sample_preservation import array_plot
+    from tests.support.windows.plot_integration import wait_for
+
+    x = np.arange(300_000)
+    with array_plot(tmp_path, monkeypatch, [{"x": x, "signal": x}]) as (window, plot):
+        ticks = []
+        timer = QtCore.QTimer(window)
+        timer.timeout.connect(lambda: ticks.append(True))
+        window.show_run_preview_stats(plot.ds.guid, "signal")
+        assert window._statistics_progress.isVisible()
+        timer.start(5)
+        wait_for(lambda: window.findChild(qtw.QTableWidget, "statisticsTable"), timeout=30)
+        timer.stop()
+        table = window.findChild(qtw.QTableWidget, "statisticsTable")
+        rows = {table.item(row, 0).text(): table.item(row, 1).text() for row in range(table.rowCount())}
+        assert ticks
+        assert rows["Data"] == "300000 finite values of 300000 recorded samples"
+        assert rows["Average"] == plot.formatNum(149999.5)

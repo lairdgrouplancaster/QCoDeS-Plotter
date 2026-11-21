@@ -125,3 +125,69 @@ def test_one_marker_editor_changes_symbols_without_changing_samples(mixed_plot, 
         np.testing.assert_array_equal(expected, actual)
     dialog.reject()
     assert target._trace_styles[key] == style
+
+
+def test_dialog_colours_follow_plot_theme_over_light_system_palette(mixed_plot, qapplication):
+    from PyQt6 import QtGui
+
+    from qplot.configuration.themes.dark import _PALETTE as dark
+    from qplot.configuration.themes.light import _PALETTE as light
+    from qplot.windows._preferences import PreferencesDialog
+
+    main, plot, runs = mixed_plot
+    overlay = runs["other_line"]
+    _drop(plot, overlay)
+    _added(plot, overlay)
+    original_palette = qapplication.palette()
+    palette = QtGui.QPalette(original_palette)
+    palette.setColor(QtGui.QPalette.ColorRole.Base, QtGui.QColor("white"))
+    palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("black"))
+    qapplication.setPalette(palette)
+    plot.open_plot_appearance_dialog()
+    appearance = plot._plot_appearance_dialog
+    plot.open_export_dialog()
+    export = plot.widget.scene().exportDialog
+    preferences = PreferencesDialog(main.config, main)
+    preferences.tabs.setCurrentIndex(1)
+    preferences.show()
+    try:
+        for theme, colours in (("dark", dark), ("light", light)):
+            main.config.update("user_preference.theme", theme)
+            main.apply_current_settings()
+            qapplication.processEvents()
+            assert export.isVisible() and export.parentWidget() is plot
+            assert export.controls.heading.palette().windowText().color().name() == colours.text
+            assert export.palette().window().color().name() == colours.window_bg
+            table = appearance.table
+            assert table.rowCount() == 2
+            table.selectRow(0)
+            table.setFocus()
+            assert table.palette().base().color().name() == colours.table_bg
+            assert table.palette().alternateBase().color().name() == colours.table_alt_bg
+            assert table.palette().text().color().name() == colours.text
+            assert table.palette().highlightedText().color().name() == colours.selection_text
+            assert appearance.selected_group.palette().windowText().color().name() == colours.text
+            style = preferences.defaultTraceStyleCombo
+            sample = style._preview("Solid", 32).pixmap(32, 16).toImage()
+            assert sample.pixelColor(16, 8).name() == colours.text
+            assert not preferences.apply_button.isEnabled()
+            disabled_ink = preferences.apply_button.palette().color(
+                QtGui.QPalette.ColorGroup.Disabled, QtGui.QPalette.ColorRole.ButtonText,
+            )
+            assert disabled_ink.name() == colours.disabled_text
+    finally:
+        preferences.reject()
+        export.close()
+        appearance.reject()
+        qapplication.setPalette(original_palette)
+
+
+def test_overlay_marquee_report_names_the_host_measurement(mixed_plot):
+    _, plot, runs = mixed_plot
+    _drop(plot, runs["other_line"])
+    _added(plot, runs["other_line"])
+    plot.set_marquee_rect(QtCore.QRectF(-1, -1, 40, 40))
+    report = plot._marquee_stats_text()
+    assert f"Run: {plot.ds.run_id} ({plot.ds.guid})" in report
+    assert f"Measurement: {plot.param.name} [{plot.param.unit}]" in report
+    assert runs["other_line"].guid not in report

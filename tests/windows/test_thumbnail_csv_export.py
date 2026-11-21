@@ -25,6 +25,11 @@ def _choose_folder(monkeypatch, folder, before_return=None):
             before_return()
         return str(folder)
 
+    def confirm(review):
+        review.accept()
+        return review.result()
+
+    monkeypatch.setattr(batch.CsvFilenameReview, "exec", confirm)
     monkeypatch.setattr(qtw.QFileDialog, "getExistingDirectory", choose)
 
 
@@ -204,8 +209,13 @@ def test_thumbnail_export_cancel_approves_every_file_before_starting(
         monkeypatch.setattr(qtw.QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: "")
     else:
         _choose_folder(monkeypatch, folder)
-        replies = iter((qtw.QMessageBox.StandardButton.Yes, qtw.QMessageBox.StandardButton.No))
-        monkeypatch.setattr(qtw.QMessageBox, "question", lambda *_args, **_kwargs: next(replies))
+        def cancel_review(review):
+            review.table.cellWidget(0, 3).setCurrentText("Replace")
+            assert not review.export_button.isEnabled()
+            review.reject()
+            return review.result()
+
+        monkeypatch.setattr(batch.CsvFilenameReview, "exec", cancel_review)
     window.export_selected_previews_csv(targets)
     assert not getattr(window, "_export_task_manager", None)
     assert set(folder.iterdir()) == set(existing)
@@ -265,6 +275,15 @@ def test_thumbnail_filename_collisions_keep_both_measurements(
                         lambda *_args, **_kwargs: str(folder / "measurement.csv"))
     monkeypatch.setattr(batch, "suggested_export_filename", lambda _name: "quantity")
     _choose_folder(monkeypatch, folder)
+
+    def resolve_duplicate(review):
+        assert not review.export_button.isEnabled()
+        assert "Duplicate" in review.table.item(1, 2).text()
+        review.table.item(1, 1).setText("measurement_quantity_2.csv")
+        review.accept()
+        return review.result()
+
+    monkeypatch.setattr(batch.CsvFilenameReview, "exec", resolve_duplicate)
     window.export_selected_previews_csv(targets)
     paths = _assert_measurement_files(window, runs, targets, folder)
     assert {path.name for path in paths} == {

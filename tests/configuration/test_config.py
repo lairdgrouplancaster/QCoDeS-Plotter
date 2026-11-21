@@ -588,6 +588,25 @@ class TemporaryConfigTestCase(unittest.TestCase):
                     "dark",
                     )
 
+    @unittest.skipUnless(os.name == "nt", "Windows read-only file attribute")
+    def test_read_only_settings_report_replace_failure_and_remove_staging_file(self):
+        cfg = config()
+        target = Path(cfg.default_file)
+        before = target.read_bytes()
+        previous_mode = target.stat().st_mode
+        target.chmod(stat.S_IREAD)
+        try:
+            with self.assertRaises(PermissionError) as failure:
+                cfg.update("user_preference.theme", "dark")
+            self.assertEqual(Path(failure.exception.filename2), target)
+            self.assertEqual(target.read_bytes(), before)
+            self.assertFalse(target.stat().st_mode & stat.S_IWRITE)
+            self.assertEqual(list(target.parent.glob(".config.json.*.tmp")), [])
+        finally:
+            target.chmod(previous_mode)
+        cfg.update("user_preference.theme", "dark")
+        self.assertEqual(config().get("user_preference.theme"), "dark")
+
     def test_reset_to_defaults_failure_restores_complete_previous_config(self):
         cfg = config()
         cfg.update_many({

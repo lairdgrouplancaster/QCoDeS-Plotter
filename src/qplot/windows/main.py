@@ -44,7 +44,7 @@ from ._preferences import (
 from ._run_controls import AUTO_PLOT_KEY, RunControlsMixin
 from ._shutdown_coordinator import ShutdownCoordinator
 from ._signal_blocking import blocked_signals
-from ._status import StatusLabel
+from ._status import RecentDatabaseNotice, StatusLabel
 from ._test_database import SyntheticDatabaseActionsMixin, TestDatabaseGenerationWorker
 from ._trusted_derived_qt import TrustedDerivedQtBridge
 from ._window_controls import (
@@ -151,6 +151,7 @@ class MainWindow(
        
         #vars
         self.config = config() # Connect to config.json in :/users/<user>/.qplot/
+        self._session_recent_database_paths: list[str] | None = None
         self.windows = [] # prevent auto delete of windows
         self.ds = None
         self._selected_dataset_key: DatasetKey | None = None
@@ -246,6 +247,8 @@ class MainWindow(
         self.initMenu()
         self.initFile()
         self.initRunDisplay()
+        self.recentDatabaseNotice = RecentDatabaseNotice(self)
+        self.l.addWidget(self.recentDatabaseNotice)
         self.infoBox.preview.set_complex_preferences((
             self.config.get("user_preference.complex_1d"),
             self.config.get("user_preference.complex_nd"),
@@ -748,6 +751,9 @@ class MainWindow(
             return False
 
         self.close_plot_windows(confirm=False, status=False)
+        self._session_recent_database_paths = None
+        self.recentDatabaseNotice.clear()
+        self.refresh_recent_database_menu()
         self.apply_current_settings()
         self.close_database(status=False)
         self.show_status("Settings reset to defaults.", 5000)

@@ -16,9 +16,9 @@ from ._drawing_controls import (
     ColourSwatchCombo,
     DrawingSizeSpinBox,
     IconPreviewCombo,
+    LineStyleCombo,
     colour_swatch_icon,
     drawing_controls_row,
-    line_style_icon,
 )
 from ._plot_appearance import (
     CenteredPreviewDelegate,
@@ -1356,25 +1356,6 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.resize(780, 360)
         self.setMinimumSize(700, 300)
         self._building = False
-        self.setStyleSheet(
-            self.styleSheet()
-            + """
-            QTableWidget#traceAppearanceTable {
-                border: 1px solid palette(mid);
-                background-color: palette(base);
-                alternate-background-color: palette(alternate-base);
-                gridline-color: palette(midlight);
-            }
-            QTableWidget#traceAppearanceTable::item {
-                padding: 2px 6px;
-                border: none;
-            }
-            QTableWidget#traceAppearanceTable QHeaderView::section {
-                font-weight: normal;
-            }
-            """
-            )
-
         main = qtw.QVBoxLayout(self)
         main.setContentsMargins(10, 10, 10, 10)
         main.setSpacing(8)
@@ -1436,7 +1417,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         self.line_color = ColourSwatchCombo("Line colour"); self._add_color_items(self.line_color, TRACE_COLOR_PALETTE)
         self.line_width = DrawingSizeSpinBox(); self.line_width.setRange(0.5, 15); self.line_width.setValue(2); self.line_width.setDecimals(1); self.line_width.setSingleStep(0.5)
         self.line_width.setToolTip("Set the line width of the selected traces in pixels.")
-        self.line_style = IconPreviewCombo("Line style"); self._add_line_style_items(self.line_style)
+        self.line_style = LineStyleCombo("Line style")
         self.marker_enable = qtw.QCheckBox("Markers")
         self.marker_enable.setToolTip("Draw a marker at each data point in the selected traces.")
         self.marker_color = ColourSwatchCombo("Marker colour"); self._add_color_items(self.marker_color, TRACE_COLOR_PALETTE)
@@ -1674,18 +1655,12 @@ class _TraceAppearanceDialog(qtw.QDialog):
             combo.setItemData(combo.count() - 1, color, QtCore.Qt.ItemDataRole.ToolTipRole)
         combo.addItem("Custom", self._CUSTOM_COLOR_DATA)
 
-    def _add_line_style_items(self, combo: qtw.QComboBox) -> None:
-        for name, _pen_style in self._LINE_STYLES:
-            combo.addItem(self._line_style_icon(name), name, name)
-
     def _add_marker_symbol_items(self, combo: qtw.QComboBox) -> None:
         names = {"o": "Circle", "s": "Square", "t": "Triangle", "d": "Diamond", "+": "Plus", "x": "Cross"}
         for symbol in self._MARKER_SYMBOLS:
             combo.addItem(self._marker_symbol_icon(symbol), names[symbol], symbol)
 
     def refresh_theme(self) -> None:
-        for index, (name, _pen_style) in enumerate(self._LINE_STYLES):
-            self.line_style.setItemIcon(index, self._line_style_icon(name))
         for index, symbol in enumerate(self._MARKER_SYMBOLS):
             self.marker_symbol.setItemIcon(
                 index,
@@ -1695,9 +1670,6 @@ class _TraceAppearanceDialog(qtw.QDialog):
 
     def _color_icon(self, color: str) -> QtGui.QIcon:
         return colour_swatch_icon(color)
-
-    def _line_style_icon(self, style: str) -> QtGui.QIcon:
-        return line_style_icon(style, self.palette())
 
     def _marker_symbol_icon(self, symbol: str) -> QtGui.QIcon:
         pixmap = QtGui.QPixmap(24, 18)

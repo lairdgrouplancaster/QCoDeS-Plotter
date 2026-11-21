@@ -78,6 +78,11 @@ If you modify application code, before the final response:
 1. Run the relevant automated tests.
 2. If the change affects runtime behavior or UI, start qPlot from the project venv.
 
+Close verification instances normally after inspection. If the user asks to
+keep one open for manual testing, launch it with an isolated profile writable
+by the user running the GUI. Verify a settings save from that instance and
+read the saved value back before handing it over.
+
 On Windows, prefer:
 
 ```powershell

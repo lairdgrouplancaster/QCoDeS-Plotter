@@ -129,3 +129,23 @@ def test_cancel_discards_pending_edits_and_reset(precise_config, monkeypatch):
         assert json.loads(Path(precise_config.default_file).read_text(encoding="utf-8")) == before
     finally:
         dialog.close()
+
+
+def test_cancel_keeps_previous_apply_and_untouched_ok_is_quiet(precise_config):
+    from qplot.configuration.fonts import FONT_SIZE_KEY
+
+    dialog = PreferencesDialog(precise_config)
+    applied = []
+    dialog.preferencesApplied.connect(lambda: applied.append(True))
+    dialog._accept_preferences()
+    assert dialog.result() == qtw.QDialog.DialogCode.Accepted
+    assert applied == []
+    dialog.show()
+    original = dialog.fontSizeSpin.value()
+    dialog.fontSizeSpin.setValue(original + 1)
+    dialog.apply_button.click()
+    dialog.fontSizeSpin.setValue(original + 2)
+    dialog.buttonBox.button(qtw.QDialogButtonBox.StandardButton.Cancel).click()
+    assert precise_config.get(FONT_SIZE_KEY) == original + 1
+    assert applied == [True]
+    dialog.deleteLater()

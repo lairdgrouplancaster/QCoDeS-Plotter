@@ -205,6 +205,8 @@ files = [
     "src/qplot/windows/_commands.py",
     "src/qplot/windows/_export_tasks.py",
     "src/qplot/windows/_run_csv_export.py",
+    "src/qplot/windows/_statistics_task.py",
+    "src/qplot/windows/_csv_batch_review.py",
     "src/qplot/windows/_config_persistence.py",
     "src/qplot/windows/_signal_blocking.py",
     "src/qplot/windows/_refresh_interval.py",

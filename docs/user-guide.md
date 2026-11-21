@@ -392,7 +392,7 @@ The main window is the database and run-selection hub.
 Common actions:
 
 * `File -> Load Database...` loads a QCoDeS database.
-* `File -> Load Recent Database` reopens a recently used database.
+* `File -> Load Recent Database` reopens a recently used database. If qPlot cannot save the list, newly opened databases still appear here for this session. Choose **Details** in the notice to see the settings path and error. Opening a database again retries the save.
 * `File -> Refresh` checks the current database for new runs and refreshes all
   live plot windows once.
 * `File -> Open Database Folder` opens the folder containing the loaded
@@ -558,6 +558,11 @@ Common plot controls:
 * Hold Shift while moving a selection to lock movement horizontally or vertically,
   according to the initial drag direction. Release Shift for free movement.
 * Right-click inside a marquee selection for zoom and statistics actions.
+  Statistics use the primary trace or heatmap identified in the report. A
+  heatmap report gives the grid dimensions and the number of finite cells
+  that contributed. **Copy** includes the run, measurement and quantity units.
+  For the full recorded measurement, choose statistics from its thumbnail.
+  You can continue working or cancel while qPlot calculates.
 * Press `Esc` or double-click the plot to clear a marquee selection.
 * Double-click an X or Y axis to open its scaling dialog, or use **View → Axis Scaling…**.
 * The axis-scaling tabs are **Bottom**, **Left**, **Top** and **Right**. Each
@@ -920,10 +925,11 @@ measurement shared by the selected runs under **Data to export**, then choose
 an output folder. If there are no shared measurement names, **Data to export**
 shows **All measurements in each run** as plain text. The review shows the
 number of selected runs and their run numbers in a single-line field that you
-can select and copy. qPlot writes one
-file per run and asks before replacing an existing file. Each run
-captures the committed data available when its export starts; a batch is not
-a common acquisition instant across all runs. Later live appends are excluded
+can select and copy. After folder selection, the filename review lists one CSV
+per run. Double-click a name to edit it, choose **Skip** to leave it out, or
+choose **Replace** for an existing file. Resolve duplicate names before
+selecting **Export** with the displayed file count. Each run captures the
+committed data available when its export starts. Later live appends are excluded
 from that run's captured export. Trusted live exports use the run-prefix reader
 and do not need a writer checkpoint or a whole-database copy.
 
@@ -931,7 +937,7 @@ You can also select individual measurement thumbnails in the run table or the
 Preview pane. Ctrl-click (Cmd-click on macOS) toggles a thumbnail; Shift-click
 selects a range in the current display order. Right-click a selected thumbnail
 and choose **Export Selected Measurements as CSV…**, then choose a folder. This
-writes one raw CSV per selected measurement, including its setpoints. Selecting
+opens the same filename review with one raw CSV per selected measurement, including its setpoints. Selecting
 two measurements from the same run produces two files. Selection is local to
 the run table or Preview pane, and remains highlighted as previews finish
 loading. Drag any highlighted thumbnail onto a plot to add the whole selection

@@ -115,6 +115,8 @@ if (
         def __init__(self, scene: Any, owner: Any):
             self._qplot_owner_ref = weakref.ref(owner)
             super().__init__(scene)
+            self.setParent(owner, QtCore.Qt.WindowType.Window)
+            self.setObjectName("plotExportDialog")
             while self.ui.gridLayout.count():
                 item = self.ui.gridLayout.takeAt(0)
                 widget = item.widget()

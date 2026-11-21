@@ -1694,25 +1694,6 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         if table is None:
             self.resize(780, 360)
             self.setMinimumSize(700, 300)
-        self.setStyleSheet(
-            self.styleSheet()
-            + """
-            QTableWidget#heatmapAppearanceTable {
-                border: 1px solid palette(mid);
-                background-color: palette(base);
-                alternate-background-color: palette(alternate-base);
-                gridline-color: palette(midlight);
-            }
-            QTableWidget#heatmapAppearanceTable::item {
-                padding: 2px 6px;
-                border: none;
-            }
-            QTableWidget#heatmapAppearanceTable QHeaderView::section {
-                font-weight: normal;
-            }
-            """
-        )
-
         main = qtw.QVBoxLayout(self)
         main.setContentsMargins(10, 10, 10, 10)
         main.setSpacing(8)
