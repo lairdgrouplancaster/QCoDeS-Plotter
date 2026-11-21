@@ -5237,6 +5237,66 @@ class DatabaseLoadRequestTestCase(unittest.TestCase):
 
 
 class DatabaseDropTestCase(unittest.TestCase):
+    def test_database_field_shows_hint_until_leave_or_drop(self):
+        field = main_window.DatabasePathLineEdit()
+        field.setReadOnly(True)
+        field.setText(os.path.abspath("current.db"))
+        field.show()
+        self.addCleanup(field.close)
+        hint = field.findChild(qtw.QLabel)
+        self.assertFalse(hint.isVisible())
+        opened = []
+        field.databaseDropped.connect(opened.append)
+        actions = QtCore.Qt.DropAction.CopyAction | QtCore.Qt.DropAction.MoveAction
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            mime = QtCore.QMimeData()
+            mime.setUrls([QtCore.QUrl.fromLocalFile(database.name)])
+            args = (actions, mime, QtCore.Qt.MouseButton.LeftButton,
+                    QtCore.Qt.KeyboardModifier.ShiftModifier)
+            for finish in ("leave", "drop"):
+                with self.subTest(finish=finish):
+                    for event_type in (QtGui.QDragEnterEvent, QtGui.QDragMoveEvent):
+                        event = event_type(QtCore.QPoint(3, 3), *args)
+                        qtw.QApplication.sendEvent(field, event)
+                        self.assertTrue(event.isAccepted())
+                        self.assertEqual(event.dropAction(), QtCore.Qt.DropAction.CopyAction)
+                        self.assertTrue(hint.isVisible())
+                        self.assertEqual(hint.text(), "Drop to open database")
+                        self.assertEqual(hint.geometry(), field.rect())
+                        self.assertEqual(field.text(), os.path.abspath("current.db"))
+                    if finish == "leave":
+                        qtw.QApplication.sendEvent(field, QtGui.QDragLeaveEvent())
+                        self.assertEqual(opened, [])
+                    else:
+                        drop = QtGui.QDropEvent(QtCore.QPointF(3, 3), *args)
+                        qtw.QApplication.sendEvent(field, drop)
+                        self.assertTrue(drop.isAccepted())
+                        self.assertEqual(drop.dropAction(), QtCore.Qt.DropAction.CopyAction)
+                        self.assertEqual(opened, [database.name])
+                    self.assertFalse(hint.isVisible())
+                    self.assertEqual(field.displayText(), "current.db")
+
+    def test_database_field_rejects_invalid_files_and_move_only_drags(self):
+        field = main_window.DatabasePathLineEdit()
+        field.show()
+        self.addCleanup(field.close)
+        with (
+            tempfile.NamedTemporaryFile(suffix=".db") as database,
+            tempfile.NamedTemporaryFile(suffix=".txt") as other_file,
+        ):
+            for path, action in ((database.name, QtCore.Qt.DropAction.MoveAction),
+                                 (other_file.name, QtCore.Qt.DropAction.CopyAction)):
+                with self.subTest(path=path, action=action):
+                    mime = QtCore.QMimeData()
+                    mime.setUrls([QtCore.QUrl.fromLocalFile(path)])
+                    event = QtGui.QDragEnterEvent(
+                        QtCore.QPoint(3, 3), action, mime, QtCore.Qt.MouseButton.LeftButton,
+                        QtCore.Qt.KeyboardModifier.NoModifier,
+                    )
+                    qtw.QApplication.sendEvent(field, event)
+                    self.assertFalse(event.isAccepted())
+                    self.assertFalse(field.findChild(qtw.QLabel).isVisible())
+
     def test_database_info_report_summarises_qcodes_tables(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = str(Path(temp_dir) / "info.db")

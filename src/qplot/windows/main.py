@@ -89,6 +89,14 @@ class DatabasePathLineEdit(qtw.QLineEdit):
 
         self._database_path = ""
         self.setAcceptDrops(True)
+        self._drop_hint = qtw.QLabel("Drop to open database", self)
+        self._drop_hint.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._drop_hint.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self._drop_hint.setStyleSheet(
+            "background-color: palette(highlight); color: palette(highlighted-text);"
+            "border-radius: 4px;"
+        )
+        self._drop_hint.hide()
 
     def setText(self, text):
         self._database_path = str(text or "")
@@ -109,23 +117,37 @@ class DatabasePathLineEdit(qtw.QLineEdit):
     def text(self):
         return self._database_path
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._drop_hint.setGeometry(self.rect())
+
+    def _accept_database_drag(self, event):
+        path = database_path_from_mime_data(event.mimeData())
+        if path is not None:
+            # Opening the path must never tell the source to move its file.
+            for action in (QtCore.Qt.DropAction.CopyAction, QtCore.Qt.DropAction.LinkAction):
+                if event.possibleActions() & action:
+                    event.setDropAction(action)
+                    event.accept()
+                    return path
+        event.ignore()
+        return None
+
     def dragEnterEvent(self, event):
-        if database_path_from_mime_data(event.mimeData()) is not None:
-            event.acceptProposedAction()
-        else:
-            event.ignore()
+        self._drop_hint.setVisible(self._accept_database_drag(event) is not None)
 
     def dragMoveEvent(self, event):
         self.dragEnterEvent(event)
 
-    def dropEvent(self, event):
-        path = database_path_from_mime_data(event.mimeData())
-        if path is None:
-            event.ignore()
-            return
+    def dragLeaveEvent(self, event):
+        self._drop_hint.hide()
+        event.accept()
 
-        event.acceptProposedAction()
-        self.databaseDropped.emit(os.path.abspath(path))
+    def dropEvent(self, event):
+        self._drop_hint.hide()
+        path = self._accept_database_drag(event)
+        if path is not None:
+            self.databaseDropped.emit(os.path.abspath(path))
 
 
 class MainWindow(
