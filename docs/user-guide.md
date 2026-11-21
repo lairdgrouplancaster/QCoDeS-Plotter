@@ -392,7 +392,7 @@ The main window is the database and run-selection hub.
 Common actions:
 
 * `File -> Load Database...` loads a QCoDeS database.
-* `File -> Load Recent Database` reopens a recently used database.
+* `File -> Load Recent Database` reopens a recently used database. If qPlot cannot save the list, newly opened databases still appear here for this session. Choose **Details** in the notice to see the settings path and error. Opening a database again retries the save.
 * `File -> Refresh` checks the current database for new runs and refreshes all
   live plot windows once.
 * `File -> Open Database Folder` opens the folder containing the loaded

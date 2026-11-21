@@ -1,8 +1,7 @@
-import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui
@@ -19,6 +18,10 @@ from qplot.windows._window_controls import (
     ask_confirmation_with_dont_ask_again,
 )
 from qplot.windows.plot2d import plot2d
+from tests.support.windows.plot_integration import build_line_database, wait_for
+from tests.support.windows.typed_run_keyboard_launch import (
+    typed_run_window as typed_run_window,
+)
 
 
 class TransactionalGuiTestCase(unittest.TestCase):
@@ -376,26 +379,20 @@ class TransactionalGuiTestCase(unittest.TestCase):
         finally:
             plot.deleteLater()
 
-    def test_default_and_recent_database_paths_are_atomic(self):
+    def test_default_database_path_change_is_atomic(self):
         class Harness:
             change_default_file = DatabaseActionsMixin.change_default_file
-            recent_database_paths = DatabaseActionsMixin.recent_database_paths
-            remember_loaded_database = DatabaseActionsMixin.remember_loaded_database
 
             def __init__(self, config_object):
                 self.config = config_object
                 self.errors = []
                 self.statuses = []
-                self.menu_refreshes = 0
 
             def show_error(self, *args):
                 self.errors.append(args)
 
             def show_status(self, *args):
                 self.statuses.append(args)
-
-            def refresh_recent_database_menu(self):
-                self.menu_refreshes += 1
 
         harness = Harness(self.config)
         folder = self.temp_dir.name
@@ -414,45 +411,6 @@ class TransactionalGuiTestCase(unittest.TestCase):
             self.assertTrue(harness.change_default_file())
         self.assertEqual(self.disk_value("file.default_load_path"), folder)
 
-        previous_path = os.path.abspath("previous.db")
-        recent_path = os.path.abspath("recent.db")
-        self.config.update(
-            "file.recent_file_paths",
-            [previous_path, recent_path],
-            )
-        new_path = os.path.abspath("new.db")
-        with (
-            patch.object(self.config, "update", wraps=self.config.update) as update,
-            self.failing_save(self.config),
-            ):
-            self.assertFalse(harness.remember_loaded_database(new_path))
-            self.assertEqual(update.call_count, 1)
-            self.assertEqual(
-                update.call_args.args,
-                (
-                    "file.recent_file_paths",
-                    [new_path, previous_path, recent_path],
-                    ),
-                )
-
-        self.assertEqual(
-            self.config.get("file.recent_file_paths"),
-            [previous_path, recent_path],
-            )
-        self.assertEqual(
-            self.disk_value("file.recent_file_paths"),
-            [previous_path, recent_path],
-            )
-        self.assertEqual(harness.menu_refreshes, 0)
-        self.assertEqual(len(harness.errors), 2)
-
-        self.assertTrue(harness.remember_loaded_database(new_path))
-        self.assertEqual(
-            self.disk_value("file.recent_file_paths"),
-            [new_path, previous_path, recent_path],
-            )
-        self.assertEqual(harness.menu_refreshes, 1)
-
     def test_gui_reset_waits_for_persistence_and_can_retry(self):
         self.config.update("user_preference.theme", "dark")
 
@@ -466,6 +424,8 @@ class TransactionalGuiTestCase(unittest.TestCase):
                 self.applied = 0
                 self.closed_database = 0
                 self.statuses = []
+                self.recentDatabaseNotice = Mock()
+                self.refresh_recent_database_menu = Mock()
 
             def show_error(self, *args):
                 self.errors.append(args)
@@ -550,3 +510,69 @@ class TransactionalGuiTestCase(unittest.TestCase):
             self.assertEqual(applied, [True])
         finally:
             dialog.deleteLater()
+
+
+def test_recent_database_save_failure_keeps_menu_and_load_usable(typed_run_window, tmp_path):
+    window, _runs = typed_run_window
+    notice = window.recentDatabaseNotice
+    original = window.fileTextbox.text()
+    second = str(tmp_path / "second.db")
+    third = str(tmp_path / "third.db")
+    for filename in (second, third):
+        build_line_database(Path(filename), 5)
+    key = "file.recent_file_paths"
+    before = Path(window.config.default_file).read_bytes()
+
+    with patch.object(window.config, "save_config", side_effect=PermissionError("Access denied")):
+        assert window.load_database_path(second)
+        wait_for(lambda: notice.isVisible() and not window._database_load_active)
+        assert window.RunList.topLevelItemCount() == 1
+        assert window.fileTextbox.text() == second
+        assert "Loaded 1 run from second.db" in window.status_label.text()
+        assert window.plotRunButton.isEnabled()
+        assert qtw.QApplication.activeModalWidget() is None
+        assert not notice.details.isVisible()
+        notice.details_button.click()
+        assert notice.details.isVisible()
+        assert window.config.default_file in notice.details.text()
+        assert "Access denied" in notice.details.text()
+
+        next(button for button in notice.findChildren(qtw.QPushButton)
+             if button.text() == "Dismiss").click()
+        assert window.load_database_path(third)
+        wait_for(lambda: window.fileTextbox.text() == third and not window._database_load_active)
+        assert not notice.isVisible()
+        assert [action.toolTip() for action in window.recentDatabaseMenu.actions()] == [
+            third, second, original,
+        ]
+        assert window.config.get(key) == [original]
+        assert Path(window.config.default_file).read_bytes() == before
+
+    window.recentDatabaseMenu.actions()[0].trigger()
+    assert config().get(key) == [third, second, original]
+    assert not notice.isVisible()
+    assert not notice.details.text()
+
+
+def test_reset_only_discards_session_history_after_successful_save(typed_run_window):
+    window, _runs = typed_run_window
+    current = window.fileTextbox.text()
+    key = "file.recent_file_paths"
+    window.config.update(key, [])
+    with patch.object(qtw.QMessageBox, "question", return_value=qtw.QMessageBox.StandardButton.Yes):
+        with (
+            patch.object(window.config, "save_config", side_effect=PermissionError("Access denied")),
+            patch.object(window, "show_error") as explicit_save_error,
+        ):
+            assert window.load_database_path(current)
+            assert window.recentDatabaseNotice.isVisible()
+            explicit_save_error.assert_not_called()
+            assert not window.restore_default_settings()
+            explicit_save_error.assert_called_once()
+            assert window.recent_database_paths() == [current]
+            assert window.recentDatabaseNotice.isVisible()
+
+        assert window.restore_default_settings()
+        assert not window.recentDatabaseNotice.isVisible()
+        assert not window.recentDatabaseMenu.isEnabled()
+        assert window.recent_database_paths() == config().get(key) == []

@@ -1564,7 +1564,9 @@ class DatabaseActionsMixin:
         Returns recent database paths, newest first.
 
         """
-        paths = list(self.config.get("file.recent_file_paths"))
+        paths = self._session_recent_database_paths
+        if paths is None:
+            paths = self.config.get("file.recent_file_paths")
 
         deduped = []
         seen = set()
@@ -1580,7 +1582,7 @@ class DatabaseActionsMixin:
 
     def remember_loaded_database(self, filename):
         """
-        Persists the successfully loaded database path.
+        Keep the session's recent databases available even when saving fails.
 
         """
         abspath = os.path.abspath(filename)
@@ -1590,18 +1592,22 @@ class DatabaseActionsMixin:
         paths.insert(0, abspath)
         paths = paths[:10]
 
-        if current_paths == paths:
+        if current_paths == paths and self._session_recent_database_paths is None:
             return True
 
-        if not persist_config_value(
-                self,
-                self.config,
-                "file.recent_file_paths",
-                paths,
-                "the recent database list",
-                ):
+        try:
+            if current_paths != paths:
+                self.config.update("file.recent_file_paths", paths)
+        except Exception as error:
+            if self._session_recent_database_paths is None:
+                log_exception("Saving recent databases failed", error, __name__)
+            self._session_recent_database_paths = paths
+            self.recentDatabaseNotice.report_failure(self.config.default_file, error)
+            self.refresh_recent_database_menu()
             return False
 
+        self._session_recent_database_paths = None
+        self.recentDatabaseNotice.clear()
         self.refresh_recent_database_menu()
         return True
 
@@ -2315,8 +2321,8 @@ class DatabaseActionsMixin:
         elapsed = perf_counter() - load_started_at
         self.remember_loaded_database(abspath)
         run_count = self.RunList.topLevelItemCount()
+        run_word = "run" if run_count == 1 else "runs"
         if state.replacement_reload:
-            run_word = "run" if run_count == 1 else "runs"
             status = (
                 f"Database was replaced and reloaded: "
                 f"{os.path.basename(abspath)} ({run_count} {run_word})."
@@ -2327,7 +2333,7 @@ class DatabaseActionsMixin:
             status = self._loaded_empty_database_status(abspath, elapsed)
         else:
             status = (
-                f"Loaded {run_count} runs from "
+                f"Loaded {run_count} {run_word} from "
                 f"{os.path.basename(abspath)} in {elapsed:.2f} s."
             )
         self.show_status(status, 5000)

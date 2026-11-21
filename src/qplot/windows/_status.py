@@ -6,6 +6,52 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 
+class RecentDatabaseNotice(qtw.QWidget):
+    """Show a history-save failure alongside the database until it is resolved or dismissed."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = qtw.QGridLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        summary = qtw.QLabel("Database opened. qPlot couldn’t save the recent-file list for next time.")
+        summary.setWordWrap(True)
+        layout.addWidget(summary, 0, 0)
+        layout.setColumnStretch(0, 1)
+
+        self.details_button = qtw.QPushButton("Details")
+        self.details_button.setCheckable(True)
+        layout.addWidget(self.details_button, 0, 1)
+        dismiss = qtw.QPushButton("Dismiss")
+        dismiss.clicked.connect(self.hide)
+        layout.addWidget(dismiss, 0, 2)
+
+        self.details = qtw.QLabel()
+        self.details.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.details.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+            | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        self.details.setWordWrap(True)
+        layout.addWidget(self.details, 1, 0, 1, 3)
+        self.details_button.toggled.connect(self.details.setVisible)
+        self.details.hide()
+        self.hide()
+
+    def report_failure(self, filename: str, error: Exception) -> None:
+        first_failure = not self.details.text()
+        reason = str(error)
+        if isinstance(error, OSError) and (code := getattr(error, "winerror", None)) is not None:
+            reason = f"[WinError {code}] {error.strerror}"
+        self.details.setText(f"Settings file: {filename}\n{reason}")
+        if first_failure:
+            self.show()
+
+    def clear(self) -> None:
+        self.hide()
+        self.details_button.setChecked(False)
+        self.details.clear()
+
+
 class StatusLabel(qtw.QLabel):
     def __init__(self, parent=None):
         super().__init__(parent)

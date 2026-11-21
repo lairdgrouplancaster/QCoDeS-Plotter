@@ -6,7 +6,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import ANY, patch
+from unittest.mock import ANY, Mock, patch
 
 import numpy as np
 from _database_load_fakes import PreviewPublicationGate
@@ -2548,6 +2548,8 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.closed_plots = []
                 self.closed_database = []
                 self.status_messages = []
+                self.recentDatabaseNotice = Mock()
+                self.refresh_recent_database_menu = Mock()
 
             def close_plot_windows(self, confirm=True, status=True):
                 self.closed_plots.append((confirm, status))
