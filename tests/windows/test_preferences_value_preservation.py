@@ -106,13 +106,13 @@ def test_keyboard_edit_to_same_rounded_value_is_saved(precise_config):
 def test_restore_defaults_saves_even_matching_rounded_value(precise_config, monkeypatch):
     precise_config.update("user_preference.default_refresh_rate", 1.049)
     dialog = PreferencesDialog(precise_config)
-    monkeypatch.setattr(qtw.QMessageBox, "question", lambda *args: qtw.QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr("qplot.windows._preferences.confirm_action", lambda *args, **kwargs: True)
     try:
         assert dialog.refreshRateSpin.value() == 1.0
         assert dialog.restore_defaults()
         assert dialog.apply_preferences()
         assert precise_config.get("user_preference.default_refresh_rate") == 1.0
-        assert precise_config.get("user_preference.axis_tick_width") == 2.0
+        assert precise_config.get("user_preference.axis_tick_width") == 1.25
     finally:
         dialog.close()
 
@@ -120,7 +120,7 @@ def test_restore_defaults_saves_even_matching_rounded_value(precise_config, monk
 def test_cancel_discards_pending_edits_and_reset(precise_config, monkeypatch):
     before = json.loads(Path(precise_config.default_file).read_text(encoding="utf-8"))
     dialog = PreferencesDialog(precise_config)
-    monkeypatch.setattr(qtw.QMessageBox, "question", lambda *args: qtw.QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr("qplot.windows._preferences.confirm_action", lambda *args, **kwargs: True)
     try:
         assert dialog.restore_defaults()
         dialog.refreshRateSpin.setValue(0.2)

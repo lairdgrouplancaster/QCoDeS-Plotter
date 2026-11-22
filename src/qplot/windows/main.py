@@ -35,6 +35,7 @@ from ._config_persistence import (
 from ._database_actions import DatabaseActionsMixin
 from ._dataset_handle import DatasetHandle, DatasetKey
 from ._error_dialog import ErrorDialog
+from ._export_tasks import cancel_owner_exports
 from ._help import add_help_menu
 from ._plot_actions import PlotActionsMixin
 from ._preferences import (
@@ -44,6 +45,7 @@ from ._preferences import (
 from ._run_controls import AUTO_PLOT_KEY, RunControlsMixin
 from ._shutdown_coordinator import ShutdownCoordinator
 from ._signal_blocking import blocked_signals
+from ._small_dialogs import confirm_action
 from ._status import RecentDatabaseNotice, StatusLabel
 from ._test_database import SyntheticDatabaseActionsMixin, TestDatabaseGenerationWorker
 from ._trusted_derived_qt import TrustedDerivedQtBridge
@@ -55,6 +57,7 @@ from ._window_controls import (
     add_standard_window_controls,
     ask_confirmation_with_dont_ask_again,
     close_all_warning_enabled,
+    pending_export_message,
 )
 
 # Public window types and the worker/report aliases exposed by this module.
@@ -432,7 +435,9 @@ class MainWindow(
             create_preferences_action(self, self.show_preferences_dialog)
             )
         prefMenu.addSeparator()
-        add_restore_defaults_option(self, prefMenu)
+        advanced_settings = prefMenu.addMenu("Advanced")
+        if advanced_settings is not None:
+            add_restore_defaults_option(self, advanced_settings)
         add_help_menu(self, include_desktop_integration=True)
 
     def initFile(self):
@@ -561,7 +566,14 @@ class MainWindow(
             self.show_status("No database is loaded.", 3000)
             return
 
-        if not self.close_plot_windows(confirm=True, status=False):
+        warning = pending_export_message(self)
+        if warning and not confirm_action(
+            self, "Close database?", f"Close the database and its plot windows?\n\n{warning}",
+            affirmative="Close database",
+        ):
+            self.show_status("Database close cancelled.", 3000)
+            return
+        if not self.close_plot_windows(confirm=not warning, status=False):
             self.show_status("Database close cancelled.", 3000)
             return
 
@@ -596,6 +608,11 @@ class MainWindow(
                 CONFIRM_QUIT_KEY,
                 )
             if reply != qtw.QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+        else:
+            warning = pending_export_message(self)
+            if warning and not confirm_action(self, "Quit qPlot?", warning, affirmative="Quit qPlot"):
                 event.ignore()
                 return
 
@@ -654,8 +671,8 @@ class MainWindow(
                 self.show_status("No plot windows to close.", 3000)
             return True
 
+        count = len(plot_windows)
         if confirm and close_all_warning_enabled(self.config):
-            count = len(plot_windows)
             noun = "window" if count == 1 else "windows"
             reply = ask_confirmation_with_dont_ask_again(
                 self,
@@ -668,6 +685,13 @@ class MainWindow(
                 if status:
                     self.show_status("Close all plot windows cancelled.", 3000)
                 return False
+        elif confirm:
+            warning = pending_export_message(self, plots_only=True)
+            action = f"Close {count} {'plot' if count == 1 else 'plots'}"
+            if warning and not confirm_action(self, f"{action}?", warning, affirmative=action):
+                if status:
+                    self.show_status("Close all plot windows cancelled.", 3000)
+                return False
 
         PlotActionsMixin._cancel_pending_plot_launches(self)
         # Auto-plot and pending plot loads can publish while the modal
@@ -676,6 +700,10 @@ class MainWindow(
         plot_windows = self.windows.copy()
         if status:
             self.show_status("Closing plot windows...", 3000)
+        # One confirmation covers the group, including child plots that close
+        # synchronously from another plot's close event.
+        for win in plot_windows:
+            cancel_owner_exports(win)
         for win in plot_windows:
             win.close()
         return True
@@ -753,15 +781,11 @@ class MainWindow(
         Confirms and resets all user settings to schema defaults.
 
         """
-        reply = qtw.QMessageBox.question(
-            self,
-            "Reset All Settings",
-            "Reset all qPlot settings to their defaults? "
-            "This will also close the current database and all plot windows.",
-            qtw.QMessageBox.StandardButton.Yes | qtw.QMessageBox.StandardButton.No,
-            qtw.QMessageBox.StandardButton.No,
-            )
-        if reply != qtw.QMessageBox.StandardButton.Yes:
+        message = "Reset all qPlot settings to their defaults? This will also close the current database and all plot windows."
+        export_warning = pending_export_message(self)
+        if export_warning:
+            message += "\n\n" + export_warning
+        if not confirm_action(self, "Reset all settings", message, affirmative="Reset all settings"):
             self.show_status("Settings reset cancelled.", 3000)
             return False
 
@@ -941,4 +965,9 @@ class MainWindow(
         self.show_status(message, 10_000)
 
         box = ErrorDialog(title, message, details, parent=self)
-        box.exec()
+        if title in {"Database Load Failed", "Trusted Database Load Failed", "Unverifiable Database WAL"}:
+            box.add_recovery_action("Choose database…")
+            if box.exec() == ErrorDialog.RecoveryRequested:
+                QtCore.QTimer.singleShot(0, self.getfile)
+        else:
+            box.exec()

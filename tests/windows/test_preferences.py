@@ -2,9 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PyQt6 import QtWidgets as qtw
-
 from qplot.configuration.config import config
+from qplot.windows import _preferences
 from qplot.windows import main as main_window
 from qplot.windows._preferences import (
     AXIS_MAJOR_TICK_COUNT_KEY,
@@ -12,7 +11,6 @@ from qplot.windows._preferences import (
     COLORBAR_WIDTH_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
-    COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
     COPY_PLOT_IMAGE_RESOLUTION_SVG,
     PreferencesDialog,
 )
@@ -181,8 +179,8 @@ class PreferencesDialogTestCase(unittest.TestCase):
         finally:
             dialog.deleteLater()
 
-    def test_restore_defaults_updates_displayed_preferences(self):
-        old_question = qtw.QMessageBox.question
+    def test_reset_current_page_stages_only_that_pages_defaults(self):
+        old_question = _preferences.confirm_action
         cfg = FakeConfig()
         cfg.values.update({
             "user_preference.theme": "dark",
@@ -202,51 +200,48 @@ class PreferencesDialogTestCase(unittest.TestCase):
         dialog = PreferencesDialog(cfg)
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.StandardButton.Yes
+            _preferences.confirm_action = lambda *args, **kwargs: True
             dialog.preferencesApplied.connect(lambda: applied.append(True))
 
             self.assertTrue(dialog.restore_defaults())
 
             self.assertNotEqual(cfg.values, cfg.defaults)
             self.assertEqual(dialog.themeCombo.currentData(), "light")
-            self.assertEqual(dialog.colorbarWidthSpin.value(), 15)
             self.assertEqual(dialog.previewSizeSpin.value(), 200)
-            self.assertEqual(
-                dialog.copyPlotImageResolutionCombo.currentData(),
-                COPY_PLOT_IMAGE_RESOLUTION_SCREEN,
-                )
-            self.assertEqual(dialog.defaultLoadPathEdit.text(), "")
             self.assertEqual(dialog.refreshRateSpin.value(), 1.0)
             self.assertTrue(dialog.confirmCloseAllCheck.isChecked())
             self.assertTrue(dialog.confirmQuitCheck.isChecked())
-            self.assertEqual(dialog.maxThreadsSpin.value(), 4)
-            self.assertEqual(dialog.maxFullHeatmapPointsSpin.value(), 2_000_000)
-            self.assertEqual(dialog.delGracePeriodSpin.value(), 10.0)
-            self.assertEqual(dialog.cloudSyncTimeoutSpin.value(), 120.0)
+            self.assertEqual(dialog.colorbarWidthSpin.value(), 24)
+            self.assertEqual(dialog.defaultLoadPathEdit.text(), "C:/measurements")
+            self.assertEqual(dialog.maxThreadsSpin.value(), 9)
+
+            for page in range(1, dialog.tabs.count()):
+                dialog.tabs.setCurrentIndex(page)
+                self.assertTrue(dialog.restore_defaults())
             self.assertEqual(applied, [])
 
             self.assertTrue(dialog.apply_preferences())
             self.assertEqual(cfg.values, cfg.defaults)
             self.assertEqual(applied, [True])
         finally:
-            qtw.QMessageBox.question = old_question
+            _preferences.confirm_action = old_question
             dialog.deleteLater()
 
     def test_restore_defaults_can_be_cancelled(self):
-        old_question = qtw.QMessageBox.question
+        old_question = _preferences.confirm_action
         cfg = FakeConfig()
         cfg.values.update({"user_preference.theme": "dark"})
         dialog = PreferencesDialog(cfg)
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: qtw.QMessageBox.StandardButton.No
+            _preferences.confirm_action = lambda *args, **kwargs: False
 
             self.assertFalse(dialog.restore_defaults())
 
             self.assertEqual(cfg.values["user_preference.theme"], "dark")
             self.assertEqual(cfg.updates, [])
         finally:
-            qtw.QMessageBox.question = old_question
+            _preferences.confirm_action = old_question
             dialog.deleteLater()
 
 

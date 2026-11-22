@@ -251,14 +251,17 @@ def promote_plot_source(
         raise
     finally:
         main._plot_tile_grid, main._next_plot_tile = next_position
-    owner._preview_drop_replacement = ref(replacement)
     if (dialog is not None and getattr(dialog, "_session_active", False)
             and volume is not None and getattr(dialog, "_pending_added_entry", None) is not None
             and not getattr(dialog, "_session_finishing", False)):
+        owner._preview_drop_replacement = ref(replacement)
         dialog.adopt_preview(replacement)
         replacement.show()
         return replacement
-    owner.close()
+    if not owner.close():
+        replacement.close()
+        return None
+    owner._preview_drop_replacement = ref(replacement)
     if owner._merged_trace_users <= 0:
         owner.deleteLater()
     replacement.show()

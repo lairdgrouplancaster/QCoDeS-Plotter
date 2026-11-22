@@ -29,8 +29,8 @@ def test_preference_persists_and_restores_default(cfg, monkeypatch):
         dialog.cursorSignificantFiguresSpin.setValue(9)
         assert dialog.apply_preferences()
         assert config().get(CURSOR_SIGNIFICANT_FIGURES_KEY) == 9
-        monkeypatch.setattr(qtw.QMessageBox, "question",
-                            lambda *a, **k: qtw.QMessageBox.StandardButton.Yes)
+        monkeypatch.setattr("qplot.windows._preferences.confirm_action", lambda *args, **kwargs: True)
+        dialog.tabs.setCurrentIndex(1)
         assert dialog.restore_defaults()
         assert dialog.cursorSignificantFiguresSpin.value() == 6
         assert dialog.apply_preferences()

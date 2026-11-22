@@ -118,7 +118,7 @@ A local Windows run cannot substitute for those platform results.
 
 ## Static analysis
 
-The explicit mypy targets in `pyproject.toml` cover 180 of the 215 application
+The explicit mypy targets in `pyproject.toml` cover 184 of the 219 application
 modules. The other 35 have individual reasons in `[tool.qplot.typing.deferred]`.
 `follow_imports = "silent"` allows mypy to use imported types while suppressing
 diagnostics from modules outside the explicit targets; this is partial coverage,

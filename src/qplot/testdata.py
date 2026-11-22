@@ -1260,6 +1260,7 @@ def generate_database(
         rng=None,
         cancelled_callback=None,
         publication_callback=None,
+        run_started_callback=None,
         ):
     """Generate a database and optionally observe its publication boundary."""
     specifications = list(specifications)
@@ -1315,6 +1316,12 @@ def generate_database(
                 for run_number, specification in enumerate(specifications, start=1):
                     run_started = perf_counter()
                     run_name = specification.name or f"run_{run_number}"
+                    if run_started_callback is not None:
+                        run_started_callback(
+                            f"Generating run {run_number} of {total_runs} · {run_name} "
+                            f"({specification.point_count:,} points)",
+                            run_number, total_runs,
+                        )
                     _timestamped_message(
                         f"Run started: {run_name} ({run_number}/{total_runs}, "
                         f"{specification.dimension_summary}, "

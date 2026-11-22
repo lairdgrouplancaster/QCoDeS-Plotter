@@ -67,10 +67,12 @@ def test_narrow_pages_scroll_and_keep_actions_visible(preferences, qapplication)
     dialog.show()
     dialog.resize(390, 330)
     qapplication.processEvents()
+    assert [dialog.tabs.tabText(i) for i in range(dialog.tabs.count())] == [
+        "Application", "Plots", "Files && export", "Performance",
+    ]
     for index, field in enumerate((
-        dialog.confirmQuitCheck, dialog.defaultColourMapButton,
-        dialog.confirmIncompatibleAxesCheck, dialog.copyPlotImageResolutionCombo,
-        dialog.delGracePeriodSpin, dialog.includePrereleasesCheck,
+        dialog.includePrereleasesCheck, dialog.defaultColourMapButton,
+        dialog.copyPlotImageResolutionCombo, dialog.delGracePeriodSpin,
     )):
         dialog.tabs.setCurrentIndex(index)
         qapplication.processEvents()
@@ -83,8 +85,31 @@ def test_narrow_pages_scroll_and_keep_actions_visible(preferences, qapplication)
         assert page.viewport().rect().contains(rect.center()), (index, rect, page.viewport().rect())
         assert_buttons_visible(dialog)
     assert dialog.tabs.tabBar().usesScrollButtons()
-    assert any(button.isVisible() for button in dialog.tabs.tabBar().findChildren(qtw.QToolButton))
     assert not any(label.text().startswith("Changes are saved when") for label in dialog.findChildren(qtw.QLabel))
+
+
+@pytest.mark.parametrize("width", [390, 600])
+def test_plot_grid_keeps_each_label_next_to_its_spin_box(preferences, qapplication, width):
+    dialog = preferences
+    dialog.show()
+    dialog.resize(width, 540)
+    dialog.tabs.setCurrentIndex(1)
+    qapplication.processEvents()
+    page = dialog.tabs.currentWidget()
+    viewport = page.viewport()
+    labels = {label.buddy(): label for label in page.findChildren(qtw.QLabel) if label.buddy()}
+    rows, columns = dialog.plotTileRowsSpin, dialog.plotTileColumnsSpin
+    row_label, row_box, column_label, column_box = [
+        QtCore.QRect(widget.mapTo(viewport, QtCore.QPoint()), widget.size())
+        for widget in (labels[rows], rows, labels[columns], columns)
+    ]
+    assert 0 <= row_label.left() < column_box.right() < viewport.width()
+    centres = [rect.center().y() for rect in (row_label, row_box, column_label, column_box)]
+    assert max(centres) - min(centres) <= 1
+    between_pairs = column_label.left() - row_box.right()
+    assert 0 < row_box.left() - row_label.right() < between_pairs
+    assert 0 < column_box.left() - column_label.right() < between_pairs
+    assert row_box.width() == column_box.width()
 
 
 def test_wrapped_checkbox_remains_clickable_and_keyboard_accessible(preferences, qapplication):

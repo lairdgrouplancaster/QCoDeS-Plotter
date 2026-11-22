@@ -500,6 +500,9 @@ def immutable_run_name(database_path, run_id):
 
 
 def configure_generation_dialogs(monkeypatch, csv_path, database_path):
+    from tests.support.windows.generation_review import choose_custom_generation
+
+    choose_custom_generation(monkeypatch)
     monkeypatch.setattr(
         qtw.QFileDialog,
         "getOpenFileName",
@@ -514,9 +517,7 @@ def configure_generation_dialogs(monkeypatch, csv_path, database_path):
         ),
     )
     monkeypatch.setattr(
-        qtw.QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: qtw.QMessageBox.StandardButton.Yes,
+        "qplot.windows._generation_dialog.confirm_action", lambda *_args, **_kwargs: True,
     )
 
 
@@ -817,22 +818,15 @@ def test_real_plot_export_format_controls_suffix_and_delimiter(
             ]
 
         cases = (
-            # Default exporter settings, then explicitly conflicting settings.
-            ("csv", None, ".csv", True),
-            ("tsv", None, ".tsv", True),
-            ("csv", "tab", ".csv", True),
-            ("tsv", "comma", ".tsv", True),
-            # Resolve suffix/filter conflicts before confirming replacement.
-            ("csv", "tab", ".tsv", True),
-            ("tsv", "comma", ".csv", True),
-            ("csv", None, "", True),
-            ("tsv", None, "", True),
-            ("tsv", None, ".TSV", True),
-            # A dialog without a selected filter uses the approved suffix.
-            ("csv", "tab", ".csv", False),
-            ("tsv", "comma", ".tsv", False),
+            # The qPlot format governs both the final name and its contents.
+            ("csv", ".csv", "CSV files (*.csv)"),
+            ("tsv", ".tsv", "TSV files (*.tsv)"),
+            ("csv", ".tsv", "TSV files (*.tsv)"),
+            ("tsv", ".csv", "CSV files (*.csv)"),
+            ("csv", "", ""), ("tsv", "", ""), ("tsv", ".TSV", ""),
+            ("csv", ".tsv", ""), ("tsv", ".csv", ""),
         )
-        for index, (format_name, separator, typed_suffix, use_filter) in enumerate(cases):
+        for index, (format_name, typed_suffix, selected_filter) in enumerate(cases):
             stem = tmp_path / f"export-{index}"
             selected_path = Path(f"{stem}{typed_suffix}")
             approved_suffix = (
@@ -844,33 +838,26 @@ def test_real_plot_export_format_controls_suffix_and_delimiter(
             target.write_bytes(sentinel)
             if selected_path != target and typed_suffix:
                 selected_path.write_bytes(b"different format must remain untouched")
-            selected_filter = (
-                f"{format_name.upper()} files (*.{format_name})" if use_filter else ""
-            )
             monkeypatch.setattr(
                 qtw.QFileDialog, "getSaveFileName",
                 lambda *_args, _path=selected_path, _filter=selected_filter,
                 **_kwargs: (str(_path), _filter),
             )
-            replies = [
-                qtw.QMessageBox.StandardButton.No,
-                qtw.QMessageBox.StandardButton.Yes,
-            ]
+            replies = [False, True]
             prompts = []
 
             def confirm(
                 _parent, _title, message, *_args, _prompts=prompts,
-                _target=target, _sentinel=sentinel, _replies=replies,
+                _target=target, _sentinel=sentinel, _replies=replies, affirmative,
             ):
                 _prompts.append(message)
                 assert str(_target) in message
                 assert _target.read_bytes() == _sentinel
                 return _replies.pop(0)
 
-            monkeypatch.setattr(qtw.QMessageBox, "question", confirm)
+            monkeypatch.setattr("qplot.windows._export_paths.confirm_action", confirm)
             exporter = CSVExporter(plot_window.plot)
-            if separator is not None:
-                exporter.params["separator"] = separator
+            exporter.params["separator"] = "tab" if format_name == "tsv" else "comma"
             assert not plot_window._export_pyqtgraph_exporter(exporter)
             assert target.read_bytes() == sentinel
             assert len(prompts) == 1
@@ -2766,11 +2753,7 @@ def test_preview_export_capture_replacement_preserves_existing_csv(
                     "CSV files (*.csv)",
                 ),
             )
-            scoped_monkeypatch.setattr(
-                qtw.QMessageBox,
-                "question",
-                lambda *_args, **_kwargs: qtw.QMessageBox.StandardButton.Yes,
-            )
+            scoped_monkeypatch.setattr("qplot.windows._export_paths.confirm_action", lambda *_args, **_kwargs: True)
             window.export_run_preview_csv(guid, "signal")
             wait_for(lambda: not window._export_task_manager.tasks)
             assert window._export_task_manager.history[-1].error is not None

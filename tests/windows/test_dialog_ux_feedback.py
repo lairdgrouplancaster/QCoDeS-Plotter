@@ -86,6 +86,7 @@ def test_invalid_draft_blocks_format_switch_and_keeps_selection(qapplication, ce
     ui = window._axis_scale_controls["x"]
     entry = ui.rangeEntry
     try:
+        ui.manualRadio.click()
         if centre_span:
             entry.center_span_button.click()
         ui.minText.setText("9")
@@ -119,6 +120,7 @@ def test_range_draft_survives_refresh_and_corrects_without_precision_loss(qappli
     window.plot.plot([1, 2, 3], [1, 2, 3])
     window.open_axis_scale_dialog("x")
     ui = window._axis_scale_controls["x"]
+    ui.manualRadio.click()
     before = list(window.vb.viewRange()[0])
     try:
         ui.minText.setText("9")
@@ -139,7 +141,7 @@ def test_range_draft_survives_refresh_and_corrects_without_precision_loss(qappli
         np.testing.assert_array_equal(window.vb.viewRange()[0], [1.0000000000000002, 2.0])
         ui.maxText.setText("0")
         window._axis_scale_range_text_changed("x")
-        window._axis_scale_auto_clicked("x")
+        ui.autoRadio.click()
         assert not ui.rangeEntry._error
         assert float(ui.minText.text()) < float(ui.maxText.text())
     finally:

@@ -365,6 +365,26 @@ def close_all_warning_enabled(config):
     return config.get(CONFIRM_CLOSE_ALL_KEY)
 
 
+def pending_export_message(window, *, plots_only=False):
+    if plots_only:
+        return pending_plot_export_message(getattr(window, "windows", ()))
+    manager = getattr(window, "_export_task_manager", None)
+    tasks = manager.tasks if manager is not None else getattr(window, "_export_tasks", ())
+    return _unfinished_export_message(tasks)
+
+
+def pending_plot_export_message(plots):
+    return _unfinished_export_message(task for plot in plots for task in getattr(plot, "_export_tasks", ()))
+
+
+def _unfinished_export_message(tasks):
+    count = sum(1 for task in tasks if not task.cancelled and not task.stage.published)
+    if not count:
+        return ""
+    noun = "export" if count == 1 else "exports"
+    return f"This will cancel {count} unfinished {noun}. Completed files will be kept."
+
+
 def ask_confirmation_with_dont_ask_again(
         window,
         title,
@@ -385,9 +405,20 @@ def ask_confirmation_with_dont_ask_again(
         parent,
         )
     box.setDefaultButton(default_button)
+    count = len(getattr(window, "windows", ()))
+    closing_plots = config_key == CONFIRM_CLOSE_ALL_KEY
+    action = "Quit qPlot"
+    if closing_plots:
+        action = f"Close {count} {'plot' if count == 1 else 'plots'}" if count else "Close plots"
+    confirm = box.button(qtw.QMessageBox.StandardButton.Yes)
+    cancel = box.button(qtw.QMessageBox.StandardButton.No)
+    assert confirm is not None and cancel is not None
+    confirm.setText(action)
+    cancel.setText("Cancel")
+    box.setInformativeText(pending_export_message(window, plots_only=closing_plots))
 
     dont_ask_again = qtw.QCheckBox(DO_NOT_ASK_AGAIN_LABEL)
-    dont_ask_again.setToolTip("If you confirm this action, disable this confirmation in future. Re-enable it in Preferences.")
+    dont_ask_again.setToolTip("Turn off routine confirmations for this action. Warnings about unfinished exports still appear. Re-enable routine confirmations in Preferences.")
     box.setCheckBox(dont_ask_again)
 
     reply = box.exec()

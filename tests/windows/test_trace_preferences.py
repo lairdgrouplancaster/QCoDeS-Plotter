@@ -2,6 +2,7 @@
 
 import sys
 from copy import deepcopy
+from itertools import pairwise
 
 import pytest
 from jsonschema import ValidationError
@@ -55,7 +56,8 @@ def test_trace_defaults_load_cancel_apply_and_restore(preferences, monkeypatch):
     assert saved.get(TRACE_COLOUR_KEY) == "#ff7f0e"
     assert saved.get(TRACE_WIDTH_KEY) == 5.5
     assert saved.get(TRACE_STYLE_KEY) == "Dash Dot"
-    monkeypatch.setattr(qtw.QMessageBox, "question", lambda *args: qtw.QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr("qplot.windows._preferences.confirm_action", lambda *args, **kwargs: True)
+    dialog.tabs.setCurrentIndex(1)
     assert dialog.restore_defaults()
     assert dialog.defaultTraceColourCombo.currentData() == "#1f77b4"
     assert dialog.defaultTraceWidthSpin.value() == 2.0
@@ -95,9 +97,9 @@ def test_untouched_trace_width_preserves_saved_precision(preferences):
     assert config().get(TRACE_WIDTH_KEY) == 2.25
 
 
-@pytest.mark.parametrize("width", [360, 760])
+@pytest.mark.parametrize("width", [360, 600, 760])
 @pytest.mark.parametrize("font_size", [9, 14])
-def test_trace_default_row_keeps_controls_visible(preferences, qapplication, width, font_size):
+def test_trace_and_heatmap_defaults_share_a_section_and_field_column(preferences, qapplication, width, font_size):
     dialog, _cfg = preferences
     font = QtGui.QFont(dialog.font())
     font.setPointSize(font_size)
@@ -110,16 +112,33 @@ def test_trace_default_row_keeps_controls_visible(preferences, qapplication, wid
     page.ensureWidgetVisible(dialog.defaultTraceRow)
     qapplication.processEvents()
     controls = (dialog.defaultTraceColourCombo, dialog.defaultTraceWidthSpin, dialog.defaultTraceStyleCombo)
+    form = page.widget().layout()
+    trace_row, role = form.getWidgetPosition(dialog.defaultTraceRow)
+    assert role == qtw.QFormLayout.ItemRole.FieldRole
+    assert form.getWidgetPosition(dialog.defaultColourMapButton) == (trace_row + 1, role)
+    assert form.labelForField(dialog.defaultTraceRow).buddy() is controls[0]
+    assert form.labelForField(dialog.defaultColourMapButton).buddy() is dialog.defaultColourMapButton
+    heading = form.itemAt(trace_row - 1, qtw.QFormLayout.ItemRole.SpanningRole).widget()
+    assert isinstance(heading, qtw.QLabel) and heading.font().bold()
+    fields = (dialog.fontSizeSpin, controls[0], dialog.defaultColourMapButton)
+    left_edges = [field.mapTo(page.widget(), QtCore.QPoint()).x() for field in fields]
+    assert left_edges[0] == left_edges[1] == left_edges[2]
+    for field in (*controls, dialog.defaultColourMapButton):
+        left = field.mapTo(page.viewport(), QtCore.QPoint()).x()
+        assert 0 <= left < left + field.width() <= page.viewport().width()
     for control in controls:
         rect = QtCore.QRect(control.mapTo(dialog.defaultTraceRow, QtCore.QPoint()), control.size())
         assert dialog.defaultTraceRow.rect().contains(rect)
-    if width == 760:
-        assert max(control.geometry().center().y() for control in controls) - min(
-            control.geometry().center().y() for control in controls
-        ) <= 1
+    centres = [control.geometry().center().y() for control in controls]
+    assert max(centres) - min(centres) <= 1
     assert controls[0].geometry().left() == 0
-    assert controls[-1].geometry().right() == dialog.defaultTraceRow.width() - 1
-    assert abs(controls[0].width() - controls[-1].width()) <= 1
+    for previous, following in pairwise(controls):
+        assert following.x() - previous.geometry().right() - 1 == dialog.defaultTraceRow.layout().spacing()
+    assert controls[0].width() == controls[-1].width()
+    assert not dialog.defaultTraceRow.findChildren(qtw.QLabel)
+    for control, name in zip(controls, ("colour", "width", "style"), strict=True):
+        assert name in control.accessibleName().lower()
+        assert name in control.toolTip().lower()
     assert not page.horizontalScrollBar().isVisible()
 
 

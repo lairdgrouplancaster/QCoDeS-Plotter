@@ -24,7 +24,7 @@ from qplot.updates import (
     latest_release,
 )
 
-from ._small_dialogs import close_default, resize_dialog
+from ._small_dialogs import close_default, copy_to_clipboard
 
 
 class UpdateChecker(QtCore.QObject):
@@ -173,12 +173,8 @@ class UpdateChecker(QtCore.QObject):
         for ref in dialogs:
             dialog = ref()
             if dialog is not None and not sip.isdeleted(dialog) and dialog.isVisible():
-                browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
-                if browser is not None:
-                    prefix = str(dialog.property("qplotUpdatePrefixHtml") or "")
-                    browser.setHtml(prefix + message.html)
-                    self._set_upgrade_command(dialog, message.upgrade_command)
-                    shown = True
+                self._show_message(dialog, message, failed=bool(error))
+                shown = True
         parent = self._automatic_parent() if self._automatic_parent is not None else None
         self._automatic_parent = None
         if (
@@ -189,34 +185,47 @@ class UpdateChecker(QtCore.QObject):
         ):
             self._new_dialog(parent, message)
 
-    def _set_upgrade_command(self, dialog: qtw.QDialog, command: str):
-        dialog.setProperty("qplotUpgradeCommand", command)
-        button = dialog.findChild(qtw.QPushButton, "copyUpdateCommandButton")
-        if button is not None:
-            button.setVisible(bool(command))
+    @staticmethod
+    def add_controls(dialog, request_check, *, about=False):
+        """Give About and the standalone update report the same actions."""
+        buttons = dialog.findChild(qtw.QDialogButtonBox)
+        check = buttons.addButton("Check for updates" if about else "Check again", qtw.QDialogButtonBox.ButtonRole.ActionRole)
+        check.setObjectName("aboutCheckForUpdatesButton" if about else "checkAgainButton")
+        check.setToolTip("Check PyPI for a newer qPlot release.")
+        check.clicked.connect(request_check)
+        copy = buttons.addButton("Copy upgrade command", qtw.QDialogButtonBox.ButtonRole.ActionRole)
+        copy.setObjectName("copyUpdateCommandButton")
+        copy.setToolTip("Copy the command for this Python installation to the clipboard.")
+        copy.clicked.connect(lambda: copy_to_clipboard(dialog.property("qplotUpgradeCommand")))
+        copy.hide()
+        close_default(buttons)
+
+    @staticmethod
+    def _show_message(dialog, message, *, failed=False):
+        browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
+        prefix = str(dialog.property("qplotUpdatePrefixHtml") or "")
+        browser.setHtml(prefix + message.html)
+        dialog.setProperty("qplotUpgradeCommand", message.upgrade_command)
+        copy = dialog.findChild(qtw.QPushButton, "copyUpdateCommandButton")
+        copy.setVisible(bool(message.upgrade_command))
+        check = (dialog.findChild(qtw.QPushButton, "aboutCheckForUpdatesButton")
+                 or dialog.findChild(qtw.QPushButton, "checkAgainButton"))
+        check.setText("Retry" if failed else "Check again")
+        check.setEnabled(message is not CHECKING_MESSAGE)
+
+    def _check_from_dialog(self, dialog, config):
+        self._show_message(dialog, CHECKING_MESSAGE)
+        self.check(config, dialog=dialog)
+        return dialog
 
     def _new_dialog(self, parent, message: UpdateMessage):
         from ._help import _show_help_dialog
 
         dialog = _show_help_dialog(
-            parent, "Check for updates", message.html, "qplotUpdatesDialog", size=(650, 430),
+            parent, "Check for updates", message.html, "qplotUpdatesDialog", size=(600, 330),
         )
-        buttons = dialog.findChild(qtw.QDialogButtonBox)
-        if buttons is not None:
-            copy = buttons.addButton("Copy upgrade command", qtw.QDialogButtonBox.ButtonRole.ActionRole)
-            if copy is not None:
-                copy.setToolTip("Copy the upgrade command to run yourself; this does not install an update.")
-                copy.setObjectName("copyUpdateCommandButton")
-
-                def copy_command():
-                    clipboard = qtw.QApplication.clipboard()
-                    if clipboard is not None:
-                        clipboard.setText(str(dialog.property("qplotUpgradeCommand")))
-
-                copy.clicked.connect(copy_command)
-            close_default(buttons)
-            resize_dialog(dialog, 650, 430)
-        self._set_upgrade_command(dialog, message.upgrade_command)
+        self.add_controls(dialog, lambda: self._check_from_dialog(dialog, parent.config))
+        self._show_message(dialog, message)
         return dialog
 
     def show_manual(self, parent):
@@ -224,26 +233,12 @@ class UpdateChecker(QtCore.QObject):
                        if dialog.isVisible()), None)
         if dialog is None:
             dialog = self._new_dialog(parent, CHECKING_MESSAGE)
-        else:
-            dialog.show()
-            dialog.raise_()
-            browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
-            if browser is not None:
-                browser.setHtml(CHECKING_MESSAGE.html)
-        self._set_upgrade_command(dialog, CHECKING_MESSAGE.upgrade_command)
-        self.check(parent.config, dialog=dialog)
-        return dialog
+        dialog.show()
+        dialog.raise_()
+        return self._check_from_dialog(dialog, parent.config)
 
     def show_in_about(self, dialog, config):
-        """Show check results below the installed version and build details."""
-        browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
-        if browser is not None:
-            prefix = str(dialog.property("qplotUpdatePrefixHtml") or "")
-            browser.setHtml(prefix + CHECKING_MESSAGE.html)
-        dialog.resize(dialog.width(), max(dialog.height(), 520))
-        self._set_upgrade_command(dialog, "")
-        self.check(config, dialog=dialog)
-        return dialog
+        return self._check_from_dialog(dialog, config)
 
     def shutdown(self):
         self._stopping = True

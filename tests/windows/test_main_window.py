@@ -1761,7 +1761,8 @@ class OptionsMenuTestCase(unittest.TestCase):
                 preferences_action.menuRole(),
                 QtGui.QAction.MenuRole.PreferencesRole,
             )
-            self.assertIn("Reset All Settings...", option_texts)
+            advanced = next(a.menu() for a in menus["Settings"].actions() if a.text() == "Advanced")
+            self.assertIn("Reset All Settings...", [a.text() for a in advanced.actions()])
             self.assertNotIn("Open Location", option_texts)
             self.assertNotIn("Theme", option_texts)
             self.assertNotIn("Preview Size", option_texts)
@@ -1797,7 +1798,7 @@ class OptionsMenuTestCase(unittest.TestCase):
                     "openBundledTestdataFolderAction": "Open Bundled CSV Folder",
                     "createTestDatabaseCsvAction": "Create Example CSV...",
                     "exportTestDatabaseCsvCollectionAction": "Export CSV Collection...",
-                    "generateTestDatabaseAction": "Generate Database from CSV...",
+                    "generateTestDatabaseAction": "Generate database…",
                 },
             )
         finally:
@@ -2488,7 +2489,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             window.deleteLater()
 
     def test_restore_default_settings_can_be_cancelled(self):
-        old_question = qtw.QMessageBox.question
+        old_question = main_window.confirm_action
 
         class FakeConfig:
             def __init__(self):
@@ -2517,19 +2518,19 @@ class CloseAllPlotsTestCase(unittest.TestCase):
                 self.status_messages.append((message, timeout))
 
         try:
-            qtw.QMessageBox.question = lambda *args, **kwargs: (
-                qtw.QMessageBox.StandardButton.No
+            main_window.confirm_action = lambda *args, **kwargs: (
+                False
             )
             harness = Harness()
             self.assertFalse(harness.restore_default_settings())
         finally:
-            qtw.QMessageBox.question = old_question
+            main_window.confirm_action = old_question
 
         self.assertFalse(harness.config.reset_called)
         self.assertEqual(harness.status_messages[-1][0], "Settings reset cancelled.")
 
     def test_restore_default_settings_resets_and_applies_defaults(self):
-        old_question = qtw.QMessageBox.question
+        old_question = main_window.confirm_action
         questions = []
 
         class FakeConfig:
@@ -2567,13 +2568,13 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
             def answer_yes(*args, **kwargs):
                 questions.append((args, kwargs))
-                return qtw.QMessageBox.StandardButton.Yes
+                return True
 
-            qtw.QMessageBox.question = answer_yes
+            main_window.confirm_action = answer_yes
             harness = Harness()
             harness.restore_default_settings()
         finally:
-            qtw.QMessageBox.question = old_question
+            main_window.confirm_action = old_question
 
         self.assertTrue(harness.config.reset_called)
         self.assertTrue(harness.applied)

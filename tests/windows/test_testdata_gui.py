@@ -22,6 +22,13 @@ from qplot.windows._file_manager import reveal_file_in_file_manager
 from qplot.windows._test_database import SyntheticDatabaseActionsMixin
 
 
+@pytest.fixture(autouse=True)
+def custom_csv_review(monkeypatch):
+    from tests.support.windows.generation_review import choose_custom_generation
+
+    choose_custom_generation(monkeypatch)
+
+
 class ImmediateThreadPool:
     def start(self, worker):
         worker.run()
@@ -56,6 +63,20 @@ def write_small_specification(path):
             ("run_1", "axis", "V_SD", "Source-drain voltage", "V", "", "-1", "1", "5"),
             ("run_1", "measurement", "current", "Current", "nA", "V_SD", "", "", ""),
         ])
+
+
+def test_bundled_templates_review_workload_before_any_output(tmp_path):
+    harness = GuiHarness(tmp_path)
+    dialog = test_database_module.GenerationReview(harness)
+    try:
+        dialog.templates.setCurrentIndex(dialog.templates.count() - 1)
+        assert "30 GB" in dialog.summary.text()
+        points = sum(spec.point_count for spec in dialog.specifications)
+        assert f"{points:,} points" in dialog.summary.text()
+        assert not dialog.generate.isEnabled()
+        assert not list(tmp_path.iterdir())
+    finally:
+        harness.deleteLater()
 
 
 def test_create_example_csv_opens_its_folder(tmp_path):
@@ -98,11 +119,7 @@ def test_create_example_csv_confirms_normalized_existing_path(tmp_path):
                 "getSaveFileName",
                 return_value=(str(selected_path), "CSV Files (*.csv)"),
             ),
-            patch.object(
-                qtw.QMessageBox,
-                "question",
-                return_value=qtw.QMessageBox.StandardButton.No,
-            ) as question,
+            patch("qplot.windows._export_paths.confirm_action", return_value=False) as question,
             patch(
                 "qplot.windows._test_database.reveal_file_in_file_manager",
             ) as reveal_file,
@@ -162,7 +179,7 @@ def test_example_csv_rejects_loaded_database_with_csv_suffix(tmp_path):
                 "getSaveFileName",
                 return_value=(str(database_path), "CSV Files (*.csv)"),
             ),
-            patch.object(qtw.QMessageBox, "question") as question,
+            patch("qplot.windows._export_paths.confirm_action") as question,
             patch(
                 "qplot.windows._test_database.reveal_file_in_file_manager",
             ) as reveal_file,
@@ -271,6 +288,10 @@ def test_generate_database_from_csv_runs_in_worker_pool(tmp_path):
         assert not harness._test_database_generation_active
         assert harness._test_database_generation_worker is None
         assert harness.generateTestDatabaseAction.isEnabled()
+        assert harness._generation_progress.bar.maximum() == 1
+        assert any("Generating run 1 of 1" in message for message, _ in harness.status_messages)
+        assert not harness._generation_progress.open_file.isHidden()
+        assert not harness._generation_progress.open_folder.isHidden()
         assert "with 1 run and 5 points" in harness.status_messages[-1][0]
         assert harness.errors == []
     finally:
@@ -318,7 +339,7 @@ def test_generation_start_failure_recovers_controller_and_preserves_files(
     monkeypatch.setattr(test_database_module, "quarantine_wal_for_replaced_database", quarantine)
     monkeypatch.setattr(qtw.QFileDialog, "getOpenFileName", lambda *a, **kw: (str(csv_path), ""))
     monkeypatch.setattr(qtw.QFileDialog, "getSaveFileName", lambda *a, **kw: (str(database_path), ""))
-    monkeypatch.setattr(qtw.QMessageBox, "question", lambda *a, **kw: qtw.QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr("qplot.windows._generation_dialog.confirm_action", lambda *a, **kw: True)
 
     try:
         assert not harness.generate_test_database_from_csv()
@@ -429,11 +450,7 @@ def test_generation_releases_current_database_before_replacing_it(tmp_path):
                 "getSaveFileName",
                 return_value=(str(database_path), "QCoDeS Database (*.db)"),
             ),
-            patch.object(
-                qtw.QMessageBox,
-                "question",
-                return_value=qtw.QMessageBox.StandardButton.Yes,
-            ),
+            patch("qplot.windows._generation_dialog.confirm_action", return_value=True),
             patch(
                 "qplot.windows._test_database."
                 "quarantine_wal_for_replaced_database"
@@ -503,11 +520,7 @@ def test_failed_current_database_replacement_reloads_without_quarantine(tmp_path
                 "getSaveFileName",
                 return_value=(str(database_path), "QCoDeS Database (*.db)"),
             ),
-            patch.object(
-                qtw.QMessageBox,
-                "question",
-                return_value=qtw.QMessageBox.StandardButton.Yes,
-            ),
+            patch("qplot.windows._generation_dialog.confirm_action", return_value=True),
             patch(
                 "qplot.windows._test_database.generate_database",
                 side_effect=publication_error,
@@ -588,10 +601,14 @@ def test_ambiguous_sidecar_failure_keeps_guarded_database_unloaded(tmp_path):
         harness.deleteLater()
 
 
-def test_invalid_csv_is_reported_before_database_destination_prompt(tmp_path):
+@pytest.mark.parametrize(("contents", "message"), [
+    ("not,a,valid,header\n", "Invalid CSV header"),
+    ("x" * (csv.field_size_limit() + 1), "field larger than field limit"),
+])
+def test_invalid_csv_is_reported_before_database_destination_prompt(tmp_path, contents, message):
     harness = GuiHarness(tmp_path)
     csv_path = tmp_path / "invalid.csv"
-    csv_path.write_text("not,a,valid,header\n", encoding="utf-8")
+    csv_path.write_text(contents, encoding="utf-8")
 
     try:
         with (
@@ -602,11 +619,13 @@ def test_invalid_csv_is_reported_before_database_destination_prompt(tmp_path):
             ),
             patch.object(qtw.QFileDialog, "getSaveFileName") as save_dialog,
         ):
-            assert not harness.generate_test_database_from_csv()
+            dialog = test_database_module.GenerationReview(harness)
+            dialog.exec()
 
         save_dialog.assert_not_called()
-        assert harness.errors[0][0] == "Invalid Test Database CSV"
-        assert "Invalid CSV header" in harness.errors[0][2]
+        assert not dialog.generate.isEnabled()
+        assert not dialog.browse_output.isEnabled()
+        assert message in dialog.summary.text()
     finally:
         harness.deleteLater()
 
@@ -751,11 +770,7 @@ def test_exception_after_publication_is_reloaded_as_replacement(tmp_path):
                 "getSaveFileName",
                 return_value=(str(database_path), "QCoDeS Database (*.db)"),
             ),
-            patch.object(
-                qtw.QMessageBox,
-                "question",
-                return_value=qtw.QMessageBox.StandardButton.Yes,
-            ),
+            patch("qplot.windows._generation_dialog.confirm_action", return_value=True),
             patch(
                 "qplot.windows._test_database.generate_database",
                 side_effect=publish_then_fail,
@@ -807,11 +822,7 @@ def test_generation_declined_overwrite_leaves_existing_output_unchanged(tmp_path
                 "getSaveFileName",
                 return_value=(str(database_path), "QCoDeS Database (*.db)"),
             ),
-            patch.object(
-                qtw.QMessageBox,
-                "question",
-                return_value=qtw.QMessageBox.StandardButton.No,
-            ) as question,
+            patch("qplot.windows._generation_dialog.confirm_action", return_value=False) as question,
         ):
             assert not harness.generate_test_database_from_csv()
 

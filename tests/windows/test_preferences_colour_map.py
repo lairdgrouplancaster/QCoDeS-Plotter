@@ -98,7 +98,7 @@ def test_defaults_reload_and_preferences_cancel_keep_button_in_sync(preferences,
     preferences.load_from_config()
     assert button.value() == "twilight_shifted"
     assert button.text() == "twilight_shifted"
-    monkeypatch.setattr(qtw.QMessageBox, "question", lambda *args: qtw.QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr("qplot.windows._preferences.confirm_action", lambda *args, **kwargs: True)
     assert preferences.restore_defaults()
     assert button.value() == "viridis"
     assert button.text() == "Viridis"

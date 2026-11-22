@@ -164,6 +164,11 @@ def test_batch_dialog_selection_changes_do_not_retarget_captured_runs(
     wait_for(lambda: not manager.tasks)
     assert {task.result.guid for task in manager.history} == {run[1] for run in runs}
     assert all(task.stage.published for task in manager.history)
+    assert manager.tree.topLevelItemCount() == 1
+    group = manager.tree.topLevelItem(0)
+    assert group.childCount() == len(runs)
+    assert group.text(1) == f"{len(runs)} of {len(runs)} finished"
+    assert all(task.row.text(0) == Path(task.destination.filename).name for task in manager.history)
 
 
 def test_switching_database_cancels_active_and_queued_batch_outputs(
@@ -352,11 +357,17 @@ def test_cancelling_reviewed_batch_keeps_completed_file(typed_run_window, monkey
         wait_for(second_started.is_set)
         first, second = manager.history
         assert first.stage.published
+        group = manager.tree.topLevelItem(0)
+        manager.poll()
+        assert group.text(1) == "1 of 2 finished"
+        assert "1 exported" in manager.summary.text() and "1 pending" in manager.summary.text()
         completed = Path(first.destination.filename)
         content = completed.read_bytes()
         manager.cancel_all()
         wait_for(lambda: not manager.tasks)
         assert second.cancelled and not second.stage.published
+        assert group.text(1) == "2 of 2 finished"
+        assert "1 exported" in manager.summary.text() and "1 cancelled" in manager.summary.text()
         assert list(folder.iterdir()) == [completed]
         assert completed.read_bytes() == content
     finally:

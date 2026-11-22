@@ -30,9 +30,9 @@ def test_font_preference_persists_and_restores_default(cfg, monkeypatch):
         assert dialog.apply_preferences()
         assert config().get(FONT_SIZE_KEY) == 16
         monkeypatch.setattr(
-            qtw.QMessageBox, "question",
-            lambda *args, **kwargs: qtw.QMessageBox.StandardButton.Yes,
+            "qplot.windows._preferences.confirm_action", lambda *args, **kwargs: True,
         )
+        dialog.tabs.setCurrentIndex(1)
         assert dialog.restore_defaults()
         assert dialog.fontSizeSpin.value() == 10
         assert config().get(FONT_SIZE_KEY) == 16

@@ -35,8 +35,9 @@ def test_mixed_feedback_and_revert_preserve_individual_styles(trace_editor, qapp
     assert "Mixed" in dialog.selection_summary.text()
     assert dialog.selection_summary.text() == "<b>2 traces selected</b> · Mixed values"
     assert "Line width" in dialog.selection_summary.toolTip()
-    assert dialog.line_width.lineEdit().text() == "Mixed"
-    assert dialog.line_width.lineEdit().placeholderText() == "Mixed"
+    assert dialog.line_width.lineEdit().text() == "—"
+    assert "Mixed" in dialog.line_width.accessibleDescription()
+    assert dialog.line_width.lineEdit().placeholderText() == "—"
     dialog.line_width.setValue(5.5)
     assert all(host._trace_styles[key].line_width == 5.5 for key in keys)
     host._trace_styles[keys[1]].visible = False

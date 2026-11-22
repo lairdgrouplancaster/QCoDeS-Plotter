@@ -339,9 +339,9 @@ feedback there instead of adding more status or message-box methods to
 
 `src/qplot/windows/_plot_axis_scaling.py` contains the shared plot-axis scaling
 mixin and the custom axis item used for power-of-ten unit labels. It owns the
-X/Y axis scaling dialogs opened by double-clicking plot axes.
+axis editor opened by double-clicking a plot axis.
 Its immutable axis specifications define names, aliases, dimensions, sides,
-assignment attributes, and tab help together.
+assignment attributes, and tooltips for the four axis tabs.
 
 `tools/native_transform_math.py` owns sample differences, secants, interpolation,
 and FFT coordinate arithmetic. `windows/_native_transforms.py`

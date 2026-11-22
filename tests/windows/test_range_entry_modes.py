@@ -7,7 +7,7 @@ from weakref import ref
 import numpy as np
 import pyqtgraph as pg
 import pytest
-from PyQt6 import QtCore, QtTest, sip
+from PyQt6 import QtCore, QtGui, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 
 from tests.support.windows.axis_limit_precision import AxisLimitWindow
@@ -55,27 +55,24 @@ def click(button):
     QtTest.QTest.mouseClick(button, QtCore.Qt.MouseButton.LeftButton)
 
 
-def test_colour_scaling_uses_the_axis_range_layout(heatmap, axis_window, qapplication):
+def test_colour_scaling_keeps_its_compact_range_layout(heatmap, axis_window, qapplication):
     heatmap.open_colorbar_scale_dialog()
     qapplication.processEvents()
     axis = axis_window._axis_scale_controls["x"]
     assert type(heatmap.colorbar_copy_auto_limits_button) is type(axis.copyAutoLimitsButton)
-    for entry, manual, first, second, auto, fit in (
-        (heatmap.colorbar_range_entry, heatmap.colorbar_manual_radio,
-         heatmap.colorbar_min_text, heatmap.colorbar_max_text,
-         heatmap.colorbar_auto_radio, heatmap.colorbar_copy_auto_limits_button),
-        (axis.rangeEntry, axis.manualRadio, axis.minText, axis.maxText,
-         axis.autoRadio, axis.copyAutoLimitsButton),
-    ):
-        assert entry.geometry().bottom() < entry._labels[0].geometry().top()
-        assert entry._labels[0].geometry().bottom() < first.geometry().top()
-        assert manual.geometry().right() < first.geometry().left()
-        assert first.geometry().right() < second.geometry().left()
-        assert second.geometry().right() < fit.geometry().left()
-        assert abs(entry.geometry().center().x() - (first.geometry().left() + second.geometry().right()) / 2) <= 2
-        assert entry.summary.geometry().top() > first.geometry().bottom()
-        assert auto.geometry().top() > entry.summary.geometry().bottom()
-        assert auto.geometry().left() == manual.geometry().left()
+    entry = heatmap.colorbar_range_entry
+    manual, auto = heatmap.colorbar_manual_radio, heatmap.colorbar_auto_radio
+    first, second = heatmap.colorbar_min_text, heatmap.colorbar_max_text
+    fit = heatmap.colorbar_copy_auto_limits_button
+    assert entry.geometry().bottom() < entry._labels[0].geometry().top()
+    assert entry._labels[0].geometry().bottom() < first.geometry().top()
+    assert manual.geometry().right() < first.geometry().left()
+    assert first.geometry().right() < second.geometry().left()
+    assert second.geometry().right() < fit.geometry().left()
+    assert abs(entry.geometry().center().x() - (first.geometry().left() + second.geometry().right()) / 2) <= 2
+    assert entry.summary.geometry().top() > first.geometry().bottom()
+    assert auto.geometry().top() > entry.summary.geometry().bottom()
+    assert auto.geometry().left() == manual.geometry().left()
     table = heatmap.colorbar_colormap_table
     assert table.horizontalHeaderItem(0).text() == "Name"
     assert table.minimumHeight() < 220
@@ -160,6 +157,7 @@ def check_keyboard_range_edit(dialog, field, entry, current_limits, key):
 @pytest.mark.parametrize("key", [QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter])
 def test_axis_range_enter_preserves_the_editor(axis_window, key):
     ui = axis_window._axis_scale_controls["x"]
+    click(ui.manualRadio)
     check_keyboard_range_edit(
         axis_window._axis_scale_dialog, ui.minText, ui.rangeEntry,
         lambda: axis_window.vb.viewRange()[0], key,
@@ -177,33 +175,35 @@ def test_colour_range_enter_preserves_the_editor(heatmap, key):
 
 @pytest.mark.parametrize("axis", ["x", "y"])
 @pytest.mark.parametrize("center_span", [False, True])
-def test_typing_axis_limit_freezes_auto_and_preserves_first_keystroke(
+def test_selecting_manual_freezes_range_and_preserves_first_keystroke(
     axis_window, axis, center_span,
 ):
     window = axis_window
     window.open_axis_scale_dialog(axis)
     ui = window._axis_scale_controls[axis]
+    assert ui.autoRadio.isChecked() and ui.currentLimits.isVisible()
+    assert ui.autoPercentSpin.isVisible() and not ui.minText.isVisible()
+    original = deepcopy(window.vb.getState()["targetRange"])
+    click(ui.manualRadio)
+    assert ui.minText.isVisible() and not ui.currentLimits.isVisible()
+    assert not ui.autoPercentSpin.isVisible()
     if center_span:
         click(ui.rangeEntry.center_span_button)
-    original = deepcopy(window.vb.getState()["targetRange"])
-    automatic_style = ui.minText.styleSheet()
-    assert "palette(mid)" not in automatic_style
     assert ui.minText.isEnabled() and not ui.minText.isReadOnly()
     ui.minText.setFocus()
     QtTest.QTest.keyClick(ui.minText, QtCore.Qt.Key.Key_Return)
-    assert ui.autoRadio.isChecked()
+    assert ui.manualRadio.isChecked()
     ui.minText.selectAll()
     QtTest.QTest.keyClicks(ui.minText, "-")
     assert ui.minText.text() == "-"
     assert ui.manualRadio.isChecked()
-    assert ui.minText.styleSheet() == automatic_style
     assert window.vb.getState()["targetRange"] == original
     assert window.vb.autoRangeEnabled()[window._axis_scale_axis_number(axis)] is False
     QtTest.QTest.keyClicks(ui.minText, "1.5")
     QtTest.QTest.keyClick(ui.minText, QtCore.Qt.Key.Key_Return)
     assert float(ui.minText.text()) == -1.5
     click(ui.autoRadio)
-    assert ui.minText.styleSheet() == automatic_style
+    assert ui.currentLimits.isVisible() and not ui.minText.isVisible()
 
 
 @pytest.mark.parametrize("center_span", [False, True])
@@ -252,17 +252,63 @@ def test_axis_link_none_unlinks_without_confusing_a_view_name(axis_window, axis,
         target.deleteLater()
 
 
-def test_axis_heading_tracks_quantity_without_changing_range_units(axis_window):
+def test_axis_tabs_track_quantity_without_changing_range_units(axis_window):
     axis_window.plot.setLabel("bottom", "Gate <b>voltage</b>", units="V")
     axis_window.vb.setXRange(0.001, 0.002, padding=0)
     axis_window.open_axis_scale_dialog("bottom")
     ui = axis_window._axis_scale_controls["x"]
-    assert ui.quantityLabel.text() == "Gate voltage (V)"
+    tabs = axis_window._axis_scale_tabs
+    assert tabs.tabText(tabs.currentIndex()) == "Bottom"
+    assert axis_window._axis_scale_quantity.isVisible()
+    assert axis_window._axis_scale_quantity.text() == "Gate voltage (V)"
     assert float(ui.minText.text()) == 0.001
     assert float(ui.maxText.text()) == 0.002
     axis_window.plot.setLabel("bottom", "Frequency", units="Hz")
     axis_window._sync_axis_scale_controls("x")
-    assert ui.quantityLabel.text() == "Frequency (Hz)"
+    assert axis_window._axis_scale_quantity.text() == "Frequency (Hz)"
+    assert "Frequency (Hz)" in tabs.tabToolTip(tabs.currentIndex())
+
+
+def test_axis_tabs_support_one_click_and_keyboard_selection(axis_window):
+    tabs = axis_window._axis_scale_tabs
+    stack = axis_window._axis_scale_stack
+    assert isinstance(tabs, qtw.QTabBar)
+    assert tabs.accessibleName()
+    assert tabs.count() == 4
+    QtTest.QTest.mouseClick(tabs, QtCore.Qt.MouseButton.LeftButton, pos=tabs.tabRect(1).center())
+    assert tabs.tabText(tabs.currentIndex()) == "Left"
+    assert stack.currentWidget() is axis_window._axis_scale_controls["y"]
+    assert not tabs.isTabEnabled(2)
+    QtTest.QTest.mouseClick(tabs, QtCore.Qt.MouseButton.LeftButton, pos=tabs.tabRect(2).center())
+    assert tabs.tabText(tabs.currentIndex()) == "Left"
+    tabs.setFocus()
+    QtTest.QTest.keyClick(tabs, QtCore.Qt.Key.Key_Left)
+    assert stack.currentWidget() is axis_window._axis_scale_controls["x"]
+    QtTest.QTest.keyClick(tabs, QtCore.Qt.Key.Key_Right)
+    assert stack.currentWidget() is axis_window._axis_scale_controls["y"]
+    QtTest.QTest.keyClick(tabs, QtCore.Qt.Key.Key_Right)
+    assert tabs.isTabEnabled(tabs.currentIndex())
+
+
+def test_automatic_readout_copies_exact_updated_data_limits(axis_window, qapplication, monkeypatch):
+    copied = []
+    monkeypatch.setattr("qplot.windows._plot_axis_scaling.copy_to_clipboard", copied.append)
+    ui = axis_window._axis_scale_controls["x"]
+    readout = ui.currentLimits
+    previous = readout.text()
+    axis_window.plot.setLabel("bottom", "Frequency", units="Hz")
+    axis_window.plot.listDataItems()[0].setData([0.01234567890123, 0.98765432109876], [2, 6])
+    axis_window.vb.updateAutoRange()
+    qapplication.processEvents()
+    assert ui.autoRadio.isChecked() and readout.isVisible()
+    assert readout.text() != previous and readout.text().endswith(" Hz")
+    lower, upper = axis_window.vb.getState()["targetRange"][0]
+    assert f"{lower!r} to {upper!r} Hz" in readout.toolTip()
+    assert readout.accessibleName() == "Current axis limits"
+    assert [action.text() for action in readout.actions()] == ["Copy exact limits"]
+    readout.setFocus()
+    QtTest.QTest.keySequence(readout, QtGui.QKeySequence(QtGui.QKeySequence.StandardKey.Copy))
+    assert copied == [f"{lower!r}\t{upper!r}"]
 
 
 @pytest.mark.parametrize("axis, side, number", [("x", "bottom", 0), ("y", "left", 1)])
@@ -317,6 +363,7 @@ def test_axis_link_ignores_target_destroyed_while_dialog_is_open(axis_window, qa
 ])
 def test_axis_manual_limits_use_shortest_exact_text(axis_window, texts):
     ui = axis_window._axis_scale_controls["x"]
+    click(ui.manualRadio)
     accept(ui.minText, ui.maxText, texts)
     assert (ui.minText.text(), ui.maxText.text()) == texts
     assert tuple(axis_window.vb.viewRange()[0]) == tuple(map(float, texts))
@@ -341,16 +388,12 @@ def test_color_manual_limits_use_shortest_exact_text(heatmap, texts):
 
 
 @pytest.mark.parametrize("axis", ["x", "y"])
-@pytest.mark.parametrize("automatic", [False, True])
-def test_axis_switch_preserves_range_auto_and_per_axis_format(
-    axis_window, qapplication, axis, automatic,
-):
+def test_axis_switch_preserves_range_and_per_axis_format(axis_window, qapplication, axis):
     window = axis_window
     window.open_axis_scale_dialog(axis)
     ui = window._axis_scale_controls[axis]
     number = window._axis_scale_axis_number(axis)
-    if not automatic:
-        click(ui.copyAutoLimitsButton)
+    click(ui.manualRadio)
     qapplication.processEvents()
     original = deepcopy(window.vb.getState())
     assert ui.rangeEntry.min_max_button.isChecked()
@@ -384,6 +427,7 @@ def test_axis_center_span_edits_pan_and_copy_auto(axis_window, axis):
     window.open_axis_scale_dialog(axis)
     ui = window._axis_scale_controls[axis]
     number = window._axis_scale_axis_number(axis)
+    click(ui.manualRadio)
     click(ui.rangeEntry.center_span_button)
     accept(ui.minText, ui.maxText, (3, 8))
     assert window.vb.viewRange()[number] == [-1, 7]
@@ -402,9 +446,10 @@ def test_axis_center_span_edits_pan_and_copy_auto(axis_window, axis):
 
 @pytest.mark.parametrize("values", [(0, 0), (0, -2), ("nan", 2), (0, "inf"),
                                          (1.7e308, 1e308), (1e20, 1)])
-def test_invalid_axis_center_span_preserves_auto_and_fields(axis_window, values):
+def test_invalid_axis_center_span_preserves_range_and_fields(axis_window, values):
     window = axis_window
     ui = window._axis_scale_controls["x"]
+    click(ui.manualRadio)
     click(ui.rangeEntry.center_span_button)
     original = deepcopy(window.vb.getState())
     texts = tuple(map(str, values))
@@ -419,6 +464,7 @@ def test_log_center_span_uses_physical_values_and_preserves_exact_view(axis_wind
     window = axis_window
     ui = window._axis_scale_controls["x"]
     ui.logCheck.click()
+    click(ui.manualRadio)
     click(ui.rangeEntry.center_span_button)
     accept(ui.minText, ui.maxText, (55, 90))
     np.testing.assert_allclose(window.vb.viewRange()[0], [1, 2])

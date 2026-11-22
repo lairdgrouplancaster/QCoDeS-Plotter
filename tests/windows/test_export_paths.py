@@ -334,11 +334,7 @@ def test_unsuffixed_existing_export_decline_preserves_exact_target(tmp_path, kin
             "getSaveFileName",
             return_value=(str(selected_path), ""),
         ) as save_dialog,
-        patch.object(
-            qtw.QMessageBox,
-            "question",
-            return_value=qtw.QMessageBox.StandardButton.No,
-        ) as question,
+        patch("qplot.windows._export_paths.confirm_action", return_value=False) as question,
     ):
         harness = _invoke_export(kind, selected_path)
 
@@ -366,11 +362,7 @@ def test_unsuffixed_existing_export_accept_replaces_exact_target(tmp_path, kind)
             "getSaveFileName",
             return_value=(str(selected_path), ""),
         ),
-        patch.object(
-            qtw.QMessageBox,
-            "question",
-            return_value=qtw.QMessageBox.StandardButton.Yes,
-        ) as question,
+        patch("qplot.windows._export_paths.confirm_action", return_value=True) as question,
     ):
         harness = _invoke_export(kind, selected_path)
 
@@ -388,7 +380,7 @@ def test_export_dialog_cancel_creates_no_files(tmp_path, kind):
 
     with (
         patch.object(qtw.QFileDialog, "getSaveFileName", return_value=("", "")),
-        patch.object(qtw.QMessageBox, "question") as question,
+        patch("qplot.windows._export_paths.confirm_action") as question,
     ):
         harness = _invoke_export(kind, selected_path)
 
@@ -416,7 +408,7 @@ def test_suffixed_export_preserves_suffix_without_confirmation(tmp_path, kind, f
             "getSaveFileName",
             return_value=(str(selected_path), ""),
         ),
-        patch.object(qtw.QMessageBox, "question") as question,
+        patch("qplot.windows._export_paths.confirm_action") as question,
     ):
         harness = _invoke_export(kind, selected_path)
 
@@ -439,11 +431,7 @@ def test_export_failure_preserves_existing_target(tmp_path, kind):
             "getSaveFileName",
             return_value=(str(selected_path), ""),
         ),
-        patch.object(
-            qtw.QMessageBox,
-            "question",
-            return_value=qtw.QMessageBox.StandardButton.Yes,
-        ),
+        patch("qplot.windows._export_paths.confirm_action", return_value=True),
     ):
         harness = _invoke_export(kind, selected_path, fail=True)
 
@@ -463,7 +451,7 @@ def test_unsuffixed_export_creates_final_target_when_absent(tmp_path, kind):
             "getSaveFileName",
             return_value=(str(selected_path), ""),
         ),
-        patch.object(qtw.QMessageBox, "question") as question,
+        patch("qplot.windows._export_paths.confirm_action") as question,
         patch(
             "qplot.windows._export_paths.os.fsync",
             wraps=os.fsync,
@@ -599,7 +587,7 @@ def test_pdf_and_measurement_csv_routes_reject_their_loaded_database(
             "getSaveFileName",
             return_value=(str(database_path), ""),
         ),
-        patch.object(qtw.QMessageBox, "question") as question,
+        patch("qplot.windows._export_paths.confirm_action") as question,
     ):
         if kind == "csv":
             _invoke_csv_harness(harness)

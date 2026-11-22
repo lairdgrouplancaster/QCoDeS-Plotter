@@ -282,6 +282,12 @@ _STYLESHEET_TEMPLATE = Template(
         width: 14px;
         height: 14px;
     }
+    QWidget#plotSettingsDatasets QCheckBox::indicator:unchecked:enabled,
+    QTableWidget#plotAppearanceTable::indicator:unchecked:enabled {
+        border: 1px solid $muted_text;
+        border-radius: 2px;
+        background-color: $field_bg;
+    }
     QRadioButton {
         color: $text;
         background-color: $window_bg;
@@ -300,9 +306,9 @@ _STYLESHEET_TEMPLATE = Template(
     QRadioButton::indicator:!checked {
         background-color: transparent;
     }
-    QSplitter#plotAppearanceSplitter::handle:horizontal {
-        background-color: $splitter;
-        width: 4px;
+    QSplitter#plotAppearanceSplitter QSplitterHandle {
+        color: $text;
+        selection-background-color: $accent;
     }
     QSplitter::handle:vertical {
         background-color: $splitter;
@@ -311,6 +317,9 @@ _STYLESHEET_TEMPLATE = Template(
     }
     QSplitter::handle:vertical:hover {
         background-color: $accent;
+    }
+    QSplitter#plotAppearanceSplitter::handle:vertical {
+        margin: 0;
     }
     QTabWidget {
         color: $text;
@@ -529,12 +538,60 @@ _STYLESHEET_TEMPLATE = Template(
 )
 
 
+AXIS_PANEL_STYLESHEET = Template(
+    """
+    QFrame#axisScalePanel {
+        border: 1px solid $border_strong;
+        background-color: $window_bg;
+    }
+    QTabBar#axisScaleTabs::tab {
+        min-width: 3em;
+        min-height: $min_height;
+        padding: $padding_y 8px;
+        border: none;
+        border-top: 2px solid transparent;
+        border-right: 1px solid $border;
+        border-bottom: 1px solid $border_strong;
+        border-radius: 0;
+        background-color: $panel_bg;
+        color: $muted_text;
+    }
+    QTabBar#axisScaleTabs::tab:last {
+        border-right: none;
+    }
+    QTabBar#axisScaleTabs::tab:enabled:!selected:hover {
+        background-color: $tab_hover_bg;
+        color: $text_strong;
+    }
+    QTabBar#axisScaleTabs::tab:selected {
+        border-top-color: $accent;
+        border-bottom-color: $window_bg;
+        background-color: $window_bg;
+        color: $text_strong;
+        font-weight: bold;
+    }
+    QTabBar#axisScaleTabs::tab:selected:focus {
+        border-top: 2px dashed $accent;
+    }
+    QTabBar#axisScaleTabs::tab:disabled {
+        color: $disabled_text;
+    }
+    QLabel#axisScaleQuantity {
+        color: $text_strong;
+    }
+    """
+)
+
+
 def build_stylesheet(palette: ThemePalette) -> str:
     """
     Builds qPlot's shared application stylesheet from a palette.
 
     """
-    return _STYLESHEET_TEMPLATE.substitute(asdict(palette))
+    colours = asdict(palette)
+    return _STYLESHEET_TEMPLATE.substitute(colours) + AXIS_PANEL_STYLESHEET.substitute(
+        colours, min_height="18px", padding_y="2px"
+    )
 
 
 def color_list(names: list[str]) -> list:

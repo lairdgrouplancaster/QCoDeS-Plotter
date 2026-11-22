@@ -201,7 +201,7 @@ def _ordinal(number: int) -> str:
 
 
 def resolution_summary(report: HeatmapResolutionReport) -> str:
-    lines = ["This heatmap is displayed at reduced resolution.", ""]
+    lines = []
     for label, grid in (("Source", report.source), ("Displayed", report.displayed)):
         dimensions = (f"{grid.columns:,} × {grid.rows:,} (columns × rows)"
                       if grid.columns is not None and grid.rows is not None
@@ -219,7 +219,6 @@ def resolution_summary(report: HeatmapResolutionReport) -> str:
         lines.append("Loaded values were averaged into display cells.")
     elif report.inferred_reduction:
         lines.append("The displayed grid is smaller than the source grid.")
-    lines.extend(["", "Adjust heatmap limits in Preferences → Performance."])
     return "\n".join(lines)
 
 

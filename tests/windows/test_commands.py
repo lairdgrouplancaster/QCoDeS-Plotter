@@ -43,7 +43,7 @@ class CommandRegistryTestCase(unittest.TestCase):
 
         self.assertEqual(close_action.text, "&Close Database")
         self.assertEqual(close_action.object_name, "closeDatabaseAction")
-        self.assertEqual(quit_action.help_shortcut, "Ctrl+Q / Cmd+Q")
+        self.assertEqual(quit_action.help_row()[0], quit_action.shortcut_display_text())
         self.assertEqual(
             quit_action.shortcut_context,
             QtCore.Qt.ShortcutContext.ApplicationShortcut,
@@ -93,7 +93,7 @@ class CommandRegistryTestCase(unittest.TestCase):
 
         self.assertEqual(spec.object_name, "printPlotAction")
         self.assertEqual(spec.resolved_shortcuts()[0].toString(), "Ctrl+P")
-        self.assertEqual(spec.help_shortcut, "Ctrl+P / Cmd+P")
+        self.assertEqual(spec.help_row()[0], spec.shortcut_display_text())
         self.assertTrue(
             any(
                 shortcut in spec.resolved_shortcuts()
@@ -110,7 +110,9 @@ class CommandRegistryTestCase(unittest.TestCase):
         self.assertIn(command_spec("plot.export").help_text, html)
         self.assertIn(command_spec("plot.print").status_tip, html)
         self.assertIn(command_spec("heatmap.horizontal_cut").status_tip, html)
-        self.assertIn("Ctrl+1 to Ctrl+9", html)
+        first = plot_measurement_command_spec(0).shortcut_display_text()
+        last = plot_measurement_command_spec(8).shortcut_display_text()
+        self.assertIn(f"{first} to {last}", html)
 
     def test_every_shortcut_has_help_in_its_window_section(self):
         html = shortcut_help_html()

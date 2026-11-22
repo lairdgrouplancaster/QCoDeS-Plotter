@@ -36,12 +36,16 @@ def test_editing_either_dimension_updates_its_partner_after_commit(size_dialog):
 
 def test_unlock_and_relock_adopts_the_entered_ratio(size_dialog):
     dialog = size_dialog
+    assert dialog.windowTitle() == "Custom plot canvas size"
+    assert dialog.lock_ratio.text() == "Lock aspect ratio (4:3)"
     dialog.lock_ratio.setChecked(False)
+    assert dialog.lock_ratio.text() == "Lock aspect ratio"
     dialog.width_spin.setValue(1000)
     assert dialog.height_spin.value() == 600
     dialog.height_spin.setValue(300)
     assert dialog.width_spin.value() == 1000
     dialog.lock_ratio.setChecked(True)
+    assert dialog.lock_ratio.text() == "Lock aspect ratio (10:3)"
     assert dialog.plot_area_size() == QtCore.QSize(1000, 300)
     dialog.width_spin.setValue(500)
     assert dialog.plot_area_size() == QtCore.QSize(500, 150)

@@ -19,9 +19,10 @@ def mixed_values(bindings):
                 if mixed:
                     control.setCurrentIndex(-1)
             elif isinstance(control, qtw.QAbstractSpinBox):
-                control.lineEdit().setPlaceholderText("Mixed")
+                control.setAccessibleDescription("Mixed values" if mixed else "")
                 if mixed:
-                    control.lineEdit().setText("Mixed")
+                    editor = control.lineEdit()
+                    editor.setText(editor.placeholderText())
         if mixed:
             names.append(name)
     return names

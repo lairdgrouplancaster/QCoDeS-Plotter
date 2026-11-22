@@ -25,6 +25,7 @@ from qplot.datahandling.file_identity import (
 
 from ._export_names import ExportSuffixPolicy
 from ._export_names import normalize_export_path as normalize_export_path
+from ._small_dialogs import confirm_action
 
 _DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
 _SQLITE_HEADER = b"SQLite format 3\x00"
@@ -159,13 +160,9 @@ def choose_export_path_with_suffixes(
     default_suffix: str,
     replace_title: str,
     file_description: str,
-    match_selected_filter: bool = False,
+    use_chosen_format: bool = False,
 ) -> ExportDestinationTransaction | None:
-    """Choose and approve an export, optionally enforcing its selected format.
-
-    When matching the filter, replace a conflicting allowed suffix before
-    approval. An absent/unrecognized filter leaves an allowed suffix intact.
-    """
+    """Approve the final pathname, respecting the format selected in qPlot."""
     policy = ExportSuffixPolicy(tuple(allowed_suffixes), default_suffix)
 
     dialog_options = qtw.QFileDialog.Option.DontConfirmOverwrite
@@ -181,7 +178,8 @@ def choose_export_path_with_suffixes(
 
     return approve_export_path(
         parent,
-        policy.resolve(filename, selected_filter, match_selected_filter=match_selected_filter),
+        policy.resolve(filename, name_filter if use_chosen_format else selected_filter,
+                       match_selected_filter=use_chosen_format),
         replace_title=replace_title,
         file_description=file_description,
     )
@@ -204,15 +202,14 @@ def approve_export_path(
     if not destination.target_existed:
         return destination
 
-    reply = qtw.QMessageBox.question(
+    confirmed = confirm_action(
         parent,
         replace_title,
         f"{destination.filename} already exists.\n\n"
         f"Replace the existing {file_description}?",
-        qtw.QMessageBox.StandardButton.Yes | qtw.QMessageBox.StandardButton.No,
-        qtw.QMessageBox.StandardButton.No,
+        affirmative="Replace file",
     )
-    if reply != qtw.QMessageBox.StandardButton.Yes:
+    if not confirmed:
         return None
     return replace(destination, replacement_confirmed=True)
 

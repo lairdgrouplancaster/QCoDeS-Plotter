@@ -62,7 +62,7 @@ def test_heatmap_resolution_dialog_details_resize_and_preferences(qapplication):
         qapplication.processEvents()
         assert dialog.size() == compact_size
         buttons = dialog.findChild(qtw.QDialogButtonBox)
-        assert buttons.button(qtw.QDialogButtonBox.StandardButton.Ok).isDefault()
+        assert buttons.button(qtw.QDialogButtonBox.StandardButton.Close).isDefault()
         preferences = dialog.findChild(qtw.QPushButton, "openHeatmapLimitPreferencesButton")
         preferences.click()
         assert dialog.result() == qtw.QDialog.DialogCode.Accepted

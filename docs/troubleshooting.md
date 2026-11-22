@@ -414,21 +414,26 @@ The log records startup, database loads, refresh failures, CSV export failures,
 plot-opening failures, preview-generation failures, and background worker
 errors.
 
-Inside qPlot, use `Help -> Copy Diagnostic Log Path` to copy this path to the
+Inside qPlot, use **Help → Copy Path to Diagnostic Log** to copy this path to the
 clipboard. Use `Help -> Show Diagnostic Log in Finder` to reveal the file on
 macOS, or `Help -> Show Diagnostic Log in File Explorer` to open its folder on
 Windows. These commands are available in main and plot windows.
 
 ## Theme or Preference Changes Do Not Look Right
 
-Use `Options -> Reset All Settings...` from the app, or run:
+To change the theme, open **Preferences → Application**, choose a **Theme**
+and select **Apply**. To restore all defaults on either the **Application** or
+**Plots** page, select **Reset this page** and then **Apply**.
+
+To reset the whole application, use **Settings → Advanced → Reset All
+Settings…** in the main window. This also closes the database and plot
+windows and cancels their unfinished exports.
+
+With qPlot closed, you can reset settings for the next launch from a terminal:
 
 ```console
 qplot-cfg -reset
 ```
-
-Then restart qPlot. Resetting defaults closes current plot windows and clears
-the loaded database from the main window.
 
 ## Development Checks Fail Locally
 

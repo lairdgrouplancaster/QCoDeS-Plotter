@@ -1,12 +1,10 @@
 """A per-user invitation to configure optional desktop integration."""
-import json
 import sys
 
 from PyQt6 import QtCore
 from PyQt6 import QtWidgets as qtw
 
-from qplot._icons import application_icon
-from qplot.desktop import _MARKER, default_destination
+from qplot.desktop import default_destination, is_owned_launcher
 from qplot.diagnostics import log_exception
 
 
@@ -27,17 +25,11 @@ def _remember_choice(settings: QtCore.QSettings) -> None:
 
 
 def _already_installed() -> bool:
-    destination = default_destination()
-    resources = destination / "Contents/Resources" if sys.platform == "darwin" else destination
-    try:
-        record = json.loads((resources / "installation.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    return isinstance(record, dict) and record.get("marker") == _MARKER
+    return is_owned_launcher(default_destination())
 
 
-def show_first_launch_invitation(parent: qtw.QWidget) -> qtw.QMessageBox | None:
-    if sys.platform not in {"darwin", "win32"}:
+def show_first_launch_invitation(parent: qtw.QMainWindow) -> qtw.QWidget | None:
+    if sys.platform not in {"darwin", "win32"} or not parent.isVisible():
         return None
     settings = _prompt_settings()
     if settings.value("invitationAnswered", False, type=bool):
@@ -46,48 +38,41 @@ def show_first_launch_invitation(parent: qtw.QWidget) -> qtw.QMessageBox | None:
         _remember_choice(settings)
         return None
 
-    prompt = qtw.QMessageBox(parent)
-    prompt.setObjectName("desktopIntegrationInvitation")
-    prompt.setWindowTitle("Set up qPlot on your desktop")
-    prompt.setText("Add qPlot to your desktop and register database icons?")
-    prompt.setInformativeText(
-        "Choose which shortcuts and file icons to install. Your default file opener "
-        "will stay unchanged. You can also do this later from Settings → Desktop integration."
-    )
-    icon = application_icon()
-    prompt.setWindowIcon(icon)
-    prompt.setIconPixmap(icon.pixmap(QtCore.QSize(64, 64), prompt.devicePixelRatioF()))
-    setup = prompt.addButton("Set up…", qtw.QMessageBox.ButtonRole.AcceptRole)
-    if setup is not None:
-        setup.setToolTip("Open desktop integration options before installing anything.")
-    later = prompt.addButton("Later", qtw.QMessageBox.ButtonRole.RejectRole)
-    if later is not None:
-        later.setToolTip("Dismiss this invitation for now; ask again on a future launch.")
-    never = prompt.addButton("Don’t ask again", qtw.QMessageBox.ButtonRole.NoRole)
-    if never is not None:
-        never.setToolTip("Stop showing this invitation. Desktop integration remains available from Settings.")
-    prompt.setDefaultButton(later)
-    prompt.setEscapeButton(later)
-    prompt.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
+    bar = parent.statusBar()
+    if bar is None:
+        return None
+    banner = qtw.QWidget(bar)
+    banner.setObjectName("desktopIntegrationInvitation")
+    row = qtw.QHBoxLayout(banner)
+    row.setContentsMargins(2, 0, 2, 0)
+    row.addWidget(qtw.QLabel("Add a qPlot desktop launcher?", banner))
+    setup = qtw.QPushButton("Set up…", banner)
+    dismiss = qtw.QPushButton("Dismiss", banner)
+    for button in (setup, dismiss):
+        row.addWidget(button)
 
-    def finished(_result: int) -> None:
-        choice = prompt.clickedButton()
-        if choice in (setup, never):
-            _remember_choice(settings)
-        if choice is setup:
+    def finish(open_setup: bool) -> None:
+        _remember_choice(settings)
+        bar.removeWidget(banner)
+        banner.deleteLater()
+        if open_setup:
             from ._help import show_desktop_integration
 
             show_desktop_integration(parent)
 
-    prompt.finished.connect(finished)
-    prompt.open()
-    return prompt
+    setup.clicked.connect(lambda: finish(True))
+    dismiss.clicked.connect(lambda: finish(False))
+    bar.addPermanentWidget(banner)
+    return banner
 
 
-def schedule_first_launch_invitation(parent: qtw.QWidget) -> None:
+def schedule_first_launch_invitation(parent: qtw.QMainWindow) -> None:
     # Headless automated runs must never show or persist onboarding choices.
     if sys.platform not in {"darwin", "win32"} or qtw.QApplication.platformName() in {"offscreen", "minimal"}:
         return
+    if parent.property("qplotDesktopInvitationScheduled"):
+        return
+    parent.setProperty("qplotDesktopInvitationScheduled", True)
     timer = QtCore.QTimer(parent)
     timer.setSingleShot(True)
     timer.timeout.connect(lambda: show_first_launch_invitation(parent))

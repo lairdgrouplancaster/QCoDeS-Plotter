@@ -307,6 +307,23 @@ def setup(destination: Path, *, associations: bool = False, desktop_shortcut: bo
         print(f"Created desktop shortcut {shortcut_record['path']}")
 
 
+def is_owned_launcher(destination: Path) -> bool:
+    """Recognise the launcher's installation record for desktop setup controls."""
+    resources = destination / "Contents/Resources" if sys.platform == "darwin" else destination
+    marker = resources / "installation.json"
+    try:
+        if destination.is_symlink() or marker.is_symlink() or not marker.is_file():
+            return False
+        with marker.open("rb") as source:
+            data = source.read(256 * 1024 + 1)
+        if len(data) > 256 * 1024:
+            return False
+        record = json.loads(data)
+    except (OSError, ValueError, RecursionError):
+        return False
+    return isinstance(record, dict) and record.get("marker") == _MARKER
+
+
 def remove(destination: Path) -> None:
     destination = destination.expanduser().absolute()
     resources = destination / "Contents/Resources" if sys.platform == "darwin" else destination

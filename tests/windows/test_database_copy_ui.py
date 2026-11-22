@@ -67,10 +67,34 @@ def test_reject_existing_database_or_sidecars(export_window, tmp_path, monkeypat
     path = target if existing == "database" else Path(str(target) + "-" + existing)
     content = source.read_bytes() if existing == "database" else b"existing sidecar"
     path.write_bytes(content)
+    prompts = []
+    monkeypatch.setattr(_database_export, "confirm_action", lambda *args, **kwargs: prompts.append(kwargs) or False)
     _database_export.export_database(window)
-    assert errors
+    assert not errors and prompts == [{"affirmative": "Choose another name…"}]
     assert path.read_bytes() == content
     assert not getattr(window, "_export_task_manager", None)
+
+
+def test_occupied_copy_destination_can_be_corrected(export_window, tmp_path, monkeypatch):
+    window, errors = export_window
+    _, target = prepare(window, tmp_path, monkeypatch)
+    target.write_bytes(b"existing file")
+    retry_target = tmp_path / "another-copy.db"
+    choices = iter((target, retry_target))
+    suggestions = []
+
+    def choose(_owner, _title, suggested, *_args, **_kwargs):
+        suggestions.append(suggested)
+        return str(next(choices)), ""
+
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getSaveFileName", choose)
+    monkeypatch.setattr(_database_export, "confirm_action", lambda *a, **kw: True)
+    _database_export.export_database(window)
+    wait_for(lambda: not window._export_task_manager.tasks)
+    assert suggestions[1] == str(target)
+    assert target.read_bytes() == b"existing file"
+    assert retry_target.read_bytes().startswith(b"SQLite format 3")
+    assert not errors
 
 
 def test_switch_database_before_publication_cancels(export_window, tmp_path, monkeypatch):

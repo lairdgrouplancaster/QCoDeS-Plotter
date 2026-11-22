@@ -34,6 +34,7 @@ from ._plot_appearance import (
     _OpacitySpinBox,
     configure_appearance_table,
     configure_opacity_spinbox,
+    dataset_axes_group,
     reordered_rows,
     visibility_opacity_row,
 )
@@ -1238,6 +1239,15 @@ class Plot2DLayerMixin(PlotHost):
                     remove_cut = getattr(self, "handle_sweep_line_double_click", None)
                     if callable(remove_cut) and remove_cut(event):
                         return
+                    # Qt may deliver the double-click to the image or mesh
+                    # even when the cursor readout has picked a trace over it.
+                    trace_at = getattr(self, "_highlighted_trace_key_at", None)
+                    if callable(trace_at):
+                        trace_key = trace_at(getattr(event, "scenePos", lambda: None)())
+                        if trace_key is not None:
+                            self.open_trace_appearance_dialog(trace_key)
+                            event.accept()
+                            return
                     heatmap_key = getattr(
                         target,
                         "_qplot_heatmap_key",
@@ -1551,9 +1561,9 @@ class Plot2DLayerMixin(PlotHost):
             )
             unit = getattr(parameter, "unit", "") or ""
             axis.setLabel(text=str(label), units=str(unit))
-        sync_tabs = getattr(self, "_sync_axis_scale_tab_states", None)
-        if callable(sync_tabs):
-            sync_tabs()
+        sync_choices = getattr(self, "_sync_axis_scale_choices", None)
+        if callable(sync_choices):
+            sync_choices()
 
     def _set_param_axis_labels(self) -> None:
         """Refresh primary labels without losing active heatmap side axes."""
@@ -1778,17 +1788,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         self.y_axis = qtw.QComboBox()
         self.y_axis.addItems(["Left", "Right"])
         self.y_axis.setToolTip("Choose the vertical axis for this heatmap.")
-        for combo in (self.x_axis, self.y_axis):
-            combo.setFixedWidth(108)
-        heatmap_axes = qtw.QGroupBox("Heatmap axes", panel)
-        heatmap_axes_grid = qtw.QGridLayout(heatmap_axes)
-        heatmap_axes_grid.setContentsMargins(8, 10, 8, 8)
-        heatmap_axes_grid.addWidget(qtw.QLabel("Horizontal"), 0, 0)
-        heatmap_axes_grid.addWidget(self.x_axis, 0, 1)
-        heatmap_axes_grid.addWidget(qtw.QLabel("Vertical"), 1, 0)
-        heatmap_axes_grid.addWidget(self.y_axis, 1, 1)
-        heatmap_axes_grid.setColumnStretch(2, 1)
-        panel_layout.addWidget(heatmap_axes)
+        panel_layout.addWidget(dataset_axes_group("Heatmap axes", self.x_axis, self.y_axis))
 
         self.swap_axes = qtw.QCheckBox("Swap X/Y")
         self.swap_axes.setToolTip("Exchange the two plotted heatmap axes.")

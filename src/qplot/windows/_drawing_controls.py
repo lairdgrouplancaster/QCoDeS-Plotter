@@ -54,12 +54,31 @@ class DrawingSizeSpinBox(qtw.QDoubleSpinBox):
         return self.sizeHint()
 
 
+class DrawingCheckBox(qtw.QCheckBox):
+    def sizeHint(self) -> QtCore.QSize:
+        # The outlined, unchecked indicator can be wider than the checked one.
+        # Reserve its space even when Qt cached the hint in a different state.
+        option = qtw.QStyleOptionButton()
+        self.initStyleOption(option)
+        state = qtw.QStyle.StateFlag
+        option.state &= ~(state.State_On | state.State_NoChange)
+        option.state |= state.State_Off | state.State_Enabled
+        style = self.style()
+        assert style is not None
+        text_size = option.fontMetrics.size(QtCore.Qt.TextFlag.TextShowMnemonic, self.text())
+        focus_margin = style.pixelMetric(qtw.QStyle.PixelMetric.PM_FocusFrameHMargin, option, self)
+        text_size.setWidth(text_size.width() + focus_margin)
+        unchecked = style.sizeFromContents(qtw.QStyle.ContentsType.CT_CheckBox, option, text_size, self)
+        return unchecked.expandedTo(super().sizeHint())
+
+
 class IconPreviewCombo(qtw.QComboBox):
     """Show the selected preview with descriptive tooltips and menu entries."""
 
-    def __init__(self, name, *, preview_renderer=None):
+    def __init__(self, name, *, preview_renderer=None, centre_on_button=False):
         super().__init__()
         self._preview_renderer = preview_renderer
+        self._centre_on_button = centre_on_button
         self.setAccessibleName(name)
         self.setIconSize(QtCore.QSize(26, 16))
         self.setStyleSheet("QComboBox { padding: 0 2px; }")
@@ -75,9 +94,14 @@ class IconPreviewCombo(qtw.QComboBox):
         option = qtw.QStyleOptionComboBox()
         self.initStyleOption(option)
         option.currentText = ""
-        contents = QtCore.QSize(max(self.iconSize().width(), self.fontMetrics().horizontalAdvance("Mixed")),
-                               max(self.iconSize().height(), self.fontMetrics().height()))
-        return self.style().sizeFromContents(qtw.QStyle.ContentsType.CT_ComboBox, option, contents, self)
+        contents = self.iconSize().expandedTo(QtCore.QSize(0, self.fontMetrics().height()))
+        style = self.style()
+        size = style.sizeFromContents(qtw.QStyle.ContentsType.CT_ComboBox, option, contents, self)
+        option.rect = QtCore.QRect(QtCore.QPoint(), size)
+        field = style.subControlRect(qtw.QStyle.ComplexControl.CC_ComboBox, option,
+                                     qtw.QStyle.SubControl.SC_ComboBoxEditField, self)
+        size.setWidth(size.width() - field.width() + contents.width() + 4)
+        return size
 
     def minimumSizeHint(self):
         return self.sizeHint()
@@ -96,23 +120,26 @@ class IconPreviewCombo(qtw.QComboBox):
     def paintEvent(self, event):
         option = qtw.QStyleOptionComboBox()
         self.initStyleOption(option)
+        contents = self.style().subControlRect(qtw.QStyle.ComplexControl.CC_ComboBox, option,
+                                               qtw.QStyle.SubControl.SC_ComboBoxEditField, self)
+        painter = qtw.QStylePainter(self)
+        painter.drawComplexControl(qtw.QStyle.ComplexControl.CC_ComboBox, option)
         if self.currentIndex() < 0:
             option.currentText = self.placeholderText()
+            if self.fontMetrics().horizontalAdvance(option.currentText) + 4 > contents.width():
+                option.currentText = "—"
             option.currentIcon = QtGui.QIcon()
             option.palette.setBrush(QtGui.QPalette.ColorRole.ButtonText,
                                     self.palette().brush(QtGui.QPalette.ColorRole.PlaceholderText))
         elif not option.currentIcon.isNull():
-            option.currentText = ""
+            preview = self.iconSize().boundedTo(contents.size())
             if self._preview_renderer is not None:
-                contents = self.style().subControlRect(
-                    qtw.QStyle.ComplexControl.CC_ComboBox, option,
-                    qtw.QStyle.SubControl.SC_ComboBoxEditField, self,
-                )
-                width = max(10, contents.width() - 4)
-                option.iconSize = QtCore.QSize(width, self.iconSize().height())
-                option.currentIcon = self._preview_renderer(self.currentData(), width)
-        painter = qtw.QStylePainter(self)
-        painter.drawComplexControl(qtw.QStyle.ComplexControl.CC_ComboBox, option)
+                option.currentIcon = self._preview_renderer(self.currentData(), preview.width())
+            bounds = option.rect if self._centre_on_button else contents
+            rect = qtw.QStyle.alignedRect(option.direction, QtCore.Qt.AlignmentFlag.AlignCenter, preview, bounds)
+            mode = QtGui.QIcon.Mode.Normal if self.isEnabled() else QtGui.QIcon.Mode.Disabled
+            option.currentIcon.paint(painter, rect, QtCore.Qt.AlignmentFlag.AlignCenter, mode)
+            return
         painter.drawControl(qtw.QStyle.ControlElement.CE_ComboBoxLabel, option)
 
 
@@ -149,7 +176,7 @@ class ColourSwatchCombo(IconPreviewCombo):
 
 
 class _WrappingLayout(qtw.QLayout):
-    """Lay controls out at their natural sizes, wrapping when necessary."""
+    """Lay out equal-width drawing controls, wrapping when necessary."""
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -178,8 +205,15 @@ class _WrappingLayout(qtw.QLayout):
     def heightForWidth(self, width):
         return self._arrange(QtCore.QRect(0, 0, width, 0), apply=False)
 
-    def sizeHint(self):
+    def _cell_sizes(self):
         sizes = [item.sizeHint().expandedTo(item.minimumSize()) for item in self._items]
+        width = max((size.width() for size in sizes), default=0)
+        for size in sizes:
+            size.setWidth(width)
+        return sizes
+
+    def sizeHint(self):
+        sizes = self._cell_sizes()
         return QtCore.QSize(sum(size.width() for size in sizes) + self.spacing() * max(0, len(sizes) - 1),
                            max((size.height() for size in sizes), default=0))
 
@@ -195,8 +229,7 @@ class _WrappingLayout(qtw.QLayout):
 
     def _arrange(self, rect, *, apply):
         x, y, row_height = rect.x(), rect.y(), 0
-        for item in self._items:
-            size = item.sizeHint().expandedTo(item.minimumSize())
+        for item, size in zip(self._items, self._cell_sizes(), strict=True):
             if row_height and x + size.width() > rect.right() + 1:
                 x = rect.x()
                 y += row_height + self.spacing()
@@ -212,5 +245,6 @@ def drawing_controls_row(*controls):
     row = qtw.QWidget()
     layout = _WrappingLayout(row)
     for control in controls:
+        control.setSizePolicy(qtw.QSizePolicy.Policy.Minimum, qtw.QSizePolicy.Policy.Fixed)
         layout.addWidget(control)
     return row

@@ -38,6 +38,7 @@ from ._drawing_controls import (
 from ._plot_annotation import SHOW_SOURCE_ANNOTATION_KEY
 from ._plot_tiling import PLOT_TILE_COLUMNS_KEY, PLOT_TILE_ROWS_KEY
 from ._signal_blocking import blocked_signals
+from ._small_dialogs import DialogTabs, confirm_action
 from ._window_controls import (
     CONFIRM_CLOSE_ALL_KEY,
     CONFIRM_INCOMPATIBLE_AXES_KEY,
@@ -232,16 +233,6 @@ class _PreferenceBinding:
             control.toggled.connect(mark_edited)
 
 
-class _PreferencesTabBar(qtw.QTabBar):
-    """Fill the tab strip while retaining Qt's normal overflow buttons."""
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        parent = self.parentWidget()
-        if parent is not None and self.width() != parent.width():
-            self.resize(parent.width(), self.height())
-
-
 class _PreferencesPage(qtw.QScrollArea):
     """Let page contents grow vertically without imposing their full size."""
 
@@ -286,17 +277,23 @@ class _PreferencesPage(qtw.QScrollArea):
         viewport = self.viewport()
         assert viewport is not None
         available = viewport.width() - margins.left() - margins.right()
-        for child in page.findChildren(qtw.QWidget, options=QtCore.Qt.FindChildOption.FindDirectChildrenOnly):
-            child.setMaximumWidth(max(1, available))
-        needed = 0
+        labels = set()
+        label_width = field_width = 0
         for row in range(form.rowCount()):
             label = form.itemAt(row, qtw.QFormLayout.ItemRole.LabelRole)
             field = form.itemAt(row, qtw.QFormLayout.ItemRole.FieldRole)
             if label is not None and field is not None:
-                needed = max(needed, label.sizeHint().width() + field.minimumSize().width()
-                             + max(0, form.horizontalSpacing()))
-        policy = (qtw.QFormLayout.RowWrapPolicy.WrapAllRows if available < needed
-                  else qtw.QFormLayout.RowWrapPolicy.WrapLongRows)
+                labels.add(label.widget())
+                label_width = max(label_width, label.minimumSize().width())
+                field_width = max(field_width, field.minimumSize().width())
+        label_space = available - max(0, form.horizontalSpacing()) - field_width
+        stack_rows = label_space < label_width
+        for child in page.findChildren(qtw.QWidget, options=QtCore.Qt.FindChildOption.FindDirectChildrenOnly):
+            # Wrap long labels within their column while leaving room for every field.
+            width = label_space if child in labels and not stack_rows else available
+            child.setMaximumWidth(max(1, width))
+        policy = (qtw.QFormLayout.RowWrapPolicy.WrapAllRows if stack_rows
+                  else qtw.QFormLayout.RowWrapPolicy.DontWrapRows)
         if form.rowWrapPolicy() != policy:
             form.setRowWrapPolicy(policy)
 
@@ -317,7 +314,7 @@ class _PreferencesLabel(qtw.QLabel):
             QtCore.QRect(0, 0, 10_000, 10_000),
             QtCore.Qt.TextFlag.TextSingleLine | QtCore.Qt.TextFlag.TextShowMnemonic, self.text(),
         )
-        return QtCore.QSize(rect.width(), self.fontMetrics().height())
+        return QtCore.QSize(rect.width() + 6, super().sizeHint().height())
 
 
 class _PreferencesCheckBox(qtw.QCheckBox):
@@ -408,20 +405,14 @@ class PreferencesDialog(qtw.QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
-        tabs = qtw.QTabWidget(self)
+        tabs = DialogTabs(self)
         tabs.setObjectName("preferencesTabs")
         self.tabs = tabs
-        tab_bar = _PreferencesTabBar(tabs)
-        tabs.setTabBar(tab_bar)
-        tab_bar.setExpanding(True)
-        tab_bar.setUsesScrollButtons(True)
-        for title, build in (("General", self._general_tab), ("Appearance", self._appearance_tab),
-                             ("Plotting", self._plotting_tab), ("Files && export", self._files_tab),
-                             ("Performance", self._performance_tab), ("Updates", self._updates_tab)):
+        for title, build in (("Application", self._application_tab), ("Plots", self._plots_tab),
+                             ("Files && export", self._files_tab), ("Performance", self._performance_tab)):
             page = _PreferencesPage(build())
             page.setObjectName("preferencesPage" + str(tabs.count()))
             tabs.addTab(page, title)
-        tabs.setElideMode(QtCore.Qt.TextElideMode.ElideNone)
         layout.addWidget(tabs)
 
         self.buttonBox = qtw.QDialogButtonBox(
@@ -456,10 +447,9 @@ class PreferencesDialog(qtw.QDialog):
                 "Preferences dialog Restore Defaults button is not available."
                 )
         self.restoreDefaultsButton.setObjectName("restorePreferenceDefaultsButton")
-        self.restoreDefaultsButton.setAccessibleName("Restore preference defaults")
-        self.restoreDefaultsButton.setToolTip(
-            "Restore the preferences shown here to their defaults"
-            )
+        self.restoreDefaultsButton.setText("Reset this page")
+        self.restoreDefaultsButton.setAccessibleName("Reset this preference page")
+        self.restoreDefaultsButton.setToolTip("Stage the defaults for the current page. Apply to save them.")
         self.restoreDefaultsButton.clicked.connect(self.restore_defaults)
         self.buttonBox.setSizePolicy(qtw.QSizePolicy.Policy.Ignored, qtw.QSizePolicy.Policy.Fixed)
         layout.addWidget(self.buttonBox)
@@ -522,7 +512,7 @@ class PreferencesDialog(qtw.QDialog):
         if self.buttonBox.orientation() != orientation:
             self.buttonBox.setOrientation(orientation)
 
-    def _general_tab(self):
+    def _application_tab(self):
         tab = qtw.QWidget(self)
         form = qtw.QFormLayout(tab)
         form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
@@ -551,7 +541,18 @@ class PreferencesDialog(qtw.QDialog):
         self.previewSizeSpin.setSuffix(" px")
         self._add_row(form, "&Preview image size:", self.previewSizeSpin)
 
-        self._add_section(form, "New window grid")
+        self._add_section(form, "Live data")
+        self._add_refresh_interval(tab, form)
+
+        self._add_section(form, "Closing windows")
+        self._add_close_preferences(tab, form)
+
+        self._add_section(form, "Updates")
+        self._add_update_preferences(tab, form)
+        return tab
+
+    def _add_window_grid(self, tab, form):
+        self._add_section(form, "New plot windows")
 
         self.plotTileRowsSpin = qtw.QSpinBox(tab)
         self.plotTileRowsSpin.setObjectName("plotTileRowsPreferenceSpin")
@@ -569,19 +570,22 @@ class PreferencesDialog(qtw.QDialog):
             "Columns in the screen grid; plots fill left to right, then top "
             "to bottom, wrapping after the last cell. Existing plots stay in place."
             )
-        grid_widget = qtw.QWidget(tab)
-        grid_layout = qtw.QHBoxLayout(grid_widget)
+        grid_layout = qtw.QHBoxLayout()
         grid_layout.setContentsMargins(0, 0, 0, 0)
-        grid_layout.setSpacing(8)
-        grid_layout.addWidget(self.plotTileRowsSpin, 1)
-        columns_label = qtw.QLabel("&Columns:", grid_widget)
+        grid_layout.setSpacing(6)
+        rows_label = qtw.QLabel("&Rows:", tab)
+        rows_label.setBuddy(self.plotTileRowsSpin)
+        grid_layout.addWidget(rows_label)
+        grid_layout.addWidget(self.plotTileRowsSpin)
+        grid_layout.addSpacing(12)
+        columns_label = qtw.QLabel("&Columns:", tab)
         columns_label.setBuddy(self.plotTileColumnsSpin)
         grid_layout.addWidget(columns_label)
-        grid_layout.addWidget(self.plotTileColumnsSpin, 1)
-        self._add_row(form, "&Rows:", grid_widget, self.plotTileRowsSpin)
+        grid_layout.addWidget(self.plotTileColumnsSpin)
+        grid_layout.addStretch(1)
+        form.addRow(grid_layout)
 
-        self._add_section(form, "Live data")
-
+    def _add_refresh_interval(self, tab, form):
         self.refreshRateSpin = qtw.QDoubleSpinBox(tab)
         self.refreshRateSpin.setObjectName("refreshRatePreferenceSpin")
         self.refreshRateSpin.setToolTip("Default interval between automatic refreshes, in seconds. Zero disables automatic refresh.")
@@ -590,10 +594,10 @@ class PreferencesDialog(qtw.QDialog):
         self.refreshRateSpin.setSingleStep(0.1)
         self.refreshRateSpin.setDecimals(1)
         self.refreshRateSpin.setSuffix(" s")
+        self.refreshRateSpin.setSpecialValueText("Manual")
         self._add_row(form, "&Default refresh interval:", self.refreshRateSpin)
 
-        self._add_section(form, "Closing windows")
-
+    def _add_close_preferences(self, tab, form):
         self.confirmCloseAllCheck = _PreferencesCheckBox(
             "Confirm before closing all plot windows",
             tab,
@@ -611,16 +615,14 @@ class PreferencesDialog(qtw.QDialog):
         self.confirmQuitCheck.setAccessibleName("Confirm before quitting qPlot")
         form.addRow(self.confirmQuitCheck)
 
-        return tab
-
-    def _appearance_tab(self):
+    def _plots_tab(self):
         tab = qtw.QWidget(self)
         form = qtw.QFormLayout(tab)
         form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setContentsMargins(8, 8, 8, 8)
         form.setSpacing(8)
 
-        self._add_section(form, "Text and annotations")
+        self._add_section(form, "All plots")
 
         self.fontSizeSpin = qtw.QSpinBox(tab)
         self.fontSizeSpin.setObjectName("fontSizePreferenceSpin")
@@ -674,10 +676,13 @@ class PreferencesDialog(qtw.QDialog):
             )
         self._add_row(form, "Colour scale &width:", self.colorbarWidthSpin)
 
-        self._add_section(form, "Defaults")
+        self._add_plot_interaction(tab, form)
+        self._add_window_grid(tab, form)
+        self._add_section(form, "New traces and heatmaps")
 
         self.defaultTraceColourCombo = _PreferenceTraceColourCombo()
         self.defaultTraceColourCombo.setObjectName("defaultTraceColourPreferenceCombo")
+        self.defaultTraceColourCombo.setIconSize(QtCore.QSize(54, 16))
         self.defaultTraceWidthSpin = DrawingSizeSpinBox()
         self.defaultTraceWidthSpin.setObjectName("defaultTraceWidthPreferenceSpin")
         self.defaultTraceWidthSpin.setAccessibleName("Default trace line width")
@@ -689,33 +694,26 @@ class PreferencesDialog(qtw.QDialog):
         self.defaultTraceWidthSpin.setToolTip("Line width for newly created traces, including traces added to existing plots.")
         self.defaultTraceStyleCombo = LineStyleCombo("Default trace line style")
         self.defaultTraceStyleCombo.setObjectName("defaultTraceStylePreferenceCombo")
-        self.defaultTraceStyleCombo.setIconSize(QtCore.QSize(32, 16))
+        self.defaultTraceStyleCombo.setIconSize(self.defaultTraceColourCombo.iconSize())
         self.defaultTraceRow = qtw.QWidget(tab)
         trace_layout = qtw.QHBoxLayout(self.defaultTraceRow)
         trace_layout.setContentsMargins(0, 0, 0, 0)
         trace_layout.setSpacing(6)
-        for control, stretch in ((self.defaultTraceColourCombo, 1),
-                                 (self.defaultTraceWidthSpin, 0),
-                                 (self.defaultTraceStyleCombo, 1)):
-            if stretch:
-                control.setSizePolicy(qtw.QSizePolicy.Policy.Expanding, qtw.QSizePolicy.Policy.Fixed)
-            trace_layout.addWidget(control, stretch)
+        trace_layout.addWidget(self.defaultTraceColourCombo)
+        trace_layout.addWidget(self.defaultTraceWidthSpin)
+        trace_layout.addWidget(self.defaultTraceStyleCombo)
+        trace_layout.addStretch()
+        self.defaultTraceRow.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed)
         self.defaultTraceRow.setToolTip("Appearance for newly created traces, including traces added to existing plots.")
-        self._add_row(form, "Default trace:", self.defaultTraceRow, buddy=self.defaultTraceColourCombo)
+        self._add_row(form, "Trace &appearance:", self.defaultTraceRow, buddy=self.defaultTraceColourCombo)
 
         self.defaultColourMapButton = _PreferenceColourMapButton(tab)
         self.defaultColourMapButton.setObjectName("defaultColourMapPreferenceButton")
-        self._add_row(form, "Default colour &map for new plots:", self.defaultColourMapButton)
+        self._add_row(form, "Heatmap colour &map:", self.defaultColourMapButton)
 
         return tab
 
-    def _plotting_tab(self):
-        tab = qtw.QWidget(self)
-        form = qtw.QFormLayout(tab)
-        form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        form.setContentsMargins(8, 8, 8, 8)
-        form.setSpacing(8)
-
+    def _add_plot_interaction(self, tab, form):
         self._add_section(form, "Navigation and readout")
 
         self.cursorSignificantFiguresSpin = qtw.QSpinBox(tab)
@@ -727,7 +725,7 @@ class PreferencesDialog(qtw.QDialog):
             )
         self._add_row(form, "Cursor &precision (significant figures):", self.cursorSignificantFiguresSpin)
 
-        self._add_section(form, "Complex data")
+        self._add_section(form, "New complex plots")
 
         for attribute, label, options in (
             ("complex1dCombo", "1D complex plots:", COMPLEX_1D_OPTIONS),
@@ -756,8 +754,6 @@ class PreferencesDialog(qtw.QDialog):
             "Warn before adding data with incompatible axes"
         )
         form.addRow(self.confirmIncompatibleAxesCheck)
-
-        return tab
 
     def _files_tab(self):
         tab = qtw.QWidget(self)
@@ -897,6 +893,10 @@ class PreferencesDialog(qtw.QDialog):
             "Maximum heatmap grid &cells:",
             self.maxHeatmapGridCellsSpin,
             )
+        hint = qtw.QLabel("Above the full-resolution limit, qPlot averages samples into a smaller grid. "
+                          "The grid cell limit counts all rows × columns.", tab)
+        hint.setWordWrap(True)
+        form.addRow(hint)
 
         self.delGracePeriodSpin = qtw.QDoubleSpinBox(tab)
         self.delGracePeriodSpin.setObjectName("deleteGracePreferenceSpin")
@@ -914,29 +914,18 @@ class PreferencesDialog(qtw.QDialog):
 
         return tab
 
-    def _updates_tab(self):
-        tab = qtw.QWidget(self)
-        layout = qtw.QVBoxLayout(tab)
+    def _add_update_preferences(self, tab, form):
         self.checkUpdatesOnLaunchCheck = _PreferencesCheckBox(
             "Check for updates on launch (at most once a day)", tab,
         )
         self.checkUpdatesOnLaunchCheck.setObjectName("checkUpdatesOnLaunchPreferenceCheck")
         self.checkUpdatesOnLaunchCheck.setToolTip("Check PyPI for newer qPlot releases in the background, at most once a day. Requires an Internet connection.")
         self.checkUpdatesOnLaunchCheck.setAccessibleName("Check for updates on launch")
-        layout.addWidget(self.checkUpdatesOnLaunchCheck)
+        form.addRow(self.checkUpdatesOnLaunchCheck)
         self.includePrereleasesCheck = _PreferencesCheckBox("Include pre-release versions", tab)
         self.includePrereleasesCheck.setObjectName("includePrereleasesPreferenceCheck")
         self.includePrereleasesCheck.setToolTip("Include development and preview releases when checking for updates.")
-        layout.addWidget(self.includePrereleasesCheck)
-        hint = qtw.QLabel(
-            "Launch checks run in the background and notify you only about newer releases. "
-            "You can check at any time from Help → Check for Updates. "
-            "Updates are listed on PyPI; an Internet connection is required.", tab,
-        )
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-        layout.addStretch(1)
-        return tab
+        form.addRow(self.includePrereleasesCheck)
 
     @staticmethod
     def _add_section(form, title):
@@ -957,6 +946,9 @@ class PreferencesDialog(qtw.QDialog):
             widget.setMinimumContentsLength(12)
             widget.setSizeAdjustPolicy(qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         form.addRow(label, widget)
+        if isinstance(widget, qtw.QAbstractSpinBox):
+            widget.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed)
+            form.setAlignment(widget, QtCore.Qt.AlignmentFlag.AlignLeft)
 
     def load_from_config(self):
         """
@@ -970,10 +962,17 @@ class PreferencesDialog(qtw.QDialog):
         self._loaded_control_values = self.preference_values()
         self._edited_preference_keys.clear()
         self.apply_button.setEnabled(False)
+        self.apply_button.setText("Apply")
 
     def _preference_edited(self, key):
         self._edited_preference_keys.add(key)
-        self.apply_button.setEnabled(bool(self._changed_values()))
+        self._sync_apply_button()
+
+    def _sync_apply_button(self):
+        dirty = bool(self._changed_values())
+        self.apply_button.setEnabled(dirty)
+        if not dirty:
+            self.apply_button.setText("Apply")
 
     def set_preference_values(self, values):
         """Load values without recording programmatic updates as edits."""
@@ -1022,9 +1021,11 @@ class PreferencesDialog(qtw.QDialog):
                 changed_values,
                 "the preferences",
                 ):
+            self.apply_button.setText("Retry")
             return False
 
         self.apply_button.setEnabled(False)
+        self.apply_button.setText("Apply")
         self._loaded_control_values = self.preference_values()
         self._edited_preference_keys.clear()
         self.preferencesApplied.emit()
@@ -1032,24 +1033,27 @@ class PreferencesDialog(qtw.QDialog):
 
     def restore_defaults(self):
         """
-        Restores the preferences shown in this dialog to schema defaults.
+        Stage defaults for controls on the selected page only.
 
         """
-        reply = qtw.QMessageBox.question(
+        page = self.tabs.currentWidget()
+        if page is None:
+            return False
+        page_title = self.tabs.tabText(self.tabs.currentIndex()).replace("&&", "&")
+        if not confirm_action(
             self,
-            "Restore Preference Defaults",
-            "Restore the preferences shown in this dialog to their defaults?",
-            qtw.QMessageBox.StandardButton.Yes | qtw.QMessageBox.StandardButton.No,
-            qtw.QMessageBox.StandardButton.No,
-            )
-        if reply != qtw.QMessageBox.StandardButton.Yes:
+            "Reset preference page",
+            f"Restore the defaults on the {page_title} page? Choose Apply or OK to save them.",
+            affirmative="Reset this page",
+            ):
             return False
 
-        self.set_preference_values(self.default_preference_values())
-        # Reset is explicit consent to defaults, even when the old value had
-        # the same rounded representation in its control.
-        self._edited_preference_keys.update(PREFERENCE_KEYS)
-        self.apply_button.setEnabled(bool(self._changed_values()))
+        for binding in self._bindings:
+            if page.isAncestorOf(binding.control):
+                with blocked_signals(binding.control):
+                    binding.write(self._schema_default(binding.key))
+                self._edited_preference_keys.add(binding.key)
+        self._sync_apply_button()
         return True
 
     def choose_default_load_path(self):

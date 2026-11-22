@@ -13,8 +13,10 @@ from tests.support.windows.svg_export_integration import real_plot as real_plot
 
 
 def _format(dialog, kind):
-    combo = dialog.controls.format_combo
-    combo.setCurrentIndex(combo.findData(kind))
+    dialog.controls.output_tabs.setCurrentIndex(int(kind is CSVExporter))
+    if kind is not CSVExporter:
+        combo = dialog.controls.format_combo
+        combo.setCurrentIndex(combo.findData(kind))
     qtw.QApplication.processEvents()
     assert type(dialog.currentExporter) is kind
 
@@ -36,6 +38,20 @@ def test_default_height_shows_all_settings_when_switching_formats(real_plot, fon
             dialog.ui.copyBtn.click()
             qtw.QApplication.processEvents()
             assert dialog.controls_scroll.verticalScrollBar().maximum() == 0
+    assert not errors
+
+
+def test_figure_tab_saves_plot_sized_pdf(real_plot, tmp_path, monkeypatch):
+    plot, _database, errors, _dimensions = real_plot
+    plot.open_export_dialog()
+    dialog = plot.widget.scene().exportDialog
+    combo = dialog.controls.format_combo
+    combo.setCurrentIndex(combo.findData(QtGui.QPdfWriter))
+    assert dialog.ui.exportBtn.isEnabled() and dialog.ui.copyBtn.isHidden()
+    target = tmp_path / "figure.pdf"
+    monkeypatch.setattr(qtw.QFileDialog, "getSaveFileName", lambda *_a, **_kw: (str(target), ""))
+    dialog.ui.exportBtn.click()
+    assert target.read_bytes().startswith(b"%PDF-")
     assert not errors
 
 

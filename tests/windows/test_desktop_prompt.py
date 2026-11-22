@@ -15,31 +15,26 @@ def invitation(qapplication, monkeypatch, tmp_path):
     monkeypatch.setattr(prompt_ui, "_prompt_settings", lambda: QtCore.QSettings(
         settings_path, QtCore.QSettings.Format.IniFormat,
     ))
-    parent = QtWidgets.QWidget()
+    parent = QtWidgets.QMainWindow()
+    parent.show()
     yield parent
     parent.close()
     parent.deleteLater()
 
 
-@pytest.mark.parametrize("choice", ["Set up…", "Don’t ask again", "Later", None])
-def test_choice_persists_only_when_answered(invitation, monkeypatch, choice):
+@pytest.mark.parametrize("choice", ["Set up…", "Dismiss"])
+def test_nonmodal_invitation_dismisses_permanently_after_choice(invitation, monkeypatch, choice):
     from qplot.windows import _help
 
     show_setup = Mock()
     monkeypatch.setattr(_help, "show_desktop_integration", show_setup)
     prompt = prompt_ui.show_first_launch_invitation(invitation)
     assert prompt is not None
-    if choice is None:
-        prompt.close()
-    else:
-        next(button for button in prompt.buttons() if button.text() == choice).click()
+    assert not prompt.isWindow()
+    assert QtWidgets.QApplication.activeModalWidget() is None
+    next(button for button in prompt.findChildren(QtWidgets.QPushButton) if button.text() == choice).click()
     assert show_setup.call_count == (1 if choice == "Set up…" else 0)
-    next_prompt = prompt_ui.show_first_launch_invitation(invitation)
-    if choice in ("Set up…", "Don’t ask again"):
-        assert next_prompt is None
-    else:
-        assert next_prompt is not None
-        next_prompt.close()
+    assert prompt_ui.show_first_launch_invitation(invitation) is None
 
 
 def test_existing_installation_suppresses_future_invitations(invitation, monkeypatch):
@@ -65,12 +60,13 @@ def test_headless_startup_does_not_schedule_prompt(invitation, monkeypatch):
     show.assert_not_called()
 
 
-def test_interactive_startup_schedules_one_invitation(invitation, monkeypatch):
+def test_interactive_first_plot_schedules_only_one_invitation(invitation, monkeypatch):
     show = Mock()
     monkeypatch.setattr(prompt_ui, "show_first_launch_invitation", show)
     monkeypatch.setattr(QtWidgets.QApplication, "platformName", lambda: "cocoa")
     prompt_ui.schedule_first_launch_invitation(invitation)
     show.assert_not_called()
+    prompt_ui.schedule_first_launch_invitation(invitation)
     QtWidgets.QApplication.processEvents()
     QtWidgets.QApplication.processEvents()
     show.assert_called_once_with(invitation)

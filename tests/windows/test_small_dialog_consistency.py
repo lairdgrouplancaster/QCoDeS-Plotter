@@ -63,7 +63,8 @@ def test_information_dialog_layout_and_keyboard(qapplication, monkeypatch, point
             assert table.rowHeight(0) >= table.fontMetrics().height() + 2
             assert table.horizontalHeader().height() >= table.fontMetrics().height() + 2
             # Copying a full path/value must not depend on visible elision.
-            table.selectRow(0)
+            table.selectRow(next(i for i in range(table.rowCount()) if table.item(i, 0).text() == "Path")
+                            if kind == "database" else 0)
             table.copySelection()
             assert (path if kind == "database" else "100 points") in qapplication.clipboard().text()
         text = dialog.findChild(qtw.QPlainTextEdit)
@@ -73,7 +74,8 @@ def test_information_dialog_layout_and_keyboard(qapplication, monkeypatch, point
             QtTest.QTest.keyClick(text, QtCore.Qt.Key.Key_Tab)
             assert dialog.focusWidget() is not text
         if kind == "desktop":
-            assert dialog.install_button.width() == dialog.remove_button.width()
+            if dialog.remove_button.isVisible():
+                assert dialog.install_button.width() == dialog.remove_button.width()
             # Return in the location field closes, never installs/removes.
             dialog.destination.setFocus()
         else:
@@ -143,5 +145,25 @@ def test_metadata_keyboard_copy_and_reopening_preserve_exact_text(qapplication):
         assert dialog.focusWidget() is dialog.close_button
         QtTest.QTest.keyClick(dialog.close_button, QtCore.Qt.Key.Key_Return)
         assert not dialog.isVisible()
+    finally:
+        sip.delete(dialog)
+
+
+def test_metadata_find_wraps_search_and_preserves_exact_copy(qapplication):
+    dialog = TrustedFullValueDialog()
+    try:
+        value = "offset\t12\noffset\t13\r\n"
+        dialog.show_value(path="settings", text=value, utf8_bytes=len(value.encode()))
+        dialog.search.setText("offset")
+        dialog.next_match.click()
+        assert dialog.text_edit.textCursor().selectionStart() == 0
+        dialog.next_match.click()
+        assert dialog.text_edit.textCursor().selectionStart() == 10
+        dialog.next_match.click()
+        assert dialog.text_edit.textCursor().selectionStart() == 0
+        dialog.wrap.setChecked(True)
+        assert dialog.text_edit.lineWrapMode() == qtw.QPlainTextEdit.LineWrapMode.WidgetWidth
+        dialog.copy_button.click()
+        assert qapplication.clipboard().text() == value
     finally:
         sip.delete(dialog)

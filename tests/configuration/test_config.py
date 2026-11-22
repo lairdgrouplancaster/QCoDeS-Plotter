@@ -1011,11 +1011,7 @@ class TemporaryConfigTestCase(unittest.TestCase):
             toggles = []
             window.autoPlotBox.toggled.connect(toggles.append)
 
-            with patch.object(
-                qtw.QMessageBox,
-                "question",
-                return_value=qtw.QMessageBox.StandardButton.Yes,
-            ):
+            with patch("qplot.windows.main.confirm_action", return_value=True):
                 self.assertTrue(window.restore_default_settings())
 
             self.assertFalse(config().get(AUTO_PLOT_KEY))

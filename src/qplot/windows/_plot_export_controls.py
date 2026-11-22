@@ -8,6 +8,10 @@ from pyqtgraph.exporters import CSVExporter, ImageExporter, SVGExporter
 
 from ._plot_csv_selection import csv_selection_description, selected_csv_measurements
 
+FIGURE_FORMATS = (
+    ("PNG image", ImageExporter), ("SVG", SVGExporter), ("Plot-sized PDF", QtGui.QPdfWriter),
+)
+
 
 class _ExportBackgroundCombo(qtw.QComboBox):
     colourChanged = QtCore.pyqtSignal(QtGui.QColor)
@@ -29,11 +33,13 @@ class _ExportBackgroundCombo(qtw.QComboBox):
         alpha_label = QtCore.QCoreApplication.translate("QColorDialog", "A&lpha channel:")
         for label in self.colour_dialog.findChildren(qtw.QLabel):
             if label.text() == alpha_label:
+                label.setText("&Opacity (0–255):")
                 tip = ("Background opacity: 0 is fully transparent; 255 is fully opaque. "
                        "PNG and SVG retain transparency.")
                 label.setToolTip(tip)
                 editor = label.buddy()
                 if editor is not None:
+                    editor.setAccessibleName("Background opacity")
                     editor.setToolTip(tip)
                 break
         self.activated.connect(self._activate)
@@ -136,11 +142,16 @@ class PlotExportControls(qtw.QWidget):
         self.body_layout = layout
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
+        self.output_tabs = qtw.QTabBar()
+        self.output_tabs.setAccessibleName("Export output")
+        self.output_tabs.addTab("&Figure")
+        self.output_tabs.addTab("Plotted &data")
+        layout.addWidget(self.output_tabs)
         form = qtw.QFormLayout()
+        self.format_form = form
         form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.format_combo = qtw.QComboBox()
-        for label, exporter in (("PNG image", ImageExporter),
-                                ("SVG", SVGExporter), ("CSV data", CSVExporter)):
+        for label, exporter in FIGURE_FORMATS:
             self.format_combo.addItem(label, exporter)
         self.format_combo.setAccessibleName("Export format")
         form.addRow("&Format", self.format_combo)
@@ -153,17 +164,18 @@ class PlotExportControls(qtw.QWidget):
         self.settings = qtw.QWidget()
         layout.addWidget(self.settings)
         self.format_combo.currentIndexChanged.connect(self._format_changed)
+        self.output_tabs.currentChanged.connect(self._format_changed)
 
     def _format_changed(self):
         if self._syncing:
             return
-        kind = self.format_combo.currentData()
+        kind = CSVExporter if self.output_tabs.currentIndex() == 1 else self.format_combo.currentData()
         for row in range(self.dialog.ui.formatList.count()):
             if self.dialog.ui.formatList.item(row).expClass is kind:
                 self.dialog.ui.formatList.setCurrentRow(row)
                 return
 
-    def set_exporter(self, exporter):
+    def set_exporter(self, exporter, *, pdf=False):
         self.clear_bindings()
         self.fields.clear()
         self.exporter = exporter
@@ -174,21 +186,28 @@ class PlotExportControls(qtw.QWidget):
         self.body_layout.replaceWidget(previous, self.settings)
         previous.hide()
         previous.deleteLater()
-        if exporter is None:
+        if exporter is None and not pdf:
             self.settings.setEnabled(False)
             return
-        self._syncing = True
-        try:
-            self.format_combo.setCurrentIndex(self.format_combo.findData(type(exporter)))
-        finally:
-            self._syncing = False
         csv = type(exporter) is CSVExporter
-        self.heading.setText("Data" if csv else "Image settings" if type(exporter) is ImageExporter else "SVG settings")
+        with QtCore.QSignalBlocker(self.output_tabs), QtCore.QSignalBlocker(self.format_combo):
+            self.output_tabs.setCurrentIndex(int(csv))
+            if not csv:
+                kind = QtGui.QPdfWriter if pdf else type(exporter)
+                self.format_combo.setCurrentIndex(self.format_combo.findData(kind))
+        self.format_form.setRowVisible(self.format_combo, not csv)
+        self.heading.setText("Data" if csv else "Figure settings")
+        self.heading.setVisible(not csv and not pdf)
+        self.dialog.setMinimumHeight(150 if pdf else 230)
         form = qtw.QFormLayout(self.settings)
         form.setContentsMargins(0, 0, 0, 0)
         form.setSpacing(10)
         form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        if csv:
+        if pdf:
+            note = qtw.QLabel("One page sized to the visible plot canvas, with its current colours.")
+            note.setWordWrap(True)
+            form.addRow(note)
+        elif csv:
             self._combo(form, "Data to export", "measurements")
             self.fields["measurements"].setAccessibleName("Data to export")
             self.fields["measurements"].setToolTip(
@@ -205,7 +224,8 @@ class PlotExportControls(qtw.QWidget):
                     ("X and Y for each trace", "(x,y) per plot"),
                     ("Shared X for all traces", "(x,y,y,y) for all plots"),
                 ])
-            self._combo(form, "Separator", "separator", [("Comma (,)", "comma"), ("Tab", "tab")])
+            self._combo(form, "File format", "separator", [("CSV (comma-separated)", "comma"),
+                                                           ("TSV (tab-separated)", "tab")])
         else:
             sizes = qtw.QWidget()
             row = qtw.QHBoxLayout(sizes)

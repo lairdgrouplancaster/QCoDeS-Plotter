@@ -51,7 +51,7 @@ from ._plot_csv_selection import (
     csv_selection_description,
     selected_csv_measurements,
 )
-from ._plot_export_controls import PlotExportControls
+from ._plot_export_controls import FIGURE_FORMATS, PlotExportControls
 from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
@@ -75,8 +75,8 @@ _UnsafePrintDestinationError = UnsafeExportDestinationError
 _PrintPdfDestination = ExportDestinationTransaction
 _SAFE_PYQTGRAPH_FILE_EXPORTERS = (ImageExporter, CSVExporter, SVGExporter)
 _SAFE_PYQTGRAPH_COPY_EXPORTERS = (ImageExporter, SVGExporter)
-CSV_UNDERLYING_VALUES = "Underlying plot samples"
-CSV_TRANSFORMED_VALUES = "Transformed plot values"
+CSV_UNDERLYING_VALUES = "After Operations-panel processing"
+CSV_TRANSFORMED_VALUES = "After operations and plot transforms"
 CSV_HEATMAP_VALUES = "Current heatmap grid"
 
 
@@ -223,14 +223,8 @@ if (
             current_class = getattr(current, "expClass", None)
             self.ui.formatList.clear()
             selected_row = 0
-            for row, exporter_class in enumerate(_SAFE_PYQTGRAPH_FILE_EXPORTERS):
-                item = _FormatExportListWidgetItem(
-                    exporter_class,
-                    QtCore.QCoreApplication.translate(
-                        "Exporter",
-                        {ImageExporter: "PNG image", CSVExporter: "CSV data", SVGExporter: "SVG"}[exporter_class],
-                    ),
-                )
+            for row, (label, exporter_class) in enumerate((*FIGURE_FORMATS, ("CSV data", CSVExporter))):
+                item = _FormatExportListWidgetItem(exporter_class, label)
                 self.ui.formatList.addItem(item)
                 if exporter_class is current_class:
                     selected_row = row
@@ -243,6 +237,15 @@ if (
             if scope is not None:
                 scope.hide()
             owner = self._qplot_owner
+            if exporter_class is QtGui.QPdfWriter and owner is not None:
+                self.currentExporter = None
+                self.ui.paramTree.clear()
+                self.ui.exportBtn.setEnabled(True)
+                self.ui.copyBtn.setEnabled(False)
+                self.ui.copyBtn.hide()
+                self.feedback.hide()
+                self.controls.set_exporter(None, pdf=True)
+                return
             if owner is None or exporter_class not in _SAFE_PYQTGRAPH_FILE_EXPORTERS:
                 self.currentExporter = None
                 self.ui.paramTree.clear()
@@ -355,17 +358,40 @@ if (
             full_scope = owner._csv_export_scope(exporter)
             scope.setToolTip(full_scope)
             selection = selected_csv_measurements(owner, exporter)
+            labels = []
+            hidden = 0
+            for entry in selection or ():
+                visible = (entry.item.isVisible() if entry.kind == "trace"
+                           else owner._heatmap_is_visible(entry.item))
+                hidden += int(not visible)
+                labels.append(entry.label if visible else f"{entry.label} [hidden]")
+            summary = ", ".join(labels[:3])
+            if len(labels) > 3:
+                summary += f" and {len(labels) - 3} more"
+                if hidden:
+                    summary += f" ({hidden} hidden in selection)"
+            elif len(labels) == 1:
+                summary = "Includes the hidden measurement." if hidden else ""
             if csv_exports_heatmap(owner, exporter):
                 layer = selection[0].item if selection else owner
                 grid = np.asarray(layer.__dict__.get("data_grid", layer.__dict__.get("dataGrid", [])))
                 shape = f" ({grid.shape[1]:,} × {grid.shape[0]:,} cells)" if grid.ndim == 2 else ""
-                text = (f"Selected heatmap grid{shape}, including operations and spatial averaging. "
-                        "Other measurements are excluded.")
+                source = selection[0].source if selection else owner
+                report = getattr(source, "_heatmap_resolution_report", None)
+                processing = "The grid retains applied operations and any spatial averaging."
+                if report is not None:
+                    if report.spatial_mean or (report.binned and not report.aggregated):
+                        processing = "Includes spatial averaging into display cells."
+                    if report.sampled:
+                        processing += " The source rows were sampled."
+                text = f"Selected heatmap grid{shape}. {processing}"
             elif exporter.params["values"] == CSV_TRANSFORMED_VALUES:
-                text = "All loaded samples, including applied operations and native transforms. Zoom does not limit the exported data."
+                text = "All loaded samples, after operations and plot transforms. Zoom does not limit the export."
             else:
-                text = "All loaded samples, including Operations-panel processing, before native transforms. Zoom does not limit the exported data."
-            scope.setText(text)
+                text = "All loaded samples, after operations and before plot transforms. Zoom does not limit the export."
+            scope.setText("\n".join(part for part in (
+                summary, text, "For raw measurements, use CSV export in the database window.",
+            ) if part))
             scope.show()
 
         @QtCore.pyqtSlot()
@@ -374,7 +400,12 @@ if (
             self.selectBox.hide()
             owner = self._qplot_owner
             if owner is not None:
-                if owner._export_pyqtgraph_exporter(self.currentExporter):
+                selected = self.ui.formatList.currentItem()
+                if selected is not None and selected.expClass is QtGui.QPdfWriter:
+                    saved = owner.save_plot_pdf()
+                else:
+                    saved = owner._export_pyqtgraph_exporter(self.currentExporter)
+                if saved:
                     self.feedback.setText("Export started." if type(self.currentExporter) is CSVExporter else "Saved.")
                     self.feedback.show()
                     self.fit_export_controls()
@@ -956,7 +987,7 @@ class PlotExportMixin(_PlotExportBase):
                 if isinstance(item, ErrorBarItem):
                     raise ValueError(
                         "Transformed export does not transform error bars. "
-                        "Choose Underlying plot samples to retain their original values."
+                        f"Choose {CSV_UNDERLYING_VALUES} to retain their original values."
                     )
                 if not (hasattr(item, "implements") and item.implements("plotData")):
                     continue
@@ -1057,9 +1088,6 @@ class PlotExportMixin(_PlotExportBase):
             return False
 
         suffixes, default_suffix, name_filter, description = specification
-        if type(exporter) is CSVExporter and exporter.params["separator"] == "tab":
-            default_suffix = ".tsv"
-            name_filter = "TSV files (*.tsv);;CSV files (*.csv)"
         selection = selected_csv_measurements(self, exporter) if type(exporter) is CSVExporter else None
         filename_owner = selection[0].source if selection and len(selection) == 1 else self
         filename_provider = getattr(filename_owner, "_default_plot_pdf_filename", self._default_plot_pdf_filename)
@@ -1072,7 +1100,7 @@ class PlotExportMixin(_PlotExportBase):
                 guid=getattr(dataset, "guid", None),
                 captured_run_id=getattr(dataset, "captured_run_id", None),
             )
-            suggested_path = path.join(path.dirname(suggested_path), filename)
+            suggested_path = path.join(path.dirname(suggested_path), path.splitext(filename)[0] + default_suffix)
         try:
             if type(exporter) is CSVExporter:
                 selected_csv_measurements(self, exporter, validate=True)
@@ -1085,19 +1113,11 @@ class PlotExportMixin(_PlotExportBase):
                 default_suffix=default_suffix,
                 replace_title="Replace Plot Export?",
                 file_description=description,
-                match_selected_filter=type(exporter) is CSVExporter,
+                use_chosen_format=type(exporter) is CSVExporter,
             )
             if destination is None:
                 self.show_status("Plot export cancelled.", 3000)
                 return False
-            csv_separator = None
-            if type(exporter) is CSVExporter:
-                # Resolve the delimiter from the exact, already-approved target
-                # without changing the options in the reused export dialog.
-                csv_separator = (
-                    "tab" if path.splitext(destination.filename)[1].casefold()
-                    == ".tsv" else "comma"
-                )
             writer = lambda staging_path: exporter.export(fileName=staging_path)
             if type(exporter) is SVGExporter:
                 writer = lambda staging_path: write_svg_stage(staging_path, exporter)
@@ -1114,7 +1134,7 @@ class PlotExportMixin(_PlotExportBase):
                     snapshot = self._capture_line_csv(
                         exporter, transformed=(mode is not None and mode.value() == CSV_TRANSFORMED_VALUES),
                     )
-                separator = "\t" if csv_separator == "tab" else ","
+                separator = "\t" if default_suffix == ".tsv" else ","
                 start_export_task(
                     self, title="Export plot CSV", destination=destination,
                     writer=lambda filename, cancelled, progress: snapshot.write(
@@ -1244,10 +1264,11 @@ class PlotExportMixin(_PlotExportBase):
                 "plot image",
             )
         if type(exporter) is CSVExporter:
+            suffix = ".tsv" if exporter.params["separator"] == "tab" else ".csv"
             return (
                 (".csv", ".tsv"),
-                ".csv",
-                "CSV files (*.csv);;TSV files (*.tsv)",
+                suffix,
+                f"{suffix[1:].upper()} files (*{suffix})",
                 "plot data file",
             )
         if type(exporter) is SVGExporter:

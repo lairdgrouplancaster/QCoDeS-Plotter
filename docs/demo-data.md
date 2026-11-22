@@ -14,13 +14,18 @@ last folder across launches. If that folder is unavailable, their dialogs fall
 back to the current database-open directory. This history is separate from the
 default database folder and requires no preference control.
 
-In qPlot, use `File -> Generate Test Data from Template -> Create Example CSV...` to choose
-where to save a ready-to-use specification. qPlot creates the file, reveals it
-in Finder on macOS, or opens its containing folder in the platform file manager.
-Edit the CSV in a spreadsheet application, then use
-`File -> Generate Test Data from Template -> Generate Database from CSV...` to choose the CSV
-and its output `.db` file. Generation runs in the background so qPlot remains
-responsive.
+Choose **File → Generate Test Data from Template → Generate database…**.
+Choose **Bundled template** and select one of the installed CSVs, or choose
+**My specification CSV** and browse to your own file. Review the run and point
+counts and the estimated size for a bundled template. Browse for an **Output
+database** and select **Generate database**. If that file already exists,
+review its path before choosing **Replace file**. The progress window shows
+the current run and offers **Cancel generation**.
+After completion, use **Open database** or **Show in folder**.
+
+To write your own specification, use **File → Generate Test Data from Template
+→ Create Example CSV…** to save a starting file. qPlot reveals the new file
+in Finder on macOS or opens its containing folder in the platform file manager.
 
 For performance and scaling tests, use
 `File -> Generate Test Data from Template -> Export CSV Collection...`. The ten installed

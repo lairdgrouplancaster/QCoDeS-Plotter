@@ -2,17 +2,42 @@
 
 import os
 
+from PyQt6 import QtWidgets as qtw
+
 from qplot.datahandling.database_export import export_database_copy, require_source
 from qplot.datahandling.file_identity import SQLITE_SIDECAR_SUFFIXES
 from qplot.datahandling.trusted_live_service import TRUSTED_LIVE_MODE
 
-from ._export_paths import choose_export_path
+from ._export_paths import (
+    UnsafeExportDestinationError,
+    normalize_export_path,
+    prepare_export_destination,
+)
 from ._export_tasks import start_export_task
+from ._small_dialogs import confirm_action
 
 
 def _require_new_destination(filename):
     if any(os.path.lexists(filename + suffix) for suffix in ("", *SQLITE_SIDECAR_SUFFIXES)):
         raise ValueError("Choose a new filename without an existing database or SQLite sidecars.")
+
+
+def _choose_database_destination(window, title, suggested):
+    while True:
+        filename, _filter = qtw.QFileDialog.getSaveFileName(
+            window, f"{title} — choose a new filename", suggested,
+            "QCoDeS databases (*.db)", options=qtw.QFileDialog.Option.DontConfirmOverwrite,
+        )
+        if not filename:
+            return None
+        suggested = normalize_export_path(filename, ".db")
+        try:
+            _require_new_destination(suggested)
+            return prepare_export_destination(window, suggested, existing_target_validator=_require_new_destination)
+        except (ValueError, OSError, UnsafeExportDestinationError) as error:
+            if not confirm_action(window, "Choose a new database filename",
+                                  f"{suggested}\n\n{error}", affirmative="Choose another name…"):
+                return None
 
 
 def export_database(window, *, selected=False):
@@ -32,12 +57,7 @@ def export_database(window, *, selected=False):
     try:
         require_source(instance)
         stem = os.path.splitext(instance.logical_path)[0]
-        destination = choose_export_path(
-            window, caption=title, suggested_path=stem + ("-selected.db" if selected else "-copy.db"),
-            name_filter="QCoDeS databases (*.db)", required_suffix=".db",
-            replace_title=title, file_description="database copy",
-            existing_target_validator=_require_new_destination,
-        )
+        destination = _choose_database_destination(window, title, stem + ("-selected.db" if selected else "-copy.db"))
         if destination is None:
             return
 

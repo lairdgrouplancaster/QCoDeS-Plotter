@@ -193,7 +193,7 @@ def build_missing_cell_array_database(db_path):
         experiment.conn.close()
 
 
-def export_real_plot_csv(monkeypatch, plot_window, target):
+def export_real_plot_csv(monkeypatch, plot_window, target, *, separator="comma"):
     """Run qPlot's real exporter entry point with only the dialogs automated."""
     monkeypatch.setattr(
         qtw.QFileDialog,
@@ -201,11 +201,12 @@ def export_real_plot_csv(monkeypatch, plot_window, target):
         lambda *_args, **_kwargs: (str(target), ""),
     )
     monkeypatch.setattr(
-        qtw.QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: qtw.QMessageBox.StandardButton.Yes,
+        "qplot.windows._export_paths.confirm_action",
+        lambda *_args, affirmative: affirmative == "Replace file",
     )
-    accepted = plot_window._export_pyqtgraph_exporter(CSVExporter(plot_window.plot))
+    exporter = CSVExporter(plot_window.plot)
+    exporter.params["separator"] = separator
+    accepted = plot_window._export_pyqtgraph_exporter(exporter)
     if accepted:
         tasks = tuple(getattr(plot_window, "_export_tasks", ()))
         wait_for(lambda: all(task.done for task in tasks))

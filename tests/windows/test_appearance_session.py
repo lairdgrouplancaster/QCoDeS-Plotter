@@ -1,11 +1,13 @@
 """OK commits and Cancel restores the complete live appearance preview."""
 
+import threading
 from copy import deepcopy
 
 import pytest
 from PyQt6 import QtCore, QtTest
 from PyQt6 import QtWidgets as qtw
 
+from qplot.windows._export_tasks import start_export_task
 from qplot.windows._preferences import PreferencesDialog
 from tests.support.windows.mixed_plot_drops import _added, _wait_for
 from tests.support.windows.mixed_plot_drops import mixed_plot as _mixed_plot
@@ -18,6 +20,96 @@ from tests.support.windows.preferences_value_preservation import (
 mixed_plot = _mixed_plot
 precise_config = _precise_config
 volume_main = _volume_main
+
+
+def test_plot_settings_pages_preview_and_restore_axis_edits(mixed_plot):
+    _window, plot, _runs = mixed_plot
+    plot.open_axis_scale_dialog("x")
+    editor = plot._axis_scale_dialog
+    assert editor is plot._plot_appearance_dialog and editor.pages.currentWidget() is editor.axes_page
+    controls = plot._axis_scale_controls["x"]
+    initial = plot._capture_axis_settings("x")
+    controls.invertCheck.click()
+    controls.mouseCheck.click()
+    controls.manualRadio.click()
+    controls.minText.setText("-6")
+    controls.maxText.setText("10")
+    controls.maxText.setFocus()
+    QtTest.QTest.keyClick(controls.maxText, QtCore.Qt.Key.Key_Return)
+    assert editor.isVisible()
+    assert plot.vb.state["targetRange"][0] == [-6, 10]
+    plot.open_plot_appearance_dialog()
+    assert editor.pages.currentIndex() == 0
+    editor.reject()
+    restored = plot._capture_axis_settings("x")
+    assert restored.mouse == initial.mouse and restored.inverted == initial.inverted
+    assert restored.auto == initial.auto and restored.filtered_auto == initial.filtered_auto
+    if initial.auto is False and not initial.filtered_auto:
+        assert restored.limits == initial.limits
+    plot.open_axis_scale_dialog("x")
+    controls.invertCheck.click()
+    keep = editor.appearance_buttons.button(qtw.QDialogButtonBox.StandardButton.Ok)
+    keep.setFocus()
+    QtTest.QTest.keyClick(keep, QtCore.Qt.Key.Key_Return)
+    assert not editor.isVisible()
+    assert plot._capture_axis_settings("x").inverted != initial.inverted
+
+
+def test_mixed_selection_applies_shared_controls_and_reorders(mixed_plot):
+    _window, plot, runs = mixed_plot
+    primary = plot._plot_item_order[0]
+    foreign = runs["heatmap" if plot.operation_kind == "plot1d" else "line"]
+    plot.open_plot_appearance_dialog()
+    editor = plot._plot_appearance_dialog
+    add(editor, foreign, "heatmap" if plot.operation_kind == "plot1d" else "trace")
+    _added(plot, foreign)
+    before = tuple(plot._plot_item_order)
+    table = editor.table
+    table.setFocus()
+    table.clearSelection()
+    QtTest.QTest.keyClick(table, QtCore.Qt.Key.Key_Up, QtCore.Qt.KeyboardModifier.AltModifier)
+    assert tuple(plot._plot_item_order) == before
+    table.selectRow(1)
+    for key, expected_order in (
+        (QtCore.Qt.Key.Key_Down, before),
+        (QtCore.Qt.Key.Key_Up, before[::-1]),
+        (QtCore.Qt.Key.Key_Up, before[::-1]),
+        (QtCore.Qt.Key.Key_Down, before),
+    ):
+        QtTest.QTest.keyClick(table, key, QtCore.Qt.KeyboardModifier.AltModifier)
+        assert tuple(plot._plot_item_order) == expected_order
+        assert editor._selected_entries() == [before[1]]
+    table.selectAll()
+    assert editor.controls_stack.currentWidget() is editor.trace_controls_panel
+    assert "Line and marker styles affect 1 trace" in editor.selection_summary.text()
+    assert editor.x_axis.parentWidget().title() == "Dataset axes"
+    editor.opacity.setValue(43)
+    assert all(style.opacity == .43 for style in plot._trace_styles.values())
+    assert all(plot._heatmap_opacity(layer) == .43 for layer in plot.heatmaps.values())
+    editor.visible.click()
+    assert not any(style.visible for style in plot._trace_styles.values())
+    assert not any(plot._heatmap_is_visible(layer) for layer in plot.heatmaps.values())
+    for row in range(table.rowCount()):
+        name = table.item(row, editor._COL_MEASUREMENT)
+        assert name.data(QtCore.Qt.ItemDataRole.CheckStateRole) is None
+        assert not (name.flags() & QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+        assert name.font().strikeOut()
+        assert name.data(QtCore.Qt.ItemDataRole.AccessibleDescriptionRole) == "Hidden"
+
+    added_row = next(row for row in range(table.rowCount()) if editor._row_entry(row) != primary)
+    name = table.item(added_row, editor._COL_MEASUREMENT)
+    QtTest.QTest.mouseClick(table.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                            pos=table.visualItemRect(name).center())
+    assert editor._selected_entries() == [editor._row_entry(added_row)]
+    controls = editor if editor._row_entry(added_row)[0] == "trace" else editor.heatmap_controls
+    assert controls.visible.isVisible() and not controls.visible.isChecked()
+    controls.visible.click()
+    for row in range(table.rowCount()):
+        assert table.item(row, editor._COL_MEASUREMENT).font().strikeOut() == (row != added_row)
+    editor.reject()
+    assert list(plot._plot_item_order) == [primary]
+    assert all(style.visible for style in plot._trace_styles.values())
+    assert all(plot._heatmap_is_visible(layer) for layer in plot.heatmaps.values())
 
 
 def add(dialog, run, kind):
@@ -154,12 +246,29 @@ def test_volume_addition_is_a_cancellable_preview(volume_main, tmp_path, monkeyp
     _wait_for(lambda: loaded(replacement))
     assert not original._closed
     assert not original.isVisible()
+    release = threading.Event()
+    retiring = original if commit else replacement
+    task = start_export_task(retiring, title="Plot data", destination=tmp_path / "preview.csv",
+                             writer=lambda *_args: release.wait(20))
+    confirmations = []
+    def confirm(_parent, _title, message, *, affirmative):
+        confirmations.append((affirmative, message))
+        return len(confirmations) == 2
+    monkeypatch.setattr("qplot.windows._mixed_appearance.confirm_action", confirm)
+    finish = dialog.accept if commit else dialog.close
+    try:
+        finish()
+        assert dialog.isVisible() and not retiring._closed and not task.cancelled
+        finish()
+        assert task.cancelled and len(confirmations) == 2
+        assert all("1 unfinished export." in message for _action, message in confirmations)
+    finally:
+        release.set()
+        _wait_for(lambda: task.done)
     if commit:
-        dialog.accept()
         assert original._closed
         assert window.windows == [replacement]
     else:
-        dialog.reject()
         assert not original._closed
         assert original.isVisible()
         assert original._plot_item_order == original_order

@@ -1,12 +1,14 @@
 """A plot CSV contains precisely the chosen measurement's loaded samples."""
 
 import csv
+import threading
+from pathlib import Path
 
 import numpy as np
 import pytest
 from PyQt6 import QtWidgets as qtw
-from pyqtgraph.exporters import CSVExporter
 
+from qplot.windows._export_tasks import start_export_task
 from qplot.windows._plot_export import CSV_TRANSFORMED_VALUES
 from tests.support.windows.mixed_plot_drops import _added, _drop, _wait_for
 from tests.support.windows.mixed_plot_drops import mixed_plot as mixed_plot
@@ -15,10 +17,63 @@ from tests.support.windows.mixed_plot_drops import mixed_plot as mixed_plot
 def _dialog(target):
     target.open_export_dialog()
     dialog = target.widget.scene().exportDialog
-    formats = dialog.controls.format_combo
-    formats.setCurrentIndex(formats.findData(CSVExporter))
+    dialog.controls.output_tabs.setCurrentIndex(1)
     qtw.QApplication.processEvents()
     return dialog
+
+
+@pytest.mark.parametrize("scope", ["plot", "plots", "plots with routine confirmation", "database"])
+def test_closing_warns_only_for_affected_unfinished_exports(mixed_plot, tmp_path, monkeypatch, scope):
+    main, plot, _runs = mixed_plot
+    entered, release = threading.Event(), threading.Event()
+    confirmations = []
+    replies = iter([False, True])
+
+    def confirm(parent, _title, message, *, affirmative):
+        confirmations.append((parent, affirmative, message))
+        return next(replies)
+
+    if scope == "plots with routine confirmation":
+        scope = "plots"
+        main.config.config["user_preference"]["confirm_close_all"] = True
+        def answer_routine(box):
+            yes, no = qtw.QMessageBox.StandardButton.Yes, qtw.QMessageBox.StandardButton.No
+            assert box.defaultButton() is box.button(no)
+            return yes if confirm(box.parent(), box.windowTitle(), box.informativeText(),
+                                  affirmative=box.button(yes).text()) else no
+        monkeypatch.setattr(qtw.QMessageBox, "exec", answer_routine)
+
+    def write_plot(filename, *_args):
+        entered.set()
+        assert release.wait(20)
+        return Path(filename).write_text("plot")
+
+    monkeypatch.setattr("qplot.windows.main.confirm_action", confirm)
+    monkeypatch.setattr("qplot.windows._plotWin.confirm_action", confirm)
+    plot_task = start_export_task(plot, title="Plot data", destination=tmp_path / "plot.csv", writer=write_plot)
+    raw_task = start_export_task(main, title="Raw data", destination=tmp_path / "raw.csv",
+                                 writer=lambda name, *_args: Path(name).write_text("raw"))
+    close = {"plot": plot.close, "plots": main.closeAll, "database": main.close_current_database}[scope]
+    parent = plot if scope == "plot" else main
+    affirmative = {"plot": "Close plot", "plots": "Close 1 plot", "database": "Close database"}[scope]
+    expected_count = "2 unfinished exports" if scope == "database" else "1 unfinished export."
+    try:
+        _wait_for(entered.is_set)
+        close()
+        assert plot in main.windows and not plot_task.cancelled and not raw_task.cancelled
+        assert plot.isVisible() and main.fileTextbox.text()
+        close()
+        assert plot not in main.windows and plot_task.cancelled
+        assert raw_task.cancelled == (scope == "database")
+        assert bool(main.fileTextbox.text()) == (scope != "database")
+        assert len(confirmations) == 2
+        assert all(owner is parent and action == affirmative and expected_count in message
+                   for owner, action, message in confirmations)
+    finally:
+        release.set()
+        _wait_for(lambda: plot_task.done and raw_task.done)
+    assert raw_task.stage.published == (scope != "database")
+    assert not plot_task.stage.published
 
 
 def _select(dialog, item):
@@ -109,10 +164,12 @@ def test_all_traces_option_and_hidden_individual_trace(mixed_plot, tmp_path, mon
     assert dialog.controls.fields["columnMode"].isVisible()
     assert "Run 1" in dialog.controls.fields["measurements"].toolTip()
     assert "Run 3" in dialog.controls.fields["measurements"].toolTip()
+    assert "Run 3" in dialog.csv_scope.text() and "[hidden]" in dialog.csv_scope.text()
     headers, data, _choices = _save(target, dialog, tmp_path / "all.csv", monkeypatch)
     assert len(headers) == 4 and data.shape == (3, 4)
     _select(dialog, line)
     assert "columnMode" not in dialog.controls.fields
+    assert "Includes the hidden measurement." in dialog.csv_scope.text()
     headers, data, _choices = _save(target, dialog, tmp_path / "hidden.csv", monkeypatch)
     assert len(headers) == 2
     np.testing.assert_allclose(data, [[4., 40.], [5., 50.], [6., 60.]])

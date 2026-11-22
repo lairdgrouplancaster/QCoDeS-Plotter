@@ -36,7 +36,10 @@ def test_install_options_and_environment(dialog):
 
 @pytest.mark.parametrize("remove_exit", [0, 1])
 def test_update_only_installs_after_successful_removal(dialog, remove_exit):
-    desktop_ui.Path(dialog.destination.text()).mkdir()
+    location = desktop_ui.Path(dialog.destination.text())
+    resources = location / "Contents/Resources" if desktop_ui.sys.platform == "darwin" else location
+    resources.mkdir(parents=True)
+    (resources / "installation.json").write_text('{"marker":"qplot-desktop-launcher-v1"}')
     dialog._start("setup")
     assert dialog.process.start.call_args.args[1][2] == "remove"
     dialog._finished(remove_exit, QtCore.QProcess.ExitStatus.NormalExit)
@@ -51,7 +54,7 @@ def test_update_only_installs_after_successful_removal(dialog, remove_exit):
 
 
 def test_failed_start_allows_retry(dialog):
-    dialog._start("remove")
+    dialog._start("setup")
     dialog._error(QtCore.QProcess.ProcessError.FailedToStart)
     assert not dialog._busy
     assert dialog.install_button.isEnabled()
@@ -75,3 +78,16 @@ def test_settings_and_about_offer_dialog(qapplication, monkeypatch):
     about.close()
     window.close()
     window.deleteLater()
+
+
+def test_unowned_location_cannot_be_removed_or_overwritten(dialog):
+    assert dialog.remove_button.isHidden()
+    assert dialog.output.isHidden()
+    location = desktop_ui.Path(dialog.destination.text())
+    location.mkdir()
+    dialog._update_status()
+    assert dialog.remove_button.isHidden()
+    assert not dialog.install_button.isEnabled()
+    dialog._start("setup")
+    dialog._start("remove")
+    dialog.process.start.assert_not_called()

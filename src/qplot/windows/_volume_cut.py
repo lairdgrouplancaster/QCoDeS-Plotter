@@ -52,10 +52,11 @@ class CutLoader(loader):
         try:
             self._check_cancelled()
             self._require_expected_source_current()
+            self.region_sizes: list[int] = []
             x, y, counts, value_param = extract_cut(
                 self.volume, self.selection, self.slice_operations, self.source_param, self.source_params,
                 check=self._check_cancelled, cancelled=self.is_cancelled,
-                complex_mode=self.source_complex_mode,
+                complex_mode=self.source_complex_mode, region_sizes=self.region_sizes,
                 progress=lambda n, total: setattr(self, "_progress", PlotProgress(
                     "Extracting cut through slices", n, total, stage=2)),
             )
@@ -111,6 +112,7 @@ class _CutTargetItem(pg.TargetItem):
 class VolumeCut(plot1d):
     _extra_publication_fields = (
         "_displayed_cut_metadata", "_displayed_description", "_coverage_counts", "_coverage_depths",
+        "_coverage_sizes", "_coverage_selection",
     )
 
     def __init__(self, dataset_key, param, source, selection, config, threadPool,
@@ -413,6 +415,8 @@ class VolumeCut(plot1d):
         counts = getattr(worker, "counts", np.array([]))
         self._coverage_counts = counts.copy()
         self._coverage_depths = worker.volume.axes[worker.selection.depth].copy()
+        self._coverage_sizes = tuple(worker.region_sizes)
+        self._coverage_selection = worker.selection
         self.coverage_label.setText(
             f" Valid cells per depth: {counts.min()}–{counts.max()}"
             if self.selection.kind == "mean" and counts.size else "")
@@ -449,21 +453,42 @@ class VolumeCut(plot1d):
     def show_coverage(self):
         if "_coverage_counts" not in self.__dict__:
             return
+        selection = self._coverage_selection
+        if selection.kind != "mean" or selection.bounds is None:
+            return
         dialog = qtw.QDialog(self)
         dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.setWindowTitle("Mean-cut coverage by depth")
         layout = dialog_layout(dialog)
-        table = CopyableTableWidget(len(self._coverage_counts), 2)
+        params = self.source.param_dict
+        left, right, bottom, top = selection.bounds
+        run = self._plot_source_info[1]
+        heading = qtw.QLabel(
+            f"Run {run} · {self.source_param.label or self.source_param.name} · Cut {self.cut_id + 1}\n"
+            f"{selection.x}: {left:g} to {right:g} {params[selection.x].unit}   "
+            f"{selection.y}: {bottom:g} to {top:g} {params[selection.y].unit}"
+        )
+        heading.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        heading.setWordWrap(True)
+        layout.addWidget(heading)
+        table = CopyableTableWidget(len(self._coverage_counts), 3)
         table.setAccessibleName("Mean-cut coverage by depth")
-        table.setHorizontalHeaderLabels([self.selection.depth, "Finite cells"])
+        depth = params[selection.depth]
+        depth_name = depth.label or depth.name
+        table.setHorizontalHeaderLabels([
+            f"{depth_name} ({depth.unit})" if depth.unit else depth_name, "Finite cells", "Selected cells",
+        ])
         horizontal_header, vertical_header = table.horizontalHeader(), table.verticalHeader()
         assert horizontal_header is not None and vertical_header is not None
         horizontal_header.setSectionResizeMode(qtw.QHeaderView.ResizeMode.Stretch)
-        vertical_header.setSectionResizeMode(qtw.QHeaderView.ResizeMode.ResizeToContents)
+        vertical_header.hide()
         table.setEditTriggers(qtw.QAbstractItemView.EditTrigger.NoEditTriggers)
-        for row, (depth, count) in enumerate(zip(self._coverage_depths, self._coverage_counts, strict=True)):
-            table.setItem(row, 0, qtw.QTableWidgetItem(str(depth)))
+        for row, (coordinate, count, total) in enumerate(zip(
+            self._coverage_depths, self._coverage_counts, self._coverage_sizes, strict=True,
+        )):
+            table.setItem(row, 0, qtw.QTableWidgetItem(str(coordinate)))
             table.setItem(row, 1, qtw.QTableWidgetItem(str(count)))
+            table.setItem(row, 2, qtw.QTableWidgetItem(str(total)))
         layout.addWidget(table)
         buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(dialog.close)

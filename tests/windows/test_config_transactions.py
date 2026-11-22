@@ -445,9 +445,9 @@ class TransactionalGuiTestCase(unittest.TestCase):
         harness = Harness(self.config)
         with (
             patch.object(
-                qtw.QMessageBox,
-                "question",
-                return_value=qtw.QMessageBox.StandardButton.Yes,
+                main_window,
+                "confirm_action",
+                return_value=True,
                 ),
             self.failing_save(self.config),
             ):
@@ -461,9 +461,9 @@ class TransactionalGuiTestCase(unittest.TestCase):
         self.assertEqual(len(harness.errors), 1)
 
         with patch.object(
-                qtw.QMessageBox,
-                "question",
-                return_value=qtw.QMessageBox.StandardButton.Yes,
+                main_window,
+                "confirm_action",
+                return_value=True,
                 ):
             self.assertTrue(harness.restore_default_settings())
 
@@ -487,7 +487,7 @@ class TransactionalGuiTestCase(unittest.TestCase):
         dialog.fontSizeSpin.setValue(font)
         self.assertFalse(dialog.apply_button.isEnabled())
         dialog.fontSizeSpin.setValue(font + 1)
-        dialog.tabs.setCurrentIndex(4)
+        dialog.tabs.setCurrentIndex(3)
         dialog.maxThreadsSpin.setValue(threads + 1)
         draft = dialog.preference_values()
         try:
@@ -496,6 +496,7 @@ class TransactionalGuiTestCase(unittest.TestCase):
                     dialog.buttonBox.button(button).click()
                     self.assertTrue(dialog.isVisible())
                     self.assertEqual(dialog.preference_values(), draft)
+                    self.assertEqual(dialog.apply_button.text(), "Retry")
                     self.assertTrue(dialog.apply_button.isEnabled())
                     self.assertEqual(self.config.get(FONT_SIZE_KEY), font)
                     self.assertEqual(self.disk_value("runtime_settings.max_threads"), threads)
@@ -559,7 +560,7 @@ def test_reset_only_discards_session_history_after_successful_save(typed_run_win
     current = window.fileTextbox.text()
     key = "file.recent_file_paths"
     window.config.update(key, [])
-    with patch.object(qtw.QMessageBox, "question", return_value=qtw.QMessageBox.StandardButton.Yes):
+    with patch.object(main_window, "confirm_action", return_value=True):
         with (
             patch.object(window.config, "save_config", side_effect=PermissionError("Access denied")),
             patch.object(window, "show_error") as explicit_save_error,

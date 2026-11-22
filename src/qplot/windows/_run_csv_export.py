@@ -14,7 +14,7 @@ from qplot.diagnostics import log_exception
 
 from ._csv_batch_review import CsvFilenameReview
 from ._export_names import suggested_export_filename
-from ._export_tasks import export_task_manager, start_export_task
+from ._export_tasks import ExportBatchRow, export_task_manager, start_export_task
 
 
 def run_export_request(window):
@@ -85,7 +85,7 @@ def _writer_for(window, key, selector):
     )
 
 
-def queue_raw_export(window, key, selector, *, run_id=None, destination=None):
+def queue_raw_export(window, key, selector, *, run_id=None, destination=None, batch=None):
     """Choose first, then capture the live source in a cancellable worker."""
     if isinstance(selector, (tuple, list)) and not selector:
         window.show_status("No measurements to export for this run.", 5000)
@@ -129,7 +129,7 @@ def queue_raw_export(window, key, selector, *, run_id=None, destination=None):
         return start_export_task(
             window, title=title,
             destination=destination, writer=write, before_publish=validate,
-            source_keys=(key,),
+            source_keys=(key,), batch=batch,
             on_failure=on_failure,
             on_success=lambda receipt: window.show_status(
                 f"Exported run {run_id}: {receipt.row_count:,} CSV rows · {destination}", 7000,
@@ -320,8 +320,10 @@ def _queue_csv_batch(window, requests, folder, generation, *, name_measurements=
             key = window._bind_one_shot_dataset_key(key)
             window._require_run_csv_source_current(key)
             bound.append((key, run_id, selector, destination))
+        title = "Selected measurements" if name_measurements else "Selected runs"
+        batch = ExportBatchRow(f"{title} · {os.path.basename(folder) or folder}")
         for key, run_id, selector, destination in bound:
-            queue_raw_export(window, key, selector, run_id=run_id, destination=destination)
+            queue_raw_export(window, key, selector, run_id=run_id, destination=destination, batch=batch)
     except Exception as error:
         log_exception("Batch CSV export request failed", error, __name__)
         window.show_error("CSV Export Failed", "Could not prepare the selected exports.", str(error))

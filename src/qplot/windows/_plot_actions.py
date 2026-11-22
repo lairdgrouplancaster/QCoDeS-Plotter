@@ -45,6 +45,7 @@ from ._export_names import suggested_export_filename
 from ._export_paths import choose_export_path
 from ._plot2d_layers import _heatmap_layer_compatibility
 from ._plot_drop_axes import plan_drop_axes, window_display_unit
+from ._plot_lifetime import close_superseded_plot
 from ._plot_source_promotion import promote_plot_source
 from ._plot_tiling import place_plot_window
 from ._plotWin import plotWidget
@@ -648,7 +649,7 @@ class PlotActionsMixin:
                     ):
                 continue
             try:
-                win.close()
+                close_superseded_plot(win)
             except Exception as err:
                 log_exception("Replaced database plot cleanup failed", err, __name__)
 
@@ -941,6 +942,9 @@ class PlotActionsMixin:
 
             place_plot_window(self, win)
             win.show()
+            from ._desktop_prompt import schedule_first_launch_invitation
+
+            schedule_first_launch_invitation(self)
 
 
     @QtCore.pyqtSlot(object, object)

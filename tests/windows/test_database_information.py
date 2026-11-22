@@ -82,7 +82,7 @@ def loaded_live_window(tmp_path, monkeypatch):
             })
             return 0
 
-        monkeypatch.setattr(actions.DatabaseInfoDialog, "exec", inspect_dialog)
+        monkeypatch.setattr(actions.DatabaseInfoDialog, "show", inspect_dialog)
         # The writer is paused. Finish the audit's own read/close metadata
         # publication before starting qPlot; keep post-reader checks immediate.
         before = _stable_artifact_state(path)
@@ -124,6 +124,7 @@ def test_live_info_dialog_reports_current_counts(loaded_live_window, monkeypatch
 
     monkeypatch.setattr(database_module, "sqlite_read_only_connection", reject_snapshot)
     rows = show_information(window, dialogs)
+    assert rows["Access mode"] == "Trusted live reader"
     assert rows["Runs"] == rows["Experiments"] == "1"
     assert rows["Latest run ID"] == "1"
     assert rows["Latest run GUID"] == saver.dataset.guid
@@ -289,7 +290,7 @@ def test_snapshot_fallback_info_and_original_report(tmp_path, monkeypatch):
     errors, dialogs = [], []
     monkeypatch.setattr(window, "show_error", lambda *args: errors.append(args))
     monkeypatch.setattr(
-        actions.DatabaseInfoDialog, "exec",
+        actions.DatabaseInfoDialog, "show",
         lambda dialog: dialogs.append(dict(dialog._rows)) or 0,
     )
     try:
@@ -299,6 +300,7 @@ def test_snapshot_fallback_info_and_original_report(tmp_path, monkeypatch):
         window.databaseInfoButton.click()
         wait_for(lambda: not window._database_info_active)
         assert dialogs[-1]["Runs"] == "1" and errors == []
+        assert dialogs[-1]["Access mode"] == "Protected snapshot"
         assert "Runs: 1" in database_module.database_info_report(str(path))
         assert ("Experiments", "1") in database_module.database_info_rows(str(path))
     finally:
