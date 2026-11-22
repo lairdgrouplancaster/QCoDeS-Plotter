@@ -139,20 +139,22 @@ def _assert_ready_overlay(host, overlay, expected, levels):
     qtw.QApplication.processEvents()
 
 
-@pytest.mark.parametrize("scale", ["auto_on", "auto_off", "manual_before", "manual_pending", "manual_refresh_on"])
+@pytest.mark.parametrize("scale", ["auto", "manual_before", "manual_pending"])
 def test_promotion_renders_before_first_primary_publication(promotion_plot, monkeypatch, scale):
     main, target, expected = promotion_plot
     manual = (-30., 130.)
     assert target.setColorbarColorMap("plasma")
     if scale == "manual_before":
         assert target.setColorbarManualRange(*manual)
+        target.colorbar_range_entry.locks["span"].click()
+        target.colorbar_range_entry.percent.setValue(95)
     promoted, overlay, publications, original = _promote_with_pending_primary(main, target, monkeypatch)
-    refresh_on = scale in ("auto_on", "manual_refresh_on")
-    promoted.relevel_refresh.setChecked(refresh_on)
-    if scale in ("manual_pending", "manual_refresh_on"):
-        promoted.colorbar_min_text.setText(str(manual[0]))
-        promoted.colorbar_max_text.setText(str(manual[1]))
-        promoted._apply_colorbar_manual_fields()
+    if scale == "manual_pending":
+        assert promoted.setColorbarManualRange(*manual)
+    if scale == "manual_before":
+        assert promoted.colorbar_range_entry.state.lock == "span"
+        assert promoted.colorbar_range_entry.state.held == manual[1] - manual[0]
+        assert promoted.colorbar_range_entry.percent.value() == 95
     levels = manual if scale.startswith("manual") else (expected["overlay"].min(), expected["overlay"].max())
     _assert_ready_overlay(promoted, overlay, expected["overlay"], levels)
     assert promoted.bar.colorMap().name == "plasma"
@@ -167,15 +169,13 @@ def test_promotion_renders_before_first_primary_publication(promotion_plot, monk
     np.testing.assert_array_equal(promoted.image.getLevels(), final_levels)
     np.testing.assert_array_equal(promoted.heatmap_mesh.getLevels(), final_levels)
     assert promoted.bar.colorMap().name == "plasma"
-    assert promoted.relevel_refresh.isChecked() == refresh_on
-    assert promoted.relevel_refresh.isEnabled() == (not scale.startswith("manual"))
+    assert promoted.colorbar_range_entry.state.automatic == (scale == "auto")
 
 
 @pytest.mark.parametrize("first_result", ["cancelled", "failed", "empty", "nonfinite"])
 def test_ready_overlay_survives_missing_primary_and_retry(promotion_plot, monkeypatch, first_result):
     main, target, expected = promotion_plot
     promoted, overlay, publications, original = _promote_with_pending_primary(main, target, monkeypatch)
-    promoted.relevel_refresh.setChecked(False)
     levels = (expected["overlay"].min(), expected["overlay"].max())
     _assert_ready_overlay(promoted, overlay, expected["overlay"], levels)
     _wait_for(lambda: bool(publications))

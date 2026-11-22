@@ -39,9 +39,12 @@ def edit_limits(window, axis, limits):
     controls = window._axis_scale_controls[axis]
     if not controls.manualRadio.isChecked():
         click(controls.manualRadio)
-    controls.minText.setText(str(limits[0]))
-    controls.maxText.setText(str(limits[1]))
-    QTest.keyClick(controls.maxText, QtCore.Qt.Key.Key_Return)
+    entries = [(controls.minText, limits[0]), (controls.maxText, limits[1])]
+    if limits[0] >= controls.rangeEntry.state.limits[1]:
+        entries.reverse()
+    for field, value in entries:
+        field.setText(str(value))
+        QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
     qtw.QApplication.processEvents()
 
 
@@ -147,8 +150,8 @@ def test_visible_auto_follows_perpendicular_range(loaded_plot, sides, dimension,
 
 
 @pytest.mark.parametrize("loaded_plot", [True], indirect=True)
-@pytest.mark.parametrize("auto_pan", [False, True])
-def test_multiple_visible_auto_axes_keep_options_and_empty_regions(loaded_plot, auto_pan):
+@pytest.mark.parametrize("hold_span", [False, True])
+def test_multiple_visible_auto_axes_keep_options_and_empty_regions(loaded_plot, hold_span):
     window = loaded_plot
     window._ensure_trace_axis_viewboxes(top=True, right=True)
     other_key = next(key for key in window.lines if key != window.label)
@@ -162,9 +165,8 @@ def test_multiple_visible_auto_axes_keep_options_and_empty_regions(loaded_plot, 
         controls = window._axis_scale_controls[axis]
         click(controls.autoRadio)
         click(controls.visibleOnlyCheck)
-        controls.autoPercentSpin.setValue(60)
-        if auto_pan:
-            click(controls.autoPanCheck)
+        if hold_span:
+            click(controls.rangeEntry.locks["span"])
     spans = {
         axis: np.ptp(window._axis_scale_viewbox(axis).viewRange()[1])
         for axis in ("y", "y2")
@@ -173,16 +175,15 @@ def test_multiple_visible_auto_axes_keep_options_and_empty_regions(loaded_plot, 
     for axis in ("y", "y2"):
         bounds = window._axis_scale_viewbox(axis).viewRange()[1]
         assert np.mean(bounds) == pytest.approx(45)
-        if auto_pan:
+        if hold_span:
             assert np.ptp(bounds) == pytest.approx(spans[axis])
         else:
-            assert_data_bounds(bounds, [42, 48])
+            assert_data_bounds(bounds, [40, 50])
         reopen(window, axis)
         controls = window._axis_scale_controls[axis]
         assert controls.autoRadio.isChecked()
         assert controls.visibleOnlyCheck.isChecked()
-        assert controls.autoPercentSpin.value() == 60
-        assert controls.autoPanCheck.isChecked() is auto_pan
+        assert controls.rangeEntry.locks["span"].isChecked() is hold_span
 
     # Only the 64-point main trace has samples here. The 48-point right trace
     # retains its Auto mode and last usable range until data is visible again.
@@ -210,13 +211,16 @@ def test_mutually_dependent_visible_auto_axes_settle_without_feedback(loaded_plo
         click(controls.visibleOnlyCheck)
     # These controls own different ViewBoxes, so both visible-only options can
     # be active even though the assigned trace's axes depend on one another.
+    window.open_axis_scale_dialog("x")
+    x_range = window._axis_scale_controls["x"].rangeEntry
+    click(x_range.locks["span"])
     changes = []
     window.vb.sigXRangeChanged.connect(lambda *_: changes.append("x"))
     window.right_vb.sigYRangeChanged.connect(lambda *_: changes.append("y2"))
-    window.open_axis_scale_dialog("x")
-    window._axis_scale_controls["x"].autoPercentSpin.setValue(60)
+    x_range.fields["span"].setText("37.8")
+    QTest.keyClick(x_range.fields["span"], QtCore.Qt.Key.Key_Return)
     qtw.QApplication.processEvents()
-    assert_data_bounds(window.vb.viewRange()[0], [12.6, 50.4])
+    np.testing.assert_allclose(window.vb.viewRange()[0], [12.6, 50.4])
     # Native linking aligns screen coordinates, so the trace's owning view
     # can expose a different edge sample when platform margins differ.
     x, y = window.line.getData()
@@ -295,7 +299,7 @@ def test_visible_auto_follows_qt_navigation(loaded_plot, gesture):
     ("x2", ("Top", "Right")),
     ("y2", ("Top", "Right")),
 ])
-@pytest.mark.parametrize("option", ["autoPan", "autoVisibleOnly"])
+@pytest.mark.parametrize("option", ["span", "autoVisibleOnly"])
 def test_filtered_options_persist_and_control_ranges(loaded_plot, axis, sides, option):
     window = loaded_plot
     window._ensure_trace_axis_viewboxes(top=True, right=True)
@@ -318,8 +322,8 @@ def test_filtered_options_persist_and_control_ranges(loaded_plot, axis, sides, o
     assert axis in window._axis_scale_custom_auto_axes
     viewbox = window._axis_scale_viewbox(axis)
     dimension = window._axis_scale_axis_number(axis)
-    checkbox = controls.autoPanCheck if option == "autoPan" else controls.visibleOnlyCheck
-    before_options = [vb.state[option][:] for vb in viewboxes]
+    checkbox = controls.rangeEntry.locks["span"] if option == "span" else controls.visibleOnlyCheck
+    before_options = [vb.state["autoVisibleOnly"][:] for vb in viewboxes]
     before_links = [vb.linkedView(0) for vb in viewboxes], [vb.linkedView(1) for vb in viewboxes]
     before_other_ranges = {
         name: window._axis_scale_viewbox(name).viewRange()[number][:]
@@ -332,9 +336,9 @@ def test_filtered_options_persist_and_control_ranges(loaded_plot, axis, sides, o
     assert checkbox.isChecked()
     for vb, previous in zip(viewboxes, before_options, strict=True):
         expected = previous[:]
-        if vb is viewbox:
+        if vb is viewbox and option == "autoVisibleOnly":
             expected[dimension] = True
-        assert vb.state[option] == expected
+        assert vb.state["autoVisibleOnly"] == expected
     assert before_links == (
         [vb.linkedView(0) for vb in viewboxes], [vb.linkedView(1) for vb in viewboxes]
     )
@@ -346,7 +350,7 @@ def test_filtered_options_persist_and_control_ranges(loaded_plot, axis, sides, o
 
     reopen(window, axis)
     assert checkbox.isChecked()
-    if option == "autoPan":
+    if option == "span":
         window.line.setData(x=x + 50, y=y + 100)
         qtw.QApplication.processEvents()
         bounds = viewbox.viewRange()[dimension]
@@ -369,9 +373,9 @@ def test_filtered_options_persist_and_control_ranges(loaded_plot, axis, sides, o
     window.monitor.stop()
     reopen(window, axis)
     assert checkbox.isChecked()
-    assert viewbox.state[option][dimension] is True
+    assert controls.rangeEntry.state.lock == "span" if option == "span" else viewbox.state[option][dimension]
     assert axis in window._axis_scale_custom_auto_axes
-    if option == "autoPan":
+    if option == "span":
         assert np.ptp(viewbox.viewRange()[dimension]) == pytest.approx(refresh_span)
 
     # Ordinary range changes leave the option selected, even in manual mode.
@@ -379,12 +383,12 @@ def test_filtered_options_persist_and_control_ranges(loaded_plot, axis, sides, o
     qtw.QApplication.processEvents()
     reopen(window, axis)
     assert checkbox.isChecked()
-    assert viewbox.state[option][dimension] is True
+    assert controls.rangeEntry.state.lock == "span" if option == "span" else viewbox.state[option][dimension]
     window.line.setData(x=x, y=y)
     click(controls.autoRadio)
     click(checkbox)
     assert not checkbox.isChecked()
-    assert viewbox.state[option][dimension] is False
+    assert controls.rangeEntry.state.lock is None and not viewbox.state["autoVisibleOnly"][dimension]
     # Disabling either option returns to all assigned data, with normal padding.
     expected = [0, 3] if dimension == 0 else [10, 2000]
     assert_data_bounds(viewbox.viewRange()[dimension], expected)

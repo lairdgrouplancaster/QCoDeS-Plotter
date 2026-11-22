@@ -3,14 +3,23 @@
 import numpy as np
 import pyqtgraph as pg
 import pytest
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows.plot2d import plot2d
 
 __all__ = [
     'heatmap',
+    'enter_colour_value',
 ]
+
+
+def enter_colour_value(window, field, text):
+    edit = window.colorbar_range_entry.fields[field]
+    edit.setFocus()
+    edit.selectAll()
+    QtTest.QTest.keyClicks(edit, str(text))
+    QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Return)
 
 
 @pytest.fixture(params=["de_DE", "C", "en_US"])

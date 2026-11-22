@@ -445,7 +445,6 @@ class plot3d(plot2d):
                     self.color_mode.setCurrentIndex(0)
             if self._color_mode != "locked":
                 self._colorbar_manual_levels = None
-                self._colorbar_pending_primary = True
             self._update_navigator()
 
     def _complete_plot_publication(self, worker):
@@ -569,43 +568,85 @@ class plot3d(plot2d):
         if task is None or not task.running:
             self._range_timer.stop()
             self.stop_range.setVisible(False)
-        elif self._color_mode == "volume":
+        elif self._effective_colour_scope() == "volume":
             progress = task.progress
             self._set_range_status(f"Provisional range · {progress.completed}/{progress.total or '?'} slices")
 
     def _init_colorbar_scope_controls(self, layout):
-        # Volume colour limits follow the selected scope on every publication.
-        # The separate 2D refresh option does not govern that behaviour.
-        self.relevel_refresh.setChecked(False)
-        self.relevel_refresh.hide()
         self.colorbar_scope = qtw.QComboBox()
         self.colorbar_scope.setMinimumContentsLength(10)
         self.colorbar_scope.setSizeAdjustPolicy(
             qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        for index in range(self.color_mode.count()):
-            self.colorbar_scope.addItem(self.color_mode.itemText(index), self.color_mode.itemData(index))
-        self.colorbar_scope.setToolTip(self.color_mode.toolTip())
-        self.colorbar_scope.setCurrentIndex(self.color_mode.currentIndex())
-        self.colorbar_scope.currentIndexChanged.connect(self.color_mode.setCurrentIndex)
-        layout.addWidget(qtw.QLabel("Colour:"))
+        for value in ("volume", "slice"):
+            index = self.color_mode.findData(value)
+            self.colorbar_scope.addItem(self.color_mode.itemText(index), value)
+        self.colorbar_scope.setToolTip(
+            "Whole volume fits its extrema. Current slice also supports a visible area and a data percentage."
+        )
+        self.colorbar_scope.currentIndexChanged.connect(self._colour_scope_changed)
+        label = qtw.QLabel("Data source")
+        label.setBuddy(self.colorbar_scope)
+        layout.addWidget(label)
         layout.addWidget(self.colorbar_scope)
+        self._sync_color_mode_controls()
+
+    def _colour_scope_changed(self):
+        scope = self.colorbar_scope.currentData()
+        if self._color_mode == "locked":
+            self._last_auto_mode = scope
+            self._color_mode_changed()
+        else:
+            self.color_mode.setCurrentIndex(self.color_mode.findData(scope))
 
     def _sync_color_mode_controls(self):
         scope = self.__dict__.get("colorbar_scope")
         if scope is not None:
             with QtCore.QSignalBlocker(scope):
-                scope.setCurrentIndex(self.color_mode.currentIndex())
-        manual = self._color_mode == "locked"
-        for name, checked in (("colorbar_manual_radio", manual), ("colorbar_auto_radio", not manual)):
-            widget = self.__dict__.get(name)
-            if widget is not None:
-                with QtCore.QSignalBlocker(widget):
-                    widget.setChecked(checked)
+                scope.setCurrentIndex(scope.findData(self._effective_colour_scope()))
+        entry = self.__dict__.get("colorbar_range_entry")
+        if entry is not None:
+            slice_scope = self._effective_colour_scope() == "slice"
+            for option, tooltip in (
+                (entry.visible_only, "Use samples inside the horizontal and vertical limits of the current slice."),
+                (entry.percent, "Use the central percentage of eligible colour values in the current slice."),
+            ):
+                option.setEnabled(slice_scope)
+                option.setToolTip(tooltip if slice_scope else
+                                  "Choose Current slice to fit a percentage or the visible area of its data.")
+            self._sync_colorbar_scale_mode()
+
+    def _effective_colour_scope(self):
+        return self._last_auto_mode if self._color_mode == "locked" else self._color_mode
+
+    def _colour_fit_options(self):
+        if self._effective_colour_scope() == "volume":
+            return False, 100
+        return super()._colour_fit_options()
+
+    def _capture_colour_range_settings(self):
+        return super()._capture_colour_range_settings(), self._color_mode, self._last_auto_mode
+
+    def _restore_colour_range_settings(self, saved):
+        settings, self._color_mode, self._last_auto_mode = saved
+        with QtCore.QSignalBlocker(self.color_mode):
+            self.color_mode.setCurrentIndex(self.color_mode.findData(self._color_mode))
+        self._sync_color_mode_controls()
+        super()._restore_colour_range_settings(settings)
+        self._start_volume_range()
+
+    def _apply_colour_range_state(self, state):
+        if state.automatic and self._color_mode == "locked":
+            self._color_mode = self._last_auto_mode
+            with QtCore.QSignalBlocker(self.color_mode):
+                self.color_mode.setCurrentIndex(self.color_mode.findData(self._color_mode))
+        super()._apply_colour_range_state(state)
+        self._sync_color_mode_controls()
+        self._start_volume_range()
 
     def _color_mode_changed(self):
         mode = self.color_mode.currentData()
         self._color_mode = mode
-        if mode != "volume":
+        if self._effective_colour_scope() != "volume":
             if self._range_task is not None and self._range_task.running:
                 self._range_task.cancel()
                 self._range_key = None
@@ -620,21 +661,17 @@ class plot3d(plot2d):
         else:
             self._last_auto_mode = mode
             self._colorbar_manual_levels = None
+            self._sync_color_mode_controls()
             self.scaleColorbar()
         self._start_volume_range()
         self._sync_color_mode_controls()
 
     def _sync_heatmap_colorbar_items(self, *, rescale=False):
-        # Overlay publications obey the volume's colour scope, rather than
-        # the ordinary heatmap's hidden refresh-autoscale checkbox.
         super()._sync_heatmap_colorbar_items(rescale=rescale or self._color_mode != "locked")
-
-    def _heatmap_union_colorbar_levels(self):
-        return self._data_colorbar_levels()
 
     def _finite_data_colorbar_range(self):
         levels = super()._finite_data_colorbar_range()
-        if self._color_mode != "volume":
+        if self._effective_colour_scope() != "volume" or not self._heatmap_is_visible(self):
             return levels
         if self._shared_levels is None:
             # Keep the provisional volume range independent of overlays so
@@ -690,7 +727,7 @@ class plot3d(plot2d):
         self._color_mode_changed()
 
     def _start_volume_range(self):
-        if self.volume is None or self._closed or self._color_mode != "volume":
+        if self.volume is None or self._closed or self._effective_colour_scope() != "volume":
             return
         key = (self.volume, tuple(self.axis_options.items()), self._applied_operation_state.entries,
                self.worker.complex_mode)
@@ -745,7 +782,7 @@ class plot3d(plot2d):
                 self._range_complete = True
                 if self._color_mode == "volume":
                     self.scaleColorbar()
-                    self._set_range_status("")
+                self._set_range_status("")
             elif levels is not None:
                 self._set_range_status("No finite volume values")
         def failed(error):

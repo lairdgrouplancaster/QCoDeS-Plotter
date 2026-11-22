@@ -17,6 +17,7 @@ from qcodes.dataset import (
 from qplot.datahandling.volume import VolumeStore
 from qplot.windows._widgets.operations import OperationEntry, OperationsState
 from qplot.windows.plot3d import plot3d
+from tests.support.windows.color_scale_locale import enter_colour_value
 from tests.support.windows.plot3d import (
     build_mixed_volume as build_mixed_volume,
 )
@@ -47,23 +48,28 @@ def test_color_dialog_scope_sync_and_symmetric_lock(tmp_path, main):
     plot = window.windows[0]
     wait_for(lambda: loaded(plot) and plot._range_complete)
     plot.open_colorbar_scale_dialog()
-    assert not plot.slice_panel.isAncestorOf(plot.symmetric_color)
+    entry = plot.colorbar_range_entry
+    assert not plot.slice_panel.isAncestorOf(entry)
+    assert not entry.percent.isEnabled()
     plot.colorbar_scope.setCurrentIndex(1)
     assert plot.color_mode.currentData() == plot._color_mode == "slice"
-    plot.symmetric_color.setChecked(True)
+    assert entry.percent.isEnabled()
+    entry.percent.setValue(80)
+    entry.locks["centre"].click()
+    enter_colour_value(plot, "centre", 0)
     assert plot.bar.levels()[0] == -plot.bar.levels()[1]
     plot.color_mode.setCurrentIndex(2)
-    assert plot.colorbar_scope.currentData() == "locked"
+    assert plot.colorbar_scope.currentData() == "slice"
+    assert not entry.state.automatic
     levels = tuple(plot.bar.levels())
-    plot.symmetric_color.setChecked(False)
-    plot.symmetric_color.setChecked(True)
+    entry.locks["centre"].click()
+    entry.locks["centre"].click()
     assert plot._color_mode == "locked"
     assert tuple(plot.bar.levels()) == levels
     plot.select_slice(1)
     wait_for(lambda: loaded(plot) and plot.slice_frame.index == 1)
     assert tuple(plot.bar.levels()) == levels
-    plot.colorbar_max_text.setText("10")
-    plot.colorbar_max_text.editingFinished.emit()
+    enter_colour_value(plot, "max", 10)
     assert plot.bar.levels() == (-10., 10.)
     plot.colorbar_auto_radio.click()
     assert plot.colorbar_scope.currentData() == plot.color_mode.currentData() == "slice"

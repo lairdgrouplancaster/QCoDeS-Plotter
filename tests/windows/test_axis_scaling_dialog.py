@@ -5,12 +5,73 @@ from weakref import ref
 import pytest
 from PyQt6 import QtCore, sip
 from PyQt6 import QtWidgets as qtw
+from PyQt6.QtTest import QTest
 
 from tests.support.windows.axis_limit_precision import AxisLimitWindow
 from tests.support.windows.mixed_plot_drops import _added, _drop
 from tests.support.windows.mixed_plot_drops import mixed_plot as mixed_plot
 from tests.support.windows.plot_dialog_lifecycle import dialog_plot as dialog_plot
 from tests.support.windows.plot_integration import wait_for
+from tests.support.windows.sql_heatmap import idle, sql_heatmap, subset, view
+
+
+def test_use_data_extrema_are_sample_coordinates_on_lines_and_heatmaps(mixed_plot):
+    _main, plot, _runs = mixed_plot
+    plot.open_axis_scale_dialog("x")
+    entry = plot._axis_scale_controls["x"].rangeEntry
+    assert entry.auto_radio.isChecked()
+    assert all(not button.isChecked() for button in entry.locks.values())
+    entry.use_buttons["min"].click()
+    assert entry.manual_radio.isChecked()
+    assert entry.state.limits[0] == 0
+    entry.use_buttons["max"].click()
+    assert entry.state.limits == (0., 2.)
+    entry.locks["min"].click()
+    entry.fit_button.click()
+    assert entry.state.limits[0] == 0 and entry.state.limits[1] > 2
+    assert entry.manual_radio.isChecked()
+    assert entry.locks["min"].isChecked()
+
+
+@pytest.mark.parametrize("mixed_plot", ["line"], indirect=True)
+def test_held_centre_tracks_line_updates_and_unlocked_edit_freezes(mixed_plot):
+    _main, plot, _runs = mixed_plot
+    plot.open_axis_scale_dialog("x")
+    entry = plot._axis_scale_controls["x"].rangeEntry
+    entry.auto_radio.click()
+    entry.locks["centre"].click()
+    field = entry.fields["centre"]
+    field.selectAll()
+    QTest.keyClicks(field, "3")
+    QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
+    assert entry.auto_radio.isChecked() and entry.state.held == 3
+    plot.line.setData([0, 10], [2, 4])
+    assert sum(entry.state.limits) / 2 == pytest.approx(3.)
+    assert entry.state.limits[1] >= 10
+    field = entry.fields["span"]
+    field.selectAll()
+    QTest.keyClicks(field, "4")
+    assert entry.manual_radio.isChecked()
+    QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
+    assert entry.state.limits == (1., 5.)
+    plot.line.setData([-100, 200], [2, 4])
+    assert entry.state.limits == (1., 5.)
+
+
+def test_use_data_recovers_full_horizontal_extent_from_zoomed_sql_heatmap(tmp_path, monkeypatch):
+    with sql_heatmap(tmp_path, monkeypatch, show=True) as (_window, plot):
+        full = plot._viewport_state.full
+        zoom = subset(full, .25, .75)
+        view(plot, zoom)
+        plot._reload_visible_heatmap_data()
+        idle(plot)
+        assert plot._viewport_state.displayed.matches(zoom)
+        plot.open_axis_scale_dialog("x")
+        entry = plot._axis_scale_controls["x"].rangeEntry
+        entry.use_buttons["min"].click()
+        entry.use_buttons["max"].click()
+        assert entry.state.limits == pytest.approx(full.x)
+        assert entry.manual_radio.isChecked()
 
 
 def test_swap_transposes_zoom_before_the_axes_page_is_opened(mixed_plot):
@@ -51,8 +112,8 @@ def test_swap_moves_primary_and_secondary_scale_behaviour(mixed_plot):
     top.invertCheck.click()
     top.mouseCheck.click()
     left = plot._axis_scale_controls["y"]
-    left.autoPercentSpin.setValue(75)
-    left.autoPanCheck.click()
+    left.autoRadio.click()
+    left.rangeEntry.locks["span"].click()
     left.visibleOnlyCheck.click()
     dialog.accept()
     left_state = plot._capture_axis_settings("y")
@@ -63,7 +124,8 @@ def test_swap_moves_primary_and_secondary_scale_behaviour(mixed_plot):
     wait_for(lambda: not plot.worker.running)
     assert plot._capture_axis_settings("y2") == top_state
     bottom = plot._capture_axis_settings("x")
-    assert bottom.filtered_auto and bottom.percent == 75 and bottom.pan and bottom.visible_only
+    assert bottom.filtered_auto and bottom.visible_only
+    assert bottom.editor.lock == "span" and bottom.editor.held == left_state.editor.held
     assert bottom.limits[1] - bottom.limits[0] == pytest.approx(left_state.limits[1] - left_state.limits[0])
     assert not plot._axis_scale_log_mode("x2")
     dialog.accept()

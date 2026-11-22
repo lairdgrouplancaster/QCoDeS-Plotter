@@ -36,18 +36,17 @@ def test_dialog_order_and_compact_header(heatmap, qapplication):
     qapplication.processEvents()
     dialog = heatmap.colorbar_scale_dialog
     widgets = (
+        heatmap.colorbar_quantity,
+        heatmap.colorbar_range_entry,
         heatmap.colorbar_current_heading,
         heatmap.colorbar_current_name,
-        heatmap.colorbar_scaling_heading,
-        heatmap.colorbar_range_entry,
-        heatmap.symmetric_color,
         heatmap.colorbar_picker_heading,
         heatmap.colorbar_search,
         heatmap.colorbar_colormap_table,
     )
     for first, second in zip(widgets[:-1], widgets[1:], strict=True):
         assert first.mapTo(dialog, first.rect().bottomLeft()).y() < second.mapTo(dialog, second.rect().topLeft()).y()
-    assert heatmap.colorbar_scaling_heading.text() == "Set scaling"
+    assert heatmap.colorbar_range_entry.range_heading.text() == "Range"
     assert heatmap.colorbar_current_heading.text() == "Colour map"
     assert heatmap.colorbar_picker_heading.text() == "Choose colour map"
     assert heatmap.colorbar_search.placeholderText() == "Search names…"
@@ -57,20 +56,18 @@ def test_dialog_order_and_compact_header(heatmap, qapplication):
     assert header.height() >= header.fontMetrics().height() + 2
     assert header.height() <= heatmap.colorbar_colormap_table.rowHeight(0) + 2
     assert all(heading.font().bold() for heading in (
-        heatmap.colorbar_current_heading, heatmap.colorbar_scaling_heading,
+        heatmap.colorbar_current_heading, heatmap.colorbar_quantity,
         heatmap.colorbar_picker_heading,
     ))
 
 
-def test_scaling_options_share_a_row_and_symmetry_remains_available_in_manual(heatmap):
-    dialog = heatmap.colorbar_scale_dialog
-    refresh = heatmap.relevel_refresh
-    symmetry = heatmap.symmetric_color
-    assert refresh.mapTo(dialog, refresh.rect().topRight()).x() < symmetry.mapTo(dialog, symmetry.rect().topLeft()).x()
-    assert abs(refresh.mapTo(dialog, refresh.rect().center()).y() - symmetry.mapTo(dialog, symmetry.rect().center()).y()) <= 1
-    heatmap.colorbar_manual_radio.click()
-    assert not refresh.isEnabled()
-    assert symmetry.isEnabled()
+def test_colour_fit_options_available_in_manual(heatmap):
+    entry = heatmap.colorbar_range_entry
+    entry.manual_radio.click()
+    assert entry.visible_only.isEnabled()
+    assert entry.percent.isEnabled()
+    assert entry.fit_button.isEnabled()
+    assert all(button.isEnabled() for button in entry.locks.values())
 
 
 def test_default_table_shows_six_complete_rows(heatmap):

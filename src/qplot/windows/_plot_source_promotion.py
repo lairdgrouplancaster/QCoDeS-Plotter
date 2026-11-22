@@ -7,6 +7,7 @@ from weakref import ref
 
 from PyQt6 import QtWidgets as qtw
 
+from ._plot2d_colorbar_dialog import ColorbarScaleDialogMixin
 from ._plot2d_layers import DEFAULT_OVERLAY_OPACITY
 from ._plot_drop_axes import DropAxisPlan, plan_drop_axes
 from ._plot_title import inherit_plot_title
@@ -77,15 +78,14 @@ def _copy_view(owner: Any, replacement: Any) -> None:
         replacement._axis_scale_log_toggled(axis, owner._axis_scale_log_mode(axis))
         new.setRange(**{"xRange" if dimension == 0 else "yRange": old.viewRange()[dimension]}, padding=0)
         new.enableAutoRange(dimension, old.state["autoRange"][dimension])
-        dimension_name = "x" if dimension == 0 else "y"
-        new.setAutoVisible(**{dimension_name: old.state["autoVisibleOnly"][dimension]})
-        new.setAutoPan(**{dimension_name: old.state["autoPan"][dimension]})
+        new.state["autoVisibleOnly"][dimension] = old.state["autoVisibleOnly"][dimension]
         new.setMouseEnabled(**{"x" if dimension == 0 else "y": old.state["mouseEnabled"][dimension]})
         if dimension == 0:
             new.invertX(old.state["xInverted"])
         else:
             new.invertY(old.state["yInverted"])
     replacement._axis_scale_custom_auto_axes = set(owner._axis_scale_custom_auto_axes)
+    replacement._axis_range_states = dict(owner._axis_range_states)
 
 
 def _copy_window_layout(owner: Any, replacement: Any) -> None:
@@ -182,9 +182,13 @@ def _restore_display(owner: Any, replacement: Any) -> None:
         bar = replacement.__dict__.get("bar")
         if bar is not None:
             bar.setColorMap(replacement._colorbar_colormap())
-    replacement._colorbar_manual_levels = owner.__dict__.get("_colorbar_manual_levels")
-    replacement._sync_heatmap_colorbar_items(rescale=True)
     _copy_view(owner, replacement)
+    if all("colorbar_range_entry" in win.__dict__ for win in (owner, replacement)):
+        # The new primary can have a different dimensionality. Transfer the
+        # shared colour settings, leaving the new source's own volume scope.
+        colour = ColorbarScaleDialogMixin._capture_colour_range_settings(owner)
+        ColorbarScaleDialogMixin._restore_colour_range_settings(replacement, colour)
+    replacement._sync_heatmap_colorbar_items(rescale=True)
     # Rebuild averages only after the surviving curves have their final
     # mapping and viewport; never transfer the old generated average.
     replacement.plot.ctrl.averageGroup.setChecked(owner.plot.ctrl.averageGroup.isChecked())

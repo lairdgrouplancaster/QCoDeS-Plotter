@@ -178,7 +178,7 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         self.pages.addTab(dataset_page, "Datasets")
         self.axes_page = qtw.QScrollArea()
         self.colour_page = qtw.QScrollArea()
-        for page, name in ((self.axes_page, "Axes"), (self.colour_page, "Colour scale")):
+        for page, name in ((self.axes_page, "Axis scales"), (self.colour_page, "Colour scale")):
             page.setWidgetResizable(True)
             page.setFrameShape(qtw.QFrame.Shape.NoFrame)
             self.pages.addTab(page, name)
@@ -190,7 +190,7 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         self._edited_axes = set()
 
     def show_page(self, name):
-        page = {"Datasets": 0, "Axes": 1, "Colour scale": 2}[name]
+        page = {"Datasets": 0, "Axes": 1, "Axis scales": 1, "Colour scale": 2}[name]
         if self.pages.isTabEnabled(page):
             if self.pages.currentIndex() == page:
                 self._activate_settings_page(page)

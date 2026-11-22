@@ -32,16 +32,20 @@ def test_plot_settings_pages_preview_and_restore_axis_edits(mixed_plot):
     controls.invertCheck.click()
     controls.mouseCheck.click()
     controls.manualRadio.click()
-    controls.minText.setText("-6")
-    controls.maxText.setText("10")
-    controls.maxText.setFocus()
-    QtTest.QTest.keyClick(controls.maxText, QtCore.Qt.Key.Key_Return)
+    for field, value in ((controls.minText, "-6"), (controls.maxText, "10")):
+        field.setFocus()
+        field.selectAll()
+        QtTest.QTest.keyClicks(field, value)
+        QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
+    controls.rangeEntry.locks["max"].click()
+    assert controls.rangeEntry.state.lock == "max"
     assert editor.isVisible()
     assert plot.vb.state["targetRange"][0] == [-6, 10]
     plot.open_plot_appearance_dialog()
     assert editor.pages.currentIndex() == 0
     editor.reject()
     restored = plot._capture_axis_settings("x")
+    assert controls.rangeEntry.state.lock is None
     assert restored.mouse == initial.mouse and restored.inverted == initial.inverted
     assert restored.auto == initial.auto and restored.filtered_auto == initial.filtered_auto
     if initial.auto is False and not initial.filtered_auto:
@@ -297,6 +301,6 @@ def test_cancel_restores_volume_colour_scope(volume_main, tmp_path, mode):
     assert plot._color_mode == mode
     assert plot._last_auto_mode == last_auto
     assert plot.color_mode.currentData() == mode
-    assert plot.colorbar_scope.currentData() == mode
+    assert plot.colorbar_scope.currentData() == last_auto
     assert not plot.colorbar_scale_dialog.isVisible()
     assert not errors

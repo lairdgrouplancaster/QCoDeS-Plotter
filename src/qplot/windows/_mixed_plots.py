@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING, Any
 
+import pyqtgraph as pg
 from PyQt6 import QtGui
 
 from ._mixed_appearance import PlotAppearanceDialog
@@ -343,7 +344,12 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
             self._sync_mixed_axis_labels()
 
     def _apply_trace_style(self, label, line):
+        displayed = isinstance(line, pg.PlotDataItem)
+        current_view = line.getViewBox() if displayed else None
+        visible = line.isVisible() if displayed else False
         super()._apply_trace_style(label, line)
+        if displayed and (current_view is not line.getViewBox() or visible != line.isVisible()):
+            self._refresh_trace_axis_auto_ranges()
         self._sync_plot_item_order()
 
     def _ensure_trace_axis_viewboxes(self, *, top=False, right=False):
@@ -432,11 +438,6 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
             if line_host:
                 self._colorbar_manual_levels = None
                 self._init_colorbar_scale_controls()
-            else:
-                # Source promotion can attach ready overlays before this
-                # heatmap host publishes its first data. They need the shared
-                # scale now, including when the primary load fails or stalls.
-                self.__dict__["_colorbar_pending_primary"] = True
             items = self._heatmap_colorbar_items()
             self.bar = self.plot.addColorBar(
                 items, colorMap=self._colorbar_colormap(),

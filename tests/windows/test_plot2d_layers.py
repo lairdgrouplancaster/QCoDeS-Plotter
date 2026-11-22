@@ -8,6 +8,7 @@ from PyQt6 import QtCore, sip
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._dataset_handle import DatasetKey, TraceKey
+from qplot.windows._plot2d_colorbar import Plot2DColorbarMixin
 from qplot.windows._plot2d_layers import (
     HeatmapLayer,
     Plot2DLayerMixin,
@@ -85,7 +86,7 @@ class _SourceWindow(QtCore.QObject):
         set_refresh_interval(self.spinBox, 0.5)
 
 
-class _LayerHost(Plot2DLayerMixin, PlotAxisScalingMixin):
+class _LayerHost(Plot2DLayerMixin, Plot2DColorbarMixin, PlotAxisScalingMixin):
     def __init__(
             self,
             trace_key,
@@ -461,11 +462,11 @@ def _install_test_colorbar(host):
     bar.setImageItem(items)
     host.bar = bar
     host._heatmap_colorbar_item_ids = tuple(id(item) for item in items)
-    host.relevel_refresh = qtw.QCheckBox()
+    host._colorbar_manual_levels = (0., 10.)
     return bar
 
 
-def test_source_refresh_respects_remap_colors_setting(tmp_path):
+def test_source_refresh_respects_colour_range_mode(tmp_path):
     host = _LayerHost(
         _trace_key(tmp_path, "host-guid", "host_signal"),
         axis_options={"x": "field", "y": "gate"},
@@ -489,7 +490,7 @@ def test_source_refresh_respects_remap_colors_setting(tmp_path):
         source.trace_updated.emit()
         assert bar.levels() == (0.0, 10.0)
 
-        host.relevel_refresh.setChecked(True)
+        host._colorbar_manual_levels = None
         source.trace_updated.emit()
         assert bar.levels() == (1.0, 204.0)
     finally:

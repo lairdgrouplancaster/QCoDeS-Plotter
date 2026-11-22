@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pyqtgraph as pg
 import qcodes
-from PyQt6 import QtCore, QtGui, QtPrintSupport, sip
+from PyQt6 import QtCore, QtGui, QtPrintSupport, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import (
     CSVExporter,
@@ -29,6 +29,7 @@ from qplot.windows import _plot_export as plot_export_module
 from qplot.windows import _plot_refresh as plot_refresh_module
 from qplot.windows import _plot_refresh_ui as plot_refresh_ui_module
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
+from qplot.windows._plot2d_colorbar import Plot2DColorbarMixin
 from qplot.windows._plot_axis_scaling import PlotAxisScalingMixin
 from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._plot_status import PlotStatusWidget
@@ -38,12 +39,11 @@ from qplot.windows._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_KEY,
     COPY_PLOT_IMAGE_RESOLUTION_SVG,
 )
-from qplot.windows._range_entry import RangeEntry
 from qplot.windows._widgets import treeWidgets
 from qplot.windows.plot1d import plot1d
-from qplot.windows.plot2d import plot2d
 from tests._plot_results import capture_fake_plot_result
 from tests.support.plot_refresh import set_plot_worker
+from tests.support.windows.axis_limit_precision import AxisLimitWindow
 
 _PRINT_DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
 
@@ -3166,8 +3166,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual([tabs.isTabEnabled(i) for i in range(4)], [True, True, False, False])
             self.assertEqual(x_controls.manualRadio.text(), "Manual")
             self.assertEqual(x_controls.autoRadio.text(), "Automatic")
-            self.assertEqual(x_controls.minimumLabel.text(), "Minimum")
-            self.assertEqual(x_controls.maximumLabel.text(), "Maximum")
+            self.assertEqual(x_controls.rangeEntry.labels["min"].text(), "Minimum")
+            self.assertEqual(x_controls.rangeEntry.labels["max"].text(), "Maximum")
             self.assertEqual(x_controls.invertCheck.text(), "Reverse axis")
             self.assertEqual(x_controls.mouseCheck.text(), "Allow zoom/pan")
             self.assertEqual(x_controls.logCheck.text(), "Log scale")
@@ -3177,21 +3177,14 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 x_controls.visibleOnlyCheck.text(),
                 "Autoscale from visible data",
                 )
-            self.assertEqual(
-                x_controls.autoPanCheck.text(),
-                "Follow new data, keep span",
-                )
+            self.assertTrue(x_controls.rangeEntry.locks["span"].isVisible())
             self.assertIs(x_controls.label.buddy(), x_controls.linkCombo)
             self.assertEqual(x_controls.linkCombo.currentText(), "None")
             self.assertIsInstance(x_controls.linkCombo, qtw.QComboBox)
             self.assertTrue(x_controls.manualRadio.isChecked())
-            for field, value in zip(
-                (x_controls.minText, x_controls.maxText),
-                ("0.010012718532581035", "0.010017029084329264"),
-                strict=True,
-            ):
+            for field in x_controls.rangeEntry.fields.values():
                 self.assertTrue(field.isVisible())
-                self.assertGreaterEqual(field.width(), field.fontMetrics().horizontalAdvance(value) + 12)
+                self.assertGreaterEqual(field.width(), field.fontMetrics().horizontalAdvance("-1.23457"))
             for control in (x_controls.mouseCheck, x_controls.invertCheck, x_controls.logCheck):
                 self.assertTrue(control.isVisible())
                 self.assertGreaterEqual(control.width(), control.sizeHint().width())
@@ -3210,10 +3203,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             auto_limits = host._axis_scale_auto_limits("x")
             self.assertIsNotNone(auto_limits)
             copy_button = x_controls.copyAutoLimitsButton
-            self.assertEqual(
-                copy_button.toolTip(),
-                f"Set manual limits to {float(auto_limits[0])!r} and {float(auto_limits[1])!r}.",
-                )
+            self.assertEqual(copy_button.text(), "Fit once to data")
 
             host._axis_scale_custom_auto_axes.add("x")
             host.vb.setXRange(-3.0, 4.0, padding=0)
@@ -3392,158 +3382,55 @@ class RunListParentLookupTestCase(unittest.TestCase):
             widget.deleteLater()
 
     def test_log_manual_and_copied_auto_limits_use_physical_fields(self):
-        widget = pg.GraphicsLayoutWidget()
-        plot_item = widget.addPlot()
-        plot_item.plot(x=[1.0, 10.0, 100.0], y=[1.0, 10.0, 100.0])
-        window = plotWidget.__new__(plotWidget)
-        qtw.QMainWindow.__init__(window)
-        window.plot = plot_item
-        window.vb = plot_item.vb
-        window.vbMenu = window.vb.menu
-        window.top_vb = pg.ViewBox()
-        window.right_vb = pg.ViewBox()
-        window._axis_scale_controls = {}
-        window._axis_scale_custom_auto_axes = set()
-        window._view_range_changed_programmatically = lambda: None
-        statuses = []
-        window.show_status = lambda message, timeout=0: statuses.append((message, timeout))
-        sides = {"x": "bottom", "y": "left", "x2": "top", "y2": "right"}
-        editor = window._create_axis_scale_editor()
-
+        window = AxisLimitWindow()
+        window.plot.plot([1, 10, 100], [1, 10, 100])
+        window.show()
         try:
-            for axis, side in sides.items():
-                plot_item.getAxis(side).setLogMode(True)
-                controls = window._axis_scale_controls[axis]
-                controls.minText.setText("10")
-                controls.maxText.setText("1000")
-                window._axis_scale_range_text_changed(axis)
-                viewbox = window._axis_scale_viewbox(axis)
-                axis_number = window._axis_scale_axis_number(axis)
-                np.testing.assert_allclose(
-                    viewbox.viewRange()[axis_number],
-                    [1.0, 3.0],
-                )
-
-                window._sync_axis_scale_controls(axis)
-                self.assertEqual(float(controls.minText.text()), 10.0)
-                self.assertEqual(float(controls.maxText.text()), 1000.0)
-
-                controls.minText.setText("0")
-                controls.maxText.setText("100")
-                window._axis_scale_range_text_changed(axis)
-                np.testing.assert_allclose(
-                    viewbox.viewRange()[axis_number],
-                    [1.0, 3.0],
-                )
-                self.assertEqual(float(controls.minText.text()), 0.0)
-                self.assertIn("greater than zero", controls.rangeEntry.summary.text())
-
-            window._axis_scale_auto_limits = lambda _axis: (0.0, 2.0)
-            x_controls = window._axis_scale_controls["x"]
-            window._update_axis_scale_auto_limits_tooltip("x")
-            self.assertEqual(
-                x_controls.copyAutoLimitsButton.toolTip(),
-                "Set manual limits to 1.0 and 100.0.",
-            )
-            window._axis_scale_copy_auto_limits("x")
-            self.assertEqual(float(x_controls.minText.text()), 1.0)
-            self.assertEqual(float(x_controls.maxText.text()), 100.0)
-            np.testing.assert_allclose(window.vb.viewRange()[0], [0.0, 2.0])
+            window.open_axis_scale_dialog("x")
+            controls = window._axis_scale_controls["x"]
+            controls.logCheck.click()
+            entry = controls.rangeEntry
+            for field, text in ((entry.fields["max"], "1000"), (entry.fields["min"], "10")):
+                field.setFocus()
+                field.selectAll()
+                QtTest.QTest.keyClicks(field, text)
+                QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
+            np.testing.assert_allclose(window.vb.viewRange()[0], [1, 3])
+            field.selectAll()
+            QtTest.QTest.keyClicks(field, "0")
+            QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
+            np.testing.assert_allclose(window.vb.viewRange()[0], [1, 3])
+            self.assertTrue(entry.error_label.isVisible())
+            QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Escape)
+            expected = window._axis_scale_auto_limits("x")
+            entry.fit_button.click()
+            np.testing.assert_allclose(window.vb.viewRange()[0], expected)
+            np.testing.assert_allclose([float(entry.fields[k].text()) for k in ("min", "max")],
+                                       np.power(10., expected))
         finally:
-            editor.deleteLater()
-            window.top_vb.deleteLater()
-            window.right_vb.deleteLater()
-            widget.deleteLater()
+            window._axis_scale_dialog.close()
+            window.close()
             window.deleteLater()
-            qtw.QApplication.sendPostedEvents(window, QtCore.QEvent.Type.DeferredDelete)
-        self.assertTrue(sip.isdeleted(window))
-
-    def test_axis_scale_rejects_non_finite_and_reversed_manual_ranges(self):
-        window = plotWidget.__new__(plotWidget)
-        window.vb = pg.ViewBox()
-        minimum = qtw.QLineEdit("nan")
-        maximum = qtw.QLineEdit("1")
-        manual = qtw.QRadioButton()
-        ui = type(
-            "AxisControls",
-            (),
-            {"minText": minimum, "maxText": maximum, "manualRadio": manual},
-            )()
-        window._axis_scale_controls = {"x": ui}
-        window.show_status = lambda *args: window.__dict__.setdefault(
-            "statuses",
-            [],
-            ).append(args)
-        window.vb.setXRange(0, 1, padding=0)
-        range_parent = qtw.QWidget()
-        ui.rangeEntry = RangeEntry(
-            minimum, maximum, qtw.QLabel(range_parent), qtw.QLabel(range_parent),
-            accessible_prefix="X axis", parent=range_parent,
-        )
-        minimum.setText("nan")
-
-        try:
-            before = list(window.vb.viewRange()[0])
-            plotWidget._axis_scale_range_text_changed(window, "x")
-            self.assertEqual(list(window.vb.viewRange()[0]), before)
-            self.assertEqual(minimum.text(), "nan")
-            self.assertTrue(ui.rangeEntry._error)
-
-            minimum.setText("2")
-            maximum.setText("1")
-            plotWidget._axis_scale_range_text_changed(window, "x")
-            self.assertEqual(list(window.vb.viewRange()[0]), before)
-            self.assertIn("finite numbers", window.statuses[-1][0])
-        finally:
-            minimum.deleteLater()
-            maximum.deleteLater()
-            manual.deleteLater()
-            range_parent.deleteLater()
-            window.vb.deleteLater()
 
     def test_manual_axis_scale_notifies_programmatic_range_change(self):
-        class ViewBox:
-            def __init__(self):
-                self.x_range = None
-
-            def viewRange(self):
-                return [[0.0, 1.0], [0.0, 1.0]]
-
-            def setXRange(self, low, high, padding=0):
-                self.x_range = (low, high, padding)
-
-        window = plotWidget.__new__(plotWidget)
-        minimum = qtw.QLineEdit("2")
-        maximum = qtw.QLineEdit("4")
-        manual = qtw.QRadioButton()
-        window.vb = ViewBox()
-        window._axis_scale_controls = {
-            "x": type(
-                "AxisControls",
-                (),
-                {"minText": minimum, "maxText": maximum, "manualRadio": manual},
-                )()
-            }
-        range_changes = []
-        window._view_range_changed_programmatically = lambda: range_changes.append(True)
-        range_parent = qtw.QWidget()
-        window._axis_scale_controls["x"].rangeEntry = RangeEntry(
-            minimum, maximum, qtw.QLabel(range_parent), qtw.QLabel(range_parent),
-            accessible_prefix="X axis", parent=range_parent,
-        )
-        minimum.setText("2")
-        maximum.setText("4")
-
+        window = AxisLimitWindow()
+        window.plot.plot([1, 2], [1, 2])
+        window.show()
         try:
-            plotWidget._axis_scale_range_text_changed(window, "x")
-
-            self.assertEqual(window.vb.x_range, (2.0, 4.0, 0))
-            self.assertEqual(range_changes, [True])
+            window.open_axis_scale_dialog("x")
+            changed = Mock()
+            window._view_range_changed_programmatically = changed
+            field = window._axis_scale_controls["x"].minText
+            field.setFocus()
+            field.selectAll()
+            QtTest.QTest.keyClicks(field, "-3")
+            QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
+            self.assertEqual(window.vb.viewRange()[0][0], -3.0)
+            changed.assert_called_once()
         finally:
-            minimum.deleteLater()
-            maximum.deleteLater()
-            manual.deleteLater()
-            range_parent.deleteLater()
+            window._axis_scale_dialog.close()
+            window.close()
+            window.deleteLater()
 
     def test_colorbar_scale_action_opens_dialog_without_nested_menu(self):
         class Bar:
@@ -3551,7 +3438,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 self.color_map = None
 
             def levels(self):
-                return 1.0, 2.0
+                return getattr(self, "current_limits", (1.0, 2.0))
 
             def setColorMap(self, color_map):
                 self.color_map = color_map
@@ -3569,74 +3456,14 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 self.values[key] = value
                 self.updates.append((key, value))
 
-        class Host(qtw.QMainWindow):
-            _current_colorbar_levels = plot2d._current_colorbar_levels
-            _colorbar_auto_limits = plot2d._colorbar_auto_limits
-            _update_colorbar_auto_limits_tooltip = (
-                plot2d._update_colorbar_auto_limits_tooltip
-                )
-            _copy_colorbar_auto_limits = plot2d._copy_colorbar_auto_limits
-            _current_colorbar_colormap_name = plot2d._current_colorbar_colormap_name
-            _available_colorbar_colormaps = plot2d._available_colorbar_colormaps
-            _fallback_colorbar_colormap_name = plot2d._fallback_colorbar_colormap_name
-            _colorbar_colormap = plot2d._colorbar_colormap
-            _init_colorbar_scale_controls = plot2d._init_colorbar_scale_controls
-            _init_colorbar_refresh_control = plot2d._init_colorbar_refresh_control
-            _init_colorbar_scope_controls = plot2d._init_colorbar_scope_controls
-            _colorbar_symmetric_changed = plot2d._colorbar_symmetric_changed
-            _symmetric_colorbar_levels = plot2d._symmetric_colorbar_levels
-            _populate_colorbar_colormap_table = plot2d._populate_colorbar_colormap_table
-            _sync_current_colorbar_map = plot2d._sync_current_colorbar_map
-            _show_current_colorbar_map = plot2d._show_current_colorbar_map
-            _install_colorbar_scale_bar_handlers = plot2d._install_colorbar_scale_bar_handlers
-            _install_colorbar_scale_axis_handlers = plot2d._install_colorbar_scale_axis_handlers
-            _install_colorbar_scale_double_click_handler = (
-                plot2d._install_colorbar_scale_double_click_handler
-                )
-            _suppress_colorbar_right_click_menu = plot2d._suppress_colorbar_right_click_menu
-            _install_colorbar_level_sync_handlers = (
-                plot2d._install_colorbar_level_sync_handlers
-                )
-            _install_colorbar_alt_range_drag_handler = (
-                plot2d._install_colorbar_alt_range_drag_handler
-                )
-            _install_colorbar_alt_handle_drag_handler = (
-                plot2d._install_colorbar_alt_handle_drag_handler
-                )
-            _colorbar_alt_range_drag_event = plot2d._colorbar_alt_range_drag_event
-            _colorbar_alt_range_drag_axis_position = (
-                plot2d._colorbar_alt_range_drag_axis_position
-                )
-            _set_colorbar_alt_range_drag_visual = (
-                plot2d._set_colorbar_alt_range_drag_visual
-                )
-            _colorbar_alt_range_drag_levels = plot2d._colorbar_alt_range_drag_levels
-            _colorbar_levels_from_bar = plot2d._colorbar_levels_from_bar
-            _colorbar_interactive_levels_changed = (
-                plot2d._colorbar_interactive_levels_changed
-                )
-            _colorbar_interactive_levels_finished = (
-                plot2d._colorbar_interactive_levels_finished
-                )
-            _sync_colorbar_scale_controls = plot2d._sync_colorbar_scale_controls
-            _sync_colorbar_scale_mode = plot2d._sync_colorbar_scale_mode
-            _colorbar_auto_refresh_changed = plot2d._colorbar_auto_refresh_changed
-            _sync_colorbar_level_fields = plot2d._sync_colorbar_level_fields
-            _colorbar_colormap_row = plot2d._colorbar_colormap_row
-            _select_colorbar_colormap = plot2d._select_colorbar_colormap
-            _colorbar_colormap_changed = plot2d._colorbar_colormap_changed
-            open_colorbar_scale_dialog = plot2d.open_colorbar_scale_dialog
-            _apply_colorbar_manual_fields = plot2d._apply_colorbar_manual_fields
-            setColorbarColorMap = plot2d.setColorbarColorMap
-            setColorbarManualRange = plot2d.setColorbarManualRange
-            setColorbarAuto = plot2d.setColorbarAuto
-            scaleColorbar = plot2d.scaleColorbar
-
-            def _data_colorbar_levels(self):
+        class Host(Plot2DColorbarMixin, qtw.QMainWindow):
+            def _finite_data_colorbar_range(self):
                 return -4.0, 8.0
 
-            def _set_colorbar_levels(self, *_levels):
-                pass
+            def _set_colorbar_levels(self, low, high):
+                self.bar.current_limits = low, high
+                self._sync_colorbar_level_fields(low, high)
+                return True
 
             def show_status(self, *_args, **_kwargs):
                 pass
@@ -3667,10 +3494,10 @@ class RunListParentLookupTestCase(unittest.TestCase):
             action_texts = [action.text().replace("&", "") for action in host.vbMenu.actions()]
 
             self.assertIn("Colour Scale...", action_texts)
-            self.assertEqual(host.colorbar_min_label.text(), "Minimum")
-            self.assertEqual(host.colorbar_max_label.text(), "Maximum")
-            self.assertIs(host.colorbar_min_label.buddy(), host.colorbar_min_text)
-            self.assertIs(host.colorbar_max_label.buddy(), host.colorbar_max_text)
+            self.assertEqual(host.colorbar_range_entry.labels["min"].text(), "Minimum")
+            self.assertEqual(host.colorbar_range_entry.labels["max"].text(), "Maximum")
+            self.assertIs(host.colorbar_range_entry.labels["min"].buddy(), host.colorbar_min_text)
+            self.assertIs(host.colorbar_range_entry.labels["max"].buddy(), host.colorbar_max_text)
             self.assertEqual(
                 host.colorbar_min_text.accessibleName(),
                 "Colour scale minimum",
@@ -3679,23 +3506,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 host.colorbar_max_text.accessibleName(),
                 "Colour scale maximum",
                 )
-            range_layout = host.colorbar_manual_radio.parentWidget().layout()
-            self.assertIsInstance(range_layout, qtw.QGridLayout)
-            for column, widget in enumerate((host.colorbar_manual_radio,
-                                              host.colorbar_min_text, host.colorbar_max_text,
-                                              host.colorbar_copy_auto_limits_button)):
-                self.assertIs(range_layout.itemAtPosition(2, column).widget(), widget)
-            self.assertIs(range_layout.itemAtPosition(1, 1).widget(), host.colorbar_min_label)
-            self.assertIs(range_layout.itemAtPosition(1, 2).widget(), host.colorbar_max_label)
-            copy_button = host.colorbar_copy_auto_limits_button
-            self.assertEqual(
-                copy_button.accessibleName(),
-                "Use auto colour scale limits as manual limits",
-                )
-            self.assertEqual(
-                copy_button.toolTip(),
-                "Set manual limits to -4.0 and 8.0.",
-                )
+            copy_button = host.colorbar_range_entry.fit_button
+            self.assertFalse(copy_button.isEnabled())
+            host.colorbar_manual_radio.click()
             copy_button.click()
             self.assertEqual(host._colorbar_manual_levels, (-4.0, 8.0))
             self.assertTrue(host.colorbar_min_text.hasAcceptableInput())

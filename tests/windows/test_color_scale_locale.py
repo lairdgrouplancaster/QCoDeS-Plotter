@@ -3,6 +3,9 @@
 import pytest
 
 from tests.support.windows.color_scale_locale import (
+    enter_colour_value,
+)
+from tests.support.windows.color_scale_locale import (
     heatmap as heatmap,
 )
 
@@ -13,43 +16,35 @@ from tests.support.windows.color_scale_locale import (
     (("1.5e-3", "2.5E+3"), (0.0015, 2500.0)),
     (("-2.5e2", "+1.5e2"), (-250.0, 150.0)),
 ])
-def test_manual_input_has_validator_numeric_meaning(heatmap, texts, expected):
-    fields = (heatmap.colorbar_min_text, heatmap.colorbar_max_text)
-    for field, text in zip(fields, texts, strict=True):
-        field.setText(text)
-        assert field.hasAcceptableInput()
-        value, ok = field.validator().locale().toDouble(text)
-        assert ok
-        assert value == expected[fields.index(field)]
-    heatmap.colorbar_manual_radio.click()
+def test_manual_input_uses_decimal_point_across_locales(heatmap, texts, expected):
+    for field, text in zip(("min", "max"), texts, strict=True):
+        enter_colour_value(heatmap, field, text)
     assert heatmap._colorbar_manual_levels == expected
     assert tuple(heatmap.bar.levels()) == expected
-    assert heatmap.relevel_refresh.isChecked()
-    assert not heatmap.relevel_refresh.isEnabled()
+    assert heatmap.colorbar_manual_radio.isChecked()
 
 
 @pytest.mark.parametrize("text", [
     "1,5", "1,234", "1.234,5", "1,234.5", "1 234", "1_234",
     "nan", "inf", "-inf", "1e999", "1e", "",
 ])
-@pytest.mark.parametrize("field_name", ["colorbar_min_text", "colorbar_max_text"])
+@pytest.mark.parametrize("field_name", ["min", "max"])
 def test_invalid_input_cannot_apply_through_manual(heatmap, text, field_name):
     assert heatmap.setColorbarManualRange(0.0, 3.0)
-    field = getattr(heatmap, field_name)
+    field = heatmap.colorbar_range_entry.fields[field_name]
     field.setText(text)
-    assert not field.hasAcceptableInput()
-    heatmap.colorbar_manual_radio.click()
+    field.accepted.emit()
+    assert heatmap.colorbar_range_entry.error_label.text()
     assert heatmap._colorbar_manual_levels == (0.0, 3.0)
     assert tuple(heatmap.bar.levels()) == (0.0, 3.0)
 
 
 @pytest.mark.parametrize("limits", [(2.0, 1.0), (2.0, 2.0)])
 def test_manual_requires_increasing_limits(heatmap, limits):
-    heatmap.colorbar_min_text.setText(str(limits[0]))
-    heatmap.colorbar_max_text.setText(str(limits[1]))
-    heatmap.colorbar_manual_radio.click()
-    assert heatmap._colorbar_manual_levels is None
-    assert tuple(heatmap.bar.levels()) == (0.0, 3.0)
+    enter_colour_value(heatmap, "min", limits[0])
+    enter_colour_value(heatmap, "max", limits[1])
+    assert heatmap._colorbar_manual_levels == (limits[0], 3.0)
+    assert heatmap.colorbar_range_entry.error_label.text()
 
 
 @pytest.mark.parametrize("limits", [

@@ -183,14 +183,6 @@ class ColourMapPicker(qtw.QWidget):
         heading.setFont(font)
         return heading
 
-    def insert_scaling_controls(self, controls):
-        """Let the full Colour Scale dialog place its controls above the list."""
-        heading = self._heading("Set scaling", "colorbarScalingHeading")
-        self._content_layout.insertWidget(3, heading)
-        self._content_layout.insertWidget(4, controls)
-        self._content_layout.insertSpacing(5, 8)
-        return heading
-
     def set_current_map(self, name):
         self._name = name
         label = _colorbar_colormap_label(name)
@@ -366,13 +358,6 @@ class ColourMapPicker(qtw.QWidget):
 
         table.resizeColumnToContents(0)
         table.resizeColumnToContents(2)
-        # Reserve a useful minimum gradient width beside the longest name/type.
-        scrollbar = table.verticalScrollBar()
-        assert scrollbar is not None
-        table.setMinimumWidth(
-            table.columnWidth(0) + table.columnWidth(2) + 120 + 12
-            + scrollbar.sizeHint().width() + 2 * table.frameWidth()
-        )
         table.setSortingEnabled(sorting_enabled)
         table.blockSignals(False)
         self._apply_filters()

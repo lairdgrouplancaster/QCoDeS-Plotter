@@ -32,10 +32,11 @@ def select_map(picker, name, app):
 @pytest.mark.parametrize("manual", [False, True])
 @pytest.mark.parametrize("exit_action", ["ok", "cancel", "escape", "close"])
 def test_map_preview_and_exit_preserve_scaling(heatmap, qapplication, manual, exit_action):
-    heatmap.symmetric_color.setChecked(True)
-    heatmap.relevel_refresh.setChecked(False)
+    entry = heatmap.colorbar_range_entry
+    entry.percent.setValue(60)
     if manual:
         assert heatmap.setColorbarManualRange(-1.2345678901234567, 2.345678901234567)
+    entry.locks["centre"].click()
     before_levels = heatmap._current_colorbar_levels()
     before_manual = heatmap._colorbar_manual_levels
     dialog = ColourMapDialog(heatmap, heatmap)
@@ -63,9 +64,9 @@ def test_map_preview_and_exit_preserve_scaling(heatmap, qapplication, manual, ex
         assert heatmap._current_colorbar_colormap_name() == expected
         assert heatmap._colorbar_manual_levels == before_manual
         np.testing.assert_array_equal(heatmap._current_colorbar_levels(), before_levels)
-        assert heatmap.symmetric_color.isChecked()
-        assert not heatmap.relevel_refresh.isChecked()
-        assert heatmap.relevel_refresh.isEnabled() != manual
+        assert entry.state.lock == "centre"
+        assert entry.percent.value() == 60
+        assert entry.state.automatic != manual
     finally:
         dialog.reject()
         dialog.deleteLater()

@@ -332,10 +332,6 @@ class plot2d(
         super().closeEvent(event)
       
 
-    def initRefresh(self, refrate: float) -> None:
-        super().initRefresh(refrate)
-        self._init_colorbar_refresh_control()
-
     def initContextMenu(self) -> None:
         super().initContextMenu()
         # Opening a popup clears the transient hover readout. Keep the cut
@@ -521,25 +517,9 @@ class plot2d(
                         self._mark_display_synchronized(plot_worker)
                     return
 
-                autoLevels = self.relevel_refresh.isChecked() and self._colorbar_manual_levels is None
-                operation_apply_generation = int(
-                    getattr(plot_worker, "_qplot_operation_apply_generation", 0)
-                    )
-                operation_auto_levels = bool(
-                    operation_apply_generation
-                    > self.__dict__.get("_colorbar_operation_apply_generation", 0)
-                    and self._colorbar_manual_levels is None
-                    )
-                initial_primary_levels = bool(
-                    self.__dict__.get("_colorbar_pending_primary", False)
-                    and self._colorbar_manual_levels is None
-                    )
                 color_levels = self._colorbar_manual_levels
                 if color_levels is None:
-                    if not hasattr(self, "bar") or autoLevels or operation_auto_levels or initial_primary_levels:
-                        color_levels = self._data_colorbar_levels()
-                    else:
-                        color_levels = self.bar.levels()
+                    color_levels = self._data_colorbar_levels()
                 if color_levels is not None and not np.isfinite(float(color_levels[1]) - float(color_levels[0])):
                     self._reject_heatmap_color_range()
                     self._emit_heatmap_trace_updated()
@@ -576,7 +556,7 @@ class plot2d(
                     self.bar = self.plot.addColorBar(
                         colorbar_items,
                         colorMap=self._colorbar_colormap(),
-                        rounding=self._data_colorbar_rounding(),
+                        rounding=self._colorbar_rounding_for_levels(*color_levels) if color_levels else 1e-5,
                         width=self._configured_colorbar_width(),
                         colorMapMenu=False,
                         )
@@ -588,25 +568,12 @@ class plot2d(
                     # been applied, so style its axes immediately as well.
                     self.config.theme.style_plotItem(self)
                     self.apply_axis_major_tick_count_preference()
-                    if self._colorbar_manual_levels is None:
-                        self.scaleColorbar()
-                    else:
-                        minimum, maximum = self._colorbar_manual_levels
-                        self._set_colorbar_levels(minimum, maximum)
-
                 self.bar.show()
+                if color_levels is not None:
+                    self._set_colorbar_levels(*color_levels)
+                else:
+                    self._sync_colorbar_axis_scaling()
 
-                # The dependent-variable label may have changed when an operation
-                # such as differentiation was added or removed.
-                self._sync_colorbar_axis_scaling()
-                if autoLevels or operation_auto_levels or initial_primary_levels:
-                    self.__dict__["_colorbar_manual_levels"] = None
-                    self.scaleColorbar()
-                elif self._colorbar_manual_levels is not None:
-                    minimum, maximum = self._colorbar_manual_levels
-                    self._set_colorbar_levels(minimum, maximum)
-                self.__dict__.pop("_colorbar_pending_primary", None)
-            
                 self._restore_heatmap_interactions()
                 if not self._refresh_publication_source_is_current(
                         plot_worker,
@@ -619,10 +586,6 @@ class plot2d(
                         clear_display=clear_display,
                         ):
                     return
-                self.__dict__["_colorbar_operation_apply_generation"] = max(
-                    operation_apply_generation,
-                    self.__dict__.get("_colorbar_operation_apply_generation", 0),
-                    )
                 self._mark_display_synchronized(plot_worker)
                 if getattr(plot_worker, "_qplot_source_rejected", False):
                     clear_display()

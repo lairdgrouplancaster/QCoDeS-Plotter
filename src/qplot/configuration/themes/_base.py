@@ -79,8 +79,8 @@ _STYLESHEET_TEMPLATE = Template(
     QLabel#mainEmptyStateDetail {
         color: $muted_text;
     }
-    QLabel#rangeEntrySummary {
-        color: $muted_text;
+    QLabel#rangeEntryError {
+        color: $danger;
         font-size: 9pt;
     }
     QTextEdit, QPlainTextEdit {

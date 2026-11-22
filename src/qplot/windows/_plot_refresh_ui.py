@@ -86,7 +86,6 @@ class PlotRefreshUi:
 
     def prepare_worker(self, worker: Any) -> None:
         window = self.window
-        worker._qplot_operation_apply_generation = int(getattr(window.oper_widget, "_apply_generation", 0))
         key = getattr(window, "_dataset_key", None)
         if key is not None:
             worker.expected_database_path = key.database_path

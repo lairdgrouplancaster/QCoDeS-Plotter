@@ -1068,9 +1068,6 @@ def test_real_plot_csv_exports_heatmaps_and_keeps_line_behavior(
         )
         before_operation = np.asarray(nonuniform_window.dataGrid).copy()
         assert nonuniform_window._colorbar_manual_levels is None
-        assert nonuniform_window.relevel_refresh.isChecked()
-        nonuniform_window.relevel_refresh.setChecked(False)
-        assert not nonuniform_window.relevel_refresh.isChecked()
         previous_worker = nonuniform_window.worker
         subtract_row_mean.input.setChecked(True)
         nonuniform_window.oper_widget.apply_but.click()

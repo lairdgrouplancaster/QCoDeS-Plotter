@@ -1477,15 +1477,25 @@ class _TraceAppearanceDialog(qtw.QDialog):
         display_layout.setSpacing(6)
         display_layout.setRowWrapPolicy(qtw.QFormLayout.RowWrapPolicy.WrapLongRows)
         display_layout.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        trace_axes = dataset_axes_group("Trace axes", self.x_axis, self.y_axis)
+
+        def preferred_drawing_width(row):
+            # Both groups start at the same x. Stop at the end of the compact
+            # axes row even when the property pane has room to grow further.
+            margins = trace_axes.contentsMargins() + trace_axes.layout().contentsMargins()
+            return trace_axes.sizeHint().width() - margins.right() - row.x()
+
         line_controls = (self.line_color, self.line_width, self.line_style)
         marker_controls = (self.marker_color, self.marker_size, self.marker_symbol)
-        display_layout.addRow(self.line_enable, drawing_controls_row(*line_controls, width_controls=marker_controls))
-        display_layout.addRow(self.marker_enable, drawing_controls_row(*marker_controls, width_controls=line_controls))
+        for toggle, controls, peers in ((self.line_enable, line_controls, marker_controls),
+                                        (self.marker_enable, marker_controls, line_controls)):
+            display_layout.addRow(toggle, drawing_controls_row(*controls, width_controls=peers,
+                                                               preferred_row_width=preferred_drawing_width))
         panel_layout.addWidget(display_group)
 
         panel_layout.insertWidget(0, visibility_opacity_row(self.visible, self.opacity_slider, self.opacity))
 
-        panel_layout.addWidget(dataset_axes_group("Trace axes", self.x_axis, self.y_axis))
+        panel_layout.addWidget(trace_axes)
 
         plot_axes = qtw.QGroupBox("Plot axes", panel)
         self.plot_axes_group = plot_axes
@@ -2026,19 +2036,10 @@ class _TraceAppearanceDialog(qtw.QDialog):
             self._opening_order = list(self.owner.__dict__.get("_plot_item_order", []))
             getter = getattr(self.owner, "_current_colorbar_colormap_name", None)
             self._opening_colour = getter() if callable(getter) else None
-            self._opening_colour_scale = None
-            self._opening_colour_scope = (
-                (self.owner._color_mode, self.owner._last_auto_mode)
-                if "_color_mode" in self.owner.__dict__ else None
+            self._opening_colour_scale = (
+                self.owner._capture_colour_range_settings()
+                if "colorbar_range_entry" in self.owner.__dict__ else None
             )
-            if "colorbar_range_entry" in self.owner.__dict__:
-                levels = self.owner._current_colorbar_levels()
-                self._opening_colour_scale = (
-                    deepcopy(self.owner.__dict__.get("_colorbar_manual_levels")),
-                    tuple(levels) if levels is not None else None,
-                    self.owner.__dict__.get("_colorbar_symmetric", False),
-                    self.owner.relevel_refresh.isChecked(),
-                )
             self._opening_swapped = self.owner.plot_axes_swapped()
             self._opening_heatmaps = {
                 key: (self.owner._heatmap_is_visible(layer), self.owner._heatmap_opacity(layer),
@@ -2063,29 +2064,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
         if self._opening_colour is not None:
             self.owner.setColorbarColorMap(self._opening_colour)
         if self._opening_colour_scale is not None:
-            manual, levels, symmetric, refresh = self._opening_colour_scale
-            if self._opening_colour_scope is not None:
-                mode, last_auto_mode = self._opening_colour_scope
-                self.owner._color_mode = mode
-                self.owner._last_auto_mode = last_auto_mode
-                with QtCore.QSignalBlocker(self.owner.color_mode):
-                    self.owner.color_mode.setCurrentIndex(self.owner.color_mode.findData(mode))
-            self.owner._colorbar_symmetric = symmetric
-            for control, checked in ((self.owner.symmetric_color, symmetric),
-                                     (self.owner.relevel_refresh, refresh)):
-                with QtCore.QSignalBlocker(control):
-                    control.setChecked(checked)
-            self.owner.colorbar_range_entry.clear_error()
-            if manual is None:
-                self.owner.setColorbarAuto()
-                if not refresh and levels is not None:
-                    self.owner._set_colorbar_levels(*levels)
-            else:
-                self.owner.setColorbarManualRange(*manual)
-            self.owner._sync_colorbar_scale_controls()
-            if self._opening_colour_scope is not None:
-                self.owner._sync_color_mode_controls()
-                self.owner._start_volume_range()
+            self.owner._restore_colour_range_settings(self._opening_colour_scale)
         current_order = self.owner.__dict__.get("_plot_item_order")
         if current_order is not None:
             order = [entry for entry in self._opening_order if entry in current_order]

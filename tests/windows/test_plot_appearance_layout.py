@@ -139,7 +139,7 @@ def test_appearance_fits_screen_and_keeps_actions_accessible(
 
 
 @pytest.mark.parametrize("mixed_plot", ["line"], indirect=True)
-@pytest.mark.parametrize("first_page", ["Datasets", "Axes"])
+@pytest.mark.parametrize("first_page", ["Datasets", "Axis scales"])
 def test_default_size_fits_two_named_traces_and_both_axis_modes(
     mixed_plot, monkeypatch, qapplication, first_page,
 ):
@@ -150,7 +150,7 @@ def test_default_size_fits_two_named_traces_and_both_axis_modes(
     monkeypatch.setattr(plot, "_trace_measurement_name", lambda _key, line: names[1] if line is overlay else names[0])
     desktop = QtCore.QRect(0, 0, 1600, 1000)
     monkeypatch.setattr(_appearance_layout, "available_appearance_geometry", lambda _dialog: desktop)
-    if first_page == "Axes":
+    if first_page == "Axis scales":
         plot.open_axis_scale_dialog("x")
     else:
         plot.open_plot_appearance_dialog()
@@ -158,7 +158,7 @@ def test_default_size_fits_two_named_traces_and_both_axis_modes(
     qapplication.processEvents()
     assert dialog.pages.tabText(dialog.pages.currentIndex()) == first_page
     opening_height = dialog.height()
-    if first_page == "Axes":
+    if first_page == "Axis scales":
         assert dialog.axes_page.verticalScrollBar().maximum() == 0
 
     dialog.show_page("Datasets")
@@ -180,10 +180,10 @@ def test_default_size_fits_two_named_traces_and_both_axis_modes(
     qapplication.processEvents()
     assert dialog.pages.currentWidget() is dialog.axes_page
     assert dialog.height() < datasets_size.height()
-    if first_page == "Axes":
+    if first_page == "Axis scales":
         assert dialog.height() == opening_height
     controls = plot._axis_scale_controls["x"]
-    for mode, field in ((controls.autoRadio, controls.currentLimits), (controls.manualRadio, controls.maxText)):
+    for mode, field in ((controls.autoRadio, controls.minText), (controls.manualRadio, controls.maxText)):
         mode.click()
         qapplication.processEvents()
         assert field.isVisible()
@@ -217,7 +217,7 @@ def _assert_drawing_row_fits(viewport, toggle, *controls):
 
 @pytest.mark.parametrize("mixed_plot", ["line"], indirect=True)
 @pytest.mark.parametrize("font_size", [9, 14])
-@pytest.mark.parametrize("first_page", ["Datasets", "Axes"])
+@pytest.mark.parametrize("first_page", ["Datasets", "Axis scales"])
 def test_opening_width_fits_drawing_controls_and_measurement_names(
     mixed_plot, monkeypatch, qapplication, font_size, first_page,
 ):
@@ -232,7 +232,7 @@ def test_opening_width_fits_drawing_controls_and_measurement_names(
         monkeypatch.setattr(target, "_trace_measurement_name", lambda *_args, name=name: name)
         # Some styles add a border to the indicator only after a checked marker is switched off.
         next(iter(target._trace_styles.values())).markers_enabled = True
-        if first_page == "Axes":
+        if first_page == "Axis scales":
             target.open_axis_scale_dialog("x")
         dialog = target.open_plot_appearance_dialog()
         qapplication.processEvents()
@@ -251,23 +251,30 @@ def test_opening_width_fits_drawing_controls_and_measurement_names(
         assert datasets.width() <= max(datasets.sizeHint().width(), list_width) + allowance
         viewport = dialog.controls_scroll.viewport()
         drawing = dialog.marker_enable.parentWidget()
-        for checked in (True, False):
-            dialog.marker_enable.setChecked(checked)
-            qapplication.processEvents()
-            _assert_drawing_row_fits(viewport, dialog.line_enable, dialog.line_color,
-                                     dialog.line_width, dialog.line_style)
-            _assert_drawing_row_fits(viewport, dialog.marker_enable, dialog.marker_color,
-                                     dialog.marker_size, dialog.marker_symbol)
-            for line, marker in ((dialog.line_color, dialog.marker_color), (dialog.line_width, dialog.marker_size),
-                                 (dialog.line_style, dialog.marker_symbol)):
-                assert line.width() == marker.width() == dialog.line_color.width()
-                assert line.mapTo(drawing, QtCore.QPoint()).x() == marker.mapTo(drawing, QtCore.QPoint()).x()
-            assert dialog.controls_scroll.verticalScrollBar().maximum() == 0
-            rightmost = max(control.mapTo(drawing, control.rect().topRight()).x()
-                            for control in (dialog.line_style, dialog.marker_symbol))
-            spare = drawing.layout().contentsRect().right() - rightmost
-            other_fields = max(0, dialog.controls_stack.sizeHint().width() - drawing.sizeHint().width())
-            assert 0 <= spare <= other_fields + drawing.layout().horizontalSpacing()
+        for extra_width in (0, 160):
+            if extra_width:
+                datasets_width, properties_width = splitter.sizes()
+                dialog.resize(dialog.width() + extra_width, dialog.height())
+                splitter.setSizes([datasets_width, properties_width + extra_width])
+            for checked in (True, False):
+                dialog.marker_enable.setChecked(checked)
+                qapplication.processEvents()
+                _assert_drawing_row_fits(viewport, dialog.line_enable, dialog.line_color,
+                                         dialog.line_width, dialog.line_style)
+                _assert_drawing_row_fits(viewport, dialog.marker_enable, dialog.marker_color,
+                                         dialog.marker_size, dialog.marker_symbol)
+                for line, marker in ((dialog.line_color, dialog.marker_color), (dialog.line_width, dialog.marker_size),
+                                     (dialog.line_style, dialog.marker_symbol)):
+                    assert line.width() == marker.width()
+                    assert line.mapTo(drawing, QtCore.QPoint()).x() == marker.mapTo(drawing, QtCore.QPoint()).x()
+                assert dialog.line_color.width() == dialog.line_style.width()
+                assert dialog.line_width.width() >= dialog.line_color.width()
+                assert dialog.controls_scroll.verticalScrollBar().maximum() == 0
+                vertical_right = dialog.y_axis.mapTo(viewport, dialog.y_axis.rect().topRight()).x()
+                for control in (dialog.line_style, dialog.marker_symbol):
+                    assert control.mapTo(viewport, control.rect().topRight()).x() == vertical_right
+                line_bottom = dialog.line_width.mapTo(viewport, dialog.line_width.rect().bottomLeft()).y()
+                assert dialog.marker_size.mapTo(viewport, QtCore.QPoint()).y() > line_bottom
         dialog.reject()
     assert widths[0] < widths[1]
 
@@ -340,9 +347,9 @@ def test_page_changes_preserve_a_user_resized_window(mixed_plot, qapplication):
     qapplication.processEvents()
     resized = dialog.size() + QtCore.QSize(57, 43)
     dialog.resize(resized)
-    pages = ["Axes", "Datasets"]
+    pages = ["Axis scales", "Datasets"]
     if dialog.pages.isTabEnabled(dialog.pages.indexOf(dialog.colour_page)):
-        pages += ["Colour scale", "Axes", "Datasets"]
+        pages += ["Colour scale", "Axis scales", "Datasets"]
     for page in pages:
         dialog.show_page(page)
         qapplication.processEvents()
@@ -352,6 +359,27 @@ def test_page_changes_preserve_a_user_resized_window(mixed_plot, qapplication):
     plot.open_axis_scale_dialog("x")
     qapplication.processEvents()
     assert dialog.isVisible() and dialog.size() == resized
+    dialog.reject()
+
+
+@pytest.mark.parametrize("mixed_plot", ["heatmap"], indirect=True)
+def test_range_pages_match_at_the_datasets_default_width(mixed_plot, qapplication):
+    _, plot, _runs = mixed_plot
+    dialog = plot.open_plot_appearance_dialog()
+    qapplication.processEvents()
+    default_width = dialog.width()
+    plot.open_axis_scale_dialog("x")
+    positions = []
+    for page, editor in (("Axis scales", plot._axis_scale_controls["x"].rangeEntry),
+                         ("Colour scale", plot.colorbar_range_entry)):
+        dialog.show_page(page)
+        qapplication.processEvents()
+        assert dialog.width() == default_width
+        assert dialog.pages.currentWidget().horizontalScrollBar().maximum() == 0
+        positions.append([(field.mapTo(dialog, field.rect().topLeft()).x(),
+                           editor.locks[name].mapTo(dialog, editor.locks[name].rect().topRight()).x())
+                          for name, field in editor.fields.items()])
+    assert positions[0] == positions[1]
     dialog.reject()
 
 
@@ -370,7 +398,7 @@ def test_axis_tabs_fill_inset_panel_above_selected_quantity(mixed_plot, qapplica
     axes = plot._axis_scale_tabs
     panel = dialog.axes_page.findChild(qtw.QFrame, "axisScalePanel")
     heading = plot._axis_scale_quantity
-    assert [primary.tabText(i) for i in range(primary.count())] == ["Datasets", "Axes", "Colour scale"]
+    assert [primary.tabText(i) for i in range(primary.count())] == ["Datasets", "Axis scales", "Colour scale"]
     assert [axes.tabText(i) for i in range(axes.count())] == ["Bottom", "Left", "Top", "Right"]
     assert panel.isAncestorOf(axes) and panel.isAncestorOf(heading)
     assert dialog.pages.currentWidget() is dialog.axes_page

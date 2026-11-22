@@ -176,11 +176,12 @@ class ColourSwatchCombo(IconPreviewCombo):
 
 
 class _WrappingLayout(qtw.QLayout):
-    """Lay out equal-width drawing controls, wrapping when necessary."""
+    """Align drawing controls in columns, wrapping when necessary."""
 
-    def __init__(self, parent, width_controls):
+    def __init__(self, parent, width_controls, preferred_row_width):
         super().__init__(parent)
         self._width_controls = width_controls
+        self._preferred_row_width = preferred_row_width
         self._items = []
         self.setContentsMargins(0, 0, 0, 0)
         self.setSpacing(6)
@@ -231,8 +232,14 @@ class _WrappingLayout(qtw.QLayout):
         self._arrange(rect, apply=True)
 
     def _arrange(self, rect, *, apply):
+        sizes = self._cell_sizes()
+        if apply and self._preferred_row_width is not None and len(sizes) == 3:
+            row_width = sum(size.width() for size in sizes) + self.spacing() * (len(sizes) - 1)
+            extra = min(rect.width(), self._preferred_row_width(self.parentWidget())) - row_width
+            if extra > 0:
+                sizes[1].setWidth(sizes[1].width() + extra)
         x, y, row_height = rect.x(), rect.y(), 0
-        for item, size in zip(self._items, self._cell_sizes(), strict=True):
+        for item, size in zip(self._items, sizes, strict=True):
             if row_height and x + size.width() > rect.right() + 1:
                 x = rect.x()
                 y += row_height + self.spacing()
@@ -244,9 +251,9 @@ class _WrappingLayout(qtw.QLayout):
         return y + row_height - rect.y()
 
 
-def drawing_controls_row(*controls, width_controls=()):
+def drawing_controls_row(*controls, width_controls=(), preferred_row_width=None):
     row = qtw.QWidget()
-    layout = _WrappingLayout(row, width_controls)
+    layout = _WrappingLayout(row, width_controls, preferred_row_width)
     for control in controls:
         control.setAttribute(QtCore.Qt.WidgetAttribute.WA_LayoutUsesWidgetRect)
         control.setSizePolicy(qtw.QSizePolicy.Policy.Minimum, qtw.QSizePolicy.Policy.Fixed)

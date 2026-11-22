@@ -8,6 +8,7 @@ All layers attached to one host deliberately share its colour map and levels.
 
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from typing import Any, cast
 
 import numpy as np
@@ -523,14 +524,12 @@ class HeatmapLayer:
         sync = getattr(self.parent, "_sync_heatmap_colorbar_items", None)
         if callable(sync):
             sync(rescale=self._parent_refresh_colorbar_enabled())
+        refresh_axes = getattr(self.parent, "_refresh_trace_axis_auto_ranges", None)
+        if callable(refresh_axes):
+            refresh_axes()
 
     def _parent_refresh_colorbar_enabled(self) -> bool:
-        try:
-            checkbox = self.parent.__dict__.get("relevel_refresh")
-        except (AttributeError, RuntimeError):
-            checkbox = None
-        is_checked = getattr(checkbox, "isChecked", None)
-        return bool(is_checked()) if callable(is_checked) else False
+        return self.parent.__dict__.get("_colorbar_manual_levels") is None
 
     def source_axis_order(self) -> tuple[str, str] | None:
         if self._dropped_axis_mapping is not None:
@@ -555,7 +554,26 @@ class Plot2DLayerMixin(PlotHost):
         watched = self.__dict__.setdefault("_heatmap_transform_viewboxes", set())
         if viewbox not in watched:
             viewbox.sigTransformChanged.connect(self._schedule_heatmap_view_validation)
+            viewbox.sigRangeChanged.connect(self._schedule_visible_colour_fit)
             watched.add(viewbox)
+
+    def _schedule_visible_colour_fit(self, *_args):
+        entry = self.__dict__.get("colorbar_range_entry")
+        if (entry is None or not self._colour_fit_options()[0]
+                or self.__dict__.get("_colorbar_manual_levels") is not None):
+            return
+        timer = self.__dict__.get("_visible_colour_fit_timer")
+        if timer is None:
+            timer = self._visible_colour_fit_timer = QtCore.QTimer(entry)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._fit_visible_colour)
+        if not timer.isActive():
+            timer.start(0)
+
+    def _fit_visible_colour(self):
+        if (self._colour_fit_options()[0]
+                and self.__dict__.get("_colorbar_manual_levels") is None and self.__dict__.get("bar") is not None):
+            self.scaleColorbar()
 
     def _schedule_heatmap_view_validation(self, *_args):
         # Mixed plots mirror coordinate owners into drawing ViewBoxes. Check
@@ -676,26 +694,28 @@ class Plot2DLayerMixin(PlotHost):
         return float(getattr(layer, "opacity", DEFAULT_OVERLAY_OPACITY))
 
     def _set_layer_visibility(self, layer: Any, visible: bool) -> None:
+        changed = self._heatmap_is_visible(layer) != bool(visible)
         if layer is not self:
             setter = getattr(layer, "set_visible", None)
             if callable(setter):
                 setter(visible)
-                return
-
-        visible = bool(visible)
-        self.__dict__["_primary_heatmap_visible"] = visible
-        if not visible:
-            for item in (
-                self.__dict__.get("image"),
-                self.__dict__.get("heatmap_mesh"),
-            ):
-                if item is not None:
-                    item.hide()
-            return
-        render = getattr(self, "_render_heatmap", None)
-        geometry = getattr(self, "_heatmap_geometry", None)
-        if callable(render) and callable(geometry) and geometry() is not None:
-            render()
+        else:
+            self.__dict__["_primary_heatmap_visible"] = bool(visible)
+            if visible:
+                render = getattr(self, "_render_heatmap", None)
+                geometry = getattr(self, "_heatmap_geometry", None)
+                if callable(render) and callable(geometry) and geometry() is not None:
+                    render()
+            else:
+                for item in (self.__dict__.get("image"), self.__dict__.get("heatmap_mesh")):
+                    if item is not None:
+                        item.hide()
+        refresh_axes = getattr(self, "_refresh_trace_axis_auto_ranges", None)
+        if changed and callable(refresh_axes):
+            refresh_axes()
+        if (changed and self.__dict__.get("bar") is not None
+                and self.__dict__.get("_colorbar_manual_levels") is None):
+            self.scaleColorbar()
 
     def _sync_heatmap_layer_order(self) -> None:
         """Map table/registry order onto heatmap renderer Z values."""
@@ -1116,20 +1136,36 @@ class Plot2DLayerMixin(PlotHost):
                 items.append(item)
         return items
 
+    def _colour_fit_options(self) -> tuple[bool, int]:
+        entry = self.__dict__.get("colorbar_range_entry")
+        if entry is None:
+            return False, 100
+        return entry.visible_only.isChecked(), entry.percent.value()
+
     def _heatmap_colorbar_data_arrays(self) -> list[np.ndarray]:
         """Return primary and secondary data arrays used for colour autoscaling."""
 
         arrays: list[np.ndarray] = []
-        primary_data = self.__dict__.get("dataGrid")
-        if primary_data is not None:
-            arrays.append(np.asarray(primary_data))
-
-        for layer in self.__dict__.get("heatmaps", {}).values():
-            if layer is self:
+        visible_only, _ = self._colour_fit_options()
+        overlays = (layer for layer in self.__dict__.get("heatmaps", {}).values() if layer is not self)
+        for layer in (self, *overlays):
+            if not self._heatmap_is_visible(layer):
                 continue
-            data = getattr(layer, "data_grid", None)
-            if data is not None and getattr(layer, "geometry", None) is not None:
-                arrays.append(np.asarray(data))
+            data = self.__dict__.get("dataGrid") if layer is self else getattr(layer, "data_grid", None)
+            if data is None or (layer is not self and getattr(layer, "geometry", None) is None):
+                continue
+            values = np.asarray(data)
+            if visible_only:
+                geometry = self._heatmap_geometry() if layer is self else layer.geometry
+                if geometry is None:
+                    continue
+                x_range, y_range = self._heatmap_axis_viewbox(layer).viewRange()
+                xlo, xhi = sorted(x_range)
+                ylo, yhi = sorted(y_range)
+                xs, ys = geometry.x.centres, geometry.y.centres
+                values = values[bisect_left(ys, ylo):bisect_right(ys, yhi),
+                                bisect_left(xs, xlo):bisect_right(xs, xhi)]
+            arrays.append(values)
         return arrays
 
     def _sync_heatmap_colorbar_items(self, *, rescale: bool = False) -> None:
@@ -1154,7 +1190,7 @@ class Plot2DLayerMixin(PlotHost):
         if manual_levels is not None:
             levels = self._normalise_colorbar_levels(manual_levels)
         elif rescale:
-            levels = self._heatmap_union_colorbar_levels()
+            levels = self._data_colorbar_levels()
         if levels is None:
             levels = previous_levels
         if levels is None:
@@ -1630,29 +1666,6 @@ class Plot2DLayerMixin(PlotHost):
         if callable(emit):
             emit(dataset_key)
 
-    def _heatmap_union_colorbar_levels(self) -> tuple[float, float] | None:
-        minimum = np.inf
-        maximum = -np.inf
-        found_finite = False
-        for data in self._heatmap_colorbar_data_arrays():
-            values = np.asarray(data, dtype=float)
-            finite_values = values[np.isfinite(values)]
-            if finite_values.size == 0:
-                continue
-            found_finite = True
-            minimum = min(minimum, float(np.min(finite_values)))
-            maximum = max(maximum, float(np.max(finite_values)))
-
-        if not found_finite:
-            return None
-        if minimum == maximum:
-            constant_levels = getattr(self, "_constant_colorbar_levels", None)
-            if callable(constant_levels):
-                return constant_levels(minimum)
-            padding = 1e-6 if minimum == 0 else abs(minimum) * 1e-6
-            return minimum - padding, maximum + padding
-        return minimum, maximum
-
     @classmethod
     def _normalise_colorbar_levels(
         cls,
@@ -2016,6 +2029,8 @@ class _HeatmapAppearanceControls(qtw.QWidget):
             low = float(np.min(finite))
             high = float(np.max(finite))
             if high > low:
+                if not np.isfinite(high - low):
+                    sampled, low, high = sampled * 0.5, low * 0.5, high * 0.5
                 normalised = (sampled - low) / (high - low)
             else:
                 normalised = np.full(sampled.shape, 0.5)

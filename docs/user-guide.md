@@ -561,22 +561,34 @@ Common plot controls:
   For the full recorded measurement, choose statistics from its thumbnail.
   You can continue working or cancel while qPlot calculates.
 * Press `Esc` or double-click the plot to clear a marquee selection.
-* Double-click an axis to open **Plot settings → Axes** on that axis, or use
+* Double-click an axis to open **Plot settings → Axis scales** on that axis, or use
   **View → Axis Scaling…**. Switch axes with the **Bottom**, **Left**, **Top**
   and **Right** tabs at the top of the axis settings panel. The heading below
   the tabs shows the plotted quantity and units for the selected side.
   Hover over a shortened quantity name to read it in full. Unused sides are disabled.
-* Choose **Automatic** to follow the data. **Current limits** shows the
-  displayed range in data coordinates. To copy both endpoints at full precision,
-  right-click the readout and choose **Copy exact limits**. **Data range** sets
-  the percentage of the data used for autoscaling.
-* Choose **Manual** to edit the limits at full precision. The default format
-  is **Min / Max**. Select **Centre / Span** to enter an arithmetic midpoint
-  and the full width (`maximum - minimum`). Switching formats preserves
-  the plotted range. The readout below the fields shows the equivalent values.
-  Each axis and colour scale retains its own format while the plot window is open.
-  Values use data coordinates even on logarithmic axes, where both resulting
-  limits must remain positive.
+* **Range** shows **Minimum**, **Maximum**, **Centre** and **Span** together.
+  Centre is the arithmetic midpoint and Span is the full width. Focus a field
+  to see its exact value. Logarithmic axes also use data units and require
+  positive endpoints.
+* **Automatic** follows the data. **Autoscale from visible data** fits a
+  coordinate axis to samples inside the other axis's current limits. Editing
+  an unlocked field selects **Manual**. Press **Enter** or leave the field
+  to apply the value. **Esc** cancels a pending edit.
+* In Manual, the two most recently edited fields determine the range. On the
+  first edit, Minimum and Maximum are paired, as are Centre and Span. Click
+  a padlock to hold one field while editing another or fitting to data.
+  Clicking a second padlock transfers the lock. In Automatic, editing the held
+  field refits the range and keeps tracking live data. In Manual, it preserves
+  the most recently edited other field.
+* **Fit once to data** refits the whole range and keeps Manual selected.
+  Holding Minimum or Maximum fits the opposite endpoint. Holding Centre gives
+  equal reach on each side, enough to cover the data. Holding Span centres that
+  width on the data midpoint. If a fit is impossible, the previous limits stay in use.
+* To take just one value from the data, hover over or focus its field and use
+  the button beside its padlock, or right-click the field and choose **Use
+  data minimum**, **Use data maximum**, **Use data centre** or **Use data span**.
+  For example, with Centre held, **Use data span** copies the measured width
+  and keeps it centred on your chosen value.
 * Under **Axis behaviour**, **Log scale** switches a line-plot axis to
   base-10 logarithmic scaling. Non-positive values are omitted. **Link range
   to** lists other plot axes by plot title, axis position and quantity.
@@ -589,7 +601,7 @@ Common plot controls:
   have different orientations. **Link range to** shows the paused link and
   reconnects it when the orientations match again. Choose **None** to remove it.
 * Open **View → Plot settings…** to preview edits on the current plot.
-  Choose **Datasets** for its measurements and drawing styles, **Axes** for its
+  Choose **Datasets** for its measurements and drawing styles, **Axis scales** for its
   coordinate ranges, or **Colour scale** when the plot includes a heatmap.
   Drag the thin divider between the dataset list and the selected-dataset controls
   to resize the panes. Narrow windows stack these panes vertically, and the controls
@@ -604,7 +616,7 @@ Common plot controls:
   Choose **Keep changes** to keep edits across the pages, or **Cancel** to undo the session and close.
   `Esc` and the window's close button also cancel. Cancellation undoes dataset
   additions and removals, and restores styles, axis assignments, drawing order, the colour map
-  and its range, edited axes, Auto/Manual mode, symmetry and refresh-autoscaling choice.
+  and its range, edited axes, range locks and autoscaling choices.
   Multiple selections show **Mixed** where their values differ. Visibility, opacity
   and axis assignments apply to all selected datasets. Line and marker styles apply
   to selected traces. The colour scale and axis swap apply to the whole plot.
@@ -618,8 +630,8 @@ Common plot controls:
   open the **Colour scale** page. Selecting a map previews it on the plot.
   The name and gradient update together. The same **Keep changes** and **Cancel**
   buttons apply to the whole editing session.
-* **Colour scale** starts with **Colour map**, followed by **Set scaling** and
-  **Choose colour map**. Search by map name or narrow the list with **Source** and
+* **Colour scale** shows the quantity, its **Range**, the current **Colour map**
+  and the **Choose colour map** list. Search by map name or narrow the list with **Source** and
   **Category**; the available categories follow the chosen source. Filtering does
   not change the plot. The **Colour map** section always shows
   the active name and preview, even when it is filtered out of the list. Opening
@@ -628,10 +640,9 @@ Common plot controls:
   row; filters are cleared if they hide it. Click the **Name** or **Type** heading
   to sort, and click again to reverse the order. Category tooltips explain the
   different kinds of colour map.
-  Colour limits use a compact display; focusing a field reveals its full
-  precision. Display rounding never changes the actual limits. **Symmetric
-  about zero** remains available in both Auto and Manual modes; only
-  **Autoscale on refresh** is disabled in Manual mode.
+  **Data range** selects the central percentage of eligible colour values.
+  For example, 98% uses the 1st and 99th percentiles. Turn on **Autoscale
+  from visible data** to use samples in the current horizontal and vertical view.
 * Under **Preferences → Plots → New traces and heatmaps**, **Trace appearance**
   sets the initial colour, line width and line style in one row, using the same
   previews as **Plot settings → Datasets**.
@@ -645,10 +656,8 @@ Common plot controls:
   vertically when needed, with the action buttons kept outside the scrolling
   area. Labels reflow in narrow windows, and arrows reveal tab headings when
   they do not all fit.
-* Invalid range entries stay in the editor with an explanation underneath.
-  Correct the values to apply them, or return to automatic scaling to discard the invalid entry.
-  Correct an invalid entry before switching between `Min / Max` and `Centre / Span`;
-  a blocked format change keeps your input and the current format.
+* If an edit would give an invalid range, the editor explains the problem
+  and the plot keeps its last valid range.
 * Cut windows have a `Cut controls` panel for the cut direction and position.
 * The right `Data operations` panel applies data operations during refresh, after
   data is loaded from the database.
@@ -708,8 +717,8 @@ hides that layer until its units match again.
 
 The **Datasets** page in **Plot settings** lists the heatmap layers. Added layers
 are translucent so overlapping maps remain visible. Select a layer to adjust
-its opacity or choose **Remove**. All layers share one colour map and colour
-range, which is autoscaled across their combined finite values. A hidden source
+its opacity or choose **Remove**. All layers share one colour map. In Automatic,
+the colour range uses the combined finite values of the visible layers. A hidden source
 plot remains live while its layer is present, just as it does for an added line
 trace. Large hidden heatmap sources also follow the visible window's viewport
 when qPlot reloads zoomed data.
@@ -722,16 +731,10 @@ Colour-scale controls:
 
 * Right-click the plot and choose `Autoscale Colour`, or press `C`.
 * Double-click the colour scale bar to open **Plot settings** on the **Colour scale** page, or use **View → Colour Scale…**.
-  Its range controls offer the same `Min / Max` and `Centre / Span` formats as
-  the plot axes.
-* **Autoscale on refresh** on the **Colour scale** page is enabled by default for
-  2D plots. Manual limits, including adjustments made by dragging the colour
-  bar, grey out this option without changing its value. Returning to **Auto**
-  restores the option with your previous choice.
-* **Symmetric** in the dialog keeps limits equally spaced around zero, for both
-  2D plots and 3D slices. It is off by default. Automatic limits use the larger
-  absolute endpoint; editing either manual limit mirrors the other. In
-  `Centre / Span` mode, the centre stays at zero. Locked limits remain locked.
+  Its **Range** controls work the same way as the coordinate axes.
+* To keep positive and negative limits symmetric about zero, lock **Centre**
+  and set its value to zero. In Automatic, the colour limits expand or shrink
+  equally on both sides as the heatmap changes.
 * Drag one colour-scale handle to adjust a limit.
 * Drag between handles to slide the range.
 * Drag outside the handles to widen or narrow the range.
@@ -799,10 +802,11 @@ An em dash (`—`) marks an unavailable or nonfinite cursor value.
   Whole-volume limits include slice operations and are calculated in the
   background, with an explicitly provisional range and scan progress. Live
   limits expand without shrinking. Press C to recalculate; dragging the
-  colourbar or using marquee colour zoom locks the limits. The **Colour** dropdown
-  is also available on **Plot settings → Colour scale** and stays in sync with
-  the toolbar. Select **Symmetric about zero** there for matching positive and
-  negative limits.
+  colourbar or using marquee colour zoom locks the limits. In **Plot settings →
+  Colour scale**, **Data source** selects the whole volume or the current slice,
+  and **Manual** holds the current limits. Select **Current slice** to fit a central
+  percentage or the visible region of that slice. Lock **Centre** at zero for matching positive
+  and negative limits.
 * **Slice operations** run independently on each full plane, regardless of
   zoom or marquee bounds. Swapping X/Y preserves the physical operation.
   Changing the depth parameter restores that plane's own operation settings,
