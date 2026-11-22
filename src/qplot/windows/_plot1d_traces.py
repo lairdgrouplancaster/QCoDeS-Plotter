@@ -1477,10 +1477,10 @@ class _TraceAppearanceDialog(qtw.QDialog):
         display_layout.setSpacing(6)
         display_layout.setRowWrapPolicy(qtw.QFormLayout.RowWrapPolicy.WrapLongRows)
         display_layout.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        display_layout.addRow(self.line_enable,
-                              drawing_controls_row(self.line_color, self.line_width, self.line_style))
-        display_layout.addRow(self.marker_enable,
-                              drawing_controls_row(self.marker_color, self.marker_size, self.marker_symbol))
+        line_controls = (self.line_color, self.line_width, self.line_style)
+        marker_controls = (self.marker_color, self.marker_size, self.marker_symbol)
+        display_layout.addRow(self.line_enable, drawing_controls_row(*line_controls, width_controls=marker_controls))
+        display_layout.addRow(self.marker_enable, drawing_controls_row(*marker_controls, width_controls=line_controls))
         panel_layout.addWidget(display_group)
 
         panel_layout.insertWidget(0, visibility_opacity_row(self.visible, self.opacity_slider, self.opacity))

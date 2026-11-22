@@ -178,8 +178,9 @@ class ColourSwatchCombo(IconPreviewCombo):
 class _WrappingLayout(qtw.QLayout):
     """Lay out equal-width drawing controls, wrapping when necessary."""
 
-    def __init__(self, parent):
+    def __init__(self, parent, width_controls):
         super().__init__(parent)
+        self._width_controls = width_controls
         self._items = []
         self.setContentsMargins(0, 0, 0, 0)
         self.setSpacing(6)
@@ -208,6 +209,8 @@ class _WrappingLayout(qtw.QLayout):
     def _cell_sizes(self):
         sizes = [item.sizeHint().expandedTo(item.minimumSize()) for item in self._items]
         width = max((size.width() for size in sizes), default=0)
+        for control in self._width_controls:
+            width = max(width, control.sizeHint().width(), control.minimumWidth())
         for size in sizes:
             size.setWidth(width)
         return sizes
@@ -241,10 +244,11 @@ class _WrappingLayout(qtw.QLayout):
         return y + row_height - rect.y()
 
 
-def drawing_controls_row(*controls):
+def drawing_controls_row(*controls, width_controls=()):
     row = qtw.QWidget()
-    layout = _WrappingLayout(row)
+    layout = _WrappingLayout(row, width_controls)
     for control in controls:
+        control.setAttribute(QtCore.Qt.WidgetAttribute.WA_LayoutUsesWidgetRect)
         control.setSizePolicy(qtw.QSizePolicy.Policy.Minimum, qtw.QSizePolicy.Policy.Fixed)
         layout.addWidget(control)
     return row

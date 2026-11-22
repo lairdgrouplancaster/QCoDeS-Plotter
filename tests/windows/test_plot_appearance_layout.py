@@ -74,6 +74,22 @@ def test_properties_scrollbar_releases_width_when_drawing_row_fits(qapplication)
         scroll.close()
 
 
+def test_drawing_rows_share_the_widest_controls_size_hint(qapplication):
+    short = qtw.QPushButton("Width")
+    long = qtw.QPushButton("A much wider marker size")
+    first = drawing_controls_row(short, width_controls=(long,))
+    second = drawing_controls_row(long, width_controls=(short,))
+    try:
+        for row in (first, second):
+            row.resize(row.sizeHint())
+            row.show()
+        qapplication.processEvents()
+        assert short.width() == long.width() == long.sizeHint().width()
+    finally:
+        first.close()
+        second.close()
+
+
 @pytest.mark.parametrize("screen_size", [(900, 700), (560, 500)])
 @pytest.mark.parametrize("font_size", [9, 14])
 def test_appearance_fits_screen_and_keeps_actions_accessible(

@@ -3408,12 +3408,11 @@ class RunListParentLookupTestCase(unittest.TestCase):
         statuses = []
         window.show_status = lambda message, timeout=0: statuses.append((message, timeout))
         sides = {"x": "bottom", "y": "left", "x2": "top", "y2": "right"}
-        control_widgets = []
+        editor = window._create_axis_scale_editor()
 
         try:
             for axis, side in sides.items():
                 plot_item.getAxis(side).setLogMode(True)
-                control_widgets.append(window._new_axis_scale_controls(axis))
                 controls = window._axis_scale_controls[axis]
                 controls.minText.setText("10")
                 controls.maxText.setText("1000")
@@ -3451,8 +3450,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual(float(x_controls.maxText.text()), 100.0)
             np.testing.assert_allclose(window.vb.viewRange()[0], [0.0, 2.0])
         finally:
-            for control_widget in control_widgets:
-                control_widget.deleteLater()
+            editor.deleteLater()
             window.top_vb.deleteLater()
             window.right_vb.deleteLater()
             widget.deleteLater()
