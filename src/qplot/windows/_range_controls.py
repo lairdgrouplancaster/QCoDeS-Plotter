@@ -213,8 +213,25 @@ class _RangeEdit(CompactNumberEdit):
 
     def focusOutEvent(self, event: QtGui.QFocusEvent | None) -> None:
         super().focusOutEvent(event)
-        if event is not None and event.reason() != QtCore.Qt.FocusReason.PopupFocusReason:
-            self.left.emit()
+        if event is None or event.reason() == QtCore.Qt.FocusReason.PopupFocusReason:
+            return
+        # Keep changes may take focus before Qt delivers its click. Treat the
+        # field and that button as one focus group until the user decides.
+        button = qtw.QApplication.focusWidget()
+        if isinstance(button, qtw.QPushButton):
+            box = button.parentWidget()
+            if isinstance(box, qtw.QDialogButtonBox) and box.standardButton(button) == box.StandardButton.Ok:
+                button.installEventFilter(self)
+                return
+        self.left.emit()
+
+    def eventFilter(self, watched: QtCore.QObject | None, event: QtCore.QEvent | None) -> bool:
+        if (isinstance(watched, qtw.QPushButton) and event is not None
+                and event.type() == QtCore.QEvent.Type.FocusOut):
+            watched.removeEventFilter(self)
+            if qtw.QApplication.focusWidget() is not self:
+                self.left.emit()
+        return super().eventFilter(watched, event)
 
 
 class _FieldBox(qtw.QWidget):
@@ -234,6 +251,9 @@ class _FieldBox(qtw.QWidget):
         self.use.setIcon(QtGui.QIcon(_RangeIcon("fit")))
         self.use.setAccessibleName(f"Use data {_NAMES[field].lower()}")
         self.use.setToolTip(self.use.accessibleName())
+        policy = self.use.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self.use.setSizePolicy(policy)
         self.lock = qtw.QToolButton(self)
         self.lock.setCheckable(True)
         self.lock.setIcon(QtGui.QIcon(_RangeIcon("lock")))
@@ -501,10 +521,18 @@ class RangeControls(qtw.QWidget):
         target = self._fit_range() if self.state.automatic and field == self.state.lock else None
         self._publish(self.state.edit(field, value, target))
 
-    def _finish(self, field: str, leaving: bool) -> None:
+    def commit_pending(self) -> bool:
+        field = self._draft
+        if field is None or self._finish(field, leaving=False):
+            return True
+        self.fields[field].setFocus()
+        self.fields[field].selectAll()
+        return False
+
+    def _finish(self, field: str, leaving: bool) -> bool:
         widget = self.fields[field]
         if self._draft != field and widget.text() == repr(float(self.state.value(field))):
-            return
+            return True
         text = widget.text().strip()
         try:
             if not _NUMBER.fullmatch(text):
@@ -514,8 +542,9 @@ class RangeControls(qtw.QWidget):
             if leaving:
                 self._cancel()
             self.show_error(str(exc))
-            return
+            return False
         self.restore()
+        return True
 
     def _use_data(self, field: str, _checked: bool = False) -> None:
         try:

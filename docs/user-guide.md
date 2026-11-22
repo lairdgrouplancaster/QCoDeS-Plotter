@@ -444,7 +444,7 @@ Common actions:
 * `Help -> Copy Path to Diagnostic Log` copies the log file location for support
   or troubleshooting.
 * `Help -> Show Diagnostic Log in Finder` reveals the log on macOS. On Windows,
-  `Show Diagnostic Log in File Explorer` opens its folder.
+  `Show Diagnostic Log in File Explorer` selects the log in its folder.
 * `File -> Quit qPlot` closes the database and exits. Its shortcut is `Cmd+Q`
   on macOS and `Ctrl+Q` on Windows and Linux.
 * **Refresh every** controls the interval for the run table and all live plots.
@@ -557,7 +557,11 @@ Common plot controls:
 * Right-click inside a marquee selection for zoom and statistics actions.
   Statistics use the primary trace or heatmap identified in the report. A
   heatmap report gives the grid dimensions and the number of finite cells
-  that contributed. **Copy** includes the run, measurement and quantity units.
+  that contributed. The report starts with the measured quantity, units and run,
+  followed by the average, standard deviation and extrema. **Selection and source**
+  contains the coordinate bounds and contributing data. **Copy full report**
+  copies all results and source details. To copy individual rows, select them
+  and use **Copy Selection**.
   For the full recorded measurement, choose statistics from its thumbnail.
   You can continue working or cancel while qPlot calculates.
 * Press `Esc` or double-click the plot to clear a marquee selection.
@@ -573,7 +577,9 @@ Common plot controls:
 * **Automatic** follows the data. **Autoscale from visible data** fits a
   coordinate axis to samples inside the other axis's current limits. Editing
   an unlocked field selects **Manual**. Press **Enter** or leave the field
-  to apply the value. **Esc** cancels a pending edit.
+  to apply the value. If you select **Keep changes** with an invalid axis or
+  colour limit, the dialog selects the value and explains what to correct.
+  **Esc** cancels the pending edit.
 * In Manual, the two most recently edited fields determine the range. On the
   first edit, Minimum and Maximum are paired, as are Centre and Span. Click
   a padlock to hold one field while editing another or fitting to data.
@@ -627,15 +633,13 @@ Common plot controls:
   To hide or show datasets, select their rows and change **Visible** in
   **Selected datasets**. Hidden rows keep their struck-through names and dimmed previews.
   For heatmaps, click the colour-map name and gradient in **Whole plot** to
-  open the **Colour scale** page. Selecting a map previews it on the plot.
-  The name and gradient update together. The same **Keep changes** and **Cancel**
-  buttons apply to the whole editing session.
-* **Colour scale** shows the quantity, its **Range**, the current **Colour map**
-  and the **Choose colour map** list. Search by map name or narrow the list with **Source** and
-  **Category**; the available categories follow the chosen source. Filtering does
-  not change the plot. The **Colour map** section always shows
-  the active name and preview, even when it is filtered out of the list. Opening
-  the dialog reveals and scrolls to the active map.
+  open the colour-map chooser directly.
+* **Colour scale** shows the quantity, its **Range**, and the current map name
+  and gradient. Select **Choose colour map…** to browse. The chooser opens at
+  the active map. Search by name or filter by **Source** and **Category**.
+  Selecting a row previews that map on the plot. **OK** keeps the preview in
+  Plot settings. **Cancel** restores the map you started browsing with. The
+  **Keep changes** and **Cancel** buttons in Plot settings apply to the whole session.
   Select the current map name to copy it, or use **Show in list** to reveal its
   row; filters are cleared if they hide it. Click the **Name** or **Type** heading
   to sort, and click again to reverse the order. Category tooltips explain the
@@ -643,7 +647,11 @@ Common plot controls:
   **Data range** selects the central percentage of eligible colour values.
   For example, 98% uses the 1st and 99th percentiles. Turn on **Autoscale
   from visible data** to use samples in the current horizontal and vertical view.
-* Under **Preferences → Plots → New traces and heatmaps**, **Trace appearance**
+* **Preferences → Plots → Plot display** groups the settings for open plots,
+  including axis styling, cursor precision and the warning when adding data
+  with incompatible axes. **New plot defaults** groups window placement,
+  complex representations, trace appearance and the heatmap colour map.
+  **Trace appearance**
   sets the initial colour, line width and line style in one row, using the same
   previews as **Plot settings → Datasets**.
   Choose a preset colour or **Custom**. These defaults apply to new
@@ -942,8 +950,11 @@ shows **All measurements in each run** as plain text. The review shows the
 number of selected runs and their run numbers in a single-line field that you
 can select and copy. After folder selection, the filename review lists one CSV
 per run. Double-click a name to edit it, choose **Skip** to leave it out, or
-choose **Replace** for an existing file. Resolve duplicate names before
-selecting **Export** with the displayed file count. Each run captures the
+choose **Replace** for an existing file. The footer counts files that are ready,
+need attention or are skipped. **Next issue** opens the next filename that needs
+attention. **Use unique names** adds numbered suffixes to resolve conflicts,
+preserving explicit replacement choices where possible. Select **Export** when
+the filenames are ready. Each run captures the
 committed data available when its export starts. Later live appends are excluded
 from that run's captured export. Trusted live exports use the run-prefix reader
 and do not need a writer checkpoint or a whole-database copy.
@@ -970,7 +981,7 @@ Successful exports show **Export complete** with a tick. When all exports have
 finished, **Hide** becomes **Done**; for a single successful export, the completion
 message also shows the output path, which you can select and copy. Select a
 completed export and use **Open file** to open it in its default application,
-or **Open folder** to open its destination folder. For a failed export, select
+or **Show in folder** to locate it in your file manager. For a failed export, select
 the row and choose **Details…**, or double-click the row, to view and copy
 the error details.
 Switching or closing the database cancels pending database copies and raw exports.

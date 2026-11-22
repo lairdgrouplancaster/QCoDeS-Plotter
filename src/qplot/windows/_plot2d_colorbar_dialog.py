@@ -5,7 +5,7 @@ import numpy as np
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
-from ._colour_map_picker import ColourMapPicker
+from ._colour_map_picker import ColourMapDialog, CurrentColourMap
 from ._plot_host import PlotHost
 from ._range_controls import RangeControls, RangeState
 
@@ -15,7 +15,6 @@ if TYPE_CHECKING:
         _colorbar_manual_levels: tuple[float, float] | None
         bar: Any
         colorbar_auto_radio: qtw.QRadioButton
-        colorbar_colormap_table: qtw.QTableWidget
         colorbar_manual_radio: qtw.QRadioButton
         colorbar_max_text: qtw.QLineEdit
         colorbar_min_text: qtw.QLineEdit
@@ -83,22 +82,13 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             options.addStretch()
             layout.addLayout(options)
 
-        self.colorbar_map_picker = ColourMapPicker(
-            self._available_colorbar_colormaps(), self._current_colorbar_colormap_name(), controls,
-        )
-        picker = self.colorbar_map_picker
-        self.colorbar_colormap_table = picker.table
-        self.colorbar_search = picker.search
-        self.colorbar_source_combo = picker.source_combo
-        self.colorbar_category_combo = picker.category_combo
-        self.colorbar_current_name = picker.current_name
-        self.colorbar_current_preview = picker.current_preview
-        self.colorbar_no_matches = picker.no_matches
-        self.colorbar_show_current_button = picker.show_current_button
-        self.colorbar_current_heading = picker.current_heading
-        self.colorbar_picker_heading = picker.picker_heading
-        picker.mapSelected.connect(self.setColorbarColorMap)
-        layout.addWidget(picker, 1)
+        self.colorbar_choose_map = qtw.QPushButton("Choose colour map…")
+        self.colorbar_choose_map.setAutoDefault(False)
+        self.colorbar_choose_map.clicked.connect(lambda: self.open_colour_map_chooser(controls.window()))
+        self.colorbar_current_map = CurrentColourMap(self.colorbar_choose_map)
+        layout.addLayout(self.colorbar_current_map)
+        outer.addStretch()
+        self.colorbar_map_dialog: ColourMapDialog | None = None
 
         self.colorbar_scale_controls = controls
 
@@ -146,15 +136,28 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             self.scaleColorbar()
         self._sync_colorbar_scale_controls()
 
-    def _populate_colorbar_colormap_table(self):
-        self.colorbar_map_picker.set_maps(
-            self._available_colorbar_colormaps(), self._current_colorbar_colormap_name(),
-        )
+    def open_colour_map_chooser(self, parent):
+        dialog = self.colorbar_map_dialog
+        if dialog is not None:
+            dialog.raise_()
+            dialog.activateWindow()
+            return
+        dialog = self.colorbar_map_dialog = ColourMapDialog(self, parent)
+        dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.finished.connect(self._colour_map_chooser_finished)
+        dialog.open()
+
+    def _colour_map_chooser_finished(self):
+        self.colorbar_map_dialog = None
 
     def _sync_current_colorbar_map(self):
-        picker = self.__dict__.get("colorbar_map_picker")
-        if picker is not None:
-            picker.set_current_map(self._current_colorbar_colormap_name())
+        current = self.__dict__.get("colorbar_current_map")
+        if current is not None:
+            name = self._current_colorbar_colormap_name()
+            current.set_colormap(name)
+            dialog = self.colorbar_map_dialog
+            if dialog is not None:
+                dialog.picker.set_current_map(name)
 
     def _sync_colorbar_scale_controls(self):
         """
@@ -165,9 +168,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         if levels is not None:
             self._sync_colorbar_level_fields(*levels)
 
-        table = getattr(self, "colorbar_colormap_table", None)
-        if table is not None:
-            self._sync_current_colorbar_map()
+        self._sync_current_colorbar_map()
 
     def _sync_colorbar_scale_mode(self):
         entry = self.__dict__.get("colorbar_range_entry")
@@ -191,15 +192,6 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         if state.automatic and self.__dict__.get("_colour_fit_error"):
             entry.show_error(self._colour_fit_error)
 
-    def _colorbar_colormap_row(self, name):
-        picker = self.__dict__.get("colorbar_map_picker")
-        return picker.row_for_name(name) if picker is not None else -1
-
-    def _select_colorbar_colormap(self, name):
-        picker = self.__dict__.get("colorbar_map_picker")
-        if picker is not None:
-            picker.select_map(name)
-
     @QtCore.pyqtSlot(int)
     def _colorbar_colormap_changed(self, index):
         """
@@ -215,12 +207,8 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             self.setColorbarColorMap(name)
 
     @QtCore.pyqtSlot()
-    def _show_current_colorbar_map(self):
-        self.colorbar_map_picker.reveal_current()
-
-    @QtCore.pyqtSlot()
     def open_colorbar_scale_dialog(self):
-        """Open the colour-scale controls and reveal the active map."""
+        """Open the colour-scale range controls and current map."""
         controls = getattr(self, "colorbar_scale_controls", None)
         if controls is None:
             return
@@ -229,18 +217,12 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             open_settings(page="Colour scale")
             return
 
-        self._populate_colorbar_colormap_table()
         self._sync_colorbar_scale_controls()
-        self._show_current_colorbar_map()
-        table = self.colorbar_colormap_table
-        row = self._colorbar_colormap_row(self._current_colorbar_colormap_name())
-
         dialog = getattr(self, "colorbar_scale_dialog", None)
-        first_open = dialog is None
         if dialog is None:
             dialog = qtw.QDialog(cast(qtw.QWidget, self))
             dialog.setWindowTitle("Colour scale")
-            dialog.resize(480, 560)
+            dialog.finished.connect(self.close_colour_map_chooser)
             layout = qtw.QVBoxLayout(dialog)
             layout.addWidget(controls)
 
@@ -251,24 +233,12 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             self.colorbar_scale_dialog = dialog
 
         dialog.show()
-        if first_open:
-            # Measure the styled viewport after layout, including the actual
-            # frame/header sizes, so the default ends on six complete rows.
-            dialog_layout = dialog.layout()
-            header = table.verticalHeader()
-            viewport = table.viewport()
-            assert dialog_layout is not None and header is not None and viewport is not None
-            dialog_layout.activate()
-            row_height = table.rowHeight(0) if table.rowCount() else header.defaultSectionSize()
-            viewport_height = 6 * row_height
-            table.setMinimumHeight(table.height() - viewport.height() + viewport_height)
-            dialog_layout.activate()
-            dialog.resize(dialog.width(), dialog.height() + viewport_height - viewport.height())
-            dialog_layout.activate()
-        if row >= 0:
-            table.scrollToItem(table.item(row, 0), qtw.QAbstractItemView.ScrollHint.PositionAtCenter)
         dialog.raise_()
         dialog.activateWindow()
+
+    def close_colour_map_chooser(self):
+        if self.colorbar_map_dialog is not None:
+            self.colorbar_map_dialog.reject()
 
     def setColorbarColorMap(self, name):
         """

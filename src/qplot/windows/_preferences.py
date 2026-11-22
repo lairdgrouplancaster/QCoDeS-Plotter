@@ -552,8 +552,6 @@ class PreferencesDialog(qtw.QDialog):
         return tab
 
     def _add_window_grid(self, tab, form):
-        self._add_section(form, "New plot windows")
-
         self.plotTileRowsSpin = qtw.QSpinBox(tab)
         self.plotTileRowsSpin.setObjectName("plotTileRowsPreferenceSpin")
         self.plotTileRowsSpin.setAccessibleName("Window grid rows")
@@ -570,7 +568,8 @@ class PreferencesDialog(qtw.QDialog):
             "Columns in the screen grid; plots fill left to right, then top "
             "to bottom, wrapping after the last cell. Existing plots stay in place."
             )
-        grid_layout = qtw.QHBoxLayout()
+        grid_row = qtw.QWidget(tab)
+        grid_layout = qtw.QHBoxLayout(grid_row)
         grid_layout.setContentsMargins(0, 0, 0, 0)
         grid_layout.setSpacing(6)
         rows_label = qtw.QLabel("&Rows:", tab)
@@ -583,7 +582,8 @@ class PreferencesDialog(qtw.QDialog):
         grid_layout.addWidget(columns_label)
         grid_layout.addWidget(self.plotTileColumnsSpin)
         grid_layout.addStretch(1)
-        form.addRow(grid_layout)
+        grid_row.setFocusProxy(self.plotTileRowsSpin)
+        self._add_row(form, "Window grid:", grid_row)
 
     def _add_refresh_interval(self, tab, form):
         self.refreshRateSpin = qtw.QDoubleSpinBox(tab)
@@ -622,7 +622,7 @@ class PreferencesDialog(qtw.QDialog):
         form.setContentsMargins(8, 8, 8, 8)
         form.setSpacing(8)
 
-        self._add_section(form, "All plots")
+        self._add_section(form, "Plot display")
 
         self.fontSizeSpin = qtw.QSpinBox(tab)
         self.fontSizeSpin.setObjectName("fontSizePreferenceSpin")
@@ -640,8 +640,6 @@ class PreferencesDialog(qtw.QDialog):
             "Show the database, run IDs and parameters above plots, including in exports"
             )
         form.addRow(self.showSourceAnnotationCheck)
-
-        self._add_section(form, "Axes and colour scales")
 
         self.axisTickWidthSpin = qtw.QDoubleSpinBox(tab)
         self.axisTickWidthSpin.setObjectName("axisTickWidthPreferenceSpin")
@@ -677,8 +675,9 @@ class PreferencesDialog(qtw.QDialog):
         self._add_row(form, "Colour scale &width:", self.colorbarWidthSpin)
 
         self._add_plot_interaction(tab, form)
+        self._add_section(form, "New plot defaults")
         self._add_window_grid(tab, form)
-        self._add_section(form, "New traces and heatmaps")
+        self._add_complex_defaults(tab, form)
 
         self.defaultTraceColourCombo = _PreferenceTraceColourCombo()
         self.defaultTraceColourCombo.setObjectName("defaultTraceColourPreferenceCombo")
@@ -714,8 +713,6 @@ class PreferencesDialog(qtw.QDialog):
         return tab
 
     def _add_plot_interaction(self, tab, form):
-        self._add_section(form, "Navigation and readout")
-
         self.cursorSignificantFiguresSpin = qtw.QSpinBox(tab)
         self.cursorSignificantFiguresSpin.setObjectName("cursorSignificantFiguresPreferenceSpin")
         self.cursorSignificantFiguresSpin.setAccessibleName("Cursor precision (significant figures)")
@@ -725,8 +722,17 @@ class PreferencesDialog(qtw.QDialog):
             )
         self._add_row(form, "Cursor &precision (significant figures):", self.cursorSignificantFiguresSpin)
 
-        self._add_section(form, "New complex plots")
+        self.confirmIncompatibleAxesCheck = _PreferencesCheckBox(
+            "Warn before adding data with incompatible axes", tab,
+        )
+        self.confirmIncompatibleAxesCheck.setObjectName("confirmIncompatibleAxesPreferenceCheck")
+        self.confirmIncompatibleAxesCheck.setToolTip("Warn when added data has coordinate names or units that differ from the current plot.")
+        self.confirmIncompatibleAxesCheck.setAccessibleName(
+            "Warn before adding data with incompatible axes"
+        )
+        form.addRow(self.confirmIncompatibleAxesCheck)
 
+    def _add_complex_defaults(self, tab, form):
         for attribute, label, options in (
             ("complex1dCombo", "1D complex plots:", COMPLEX_1D_OPTIONS),
             ("complexNdCombo", "Higher-dimensional complex plots:", COMPLEX_COMPONENT_OPTIONS),
@@ -742,18 +748,6 @@ class PreferencesDialog(qtw.QDialog):
                 combo.addItem(text, value)
             setattr(self, attribute, combo)
             self._add_row(form, label, combo)
-
-        self._add_section(form, "Adding data")
-
-        self.confirmIncompatibleAxesCheck = _PreferencesCheckBox(
-            "Warn before adding data with incompatible axes", tab,
-        )
-        self.confirmIncompatibleAxesCheck.setObjectName("confirmIncompatibleAxesPreferenceCheck")
-        self.confirmIncompatibleAxesCheck.setToolTip("Warn when added data has coordinate names or units that differ from the current plot.")
-        self.confirmIncompatibleAxesCheck.setAccessibleName(
-            "Warn before adding data with incompatible axes"
-        )
-        form.addRow(self.confirmIncompatibleAxesCheck)
 
     def _files_tab(self):
         tab = qtw.QWidget(self)

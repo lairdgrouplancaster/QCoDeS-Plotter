@@ -436,8 +436,8 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         return new_statistics_dialog(self, stats_text, "Marquee statistics")
 
     @staticmethod
-    def _new_marquee_stats_table(stats_text: str) -> CopyableTableWidget:
-        rows = PlotMarqueeMixin._marquee_stats_table_rows(stats_text)
+    def _new_marquee_stats_table(results: list[tuple[str, str]], details: list[tuple[str, str]]) -> CopyableTableWidget:
+        rows = results + details
         stats_table = CopyableTableWidget()
         stats_table.setObjectName("statisticsTable")
         stats_table.setColumnCount(2)
@@ -448,7 +448,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         stats_table.setSelectionBehavior(qtw.QAbstractItemView.SelectionBehavior.SelectRows)
         stats_table.setSelectionMode(qtw.QAbstractItemView.SelectionMode.ExtendedSelection)
         stats_table.setTextElideMode(QtCore.Qt.TextElideMode.ElideNone)
-        stats_table.setWordWrap(False)
+        stats_table.setWordWrap(True)
         vertical_header = stats_table.verticalHeader()
         horizontal_header = stats_table.horizontalHeader()
         if vertical_header is None or horizontal_header is None:
@@ -475,6 +475,18 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             value_item.setToolTip(value)
             stats_table.setItem(row, 0, field_item)
             stats_table.setItem(row, 1, value_item)
+
+        if details:
+            section_row = len(results)
+            stats_table.insertRow(section_row)
+            section = qtw.QTableWidgetItem("Selection and source")
+            section.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
+            font = stats_table.font()
+            font.setBold(True)
+            section.setFont(font)
+            section.setBackground(stats_table.palette().button())
+            stats_table.setItem(section_row, 0, section)
+            stats_table.setSpan(section_row, 0, 1, 2)
 
         return stats_table
 
@@ -773,17 +785,50 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             }
 
 
+def _statistics_sections(stats_text: str) -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
+    rows = PlotMarqueeMixin._marquee_stats_table_rows(stats_text)
+    fields = dict(rows)
+    # For a transformed trace, the result units belong to the plotted
+    # quantity. Keep the original measurement in the source details below.
+    quantity = fields.get("Statistics quantity") or fields.get("Measurement", "")
+    run, _, guid = fields.get("Run", "").partition(" (")
+    heading = " · ".join(part for part in (quantity, f"Run {run}" if run else "") if part)
+    results = []
+    details = []
+    for field, value in rows:
+        if field in ("Average", "Standard deviation", "Max", "Min", "Statistics"):
+            results.append((field, value))
+        elif field == "Run":
+            if guid:
+                details.append(("Run GUID", guid.removesuffix(")")))
+        elif field not in ("Measurement", "Statistics quantity") or value != quantity:
+            details.append((field, value))
+    return heading, results, details
+
+
 def new_statistics_dialog(parent, stats_text, title):
     dialog = qtw.QDialog(parent)
     dialog.setWindowTitle(title)
-
     layout = dialog_layout(dialog)
-    stats_table = PlotMarqueeMixin._new_marquee_stats_table(stats_text)
+    heading, results, details = _statistics_sections(stats_text)
+    if heading:
+        label = qtw.QLabel()
+        label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        label.setText(heading)
+        label.setToolTip(heading)
+        label.setWordWrap(True)
+        label.setSizePolicy(qtw.QSizePolicy.Policy.Ignored, qtw.QSizePolicy.Policy.Preferred)
+        label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        font = label.font()
+        font.setBold(True)
+        label.setFont(font)
+        layout.addWidget(label)
+    stats_table = PlotMarqueeMixin._new_marquee_stats_table(results, details)
     stats_table.setAccessibleName(title)
     layout.addWidget(stats_table, 1)
 
     buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
-    copy_button = buttons.addButton("Copy", qtw.QDialogButtonBox.ButtonRole.ActionRole)
+    copy_button = buttons.addButton("Copy full report", qtw.QDialogButtonBox.ButtonRole.ActionRole)
     if copy_button is None:
         raise RuntimeError("Marquee stats copy button is not available.")
 
@@ -799,8 +844,7 @@ def new_statistics_dialog(parent, stats_text, title):
     assert close is not None
     equal_button_widths(copy_button, close)
     close_default(buttons)
-    # Leave room for the numerical results below the source and axis rows.
-    # The shared size helper caps long reports at the available screen space.
-    resize_dialog(dialog, 640, max(380, 88 + 34 * stats_table.rowCount()))
+    # Keep the results visible on opening and let longer source details scroll.
+    resize_dialog(dialog, 600, min(480, max(260, 112 + 27 * stats_table.rowCount())))
 
     return dialog

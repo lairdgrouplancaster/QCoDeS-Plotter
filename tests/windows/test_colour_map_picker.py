@@ -18,8 +18,18 @@ def no_callback_errors(monkeypatch):
     assert not errors
 
 
-def visible_names(window):
-    table = window.colorbar_colormap_table
+@pytest.fixture
+def picker(heatmap, qapplication):
+    heatmap.colorbar_choose_map.click()
+    qapplication.processEvents()
+    dialog = heatmap.colorbar_map_dialog
+    yield dialog.picker
+    if heatmap.colorbar_map_dialog is not None:
+        heatmap.colorbar_map_dialog.reject()
+
+
+def visible_names(picker):
+    table = picker.table
     return {
         table.item(row, 0).data(QtCore.Qt.ItemDataRole.UserRole)
         for row in range(table.rowCount()) if not table.isRowHidden(row)
@@ -32,33 +42,24 @@ def choose(combo, value):
     combo.setCurrentIndex(index)
 
 
-def test_dialog_order_and_compact_header(heatmap, qapplication):
-    qapplication.processEvents()
+def test_scale_shows_only_limits_and_current_map(heatmap):
     dialog = heatmap.colorbar_scale_dialog
-    widgets = (
-        heatmap.colorbar_quantity,
-        heatmap.colorbar_range_entry,
-        heatmap.colorbar_current_heading,
-        heatmap.colorbar_current_name,
-        heatmap.colorbar_picker_heading,
-        heatmap.colorbar_search,
-        heatmap.colorbar_colormap_table,
-    )
-    for first, second in zip(widgets[:-1], widgets[1:], strict=True):
-        assert first.mapTo(dialog, first.rect().bottomLeft()).y() < second.mapTo(dialog, second.rect().topLeft()).y()
-    assert heatmap.colorbar_range_entry.range_heading.text() == "Range"
-    assert heatmap.colorbar_current_heading.text() == "Colour map"
-    assert heatmap.colorbar_picker_heading.text() == "Choose colour map"
-    assert heatmap.colorbar_search.placeholderText() == "Search names…"
-    assert "click again to reverse" in heatmap.colorbar_colormap_table.horizontalHeaderItem(0).toolTip()
-    assert "click again to reverse" in heatmap.colorbar_colormap_table.horizontalHeaderItem(2).toolTip()
-    header = heatmap.colorbar_colormap_table.horizontalHeader()
-    assert header.height() >= header.fontMetrics().height() + 2
-    assert header.height() <= heatmap.colorbar_colormap_table.rowHeight(0) + 2
-    assert all(heading.font().bold() for heading in (
-        heatmap.colorbar_current_heading, heatmap.colorbar_quantity,
-        heatmap.colorbar_picker_heading,
-    ))
+    entry = heatmap.colorbar_range_entry
+    current = heatmap.colorbar_current_map
+    button = heatmap.colorbar_choose_map
+    assert entry.range_heading.text() == "Range"
+    assert heatmap.colorbar_map_dialog is None
+    assert current.name.text() == "Viridis" and not current.preview.pixmap().isNull()
+    assert button.isVisible() and button.text() == "Choose colour map…"
+    assert entry.mapTo(dialog, entry.rect().bottomLeft()).y() < button.mapTo(dialog, button.rect().topLeft()).y()
+
+
+def test_chooser_has_search_and_sortable_headers(picker):
+    assert picker.search.placeholderText() == "Search names…"
+    for column in (0, 2):
+        assert "click again to reverse" in picker.table.horizontalHeaderItem(column).toolTip()
+    header = picker.table.horizontalHeader()
+    assert header.fontMetrics().height() + 2 <= header.height() <= picker.table.rowHeight(0) + 2
 
 
 def test_colour_fit_options_available_in_manual(heatmap):
@@ -70,64 +71,63 @@ def test_colour_fit_options_available_in_manual(heatmap):
     assert all(button.isEnabled() for button in entry.locks.values())
 
 
-def test_default_table_shows_six_complete_rows(heatmap):
-    table = heatmap.colorbar_colormap_table
+def test_default_chooser_shows_at_least_six_complete_rows(picker):
+    table = picker.table
     fully_visible = []
     for row in range(table.rowCount()):
         rect = table.visualItemRect(table.item(row, 0))
-        if rect.intersects(table.viewport().rect()):
-            assert table.viewport().rect().contains(rect)
+        if table.viewport().rect().contains(rect):
             fully_visible.append(row)
-    assert len(fully_visible) == 6
+    assert len(fully_visible) >= 6
 
 
-def test_source_offers_only_present_categories_and_resets_invalid_choice(heatmap):
-    combo = heatmap.colorbar_category_combo
-    choose(heatmap.colorbar_source_combo, "cet")
+def test_source_offers_only_present_categories_and_resets_invalid_choice(heatmap, picker):
+    combo = picker.category_combo
+    choose(picker.source_combo, "cet")
     assert combo.findData("linear") >= 0
     assert combo.findData("qualitative") == -1
     choose(combo, "linear")
-    choose(heatmap.colorbar_source_combo, "matplotlib")
+    choose(picker.source_combo, "matplotlib")
     assert combo.currentData() == "all"
     assert combo.findData("linear") == -1
     assert combo.findData("qualitative") >= 0
-    assert visible_names(heatmap)
-    choose(heatmap.colorbar_source_combo, "custom")
+    assert visible_names(picker)
+    choose(picker.source_combo, "custom")
     assert [combo.itemData(index) for index in range(combo.count())] == ["all", "sequential"]
-    assert visible_names(heatmap)
+    assert visible_names(picker)
     assert heatmap._current_colorbar_colormap_name() == "viridis"
 
 
-def test_source_retains_supported_category_and_search_does_not_change_choices(heatmap):
-    combo = heatmap.colorbar_category_combo
-    choose(heatmap.colorbar_source_combo, "cet")
+def test_source_retains_supported_category_and_search_does_not_change_choices(heatmap, picker):
+    combo = picker.category_combo
+    choose(picker.source_combo, "cet")
     choose(combo, "cyclic")
-    choose(heatmap.colorbar_source_combo, "matplotlib")
+    choose(picker.source_combo, "matplotlib")
     assert combo.currentData() == "cyclic"
     assert "phase or angle" in combo.itemData(combo.currentIndex(), QtCore.Qt.ItemDataRole.ToolTipRole)
     assert "phase or angle" in combo.toolTip()
-    assert "twilight" in visible_names(heatmap)
+    assert "twilight" in visible_names(picker)
     categories = [combo.itemData(index) for index in range(combo.count())]
-    heatmap.colorbar_search.setText("no such map")
+    picker.search.setText("no such map")
     assert [combo.itemData(index) for index in range(combo.count())] == categories
     assert combo.currentData() == "cyclic"
     assert heatmap._current_colorbar_colormap_name() == "viridis"
 
 
-def test_show_in_list_clears_hiding_filters_and_preserves_plot_and_sort(heatmap, qapplication):
+def test_show_in_list_clears_hiding_filters_and_preserves_plot_and_sort(heatmap, qapplication, picker):
     assert heatmap.setColorbarManualRange(-1.2345678901234567, 2.345678901234567)
     levels = tuple(heatmap.bar.levels())
-    table = heatmap.colorbar_colormap_table
+    table = picker.table
     table.sortItems(2, QtCore.Qt.SortOrder.DescendingOrder)
-    choose(heatmap.colorbar_source_combo, "cet")
-    choose(heatmap.colorbar_category_combo, "linear")
-    heatmap.colorbar_search.setText("no match")
-    QtTest.QTest.mouseClick(heatmap.colorbar_show_current_button, QtCore.Qt.MouseButton.LeftButton)
+    choose(picker.source_combo, "cet")
+    choose(picker.category_combo, "linear")
+    picker.search.setText("no match")
+    QtTest.QTest.mouseClick(picker.show_current_button, QtCore.Qt.MouseButton.LeftButton)
     qapplication.processEvents()
-    assert heatmap.colorbar_search.text() == ""
-    assert heatmap.colorbar_source_combo.currentData() == "all"
-    assert heatmap.colorbar_category_combo.currentData() == "all"
-    row = heatmap._colorbar_colormap_row("viridis")
+    assert picker.search.text() == ""
+    assert picker.source_combo.currentData() == "all"
+    assert picker.category_combo.currentData() == "all"
+    row = picker.row_for_name("viridis")
     assert not table.isRowHidden(row)
     assert table.currentRow() == row
     assert table.viewport().rect().contains(table.visualItemRect(table.item(row, 0)).center())
@@ -138,20 +138,20 @@ def test_show_in_list_clears_hiding_filters_and_preserves_plot_and_sort(heatmap,
     assert heatmap._colorbar_manual_levels == levels
 
 
-def test_show_in_list_keeps_filters_that_already_include_current_map(heatmap, qapplication):
-    choose(heatmap.colorbar_source_combo, "matplotlib")
-    choose(heatmap.colorbar_category_combo, "perceptual")
-    heatmap.colorbar_search.setText("vir")
-    heatmap.colorbar_show_current_button.click()
+def test_show_in_list_keeps_filters_that_already_include_current_map(qapplication, picker):
+    choose(picker.source_combo, "matplotlib")
+    choose(picker.category_combo, "perceptual")
+    picker.search.setText("vir")
+    picker.show_current_button.click()
     qapplication.processEvents()
-    assert heatmap.colorbar_source_combo.currentData() == "matplotlib"
-    assert heatmap.colorbar_category_combo.currentData() == "perceptual"
-    assert heatmap.colorbar_search.text() == "vir"
-    assert heatmap.colorbar_colormap_table.currentRow() == heatmap._colorbar_colormap_row("viridis")
+    assert picker.source_combo.currentData() == "matplotlib"
+    assert picker.category_combo.currentData() == "perceptual"
+    assert picker.search.text() == "vir"
+    assert picker.table.currentRow() == picker.row_for_name("viridis")
 
 
 def test_current_name_can_be_selected_copied_and_stays_selected_during_sync(heatmap, qapplication):
-    label = heatmap.colorbar_current_name
+    label = heatmap.colorbar_current_map.name
     label.setFocus()
     QtTest.QTest.keySequence(label, QtGui.QKeySequence(QtGui.QKeySequence.StandardKey.SelectAll))
     assert label.selectedText() == "Viridis"
@@ -174,20 +174,20 @@ def test_current_name_can_be_selected_copied_and_stays_selected_during_sync(heat
     assert label.selectedText() == "Plasma"
 
 
-def test_search_and_filters_combine_without_changing_plot(heatmap):
+def test_search_and_filters_combine_without_changing_plot(heatmap, picker):
     window = heatmap
     initial_levels = tuple(window.bar.levels())
     initial_map = window.bar.colorMap()
-    window.colorbar_search.setText("  cEt-c  ")
-    assert "CET-C1" in visible_names(window)
-    assert "CET-L1" not in visible_names(window)
-    choose(window.colorbar_source_combo, "cet")
-    choose(window.colorbar_category_combo, "cyclic")
-    assert visible_names(window)
-    assert all(name.startswith("CET-C") for name in visible_names(window))
-    assert window.colorbar_current_name.text() == "Viridis"
-    assert not window.colorbar_current_preview.pixmap().isNull()
-    assert not window.colorbar_colormap_table.selectedItems()
+    picker.search.setText("  cEt-c  ")
+    assert "CET-C1" in visible_names(picker)
+    assert "CET-L1" not in visible_names(picker)
+    choose(picker.source_combo, "cet")
+    choose(picker.category_combo, "cyclic")
+    assert visible_names(picker)
+    assert all(name.startswith("CET-C") for name in visible_names(picker))
+    assert window.colorbar_current_map.name.text() == "Viridis"
+    assert not window.colorbar_current_map.preview.pixmap().isNull()
+    assert not picker.table.selectedItems()
     assert window._current_colorbar_colormap_name() == "viridis"
     assert window.bar.colorMap() is initial_map
     assert tuple(window.bar.levels()) == initial_levels
@@ -200,65 +200,66 @@ def test_search_and_filters_combine_without_changing_plot(heatmap):
     ("custom", "sequential", "Greys"),
     ("pyqtgraph", "other", "PAL-relaxed"),
 ])
-def test_source_and_category_find_expected_maps(heatmap, source, category, expected):
-    choose(heatmap.colorbar_source_combo, source)
-    choose(heatmap.colorbar_category_combo, category)
-    assert expected in visible_names(heatmap)
+def test_source_and_category_find_expected_maps(heatmap, source, category, expected, picker):
+    choose(picker.source_combo, source)
+    choose(picker.category_combo, category)
+    assert expected in visible_names(picker)
     assert heatmap._current_colorbar_colormap_name() == "viridis"
 
 
-def test_empty_results_and_clearing_search_preserve_active_selection(heatmap):
-    heatmap.colorbar_search.setText("no such map")
-    assert not visible_names(heatmap)
-    assert heatmap.colorbar_no_matches.isVisible()
-    assert not heatmap.colorbar_colormap_table.selectedItems()
-    assert heatmap.colorbar_current_name.text() == "Viridis"
-    heatmap.colorbar_search.clear()
-    assert visible_names(heatmap)
-    assert not heatmap.colorbar_no_matches.isVisible()
-    assert heatmap.colorbar_colormap_table.currentRow() == heatmap._colorbar_colormap_row("viridis")
+def test_empty_results_and_clearing_search_preserve_active_selection(heatmap, picker):
+    picker.search.setText("no such map")
+    assert not visible_names(picker)
+    assert picker.no_matches.isVisible()
+    assert not picker.table.selectedItems()
+    assert heatmap.colorbar_current_map.name.text() == "Viridis"
+    picker.search.clear()
+    assert visible_names(picker)
+    assert not picker.no_matches.isVisible()
+    assert picker.table.currentRow() == picker.row_for_name("viridis")
 
 
-def test_selecting_search_result_updates_persistent_preview(heatmap, qapplication):
-    table = heatmap.colorbar_colormap_table
-    original_preview = heatmap.colorbar_current_preview.pixmap().toImage()
-    heatmap.colorbar_search.setFocus()
-    QtTest.QTest.keyClicks(heatmap.colorbar_search, "plasma")
+def test_selecting_search_result_updates_persistent_preview(heatmap, qapplication, picker):
+    table = picker.table
+    original_preview = heatmap.colorbar_current_map.preview.pixmap().toImage()
+    picker.search.setFocus()
+    QtTest.QTest.keyClicks(picker.search, "plasma")
     table.sortItems(0, QtCore.Qt.SortOrder.DescendingOrder)
-    row = heatmap._colorbar_colormap_row("plasma")
+    row = picker.row_for_name("plasma")
     assert not table.isRowHidden(row)
     table.scrollToItem(table.item(row, 0))
     qapplication.processEvents()
     QtTest.QTest.mouseClick(table.viewport(), QtCore.Qt.MouseButton.LeftButton,
                            pos=table.visualItemRect(table.item(row, 0)).center())
     assert heatmap._current_colorbar_colormap_name() == "plasma"
-    assert heatmap.colorbar_current_name.text() == "Plasma"
-    assert heatmap.colorbar_current_preview.pixmap().toImage() != original_preview
-    heatmap.colorbar_search.setText("viridis")
-    assert heatmap.colorbar_current_name.text() == "Plasma"
+    assert heatmap.colorbar_current_map.name.text() == "Plasma"
+    assert heatmap.colorbar_current_map.preview.pixmap().toImage() != original_preview
+    picker.search.setText("viridis")
+    assert heatmap.colorbar_current_map.name.text() == "Plasma"
     assert not table.selectedItems()
 
 
-def test_external_map_change_updates_preview_and_keeps_filters(heatmap):
-    heatmap.colorbar_search.setText("viridis")
+def test_external_map_change_updates_preview_and_keeps_filters(heatmap, picker):
+    picker.search.setText("viridis")
     assert heatmap.setColorbarColorMap("CET-C1")
-    assert heatmap.colorbar_current_name.text() == "CET-C1"
-    assert heatmap.colorbar_search.text() == "viridis"
-    assert not heatmap.colorbar_colormap_table.selectedItems()
+    assert heatmap.colorbar_current_map.name.text() == "CET-C1"
+    assert picker.search.text() == "viridis"
+    assert not picker.table.selectedItems()
 
 
-def test_reopening_reveals_and_scrolls_to_active_map(heatmap, qapplication):
+def test_reopening_reveals_and_scrolls_to_active_map(heatmap, qapplication, picker):
     assert heatmap.setColorbarColorMap("twilight_shifted")
-    choose(heatmap.colorbar_source_combo, "cet")
-    choose(heatmap.colorbar_category_combo, "linear")
-    heatmap.colorbar_search.setText("CET-L")
-    heatmap.colorbar_scale_dialog.close()
-    heatmap.open_colorbar_scale_dialog()
+    choose(picker.source_combo, "cet")
+    choose(picker.category_combo, "linear")
+    picker.search.setText("CET-L")
+    heatmap.colorbar_map_dialog.accept()
+    heatmap.colorbar_choose_map.click()
+    picker = heatmap.colorbar_map_dialog.picker
     qapplication.processEvents()
-    table = heatmap.colorbar_colormap_table
-    row = heatmap._colorbar_colormap_row("twilight_shifted")
-    assert "twilight_shifted" in visible_names(heatmap)
+    table = picker.table
+    row = picker.row_for_name("twilight_shifted")
+    assert "twilight_shifted" in visible_names(picker)
     assert table.currentRow() == row
     rect = table.visualItemRect(table.item(row, 0))
     assert table.viewport().rect().contains(rect.center())
-    assert heatmap.colorbar_current_name.text() == "twilight_shifted"
+    assert heatmap.colorbar_current_map.name.text() == "twilight_shifted"

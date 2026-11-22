@@ -256,6 +256,39 @@ def test_reveal_file_uses_finder_selection_on_macos(tmp_path):
     )
 
 
+def test_reveal_file_selects_exact_windows_path(tmp_path, monkeypatch):
+    target = tmp_path / "data, run μ.csv"
+    target.touch()
+    monkeypatch.setenv("SystemRoot", str(tmp_path))
+    with (
+        patch("qplot.windows._file_manager.sys.platform", "win32"),
+        patch("qplot.windows._file_manager.os.startfile", create=True) as start,
+    ):
+        assert reveal_file_in_file_manager(target)
+        start.assert_called_once_with(str(tmp_path / "explorer.exe"), arguments=f'/select,"{target}"')
+        start.side_effect = OSError("Explorer unavailable")
+        assert not reveal_file_in_file_manager(target)
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_linux_file_manager_selects_file_or_opens_its_folder(tmp_path, available):
+    target = tmp_path / "data #μ.csv"
+    target.touch()
+    with (
+        patch("qplot.windows._file_manager.sys.platform", "linux"),
+        patch("qplot.windows._file_manager.subprocess.run", return_value=Mock(returncode=0)) as run,
+        patch.object(QtGui.QDesktopServices, "openUrl", return_value=True) as open_folder,
+    ):
+        if not available:
+            run.side_effect = FileNotFoundError("busctl")
+        assert reveal_file_in_file_manager(target)
+        assert run.call_args.args[0][-5:] == ["ShowItems", "ass", "1", target.as_uri(), ""]
+        if available:
+            open_folder.assert_not_called()
+        else:
+            assert Path(open_folder.call_args.args[0].toLocalFile()) == tmp_path
+
+
 def test_generate_database_from_csv_runs_in_worker_pool(tmp_path):
     harness = GuiHarness(tmp_path)
     csv_path = tmp_path / "runs.csv"

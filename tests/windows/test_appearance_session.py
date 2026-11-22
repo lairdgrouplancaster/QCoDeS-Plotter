@@ -59,6 +59,54 @@ def test_plot_settings_pages_preview_and_restore_axis_edits(mixed_plot):
     assert plot._capture_axis_settings("x").inverted != initial.inverted
 
 
+def test_keep_changes_returns_to_invalid_range(mixed_plot, qapplication):
+    _main, plot, _runs = mixed_plot
+    plot.open_axis_scale_dialog("x")
+    dialog = plot._plot_appearance_dialog
+    if plot.operation_kind == "plot1d":
+        entry = plot._axis_scale_controls["x"].rangeEntry
+    else:
+        dialog.show_page("Colour scale")
+        entry = plot.colorbar_range_entry
+    dialog.activateWindow()
+    qapplication.processEvents()
+    keep = dialog.appearance_buttons.button(qtw.QDialogButtonBox.StandardButton.Ok)
+    span = entry.fields["span"]
+    initial = entry.state
+    span.setFocus()
+    span.selectAll()
+    QtTest.QTest.keyClicks(span, "-1")
+    QtTest.QTest.mouseClick(keep, QtCore.Qt.MouseButton.LeftButton)
+    qapplication.processEvents()
+    assert dialog.isVisible() and span.hasFocus() and span.selectedText() == "-1"
+    assert entry.error_label.isVisible() and "greater than zero" in entry.error_label.text()
+    assert entry.state.limits == initial.limits
+    QtTest.QTest.keyClick(span, QtCore.Qt.Key.Key_Escape)
+    assert entry.state.automatic == initial.automatic and not entry.error_label.isVisible()
+    span.selectAll()
+    QtTest.QTest.keyClicks(span, "oops")
+    keep.setFocus()
+    QtTest.QTest.keyClick(keep, QtCore.Qt.Key.Key_Return)
+    assert dialog.isVisible() and span.selectedText() == "oops"
+    keep.setFocus()
+    entry.fields["max"].setFocus()
+    assert entry.state.automatic == initial.automatic and span.text() != "oops"
+    span.setFocus()
+    span.selectAll()
+    QtTest.QTest.keyClicks(span, "3")
+    QtTest.QTest.mouseClick(keep, QtCore.Qt.MouseButton.LeftButton)
+    assert not dialog.isVisible() and entry.state.value("span") == pytest.approx(3)
+    dialog.show()
+    dialog.activateWindow()
+    qapplication.processEvents()
+    span.setFocus()
+    span.selectAll()
+    QtTest.QTest.keyClicks(span, "-1")
+    cancel = dialog.appearance_buttons.button(qtw.QDialogButtonBox.StandardButton.Cancel)
+    QtTest.QTest.mouseClick(cancel, QtCore.Qt.MouseButton.LeftButton)
+    assert not dialog.isVisible() and entry.state.value("span") == pytest.approx(3)
+
+
 def test_mixed_selection_applies_shared_controls_and_reorders(mixed_plot):
     _window, plot, runs = mixed_plot
     primary = plot._plot_item_order[0]

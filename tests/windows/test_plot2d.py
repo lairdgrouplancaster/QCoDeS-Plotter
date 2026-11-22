@@ -2202,21 +2202,22 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         stats_table = dialog.findChild(qtw.QTableWidget)
         copy_button = next(
             button for button in dialog.findChildren(qtw.QPushButton)
-            if button.text() == "Copy"
+            if button.text() == "Copy full report"
             )
         copy_button.click()
 
         self.assertIsNotNone(stats_table)
-        self.assertEqual(stats_table.rowCount(), 3)
+        self.assertEqual(stats_table.rowCount(), 4)
         self.assertEqual(stats_table.horizontalHeaderItem(0).text(), "Field")
         self.assertEqual(stats_table.horizontalHeaderItem(1).text(), "Value")
-        self.assertEqual(stats_table.item(0, 0).text(), "Selection")
-        self.assertEqual(stats_table.item(0, 1).text(), "2×2 points")
-        self.assertEqual(stats_table.item(1, 0).text(), "X range")
-        self.assertEqual(stats_table.item(1, 1).text(), "1.000 to 3.000")
+        self.assertEqual(stats_table.item(0, 0).text(), "Average")
+        self.assertEqual(stats_table.item(1, 0).text(), "Selection and source")
+        self.assertEqual(stats_table.item(2, 1).text(), "2×2 points")
+        self.assertEqual(stats_table.item(3, 0).text(), "X range")
+        self.assertEqual(stats_table.item(3, 1).text(), "1.000 to 3.000")
         self.assertEqual(qtw.QApplication.clipboard().text(), stats_text)
 
-        stats_table.selectRow(2)
+        stats_table.selectRow(0)
         stats_table.copySelection()
         self.assertEqual(qtw.QApplication.clipboard().text(), "Average\t7.5")
 

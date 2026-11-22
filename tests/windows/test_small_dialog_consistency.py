@@ -66,7 +66,7 @@ def test_information_dialog_layout_and_keyboard(qapplication, monkeypatch, point
             table.selectRow(next(i for i in range(table.rowCount()) if table.item(i, 0).text() == "Path")
                             if kind == "database" else 0)
             table.copySelection()
-            assert (path if kind == "database" else "100 points") in qapplication.clipboard().text()
+            assert (path if kind == "database" else "Average\t2.5") in qapplication.clipboard().text()
         text = dialog.findChild(qtw.QPlainTextEdit)
         if text is not None:
             assert text.tabChangesFocus()
@@ -114,11 +114,27 @@ def test_return_on_focused_copy_keeps_dialog_open(qapplication):
         dialog.show()
         qapplication.processEvents()
         buttons = dialog.findChild(qtw.QDialogButtonBox)
-        copy = next(b for b in buttons.buttons() if b.text() == "Copy")
+        copy = next(b for b in buttons.buttons() if b.text() == "Copy full report")
         copy.setFocus()
         QtTest.QTest.keyClick(copy, QtCore.Qt.Key.Key_Return)
         assert dialog.isVisible()
         assert qapplication.clipboard().text() == text
+    finally:
+        sip.delete(dialog)
+
+
+def test_statistics_heading_uses_result_units_and_keeps_source_measurement(qapplication):
+    text = ("Slice: z = 3 mm\n3 points\nRun: 4 (source-guid)\nMeasurement: Current [A]\n"
+            "Statistics quantity: d(Current)/d(Time) [A/s]\nCut: Vertical at x = 2\nAverage: 1.5")
+    dialog = new_statistics_dialog(None, text, "Marquee statistics")
+    try:
+        assert dialog.findChild(qtw.QLabel).text() == "d(Current)/d(Time) [A/s] · Run 4"
+        table = dialog.findChild(qtw.QTableWidget)
+        expected = [("Average", "1.5"), ("Selection and source", None), ("Slice", "z = 3 mm"),
+                    ("Selection", "3 points"), ("Run GUID", "source-guid"),
+                    ("Measurement", "Current [A]"), ("Cut", "Vertical at x = 2")]
+        assert [(table.item(i, 0).text(), table.item(i, 1).text() if table.item(i, 1) else None)
+                for i in range(table.rowCount())] == expected
     finally:
         sip.delete(dialog)
 

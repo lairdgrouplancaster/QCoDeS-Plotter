@@ -30,6 +30,7 @@ class CsvFilenameReview(qtw.QDialog):
         self.setWindowTitle("Review CSV filenames")
         self.folder = os.path.abspath(folder)
         self.rows: list[_FileRow] = []
+        self.issue_rows: list[int] = []
         self.approved: list[tuple[int, ExportDestinationTransaction]] = []
         layout = qtw.QVBoxLayout(self)
         folder_label = qtw.QLabel(self.folder)
@@ -53,7 +54,20 @@ class CsvFilenameReview(qtw.QDialog):
         self.export_button = export_button
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        footer = qtw.QHBoxLayout()
+        self.summary = qtw.QLabel()
+        footer.addWidget(self.summary)
+        self.next_issue = qtw.QPushButton("Next issue")
+        self.next_issue.clicked.connect(self._next_issue)
+        self.unique_names = qtw.QPushButton("Use unique names")
+        self.unique_names.setToolTip("Add numbered suffixes to resolve filename conflicts.")
+        self.unique_names.clicked.connect(self._use_unique_names)
+        for button in (self.next_issue, self.unique_names):
+            button.setAutoDefault(False)
+            footer.addWidget(button)
+        footer.addStretch()
+        footer.addWidget(buttons)
+        layout.addLayout(footer)
         for row, (source, name) in enumerate(proposed):
             source_item = qtw.QTableWidgetItem(source)
             source_item.setToolTip(source)
@@ -121,23 +135,72 @@ class CsvFilenameReview(qtw.QDialog):
             export_path_alias_key(row.target.filename) for row in self.rows
             if row.target is not None and row.action.currentText() != "Skip"
         )
-        ready = True
+        self.issue_rows.clear()
+        can_rename = False
+        skipped = 0
         count = 0
-        for row in self.rows:
+        for index, row in enumerate(self.rows):
             status = row.message
             action = row.action.currentText()
-            if action != "Skip":
-                if row.target and counts[export_path_alias_key(row.target.filename)] > 1:
-                    status = f"Duplicate filename · {status}"
-                    ready = False
-                elif action == "Review":
-                    ready = False
-                else:
-                    count += 1
+            if action == "Skip":
+                skipped += 1
+            elif row.target and counts[export_path_alias_key(row.target.filename)] > 1:
+                status = f"Duplicate filename · {status}"
+                self.issue_rows.append(index)
+                can_rename = True
+            elif action == "Review":
+                self.issue_rows.append(index)
+                can_rename |= row.target is not None
+            else:
+                count += 1
             row.status.setText(status)
             row.status.setToolTip(status)
+        issues = len(self.issue_rows)
+        summary = f"{count} ready · {issues} {'needs' if issues == 1 else 'need'} attention"
+        if skipped:
+            summary += f" · {skipped} skipped"
+        self.summary.setText(summary)
+        self.next_issue.setEnabled(bool(issues))
+        self.unique_names.setEnabled(can_rename)
         self.export_button.setText(f"Export {count} {'file' if count == 1 else 'files'}")
-        self.export_button.setEnabled(ready and count > 0)
+        self.export_button.setEnabled(not issues and count > 0)
+
+    def _next_issue(self):
+        if self.issue_rows:
+            start = self.table.currentRow()
+            if self.table.currentColumn() == 1:
+                start += 1
+            index = next((i for i in self.issue_rows if i >= start), self.issue_rows[0])
+            self.table.setFocus()
+            self.table.setCurrentItem(self.rows[index].filename)
+            self.table.editItem(self.rows[index].filename)
+
+    def _use_unique_names(self):
+        active = [row for row in self.rows if row.target is not None and row.action.currentText() != "Skip"]
+        reserved = {export_path_alias_key(row.filename.text()) for row in active}
+        kept = set()
+        next_suffix: dict[str, int] = {}
+        # Honour an explicit replacement even if its row follows a duplicate.
+        for row in sorted(active, key=lambda row: row.action.currentText() != "Replace"):
+            name = row.filename.text()
+            key = export_path_alias_key(name)
+            if key not in kept and row.action.currentText() != "Review":
+                kept.add(key)
+                continue
+            number = next_suffix.get(key, 2)
+            stem, ext = os.path.splitext(name)
+            while True:
+                candidate = f"{stem} ({number}){ext}"
+                number += 1
+                alias = export_path_alias_key(candidate)
+                if alias not in reserved and not os.path.lexists(os.path.join(self.folder, candidate)):
+                    break
+            reserved.add(alias)
+            next_suffix[key] = number
+            with QtCore.QSignalBlocker(self.table):
+                row.filename.setText(candidate)
+            self._inspect(row)
+        self._update()
 
     def accept(self):
         if not self.export_button.isEnabled():

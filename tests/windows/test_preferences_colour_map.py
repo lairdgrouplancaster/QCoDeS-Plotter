@@ -44,7 +44,7 @@ def test_chooser_previews_and_only_accepts_confirmed_selection(preferences, qapp
         chooser = qapplication.activeModalWidget()
         assert isinstance(chooser, ColourMapChooser)
         chooser.destroyed.connect(lambda: destroyed.append(True))
-        assert chooser.picker.current_name.text() == "twilight_shifted"
+        assert chooser.picker.current.name.text() == "twilight_shifted"
         chooser.picker.search.setText("plasma")
         picker = chooser.picker
         row = picker.row_for_name("plasma")

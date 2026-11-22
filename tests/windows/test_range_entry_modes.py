@@ -75,14 +75,14 @@ def test_colour_and_spatial_editors_offer_the_same_four_fields(heatmap, axis_win
         assert not editor.error_label.isVisible()
     assert colour.percent.isVisible()
     assert not spatial.percent.isVisible()
-    assert heatmap.colorbar_colormap_table.horizontalHeaderItem(0).text() == "Name"
+    assert heatmap.colorbar_choose_map.isVisible()
 
 
 def test_compact_colour_limits_reveal_and_accept_exact_values(heatmap, qapplication):
     limits = (-1.64340716715477, 1.64343277133006)
     assert heatmap.setColorbarManualRange(*limits)
     first, second = heatmap.colorbar_min_text, heatmap.colorbar_max_text
-    heatmap.colorbar_search.setFocus()
+    heatmap.colorbar_choose_map.setFocus()
     qapplication.processEvents()
     assert (first.presentation_text(), second.presentation_text()) == ("-1.64341", "1.64343")
     assert (float(first.text()), float(second.text())) == limits
@@ -102,7 +102,7 @@ def test_compact_colour_limits_reveal_and_accept_exact_values(heatmap, qapplicat
 ])
 def test_compact_colour_limits_stay_distinct_without_rounding_data(heatmap, qapplication, limits):
     assert heatmap.setColorbarManualRange(*limits)
-    heatmap.colorbar_search.setFocus()
+    heatmap.colorbar_choose_map.setFocus()
     qapplication.processEvents()
     first, second = heatmap.colorbar_min_text, heatmap.colorbar_max_text
     assert first.presentation_text() != second.presentation_text()

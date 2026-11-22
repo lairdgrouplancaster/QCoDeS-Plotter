@@ -485,8 +485,9 @@ def test_global_settings_remain_available_across_selection_types(mixed_plot, qap
     before = target._current_colorbar_colormap_name()
     button.click()
     qapplication.processEvents()
-    assert dialog.pages.currentWidget() is dialog.colour_page
-    target.colorbar_map_picker.table.selectRow(target.colorbar_map_picker.row_for_name("plasma"))
+    chooser = target.colorbar_map_dialog
+    assert chooser.isVisible() and chooser.parentWidget() is dialog
+    chooser.picker.table.selectRow(chooser.picker.row_for_name("plasma"))
     assert target._current_colorbar_colormap_name() == "plasma"
     dialog.reject()
     assert target._current_colorbar_colormap_name() == before

@@ -118,8 +118,6 @@ def test_trace_and_heatmap_defaults_share_a_section_and_field_column(preferences
     assert form.getWidgetPosition(dialog.defaultColourMapButton) == (trace_row + 1, role)
     assert form.labelForField(dialog.defaultTraceRow).buddy() is controls[0]
     assert form.labelForField(dialog.defaultColourMapButton).buddy() is dialog.defaultColourMapButton
-    heading = form.itemAt(trace_row - 1, qtw.QFormLayout.ItemRole.SpanningRole).widget()
-    assert isinstance(heading, qtw.QLabel) and heading.font().bold()
     fields = (dialog.fontSizeSpin, controls[0], dialog.defaultColourMapButton)
     left_edges = [field.mapTo(page.widget(), QtCore.QPoint()).x() for field in fields]
     assert left_edges[0] == left_edges[1] == left_edges[2]

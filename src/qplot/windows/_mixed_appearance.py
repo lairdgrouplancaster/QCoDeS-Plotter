@@ -18,6 +18,7 @@ from ._plot2d_layers import _HeatmapAppearanceControls
 from ._plot_appearance import CenteredPreviewDelegate, reordered_rows
 from ._plot_drop_axes import dataset_axis_warnings
 from ._plot_lifetime import close_superseded_plot
+from ._range_controls import RangeControls
 from ._small_dialogs import DialogTabs, confirm_action
 from ._window_controls import pending_plot_export_message
 
@@ -185,7 +186,7 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         layout.insertWidget(0, self.pages, 1)
         self.pages.currentChanged.connect(self._activate_settings_page)
         self.heatmap_controls.color_scale_button.clicked.disconnect()
-        self.heatmap_controls.color_scale_button.clicked.connect(lambda: self.show_page("Colour scale"))
+        self.heatmap_controls.color_scale_button.clicked.connect(lambda: self.owner.open_colour_map_chooser(self))
         self._opening_axes = {}
         self._edited_axes = set()
 
@@ -217,9 +218,7 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
                 if self.colour_page.widget() is not controls:
                     self.colour_page.setWidget(controls)
                 owner.colorbar_scale_dialog = self
-                owner._populate_colorbar_colormap_table()
                 owner._sync_colorbar_scale_controls()
-                owner._show_current_colorbar_map()
         if self.isVisible() and self._default_size is not None:
             self._fit_default_size()
 
@@ -495,15 +494,18 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         self.raise_()
 
     def _close_colour_editor(self):
-        picker = self.heatmap_controls.colour_map_dialog
-        if picker is not None and not sip.isdeleted(picker) and picker.isVisible():
-            picker.reject()
         for owner in self._preview_owners:
+            chooser = owner.__dict__.get("colorbar_map_dialog")
+            if chooser is not None:
+                chooser.reject()
             dialog = owner.__dict__.get("colorbar_scale_dialog")
             if dialog is not None and dialog is not self and not sip.isdeleted(dialog):
                 dialog.close()
 
     def accept(self):
+        for entry in self.findChildren(RangeControls):
+            if entry.isVisibleTo(self) and not entry.commit_pending():
+                return
         if not self._session_active:
             super().accept()
             return

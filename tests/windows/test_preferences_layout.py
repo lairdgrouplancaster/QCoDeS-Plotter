@@ -88,6 +88,25 @@ def test_narrow_pages_scroll_and_keep_actions_visible(preferences, qapplication)
     assert not any(label.text().startswith("Changes are saved when") for label in dialog.findChildren(qtw.QLabel))
 
 
+def test_plot_preferences_group_controls_by_when_they_apply(preferences):
+    dialog = preferences
+    form = dialog.tabs.widget(1).widget().layout()
+    headings = {}
+    for row in range(form.rowCount()):
+        item = form.itemAt(row, qtw.QFormLayout.ItemRole.SpanningRole)
+        if item and isinstance(label := item.widget(), qtw.QLabel) and label.font().bold():
+            headings[label.text()] = row
+    assert list(headings) == ["Plot display", "New plot defaults"]
+    defaults = headings["New plot defaults"]
+    for control in (dialog.fontSizeSpin, dialog.showSourceAnnotationCheck, dialog.axisTickWidthSpin,
+                    dialog.axisMajorTickCountSpin, dialog.colorbarWidthSpin, dialog.cursorSignificantFiguresSpin,
+                    dialog.confirmIncompatibleAxesCheck):
+        assert headings["Plot display"] < form.getWidgetPosition(control)[0] < defaults
+    for control in (dialog.plotTileRowsSpin.parentWidget(), dialog.complex1dCombo, dialog.complexNdCombo,
+                    dialog.defaultTraceRow, dialog.defaultColourMapButton):
+        assert form.getWidgetPosition(control)[0] > defaults
+
+
 @pytest.mark.parametrize("width", [390, 600])
 def test_plot_grid_keeps_each_label_next_to_its_spin_box(preferences, qapplication, width):
     dialog = preferences

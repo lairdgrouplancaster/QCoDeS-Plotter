@@ -57,9 +57,10 @@ def test_thumbnail_action_and_shared_dialog(monkeypatch):
     )
     dialog = new_statistics_dialog(label, text, 'Dataset stats')
     table = dialog.findChild(qtw.QTableWidget)
-    assert table.item(0, 1).text() == '3 points'
+    assert table.item(0, 0).text() == 'Average'
+    assert table.item(0, 1).text() == '2.00'
     buttons = dialog.findChild(qtw.QDialogButtonBox)
-    next(b for b in buttons.buttons() if b.text() == 'Copy').click()
+    next(b for b in buttons.buttons() if b.text() == 'Copy full report').click()
     assert app.clipboard().text() == text
     dialog.close()
     label.close()
@@ -370,7 +371,7 @@ def test_whole_measurement_report_uses_trusted_reader_and_copies_context(typed_r
 
     wait_for(report)
     dialog = report()
-    next(b for b in dialog.findChild(qtw.QDialogButtonBox).buttons() if b.text() == "Copy").click()
+    next(b for b in dialog.findChild(qtw.QDialogButtonBox).buttons() if b.text() == "Copy full report").click()
     text = qtw.QApplication.clipboard().text()
     assert reads == [guid]
     assert f"Run: {run_id} ({guid})" in text and "Measurement: signal" in text
@@ -436,7 +437,8 @@ def test_large_record_keeps_gui_responsive_through_whole_measurement_statistics(
         wait_for(lambda: window.findChild(qtw.QTableWidget, "statisticsTable"), timeout=30)
         timer.stop()
         table = window.findChild(qtw.QTableWidget, "statisticsTable")
-        rows = {table.item(row, 0).text(): table.item(row, 1).text() for row in range(table.rowCount())}
+        rows = {table.item(row, 0).text(): table.item(row, 1).text() for row in range(table.rowCount())
+                if table.item(row, 1) is not None}
         assert ticks
         assert rows["Data"] == "300000 finite values of 300000 recorded samples"
         assert rows["Average"] == plot.formatNum(149999.5)

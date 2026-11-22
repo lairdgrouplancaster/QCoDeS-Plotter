@@ -45,10 +45,12 @@ def _open_and_copy(plot, expected, qapplication):
         dialog = plot._marquee_stats_dialog
         assert dialog.isVisible()
         buttons = dialog.findChild(qtw.QDialogButtonBox)
-        next(button for button in buttons.buttons() if button.text() == "Copy").click()
+        next(button for button in buttons.buttons() if button.text() == "Copy full report").click()
         assert qapplication.clipboard().text() == expected
         table = dialog.findChild(qtw.QTableWidget)
-        assert table.rowCount() == len(expected.splitlines())
+        first = "Statistics" if "outside the statistics display range" in expected else "Average"
+        assert table.item(0, 0).text() == first
+        assert table.findItems("Selection and source", QtCore.Qt.MatchFlag.MatchExactly)
         dialog.close()
     finally:
         menu.close()

@@ -3516,52 +3516,53 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual(float(host.colorbar_min_text.text()), -4.0)
             self.assertEqual(float(host.colorbar_max_text.text()), 8.0)
             self.assertTrue(host.colorbar_manual_radio.isChecked())
-            self.assertGreater(host._colorbar_colormap_row("Greys"), -1)
-            self.assertGreater(host._colorbar_colormap_row("Purples"), -1)
-            self.assertGreater(host._colorbar_colormap_row("CET-C1"), -1)
-            self.assertGreater(host._colorbar_colormap_row("PAL-relaxed"), -1)
-            self.assertEqual(host.colorbar_colormap_table.columnCount(), 3)
-            self.assertTrue(host.colorbar_colormap_table.isSortingEnabled())
+            host.open_colorbar_scale_dialog()
+            host.colorbar_choose_map.click()
+            picker = host.colorbar_map_dialog.picker
+            self.assertGreater(picker.row_for_name("Greys"), -1)
+            self.assertGreater(picker.row_for_name("Purples"), -1)
+            self.assertGreater(picker.row_for_name("CET-C1"), -1)
+            self.assertGreater(picker.row_for_name("PAL-relaxed"), -1)
+            self.assertEqual(picker.table.columnCount(), 3)
+            self.assertTrue(picker.table.isSortingEnabled())
             self.assertIsNotNone(
-                host.colorbar_colormap_table.itemDelegateForColumn(1)
+                picker.table.itemDelegateForColumn(1)
                 )
             self.assertEqual(
-                host.colorbar_colormap_table.rowCount(),
+                picker.table.rowCount(),
                 len(host._available_colorbar_colormaps()),
                 )
-            type_item = host.colorbar_colormap_table.item(
-                host._colorbar_colormap_row("viridis"),
+            type_item = picker.table.item(
+                picker.row_for_name("viridis"),
                 2,
                 )
             self.assertEqual(type_item.text(), "Matplotlib - Perceptual")
-            preview_item = host.colorbar_colormap_table.item(
-                host._colorbar_colormap_row("viridis"),
+            preview_item = picker.table.item(
+                picker.row_for_name("viridis"),
                 1,
                 )
             self.assertEqual(preview_item.data(QtCore.Qt.ItemDataRole.UserRole), "viridis")
-            host.colorbar_colormap_table.sortItems(2, QtCore.Qt.SortOrder.AscendingOrder)
-            self.assertGreater(host._colorbar_colormap_row("viridis"), -1)
-
-            host.open_colorbar_scale_dialog()
+            picker.table.sortItems(2, QtCore.Qt.SortOrder.AscendingOrder)
+            self.assertGreater(picker.row_for_name("viridis"), -1)
 
             self.assertEqual(host.colorbar_scale_dialog.windowTitle(), "Colour scale")
             self.assertIs(host.colorbar_scale_controls.parent(), host.colorbar_scale_dialog)
 
-            host.colorbar_colormap_table.setCurrentCell(
-                host._colorbar_colormap_row("Purples"),
+            picker.table.setCurrentCell(
+                picker.row_for_name("Purples"),
                 0,
                 )
             self.assertEqual(host.config.updates, [])
             self.assertFalse(hasattr(host, "colorbar_default_button"))
             self.assertIsInstance(host.bar.color_map, pg.ColorMap)
 
-            host.colorbar_source_combo.setCurrentIndex(host.colorbar_source_combo.findData("cet"))
-            host.colorbar_category_combo.setCurrentIndex(host.colorbar_category_combo.findData("cyclic"))
-            self.assertTrue(host.colorbar_colormap_table.isRowHidden(host._colorbar_colormap_row("PAL-relaxed")))
-            self.assertTrue(host.colorbar_colormap_table.isRowHidden(host._colorbar_colormap_row("CET-L1")))
-            self.assertFalse(host.colorbar_colormap_table.isRowHidden(host._colorbar_colormap_row("CET-C1")))
+            picker.source_combo.setCurrentIndex(picker.source_combo.findData("cet"))
+            picker.category_combo.setCurrentIndex(picker.category_combo.findData("cyclic"))
+            self.assertTrue(picker.table.isRowHidden(picker.row_for_name("PAL-relaxed")))
+            self.assertTrue(picker.table.isRowHidden(picker.row_for_name("CET-L1")))
+            self.assertFalse(picker.table.isRowHidden(picker.row_for_name("CET-C1")))
             self.assertEqual(host._current_colorbar_colormap_name(), "Purples")
-            self.assertEqual(host.colorbar_current_name.text(), "Purples")
+            self.assertEqual(host.colorbar_current_map.name.text(), "Purples")
             self.assertEqual(host.config.updates, [])
 
             double_click_calls = []

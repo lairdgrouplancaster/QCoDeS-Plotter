@@ -416,7 +416,7 @@ errors.
 
 Inside qPlot, use **Help → Copy Path to Diagnostic Log** to copy this path to the
 clipboard. Use `Help -> Show Diagnostic Log in Finder` to reveal the file on
-macOS, or `Help -> Show Diagnostic Log in File Explorer` to open its folder on
+macOS, or `Help -> Show Diagnostic Log in File Explorer` to select it on
 Windows. These commands are available in main and plot windows.
 
 ## Theme or Preference Changes Do Not Look Right

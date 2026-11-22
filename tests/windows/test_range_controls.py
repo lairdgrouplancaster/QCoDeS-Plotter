@@ -113,6 +113,21 @@ def type_draft(widget, field, value):
     QtTest.QTest.keyClicks(edit, value)
 
 
+def test_revealing_use_data_preserves_field_and_lock_geometry(editor, qapplication):
+    for field, edit in editor.fields.items():
+        editor.auto_radio.setFocus()
+        button = editor.use_buttons[field]
+        button.hide()
+        qapplication.processEvents()
+        lock = editor.locks[field]
+        resting = edit.geometry(), lock.geometry()
+        edit.setFocus()
+        qapplication.processEvents()
+        assert button.isVisible()
+        assert (edit.geometry(), lock.geometry()) == resting
+        assert edit.geometry().right() < button.x() <= button.geometry().right() < lock.x()
+
+
 def test_numeric_events_and_rejected_blur_restore_automatic(editor, qapplication):
     requests = []
     editor.bind(lambda: (2, 8), requests.append)

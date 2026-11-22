@@ -14,6 +14,7 @@ from qplot.diagnostics import log_exception
 
 from ._error_dialog import ErrorDialog
 from ._export_paths import ExportDestinationTransaction, StagedExport
+from ._file_manager import reveal_file_in_file_manager
 from ._window_controls import _window_is_retired
 
 
@@ -139,7 +140,7 @@ class ExportTaskManager(QtCore.QObject):
         layout.addWidget(self.summary)
         self.tree = qtw.QTreeWidget()
         self.tree.setToolTip(
-            "Select a completed export to open its file or folder. Select a failed "
+            "Select a completed export to open it or show it in its folder. Select a failed "
             "export for details, or unfinished exports to cancel."
         )
         self.tree.setHeaderLabels(["Filename", "Status", "Progress"])
@@ -154,8 +155,8 @@ class ExportTaskManager(QtCore.QObject):
         self.open_file_button.setToolTip("Open the selected completed export in its default application.")
         self.open_file_button.clicked.connect(lambda: self._open_selected_export(folder=False))
         buttons.addWidget(self.open_file_button)
-        self.open_folder_button = qtw.QPushButton("Open folder")
-        self.open_folder_button.setToolTip("Open the folder containing the selected completed export.")
+        self.open_folder_button = qtw.QPushButton("Show in folder")
+        self.open_folder_button.setToolTip("Show the selected completed export in your file manager.")
         self.open_folder_button.clicked.connect(lambda: self._open_selected_export(folder=True))
         buttons.addWidget(self.open_folder_button)
         self.details_button = qtw.QPushButton("Details…")
@@ -296,13 +297,14 @@ class ExportTaskManager(QtCore.QObject):
         if task is None or not task.done or not task.stage.published:
             return
         filename = task.destination.filename
-        location = os.path.dirname(filename) if folder else filename
-        title = "Could not open export folder" if folder else "Could not open exported file"
-        available = os.path.isdir(location) if folder else os.path.isfile(location)
-        if not available:
-            self._show_details(title, "The export location is no longer available.", location)
-        elif not QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(location)):
-            self._show_details(title, "Your system could not open the export location.", location)
+        title = "Could not show export in folder" if folder else "Could not open exported file"
+        if not os.path.isfile(filename):
+            self._show_details(title, "The exported file is no longer available.", filename)
+        elif folder:
+            if not reveal_file_in_file_manager(filename):
+                self._show_details(title, "Your file manager could not show the exported file.", filename)
+        elif not QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(filename)):
+            self._show_details(title, "Your system could not open the exported file.", filename)
 
     def _show_details(self, title: str, message: str, details: str) -> None:
         dialog = ErrorDialog(title, message, details, self.dialog)

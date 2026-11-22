@@ -68,7 +68,12 @@ def test_heatmap_report_identifies_the_primary_grid_and_finite_cells(measured_pl
     plot.set_marquee_rect(QtCore.QRectF(-.5, -.5, 10, 10))
     assert plot.show_marquee_stats_dialog()
     dialog = plot._marquee_stats_dialog
-    next(b for b in dialog.findChild(qtw.QDialogButtonBox).buttons() if b.text() == "Copy").click()
+    assert dialog.findChild(qtw.QLabel).text() == f"Signal (signal) [A] · Run {plot.ds.run_id}"
+    table = dialog.findChild(qtw.QTableWidget)
+    fields = [table.item(row, 0).text() for row in range(table.rowCount())]
+    assert fields[:5] == ["Average", "Standard deviation", "Max", "Min", "Selection and source"]
+    assert table.item(fields.index("Run GUID"), 1).text() == plot.ds.guid
+    next(b for b in dialog.findChild(qtw.QDialogButtonBox).buttons() if b.text() == "Copy full report").click()
     text = qtw.QApplication.clipboard().text()
     assert f"Run: {plot.ds.run_id} ({plot.ds.guid})" in text
     assert "Measurement: Signal (signal) [A]" in text

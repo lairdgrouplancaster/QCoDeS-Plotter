@@ -119,6 +119,37 @@ class GradientPreview(qtw.QLabel):
             self._rendered = key
 
 
+class CurrentColourMap(qtw.QHBoxLayout):
+    """The selectable name and gradient shared by the scale panel and chooser."""
+
+    def __init__(self, action):
+        super().__init__()
+        self.setSpacing(10)
+        self.name = qtw.QLabel()
+        self.name.setObjectName("colorbarCurrentMapName")
+        self.name.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.name.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+            | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        self.name.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.name.setAccessibleName("Current colour map name")
+        self.preview = GradientPreview()
+        self.preview.setObjectName("colorbarCurrentMapPreview")
+        self.preview.setAccessibleName("Current colour map preview")
+        self.addWidget(self.name)
+        self.addWidget(self.preview, 1)
+        self.addWidget(action)
+
+    def set_colormap(self, name):
+        label = _colorbar_colormap_label(name)
+        if self.name.text() != label:
+            self.name.setText(label)
+        self.name.setToolTip(_colorbar_colormap_type_label(name) + "\nSelect the name to copy it.")
+        self.preview.set_colormap(name)
+        self.preview.setToolTip(label)
+
+
 class ColourMapPicker(qtw.QWidget):
     """Browse and select maps, with no ownership of plot scaling or settings."""
 
@@ -130,18 +161,6 @@ class ColourMapPicker(qtw.QWidget):
         self._name = current
         self.table = qtw.QTableWidget()
         self.table.setToolTip("Select a colour map to preview it on the plot.")
-        self.current_name = qtw.QLabel()
-        self.current_name.setObjectName("colorbarCurrentMapName")
-        self.current_name.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.current_name.setTextInteractionFlags(
-            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
-            | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
-        )
-        self.current_name.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
-        self.current_name.setAccessibleName("Current colour map name")
-        self.current_preview = GradientPreview()
-        self.current_preview.setObjectName("colorbarCurrentMapPreview")
-        self.current_preview.setAccessibleName("Current colour map preview")
         self.no_matches = qtw.QLabel("No colour maps match these filters.")
         self.no_matches.setObjectName("colorbarNoMatches")
         self.no_matches.hide()
@@ -154,18 +173,14 @@ class ColourMapPicker(qtw.QWidget):
             "Reveal the current map in the list. Clear filters if they hide it."
         )
         self.show_current_button.clicked.connect(self.reveal_current)
-        current = qtw.QHBoxLayout()
-        current.setSpacing(10)
-        current.addWidget(self.current_name)
-        current.addWidget(self.current_preview, 1)
-        current.addWidget(self.show_current_button)
+        self.current = CurrentColourMap(self.show_current_button)
         self.current_heading = self._heading("Colour map", "colorbarCurrentHeading")
         self.picker_heading = self._heading("Choose colour map", "colorbarPickerHeading")
         layout = self._content_layout = qtw.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         layout.addWidget(self.current_heading)
-        layout.addLayout(current)
+        layout.addLayout(self.current)
         layout.addSpacing(8)
         layout.addWidget(self.picker_heading)
         layout.addWidget(filters)
@@ -185,19 +200,8 @@ class ColourMapPicker(qtw.QWidget):
 
     def set_current_map(self, name):
         self._name = name
-        label = _colorbar_colormap_label(name)
-        if self.current_name.text() != label:
-            self.current_name.setText(label)
-        self.current_name.setToolTip(_colorbar_colormap_type_label(name) + "\nSelect the name to copy it.")
-        self.current_preview.set_colormap(name)
-        self.current_preview.setToolTip(label)
+        self.current.set_colormap(name)
         self.select_map(name)
-
-    def set_maps(self, names, current):
-        self._names = tuple(names)
-        self._name = current
-        self.populate()
-        self.set_current_map(current)
 
     def _build_filters(self):
         """Build a name search and independent source/category selectors."""
