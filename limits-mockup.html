@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en-GB">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>qPlot · Limits mockup</title>
+<style>
+  * { box-sizing:border-box }
+  :root { font:15px/1.45 "Segoe UI",system-ui,sans-serif; color:#1a2c3f; background:#eff3f6; accent-color:#1665a8 }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:28px 18px }
+  main { width:min(880px,100%); background:white; border:1px solid #bdcbd7; border-radius:12px; box-shadow:0 12px 40px #24394715; overflow:hidden }
+  header, footer { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 22px; background:#f6f8fa }
+  header { border-bottom:1px solid #d3dce4 } h1 { margin:0; font-size:17px; font-weight:600 }
+  header span, footer span, figcaption { color:#526476; font-size:13px }
+  section { padding:22px } nav { display:flex; border:1px solid #aebfce; border-radius:6px; overflow:hidden; margin-bottom:20px }
+  button,input { font:inherit } button { cursor:pointer; color:inherit; background:#fff; border:1px solid #b6c5d2; padding:5px 13px; border-radius:5px }
+  button:hover { background:#edf4fa } button:focus-visible, input:focus-visible { outline:2px solid #246fb0; outline-offset:2px }
+  nav button { flex:1; padding:8px; border:0; border-radius:0; border-right:1px solid #bdcbd7 }
+  nav button:last-child { border:0 } nav button[aria-pressed=true] { color:#104e80; background:#e7f1fb; box-shadow:inset 0 -3px #25679f; font-weight:600 }
+  nav button:focus-visible { outline-offset:-3px }
+  .columns { display:grid; grid-template-columns:1.1fr 1fr; gap:26px; align-items:start }
+  h2 { margin:0 0 14px; font-size:19px; font-weight:600 } fieldset { margin:0; border:0; padding:0 }
+  .mode { display:flex; gap:20px; margin-bottom:16px } .mode label { cursor:pointer } input[type=radio] { margin:0 4px 0 0 }
+  .segment { display:inline-flex; margin-bottom:12px } .segment button { font-size:13px; border-radius:0 }
+  .segment button:first-child { border-radius:5px 0 0 5px } .segment button:last-child { border-radius:0 5px 5px 0; margin-left:-1px }
+  .segment [aria-pressed=true] { color:white; background:#215d90; border-color:#215d90 }
+  .pair { display:grid; grid-template-columns:1fr 1fr; gap:12px } .pair label { font-size:13px; color:#425569 }
+  .input { display:flex; border:1px solid #a8bac9; border-radius:5px; align-items:center; margin-top:4px; padding:0 9px; background:#fff }
+  .input:focus-within { outline:2px solid #226fb0; outline-offset:1px } .input:has([aria-invalid=true]) { border-color:#a33120 }
+  .input input { width:100%; min-width:0; outline:none; border:none; padding:7px 0; color:#12283c; font-variant-numeric:tabular-nums }
+  .unit { padding-left:4px; color:#617487 } #summary { font-size:13px; color:#526476; margin:7px 0 14px }
+  #error { color:#a33120; font-size:13px; margin:0 0 10px } #error:empty { display:none }
+  .hint { color:#526476; font-size:13px; margin:10px 0 0 }
+  figure { margin:0; padding:14px; border:1px solid #d4dee7; border-radius:7px; background:#f8fafb }
+  figcaption { margin-bottom:10px; font-weight:600; color:#334b60 } canvas { display:block; width:100%; height:auto; background:#f8fafb }
+  footer { border-top:1px solid #d3dce4; justify-content:flex-end } footer span { margin-right:auto }
+  @media(max-width:650px){ .columns { grid-template-columns:1fr; gap:18px } body { padding:10px } section { padding:14px } }
+</style>
+<main>
+  <header><h1>Plot settings · Limits</h1><span>Interactive mockup</span></header>
+  <section>
+    <nav aria-label="Edit limits for"><button data-target="x">X axis</button><button data-target="y">Y axis</button><button data-target="z">Colour scale</button></nav>
+    <div class="columns">
+      <div>
+        <h2 id="quantity"></h2>
+        <fieldset class="mode" aria-label="Limit mode">
+          <label><input type="radio" name="mode" id="auto">Automatic</label>
+          <label><input type="radio" name="mode" id="manual">Manual</label>
+        </fieldset>
+        <div class="segment" role="group" aria-label="Limit format"><button id="ends">Min / Max</button><button id="centre">Centre / Span</button></div>
+        <div class="pair">
+          <label><span id="label0"></span><span class="input"><input id="field0" aria-describedby="error"><span class="unit"></span></span></label>
+          <label><span id="label1"></span><span class="input"><input id="field1" aria-describedby="error"><span class="unit"></span></span></label>
+        </div>
+        <p id="summary"></p><p id="error" role="alert"></p>
+        <button id="fit" title="Copy the data limits and hold them in Manual">Fit once to data</button>
+        <p class="hint" id="hint"></p>
+      </div>
+      <figure><figcaption>Plot preview</figcaption><canvas width="560" height="355" aria-label="Heatmap showing the selected axis and colour limits"></canvas></figure>
+    </div>
+  </section>
+  <footer><span id="frame"></span><button id="next">Next data frame</button></footer>
+</main>
+<script>
+"use strict";
+const byId = id => document.getElementById(id);
+const targets = {x:{name:"Gate voltage",unit:"V"}, y:{name:"Frequency",unit:"MHz"}, z:{name:"Signal",unit:"mV"}};
+const frames = [
+  {x:[-2,2], y:[4,8], z:[-1,3]}, {x:[-2,3], y:[3,9], z:[-3,5]}, {x:[-1,2], y:[5,8], z:[0,2]}
+];
+let selected = "x", frame = 0, dirty = false;
+for (const [key,t] of Object.entries(targets)) Object.assign(t,{auto:true,centre:false,range:[...frames[0][key]]});
+const inputs = [byId("field0"),byId("field1")];
+const labels = [byId("label0"),byId("label1")];
+const short = n => Number(n.toPrecision(6)).toString();
+function values(range,centre) {
+  const [lo,hi] = range;
+  return centre ? [lo+(hi-lo)/2, hi-lo] : [lo,hi];
+}
+function refreshMode() {
+  const t = targets[selected];
+  byId("auto").checked=t.auto; byId("manual").checked=!t.auto;
+  byId("hint").textContent=t.auto ? "Limits follow the data. Edit either value to switch to Manual."
+                                  : "Limits stay fixed as new data arrives. Enter applies an edit. Esc discards it.";
+}
+function render() {
+  const t=targets[selected], numbers=values(t.range,t.centre), other=values(t.range,!t.centre);
+  document.querySelectorAll("[data-target]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.target===selected));
+  byId("quantity").textContent=t.name+" ("+t.unit+")"; refreshMode();
+  byId("ends").setAttribute("aria-pressed",!t.centre); byId("centre").setAttribute("aria-pressed",t.centre);
+  inputs.forEach((input,i)=>{
+    labels[i].textContent=(t.centre?["Centre","Span"]:["Minimum","Maximum"])[i];
+    input.value=String(numbers[i]); input.removeAttribute("aria-invalid");
+  });
+  document.querySelectorAll(".unit").forEach(el=>el.textContent=t.unit);
+  byId("summary").textContent=(t.centre?"Minimum ":"Centre ")+short(other[0])+" "+t.unit+"   ·   "+(t.centre?"Maximum ":"Span ")+short(other[1])+" "+t.unit;
+  byId("frame").textContent="Sample data · Frame "+(frame+1)+" of "+frames.length;
+  byId("error").textContent=""; dirty=false; draw();
+}
+function commit() {
+  if (!dirty) return true;
+  const t=targets[selected], [a,b]=inputs.map(el=>el.value.trim()!==""?Number(el.value):NaN);
+  const range=t.centre?[a-b/2,a+b/2]:[a,b];
+  if (!range.every(Number.isFinite) || !Number.isFinite(range[1]-range[0]) || range[1]<=range[0]) {
+    byId("error").textContent=!Number.isFinite(a)||!Number.isFinite(b)?"Enter a finite number in both fields."
+      :t.centre?"Enter a positive span with two distinct, finite limits.":"Maximum must exceed minimum and give a finite span.";
+    inputs.forEach(el=>el.setAttribute("aria-invalid","true")); return false;
+  }
+  t.range=range; render(); return true;
+}
+inputs.forEach(el=>{
+  el.oninput=()=>{dirty=true; targets[selected].auto=false; refreshMode();};
+  el.onblur=commit;
+  el.onkeydown=e=>{if (e.key==="Enter") {e.preventDefault(); if(commit()) el.select();}
+                    if(e.key==="Escape") {render(); el.select();}};
+});
+document.querySelectorAll("[data-target]").forEach(b=>b.onclick=()=>{if(commit()){selected=b.dataset.target;render();}});
+for(const [id,isCentre] of [["ends",false],["centre",true]]) byId(id).onclick=()=>{if(commit()){targets[selected].centre=isCentre;render();}};
+byId("auto").onchange=()=>{targets[selected].auto=true;targets[selected].range=[...frames[frame][selected]];render();};
+byId("manual").onchange=()=>{targets[selected].auto=false;render();};
+byId("fit").onclick=()=>{targets[selected].auto=false;targets[selected].range=[...frames[frame][selected]];render();};
+byId("next").onclick=()=>{if(!commit())return;frame=(frame+1)%frames.length;
+  for(const [key,t] of Object.entries(targets)) if(t.auto)t.range=[...frames[frame][key]];render();};
+
+const canvas=document.querySelector("canvas"), ctx=canvas.getContext("2d");
+const ramp=[[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
+function colour(f) {
+  const p=Math.min(1,Math.max(0,f))*4,i=Math.min(3,Math.floor(p));
+  return ramp[i].map((c,j)=>Math.round(c+(ramp[i+1][j]-c)*(p-i)));
+}
+function draw() {
+  const w=365,h=224,left=82,top=22,img=ctx.createImageData(w,h), data=frames[frame];
+  const {x:{range:x},y:{range:y},z:{range:z}}=targets;
+  const palette=Array.from({length:256},(_,i)=>colour(i/255));
+  for(let j=0;j<h;j++)for(let i=0;i<w;i++){
+    const xv=x[0]+(i+.5)/w*(x[1]-x[0]),yv=y[1]-(j+.5)/h*(y[1]-y[0]);
+    let rgb=[230,235,239];
+    if(xv>=data.x[0]&&xv<=data.x[1]&&yv>=data.y[0]&&yv<=data.y[1]){
+      const f=(1+Math.cos(3*xv+.52*yv+frame+.9*Math.sin(yv)))/2;
+      const signal=data.z[0]+f*(data.z[1]-data.z[0]);
+      const index=Math.round(255*Math.min(1,Math.max(0,(signal-z[0])/(z[1]-z[0]))));
+      rgb=palette[index];
+    }
+    const offset=4*(j*w+i);img.data[offset]=rgb[0];img.data[offset+1]=rgb[1];img.data[offset+2]=rgb[2];img.data[offset+3]=255;
+  }
+  ctx.clearRect(0,0,canvas.width,canvas.height);ctx.putImageData(img,left,top);
+  ctx.font='19px "Segoe UI",sans-serif';ctx.fillStyle="#36495b";ctx.textAlign="center";
+  ctx.fillText(short(x[0]),left,top+h+23);ctx.fillText(short(x[1]),left+w,top+h+23);
+  ctx.fillText("Gate voltage (V)",left+w/2,top+h+52);ctx.textAlign="right";
+  ctx.fillText(short(y[0]),left-8,top+h);ctx.fillText(short(y[1]),left-8,top+12);
+  ctx.save();ctx.translate(25,top+h/2);ctx.rotate(-Math.PI/2);ctx.textAlign="center";ctx.fillText("Frequency (MHz)",0,0);ctx.restore();
+  const grad=ctx.createLinearGradient(0,top+h,0,top);
+  ramp.forEach((c,i)=>grad.addColorStop(i/4,"rgb("+c.join(",")+")"));
+  ctx.fillStyle=grad;ctx.fillRect(left+w+18,top,14,h);ctx.textAlign="left";ctx.fillStyle="#36495b";
+  ctx.fillText(short(z[1]),left+w+39,top+13);ctx.fillText(short(z[0]),left+w+39,top+h);
+  ctx.textAlign="center";ctx.fillText("Colour: signal (mV)",left+w/2,top+h+88);
+}
+render();
+</script>
+</html>

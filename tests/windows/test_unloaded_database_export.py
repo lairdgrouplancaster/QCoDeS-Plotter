@@ -71,8 +71,8 @@ def choose_destination(monkeypatch, target):
                         lambda *_args, **_kwargs: (str(target), ""))
     monkeypatch.setattr(qtw.QFileDialog, "getExistingDirectory",
                         lambda *_args, **_kwargs: str(target.parent))
-    question = Mock(return_value=qtw.QMessageBox.StandardButton.Yes)
-    monkeypatch.setattr(qtw.QMessageBox, "question", question)
+    question = Mock(return_value=True)
+    monkeypatch.setattr("qplot.windows._export_paths.confirm_action", question)
     return question
 
 
@@ -82,6 +82,8 @@ def export_action(source_plot, route, target, monkeypatch):
     if route in {"plot_csv", "plot_tsv", "image", "svg"}:
         exporter = {"image": ImageExporter, "svg": SVGExporter}.get(route, CSVExporter)
         dialog = select_exporter(plot, exporter)
+        if route == "plot_tsv":
+            dialog.currentExporter.params["separator"] = "tab"
         dialog.ui.exportBtn.click()
     elif route == "save_pdf":
         plot.savePlotPdfAction.trigger()

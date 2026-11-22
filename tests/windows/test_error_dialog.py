@@ -9,6 +9,33 @@ from qplot.windows._error_dialog import ErrorDialog
 from qplot.windows._plot_feedback import PlotWindowFeedbackMixin
 
 
+def test_choose_database_reopens_picker_after_failure_dialog_closes(qapplication):
+    picked = []
+
+    class Host(qtw.QMainWindow):
+        show_error = main_window.MainWindow.show_error
+
+        def show_status(self, *args):
+            pass
+
+        def getfile(self):
+            picked.append(qtw.QApplication.activeModalWidget())
+
+    host = Host()
+
+    def choose_database():
+        dialog = qtw.QApplication.activeModalWidget()
+        next(b for b in dialog.buttons.buttons() if b.text() == "Choose database…").click()
+
+    try:
+        QtCore.QTimer.singleShot(0, choose_database)
+        host.show_error("Database Load Failed", "Could not load this database.")
+        qapplication.processEvents()
+        assert picked == [None]
+    finally:
+        host.deleteLater()
+
+
 @pytest.mark.parametrize(
     "details",
     [None, "Cannot publish /a long path/database.db:\n" + "Full error details. " * 100],
@@ -22,6 +49,11 @@ def test_error_dialog_can_resize_and_copy_complete_error(details):
         qtw.QApplication.processEvents()
         before = dialog.size()
         text = dialog.findChild(qtw.QPlainTextEdit, "errorDetails")
+        if text is not None:
+            assert not text.isVisible()
+            dialog.findChild(qtw.QToolButton).click()
+            qtw.QApplication.processEvents()
+            before = dialog.size()
         old_text_size = text.size() if text is not None else None
         dialog.resize(before.width() + 200, before.height() + 180)
         qtw.QApplication.processEvents()

@@ -2,6 +2,7 @@
 
 import csv
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,11 @@ def _accept_batch(monkeypatch, folder, *, parameter=None, before_accept=None):
             before_accept()
         return qtw.QDialog.DialogCode.Accepted
 
+    def confirm(review):
+        review.accept()
+        return review.result()
+
+    monkeypatch.setattr(batch.CsvFilenameReview, "exec", confirm)
     monkeypatch.setattr(batch.BatchCsvDialog, "exec", accept)
     monkeypatch.setattr(qtw.QFileDialog, "getExistingDirectory", lambda *_args: str(folder))
 
@@ -132,8 +138,13 @@ def test_batch_cancel_before_start_does_not_capture_data_or_change_outputs(
     elif cancel_at == "folder":
         monkeypatch.setattr(qtw.QFileDialog, "getExistingDirectory", lambda *_args: "")
     else:
-        replies = iter((qtw.QMessageBox.StandardButton.Yes, qtw.QMessageBox.StandardButton.No))
-        monkeypatch.setattr(qtw.QMessageBox, "question", lambda *_args: next(replies))
+        def cancel_review(review):
+            review.table.cellWidget(0, 3).setCurrentText("Replace")
+            assert not review.export_button.isEnabled()
+            review.reject()
+            return review.result()
+
+        monkeypatch.setattr(batch.CsvFilenameReview, "exec", cancel_review)
 
     window.export_selected_runs_csv()
     assert not getattr(window, "_export_task_manager", None)
@@ -153,6 +164,11 @@ def test_batch_dialog_selection_changes_do_not_retarget_captured_runs(
     wait_for(lambda: not manager.tasks)
     assert {task.result.guid for task in manager.history} == {run[1] for run in runs}
     assert all(task.stage.published for task in manager.history)
+    assert manager.tree.topLevelItemCount() == 1
+    group = manager.tree.topLevelItem(0)
+    assert group.childCount() == len(runs)
+    assert group.text(1) == f"{len(runs)} of {len(runs)} finished"
+    assert all(task.row.text(0) == Path(task.destination.filename).name for task in manager.history)
 
 
 def test_switching_database_cancels_active_and_queued_batch_outputs(
@@ -248,3 +264,112 @@ def test_csv_button_uses_controls_with_multiple_selected_runs(typed_run_window, 
     monkeypatch.setattr(window, "export_selected_runs_csv", lambda: pytest.fail("Button switched to table selection"))
     window.exportRunCsv()
     assert captured == [(("key", 2), {"run_id": runs[0][0]})]
+
+def test_filename_review_rechecks_replacement_and_exports_only_confirmed_rows(
+        typed_run_window, tmp_path, monkeypatch):
+    window, runs = typed_run_window
+    _select_runs(window, runs)
+    folder = tmp_path / "reviewed"
+    folder.mkdir()
+    existing = folder / "repeat.csv"
+    existing.write_text("original", encoding="utf-8")
+    _accept_batch(monkeypatch, folder)
+
+    def review(dialog):
+        assert len(dialog.rows) == 2
+        assert not getattr(window, "_export_task_manager", None)
+        for index, (run_id, _, _) in enumerate(runs):
+            assert dialog.table.item(index, 0).text() == f"Run {run_id} · All measurements"
+        first, second = dialog.rows
+        first.filename.setText("repeat.csv")
+        second.filename.setText("REPEAT.csv")
+        assert "Duplicate" in first.status.text()
+        first.action.setCurrentText("Replace")
+        second.action.setCurrentText("Skip")
+        assert dialog.export_button.text() == "Export 1 file"
+        existing.write_text("changed since first approval", encoding="utf-8")
+        dialog.export_button.click()
+        assert not dialog.approved
+        assert first.action.currentText() == "Review"
+        assert "Changed during review" in first.status.text()
+        first.action.setCurrentText("Replace")
+        assert existing.read_text(encoding="utf-8") == "changed since first approval"
+        dialog.export_button.click()
+        return dialog.result()
+
+    monkeypatch.setattr(batch.CsvFilenameReview, "exec", review)
+    window.export_selected_runs_csv()
+    manager = window._export_task_manager
+    wait_for(lambda: not manager.tasks)
+    assert [task.result.guid for task in manager.history] == [runs[0][1]]
+    assert list(folder.iterdir()) == [existing]
+    assert "signal.signal" in existing.read_text(encoding="utf-8").splitlines()[0]
+
+
+def test_review_rejects_unsafe_names_and_resets_approval_on_rename(tmp_path):
+    existing = tmp_path / "old.csv"
+    existing.write_text("keep")
+    protected = tmp_path / "database.csv"
+    protected.write_bytes(b"SQLite format 3\x00" + bytes(128))
+    dialog = batch.CsvFilenameReview(None, tmp_path, [("Run 1 · signal", "old.csv")])
+    row, = dialog.rows
+    try:
+        row.action.setCurrentText("Replace")
+        for name in ("../old.csv", "database.csv", "source.db-wal"):
+            row.filename.setText(name)
+            assert not dialog.export_button.isEnabled()
+            assert row.action.findText("Replace") < 0
+        row.filename.setText("old.csv")
+        assert row.action.currentText() == "Review"
+        assert not dialog.export_button.isEnabled()
+        row.filename.setText("new.csv")
+        dialog.accept()
+        _, approval = dialog.approved[0]
+        (tmp_path / "new.csv").write_text("appeared after review")
+        from qplot.windows._export_paths import UnsafeExportDestinationError
+        with pytest.raises(UnsafeExportDestinationError):
+            approval.validate()
+        assert existing.read_text() == "keep"
+    finally:
+        dialog.close()
+
+
+def test_cancelling_reviewed_batch_keeps_completed_file(typed_run_window, monkeypatch, tmp_path):
+    window, runs = typed_run_window
+    _select_runs(window, runs)
+    folder = tmp_path / "batch"
+    folder.mkdir()
+    _accept_batch(monkeypatch, folder)
+    original = csv_export.export_raw_csv
+    second_started = threading.Event()
+
+    def export(filename, **kwargs):
+        if kwargs["guid"] == runs[1][1]:
+            second_started.set()
+            while not kwargs["cancelled"]():
+                time.sleep(.01)
+        return original(filename, **kwargs)
+
+    monkeypatch.setattr(csv_export, "export_raw_csv", export)
+    window.export_selected_runs_csv()
+    manager = window._export_task_manager
+    try:
+        wait_for(second_started.is_set)
+        first, second = manager.history
+        assert first.stage.published
+        group = manager.tree.topLevelItem(0)
+        manager.poll()
+        assert group.text(1) == "1 of 2 finished"
+        assert "1 exported" in manager.summary.text() and "1 pending" in manager.summary.text()
+        completed = Path(first.destination.filename)
+        content = completed.read_bytes()
+        manager.cancel_all()
+        wait_for(lambda: not manager.tasks)
+        assert second.cancelled and not second.stage.published
+        assert group.text(1) == "2 of 2 finished"
+        assert "1 exported" in manager.summary.text() and "1 cancelled" in manager.summary.text()
+        assert list(folder.iterdir()) == [completed]
+        assert completed.read_bytes() == content
+    finally:
+        manager.cancel_all()
+        wait_for(lambda: not manager.tasks)

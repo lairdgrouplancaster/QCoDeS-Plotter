@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from PyQt6 import QtCore, sip
+from PyQt6 import QtCore, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter
 
@@ -80,6 +80,35 @@ def test_snap_defaults_and_heatmap_trace_readout(mixed_plot):
         target.mouseMoved(point)
         assert not target.pos_labels["z"].isHidden()
         assert float(target.pos_labels["z"].text()) == 11
+
+
+def test_double_click_selects_highlighted_trace_over_heatmap(mixed_plot, qapplication):
+    _main, plot, runs = mixed_plot
+    overlay = runs["heatmap" if plot.operation_kind == "plot1d" else "line"]
+    _drop(plot, overlay)
+    _added(plot, overlay)
+    trace_key, line = next(iter(plot.lines.items()))
+    heatmap_key = next(iter(plot.heatmaps))
+    line.setData([0, 1, 2], [10, 15, 20])
+    plot.show()
+    plot.plot.setRange(xRange=(0, 2), yRange=(5, 25), padding=0)
+    qapplication.processEvents()
+    viewport = plot.widget.viewport()
+    for y, expected in ((15, ("trace", trace_key)), (10, ("heatmap", heatmap_key))):
+        scene_pos = line.getViewBox().mapViewToScene(QtCore.QPointF(1, y))
+        pos = plot.widget.mapFromScene(scene_pos)
+        QtTest.QTest.mouseMove(viewport, pos)
+        plot.mouseMoved(plot.widget.mapToScene(pos))
+        if expected[0] == "trace":
+            assert plot._hover_highlight.active_item is line
+        button = QtCore.Qt.MouseButton.LeftButton
+        QtTest.QTest.mouseClick(viewport, button, pos=pos)
+        QtTest.QTest.mouseDClick(viewport, button, pos=pos)
+        QtTest.QTest.mouseRelease(viewport, button, pos=pos)
+        dialog = plot._plot_appearance_dialog
+        assert dialog.isVisible()
+        assert dialog._selected_entries() == [expected]
+        dialog.accept()
 
 
 def _assert_scene_data_order(target):
@@ -349,13 +378,14 @@ def test_one_appearance_dialog_switches_controls_and_keeps_edits(mixed_plot, mon
     heatmap_key = next(key for key, value in target.heatmaps.items() if value is heatmap)
     target.appearance_action.trigger()
     dialog = target._plot_appearance_dialog
-    assert dialog.windowTitle() == "Plot appearance"
+    assert dialog.windowTitle() == f"{target.windowTitle()} — Plot settings"
     assert dialog is target._trace_appearance_dialog is target._heatmap_appearance_dialog
     assert dialog.table.rowCount() == 2
     assert not isinstance(dialog.heatmap_controls, qtw.QDialog)
     view = next(action.menu() for action in target.menuBar().actions()
                 if action.text().replace("&", "") == "View")
-    assert [action.text() for action in view.actions() if "appearance" in action.text().lower()] == ["Plot appearance…"]
+    assert target.appearance_action in view.actions()
+    assert target.appearance_action.text() == "Plot settings…"
     assert dialog.select_trace(line_key)
     assert dialog.controls_stack.currentWidget() is dialog.trace_controls_panel
     dialog.line_width.setValue(4.5)
@@ -544,9 +574,12 @@ def test_appearance_axis_warnings_follow_assigned_axes(mixed_plot, monkeypatch):
     assert "Left axis:" in item.toolTip()
     assert "u (K)" in item.toolTip() and "x (V)" in item.toolTip()
     assert "w (Hz)" in item.toolTip() and "y (A)" in item.toolTip()
+    assert dialog.axis_warning.isVisible()
+    assert dialog.axis_warning.text() == item.toolTip().removeprefix("Incompatible axes:\n")
     dialog.x_axis.setCurrentText("Top")
     dialog.y_axis.setCurrentText("Right")
     assert _axis_warning_item(dialog, "trace", key).icon().isNull()
+    assert dialog.axis_warning.isHidden()
 
 
 def test_appearance_warns_for_forced_axes_and_updates_after_reorder(mixed_plot, monkeypatch):

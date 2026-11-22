@@ -10,6 +10,7 @@ from qplot.windows import _test_database as generation
 from qplot.windows._database_detail_state import detail_channel
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
+from tests.support.windows.generation_review import choose_custom_generation
 from tests.support.windows.plot_integration import (
     assert_database_artifacts_unchanged_except_trusted_shm,
     build_line_database,
@@ -57,7 +58,8 @@ def test_generation_start_failure_restores_loaded_view(tmp_path, monkeypatch, fa
         with monkeypatch.context() as scoped:
             scoped.setattr(qtw.QFileDialog, "getOpenFileName", lambda *a, **kw: (str(csv_path), ""))
             scoped.setattr(qtw.QFileDialog, "getSaveFileName", lambda *a, **kw: (str(database_path), ""))
-            scoped.setattr(qtw.QMessageBox, "question", lambda *a, **kw: qtw.QMessageBox.StandardButton.Yes)
+            choose_custom_generation(scoped)
+            scoped.setattr("qplot.windows._generation_dialog.confirm_action", lambda *a, **kw: True)
             if failure_stage == "release":
                 release = window._prepare_test_database_replacement
 

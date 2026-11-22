@@ -225,7 +225,7 @@ def test_plot_csv_keeps_traces_across_all_axes_with_active_overlays(
             assert window.marquee_handles.isVisible()
             assert window.snap_marker.isVisible()
             target = tmp_path / f"trace-{trace_index}-{index}.{suffix}"
-            assert export_real_plot_csv(monkeypatch, window, target)
+            assert export_real_plot_csv(monkeypatch, window, target, separator="tab" if suffix == "tsv" else "comma")
             with target.open(newline="", encoding="utf-8") as exported:
                 rows = list(csv.reader(exported, delimiter=delimiter))
             assert len(rows[0]) == 2 * len(lines)

@@ -15,6 +15,7 @@ from qplot.windows._help import (
     add_help_menu,
     copy_diagnostic_log_path,
     show_about,
+    show_keyboard_shortcuts,
     show_quick_start,
 )
 
@@ -39,8 +40,15 @@ def test_about_opens_running_locations_with_literal_paths(
     monkeypatch.setattr(qtw.QMessageBox, "warning", warning)
     dialog = show_about()
     try:
-        browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
+        browser = dialog.findChild(qtw.QTextBrowser, "aboutTechnicalDetails")
+        assert not browser.isVisible()
+        dialog.findChild(qtw.QToolButton).click()
+        assert browser.isVisible()
         original = browser.toPlainText()
+        copy = dialog.findChild(qtw.QPushButton, "aboutCopyDetails")
+        assert copy.isVisible()
+        copy.click()
+        assert qapplication.clipboard().text() == original
         assert str(environment) in original
         assert str(package) in original
         assert "another-environment" not in original
@@ -121,6 +129,8 @@ class HelpMenuTestCase(unittest.TestCase):
             text = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser").toPlainText()
             self.assertEqual(dialog.windowTitle(), "About qPlot")
             self.assertIn("Version: 2.0.0", text)
+            self.assertNotIn("Commit:", text)
+            text = dialog.findChild(qtw.QTextBrowser, "aboutTechnicalDetails").toPlainText()
             self.assertIn("Unreleased development build (local changes)", text)
             self.assertIn("a" * 40, text)
             self.assertIn("Committed: 14 November 2026, 10:42:15 UTC", text)
@@ -188,12 +198,13 @@ class HelpMenuTestCase(unittest.TestCase):
                     "version": "2.0.0", "commit": "a" * 40, "commit_date": date,
                 }):
                     dialog = show_about(window)
-                text = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser").toPlainText()
+                text = dialog.findChild(qtw.QTextBrowser, "aboutTechnicalDetails").toPlainText()
                 self.assertIn("Commit: " + "a" * 40, text)
                 self.assertNotIn("Committed:", text)
                 dialog.close()
         finally:
             window.deleteLater()
+
 
     def test_copy_diagnostic_log_path_copies_path_and_reports_status(self):
         class Window(qtw.QMainWindow):
@@ -283,7 +294,7 @@ class HelpMenuTestCase(unittest.TestCase):
             self.assertIn(command_spec("database.load").shortcut_display_text(), text)
             self.assertIn(command_spec("plot.export").shortcut_display_text(), text)
             self.assertIn(command_spec("plot.print").status_tip, text)
-            self.assertIn(command_spec("plot.print").help_shortcut, text)
+            self.assertIn(command_spec("plot.print").shortcut_display_text(), text)
             self.assertIn("H", text)
             self.assertIn("Main and All Plot Windows", text)
             self.assertIn("Main Window — Run Details Focused", text)
@@ -307,3 +318,34 @@ class HelpMenuTestCase(unittest.TestCase):
                 dialog.close()
                 dialog.deleteLater()
             window.deleteLater()
+
+
+@pytest.mark.parametrize(("plot_kind", "expected_section"), [
+    (None, "Main Window"), ("plot2d", "2D Heatmap Windows"), ("sweeper", "Cut Windows"),
+])
+def test_shortcut_help_prioritises_window_and_filters(qapplication, plot_kind, expected_section):
+    window = qtw.QMainWindow()
+    window.operation_kind = plot_kind
+    dialog = show_keyboard_shortcuts(window)
+    try:
+        search = dialog.findChild(qtw.QLineEdit, "shortcutSearch")
+        scope = dialog.findChild(qtw.QComboBox)
+        browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
+        headings = browser.toPlainText().splitlines()
+        assert headings[1] == expected_section
+        scope.setCurrentText("This window")
+        headings = browser.toPlainText().splitlines()
+        assert ("Main Window" in headings) == (plot_kind is None)
+        assert ("Cut Windows" in headings) == (plot_kind == "sweeper")
+        assert ("2D Heatmap Windows" in headings) == (plot_kind == "plot2d")
+        scope.setCurrentText("All windows")
+        search.setText("Horizontal CUT")
+        assert "Open a horizontal cut" in browser.toPlainText()
+        assert "Open a vertical cut" not in browser.toPlainText()
+        search.setText("unmatched search")
+        assert "No matching controls" in browser.toPlainText()
+        search.clear()
+        assert "Open a vertical cut" in browser.toPlainText()
+    finally:
+        sip.delete(dialog)
+        sip.delete(window)

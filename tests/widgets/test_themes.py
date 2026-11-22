@@ -53,8 +53,15 @@ class ThemeStylesheetTestCase(unittest.TestCase):
 
         self.assertIn("background-color: #010101", stylesheet)
         self.assertIn("border: 1px solid #151515", stylesheet)
-        self.assertNotIn("QCheckBox::indicator:checked", stylesheet)
-        self.assertNotIn("QCheckBox::indicator:unchecked", stylesheet)
+        # Keep native checkbox marks throughout the app. Only enabled, empty
+        # boxes in the Datasets page need a theme-coloured outline.
+        checkbox_state_selectors = [
+            line.strip().rstrip(", {") for line in stylesheet.splitlines()
+            if "QCheckBox::indicator:" in line
+        ]
+        self.assertEqual(checkbox_state_selectors, [
+            "QWidget#plotSettingsDatasets QCheckBox::indicator:unchecked:enabled",
+        ])
         self.assertNotIn("$", stylesheet)
 
     def test_light_and_dark_stylesheets_parse_without_qt_warnings(self):

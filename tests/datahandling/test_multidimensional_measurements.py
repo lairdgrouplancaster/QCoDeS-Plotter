@@ -487,6 +487,8 @@ def test_trusted_previews_keep_all_higher_dimensional_targets(only_high_dimensio
 def test_high_dimension_csv_and_stats_actions_read_every_sample_and_axis(
     mixed_database, tmp_path, monkeypatch
 ):
+    from tests.support.windows.plot_integration import wait_for
+
     path, specs = mixed_database
     key = DatasetKey(str(path), _metadata(path)["guid"])
     before = _artifact_state(path)
@@ -524,6 +526,7 @@ def test_high_dimension_csv_and_stats_actions_read_every_sample_and_axis(
     host = Host()
     host.fileTextbox = SimpleNamespace(text=lambda: str(path))
     host.RunList = SimpleNamespace(run_id_for_guid=lambda guid: 1)
+    host.threadPool = QtCore.QThreadPool(host)
     attach_shutdown(host)
     try:
         for measured in specs[0].measurements:
@@ -539,7 +542,9 @@ def test_high_dimension_csv_and_stats_actions_read_every_sample_and_axis(
                 measured.name,
                 *(a.name for a in measured.axes),
             }
+            count = len(dialogs)
             host._show_preview_stats(key, measured.name)
+            wait_for(lambda count=count: len(dialogs) > count or errors)
             assert not errors
             text = dialogs[-1][1]
             assert text.startswith(f"{measured.point_count} points\n")

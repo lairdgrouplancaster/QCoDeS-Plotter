@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from html import escape
@@ -37,7 +38,7 @@ class CommandSpec:
     )
     object_name: str | None = None
     help_section: str | None = None
-    help_shortcut: str | None = None
+    help_shortcut: str | Callable[[], str] | None = None
     help_text: str | None = None
     show_shortcut_in_context_menu: bool = True
 
@@ -63,10 +64,22 @@ class CommandSpec:
         Returns a `(shortcut, description)` row for shortcut help.
 
         """
-        shortcut = self.help_shortcut or self.shortcut_display_text()
+        shortcut: str | None
+        if self.shortcuts:
+            shortcut = self.shortcut_display_text()
+        elif callable(self.help_shortcut):
+            shortcut = self.help_shortcut()
+        else:
+            shortcut = self.help_shortcut
         if not shortcut:
             return None
         return shortcut, self.help_text or self.status_tip
+
+
+def _measurement_range_shortcut() -> str:
+    first = plot_measurement_command_spec(0).shortcut_display_text()
+    last = plot_measurement_command_spec(8).shortcut_display_text()
+    return f"{first} to {last}"
 
 
 def _standard_shortcuts(
@@ -120,7 +133,6 @@ COMMANDS: dict[str, CommandSpec] = {
         "Close the current qPlot window",
         _standard_shortcuts(QKeySequence.StandardKey.Close, ["Ctrl+W"]),
         help_section="Main and All Plot Windows",
-        help_shortcut="Ctrl+W / Cmd+W",
     ),
     "app.quit": CommandSpec(
         "app.quit",
@@ -129,7 +141,6 @@ COMMANDS: dict[str, CommandSpec] = {
         _standard_shortcuts(QKeySequence.StandardKey.Quit, ["Ctrl+Q"]),
         QtCore.Qt.ShortcutContext.ApplicationShortcut,
         help_section="Main and All Plot Windows",
-        help_shortcut="Ctrl+Q / Cmd+Q",
     ),
     "preferences.open": CommandSpec(
         "preferences.open",
@@ -144,7 +155,6 @@ COMMANDS: dict[str, CommandSpec] = {
         "Minimise this window",
         _platform_shortcuts(mac=["Ctrl+M"], windows=["Alt+Space, N"]),
         help_section="Main and All Plot Windows",
-        help_shortcut="Ctrl+M / Alt+Space, N",
     ),
     "window.maximize_restore": CommandSpec(
         "window.maximize_restore",
@@ -152,7 +162,6 @@ COMMANDS: dict[str, CommandSpec] = {
         "Maximise or restore this window",
         _platform_shortcuts(windows=["Alt+Space, X", "Alt+Space, R"]),
         help_section="Main and All Plot Windows",
-        help_shortcut="Alt+Space, X / Alt+Space, R",
         help_text="Maximise or restore the current window on Windows",
     ),
     "window.full_screen": CommandSpec(
@@ -167,7 +176,6 @@ COMMANDS: dict[str, CommandSpec] = {
             ),
         ),
         help_section="Main and All Plot Windows",
-        help_shortcut="Ctrl+Cmd+F / F11",
     ),
     "copy.selection": CommandSpec(
         "copy.selection",
@@ -176,7 +184,6 @@ COMMANDS: dict[str, CommandSpec] = {
         _standard_shortcuts(QKeySequence.StandardKey.Copy, ["Ctrl+C"]),
         QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
         help_section="Main Window — Run Details Focused",
-        help_shortcut="Ctrl+C / Cmd+C",
     ),
     "copy.cell": CommandSpec(
         "copy.cell",
@@ -185,7 +192,6 @@ COMMANDS: dict[str, CommandSpec] = {
         "Ctrl+Shift+C",
         QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
         help_section="Main Window — Run Details Focused",
-        help_shortcut="Ctrl+Shift+C / Cmd+Shift+C",
     ),
     "context.show": CommandSpec(
         "context.show",
@@ -247,8 +253,8 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "testdata.generate_database": CommandSpec(
         "testdata.generate_database",
-        "Generate &Database from CSV...",
-        "Generate a QCoDeS test database from a CSV specification",
+        "Generate &database…",
+        "Review a bundled template or your own CSV and generate a QCoDeS test database",
         object_name="generateTestDatabaseAction",
     ),
     "window.main_front_back": CommandSpec(
@@ -277,7 +283,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Plot Measurements 1 to 9 in Selected Run",
         "Plot measurements 1 to 9 in the selected run",
         help_section="Main Window",
-        help_shortcut="Ctrl+1 to Ctrl+9",
+        help_shortcut=_measurement_range_shortcut,
     ),
     "plots.close_all": CommandSpec(
         "plots.close_all",
@@ -300,7 +306,6 @@ COMMANDS: dict[str, CommandSpec] = {
         _standard_shortcuts(QKeySequence.StandardKey.Copy, ["Ctrl+C"]),
         object_name="copyPlotImageAction",
         help_section="All Plot Windows",
-        help_shortcut="Ctrl+C / Cmd+C",
     ),
     "plot.copy_coordinates": CommandSpec(
         "plot.copy_coordinates",
@@ -309,7 +314,6 @@ COMMANDS: dict[str, CommandSpec] = {
         "Ctrl+Shift+C",
         object_name="copyCoordinatesAction",
         help_section="All Plot Windows",
-        help_shortcut="Ctrl+Shift+C / Cmd+Shift+C",
     ),
     "plot.print": CommandSpec(
         "plot.print",
@@ -318,7 +322,6 @@ COMMANDS: dict[str, CommandSpec] = {
         _standard_shortcuts(QKeySequence.StandardKey.Print, ["Ctrl+P"]),
         object_name="printPlotAction",
         help_section="All Plot Windows",
-        help_shortcut="Ctrl+P / Cmd+P",
     ),
     "plot.export": CommandSpec(
         "plot.export",
@@ -422,7 +425,8 @@ COMMANDS: dict[str, CommandSpec] = {
         "Preview Context Menu",
         "Open the focused measurement preview's context menu",
         help_section="Main Window — Measurement Preview Focused",
-        help_shortcut="Shift+F10 / Menu key",
+        help_shortcut=lambda: shortcut_display_text(key_sequences(["Shift+F10"]))
+        + ("" if sys.platform == "darwin" else " / Menu key"),
     ),
     "heatmap.move_cut": CommandSpec(
         "heatmap.move_cut",
@@ -610,7 +614,9 @@ MOUSE_AND_SELECTION_HELP = {
         ("Middle-drag or Space+left-drag", "Pan the plot\nHold Shift to constrain movement to one axis"),
         ("Mouse wheel", "Zoom the plot"),
         ("Drag inside a selection", "Move the selection\nHold Shift to constrain movement to one axis"),
-        ("Drag selection handles", "Resize the selection\nHold Alt to resize symmetrically about the centre"),
+        ("Drag selection handles", "Resize the selection\nHold "
+         + ("Option" if sys.platform == "darwin" else "Alt")
+         + " to resize symmetrically about the centre"),
         ("Right-click", "Open actions for the plot or selection"),
         ("Double-click an axis", "Open axis scaling controls; also available from View"),
     ),
@@ -623,7 +629,7 @@ MOUSE_AND_SELECTION_HELP = {
 }
 
 
-def shortcut_help_html(shortcut_column_width: int = 280) -> str:
+def shortcut_help_html(shortcut_column_width: int = 280, *, query: str = "", sections=SHORTCUT_HELP_SECTIONS) -> str:
     """
     Builds the keyboard shortcut help HTML from registered command metadata.
 
@@ -631,7 +637,8 @@ def shortcut_help_html(shortcut_column_width: int = 280) -> str:
     parts = [
         "<h2>Keyboard and mouse controls</h2>",
     ]
-    for section in SHORTCUT_HELP_SECTIONS:
+    terms = query.casefold().split()
+    for section in sections:
         rows: list[tuple[str, str]] = []
         for spec in COMMANDS.values():
             if spec.help_section != section:
@@ -640,6 +647,9 @@ def shortcut_help_html(shortcut_column_width: int = 280) -> str:
             if row is not None:
                 rows.append(row)
         rows.extend(MOUSE_AND_SELECTION_HELP.get(section, ()))
+        if terms:
+            rows = [(gesture, description) for gesture, description in rows
+                    if all(term in f"{gesture} {description} {section}".casefold() for term in terms)]
         if not rows:
             continue
 
@@ -660,6 +670,8 @@ def shortcut_help_html(shortcut_column_width: int = 280) -> str:
                 "<p>With a menu open, press an entry's underlined letter or number "
                 "to activate it.</p>"
             )
+    if len(parts) == 1:
+        parts.append("<p>No matching controls.</p>")
     return "\n".join(parts)
 
 

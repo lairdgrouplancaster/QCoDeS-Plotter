@@ -136,7 +136,9 @@ def test_about_checks_inline_without_losing_version_details(updates, monkeypatch
     })
     dialog = show_about(window)
     browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
-    locations = text(dialog).split("Python environment:", 1)[1]
+    technical = dialog.findChild(qtw.QTextBrowser, "aboutTechnicalDetails")
+    assert not technical.isVisible()
+    locations = technical.toPlainText().split("Python environment:", 1)[1]
     assert not checker._manager.requests
     button = dialog.findChild(qtw.QPushButton, "aboutCheckForUpdatesButton")
     button.click()
@@ -148,15 +150,22 @@ def test_about_checks_inline_without_losing_version_details(updates, monkeypatch
     checker._manager.replies[-1].deliver(response, status=status)
     assert expected in text(dialog)
     assert "Version: 1.0" in text(dialog)
-    assert "Commit: abc123" in text(dialog)
-    assert locations in text(dialog)
+    assert "Commit: abc123" in technical.toPlainText()
+    assert locations in technical.toPlainText()
+    if status == 503:
+        assert button.text() == "Retry"
+    if response == body("2.0"):
+        copy = dialog.findChild(qtw.QPushButton, "copyUpdateCommandButton")
+        assert copy.isVisible()
+        copy.click()
+        assert "qplotter==2.0" in qtw.QApplication.clipboard().text()
     assert not browser.openLinks()
     opened = []
     monkeypatch.setattr("PyQt6.QtGui.QDesktopServices.openUrl", lambda url: opened.append(url) or True)
-    cursor = browser.document().find("Open folder")
+    cursor = technical.document().find("Open folder")
     url = QtCore.QUrl(cursor.charFormat().anchorHref())
     assert url.isLocalFile()
-    browser.anchorClicked.emit(url)
+    technical.anchorClicked.emit(url)
     assert opened == [url]
     assert cfg.get(LAST_CHECK_KEY) > 0
     button.click()
@@ -373,7 +382,7 @@ def test_update_preferences_persist_cancel_and_restore_defaults(updates, monkeyp
         dialog.checkUpdatesOnLaunchCheck.setChecked(True)
         dialog.reject()
         assert not config().get(CHECK_ON_LAUNCH_KEY)
-        monkeypatch.setattr(qtw.QMessageBox, "question", lambda *_args: qtw.QMessageBox.StandardButton.Yes)
+        monkeypatch.setattr("qplot.windows._preferences.confirm_action", lambda *args, **kwargs: True)
         assert dialog.restore_defaults()
         assert dialog.apply_preferences()
         assert cfg.get(CHECK_ON_LAUNCH_KEY)

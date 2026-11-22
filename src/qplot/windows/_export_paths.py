@@ -25,6 +25,7 @@ from qplot.datahandling.file_identity import (
 
 from ._export_names import ExportSuffixPolicy
 from ._export_names import normalize_export_path as normalize_export_path
+from ._small_dialogs import confirm_action
 
 _DATABASE_ARTIFACT_SUFFIXES = ("", *SQLITE_SIDECAR_SUFFIXES)
 _SQLITE_HEADER = b"SQLite format 3\x00"
@@ -159,13 +160,9 @@ def choose_export_path_with_suffixes(
     default_suffix: str,
     replace_title: str,
     file_description: str,
-    match_selected_filter: bool = False,
+    use_chosen_format: bool = False,
 ) -> ExportDestinationTransaction | None:
-    """Choose and approve an export, optionally enforcing its selected format.
-
-    When matching the filter, replace a conflicting allowed suffix before
-    approval. An absent/unrecognized filter leaves an allowed suffix intact.
-    """
+    """Approve the final pathname, respecting the format selected in qPlot."""
     policy = ExportSuffixPolicy(tuple(allowed_suffixes), default_suffix)
 
     dialog_options = qtw.QFileDialog.Option.DontConfirmOverwrite
@@ -181,7 +178,8 @@ def choose_export_path_with_suffixes(
 
     return approve_export_path(
         parent,
-        policy.resolve(filename, selected_filter, match_selected_filter=match_selected_filter),
+        policy.resolve(filename, name_filter if use_chosen_format else selected_filter,
+                       match_selected_filter=use_chosen_format),
         replace_title=replace_title,
         file_description=file_description,
     )
@@ -196,7 +194,7 @@ def approve_export_path(
     existing_target_validator: Callable[[str], Any] | None = None,
 ) -> ExportDestinationTransaction | None:
     """Capture one selected path and explicitly confirm its exact target."""
-    destination = _capture_export_destination(
+    destination = inspect_export_destination(
         parent,
         os.path.abspath(filename),
         existing_target_validator=existing_target_validator,
@@ -204,15 +202,14 @@ def approve_export_path(
     if not destination.target_existed:
         return destination
 
-    reply = qtw.QMessageBox.question(
+    confirmed = confirm_action(
         parent,
         replace_title,
         f"{destination.filename} already exists.\n\n"
         f"Replace the existing {file_description}?",
-        qtw.QMessageBox.StandardButton.Yes | qtw.QMessageBox.StandardButton.No,
-        qtw.QMessageBox.StandardButton.No,
+        affirmative="Replace file",
     )
-    if reply != qtw.QMessageBox.StandardButton.Yes:
+    if not confirmed:
         return None
     return replace(destination, replacement_confirmed=True)
 
@@ -230,7 +227,7 @@ def prepare_export_destination(
         filename = normalize_export_path(filename, required_suffix)
     else:
         filename = os.path.abspath(filename)
-    destination = _capture_export_destination(
+    destination = inspect_export_destination(
         owner,
         filename,
         existing_target_validator=existing_target_validator,
@@ -631,12 +628,13 @@ def _collect_owner_database_sources(
         pass
 
 
-def _capture_export_destination(
+def inspect_export_destination(
     owner: object | None,
     filename: str,
     *,
-    existing_target_validator: Callable[[str], Any] | None,
+    existing_target_validator: Callable[[str], Any] | None = None,
 ) -> ExportDestinationTransaction:
+    """Inspect an exact candidate without granting replacement consent."""
     filename = os.path.abspath(filename)
     _ensure_windows_export_path_is_unambiguous(filename)
     parent_path = os.path.dirname(filename)
@@ -688,14 +686,14 @@ def _ensure_target_is_not_protected(
         protected_files.logical_paths | protected_files.resolved_paths
     )
     protected_aliases = {
-        _filesystem_alias_key(protected_path)
+        export_path_alias_key(protected_path)
         for protected_path in protected_paths
     }
     if (
         logical_path in protected_paths
         or resolved_path in protected_paths
-        or _filesystem_alias_key(logical_path) in protected_aliases
-        or _filesystem_alias_key(resolved_path) in protected_aliases
+        or export_path_alias_key(logical_path) in protected_aliases
+        or export_path_alias_key(resolved_path) in protected_aliases
     ):
         raise UnsafeExportDestinationError(
             "The selected export path refers to an input database or one of "
@@ -790,7 +788,7 @@ def _read_export_candidate_header(
     return header
 
 
-def _filesystem_alias_key(filename: str) -> str:
+def export_path_alias_key(filename: str) -> str:
     """Return a conservative key for case/Unicode-equivalent path aliases.
 
     ``normcase`` alone does not model case-insensitive macOS volumes, and

@@ -130,6 +130,7 @@ def _mock_warning(monkeypatch, response):
     """Inspect the real checkbox-enabled warning while selecting its result."""
     def respond(box):
         assert box.checkBox().text() == "Do not show again"
+        assert box.button(qtw.QMessageBox.StandardButton.Ok).text() == "Add dataset anyway"
         return response(box.parentWidget(), box.windowTitle(), box.text(),
                         box.standardButtons(), box.standardButton(box.defaultButton()))
 

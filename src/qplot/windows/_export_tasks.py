@@ -21,6 +21,19 @@ class ExportCancelled(InterruptedError):
     """An export was cancelled before its destination was published."""
 
 
+class ExportBatchRow(qtw.QTreeWidgetItem):
+    """Keep batch progress accurate when old completed rows leave the history."""
+
+    def __init__(self, title: str):
+        super().__init__([title])
+        self.setFlags(self.flags() & ~QtCore.Qt.ItemFlag.ItemIsSelectable)
+        self.queued = 0
+        self.finished = 0
+
+    def update_progress(self):
+        self.setText(1, f"{self.finished} of {self.queued} finished")
+
+
 class _ExportWorker(QtCore.QRunnable):
     def __init__(self, task: ExportTask):
         super().__init__()
@@ -66,8 +79,8 @@ class ExportTask:
         self._progress: tuple[str, int, int | None] = ("Queued", 0, None)
         self._started = False
         self._worker: _ExportWorker | None = None
-        self.row = qtw.QTreeWidgetItem([title, "Queued", ""])
-        self.row.setToolTip(0, destination.filename)
+        self.row = qtw.QTreeWidgetItem([os.path.basename(destination.filename), "Queued", ""])
+        self.row.setToolTip(0, f"{title}\n{destination.filename}")
         self.bar = qtw.QProgressBar()
         self.bar.setRange(0, 100)
         self.bar.setValue(0)
@@ -103,6 +116,7 @@ class ExportTaskManager(QtCore.QObject):
         self.main = main
         self.tasks: set[ExportTask] = set()
         self.history: list[ExportTask] = []
+        self._totals = {"saved": 0, "cancelled": 0, "failed": 0}
         self._polling = False
         self.pool = main._shutdown.resources.create_pool(
             "exportThreadPool", parent=main, max_threads=1,
@@ -116,9 +130,9 @@ class ExportTaskManager(QtCore.QObject):
         self.dialog = qtw.QDialog(main)
         self.dialog.setWindowTitle("Exports")
         self.dialog.setModal(False)
-        self.dialog.resize(660, 280)
+        self.dialog.resize(380, 100)
         layout = qtw.QVBoxLayout(self.dialog)
-        self.summary = qtw.QLabel("Exports run in the background. Completed files are kept if you cancel.")
+        self.summary = qtw.QLabel("No exports yet.")
         self.summary.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.summary.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
         self.summary.setWordWrap(True)
@@ -128,7 +142,8 @@ class ExportTaskManager(QtCore.QObject):
             "Select a completed export to open its file or folder. Select a failed "
             "export for details, or unfinished exports to cancel."
         )
-        self.tree.setHeaderLabels(["Export", "Status", "Progress"])
+        self.tree.setHeaderLabels(["Filename", "Status", "Progress"])
+        self.tree.hide()
         self.tree.setRootIsDecorated(False)
         self.tree.setSelectionMode(qtw.QAbstractItemView.SelectionMode.ExtendedSelection)
         self.tree.setColumnWidth(0, 230)
@@ -159,7 +174,7 @@ class ExportTaskManager(QtCore.QObject):
         self.cancel_button.setToolTip("Cancel all unfinished exports. Completed files are kept.")
         self.cancel_button.clicked.connect(self.cancel_all)
         buttons.addWidget(self.cancel_button)
-        self.dismiss_button = qtw.QPushButton("Done")
+        self.dismiss_button = qtw.QPushButton("Close")
         self.dismiss_button.setToolTip("Close the export progress window.")
         self.dismiss_button.clicked.connect(self.dialog.hide)
         buttons.addWidget(self.dismiss_button)
@@ -167,7 +182,7 @@ class ExportTaskManager(QtCore.QObject):
         self._update_selection_actions()
 
     def start(self, owner, *, title, destination, writer, before_publish=None,
-              on_success=None, on_failure=None, source_keys=()) -> ExportTask:
+              on_success=None, on_failure=None, source_keys=(), batch=None) -> ExportTask:
         if _window_is_retired(owner) or getattr(self.main, "_shutdown_started", False):
             raise ExportCancelled("The window is closing.")
         if not isinstance(destination, ExportDestinationTransaction):
@@ -184,13 +199,33 @@ class ExportTaskManager(QtCore.QObject):
             if retired is None:
                 break
             self.history.remove(retired)
-            self.tree.takeTopLevelItem(self.tree.indexOfTopLevelItem(retired.row))
+            group = retired.row.parent()
+            if group is None:
+                self.tree.takeTopLevelItem(self.tree.indexOfTopLevelItem(retired.row))
+            else:
+                group.removeChild(retired.row)
+                if group.childCount() == 0:
+                    self.tree.takeTopLevelItem(self.tree.indexOfTopLevelItem(group))
             retired.bar.deleteLater()
         owner.__dict__.setdefault("_export_tasks", set()).add(task)
-        self.tree.addTopLevelItem(task.row)
+        if self.tree.isHidden():
+            self.dialog.resize(660, 280)
+            self.tree.show()
+        first_output = batch is None or batch.queued == 0
+        if batch is None:
+            self.tree.addTopLevelItem(task.row)
+        else:
+            if batch.treeWidget() is None:
+                self.tree.addTopLevelItem(batch)
+                self.tree.setRootIsDecorated(True)
+            batch.addChild(task.row)
+            batch.queued += 1
+            batch.update_progress()
+            batch.setExpanded(True)
         self.tree.setItemWidget(task.row, 2, task.bar)
-        if self.tree.currentItem() is None:
+        if first_output or self.tree.currentItem() is None:
             self.tree.setCurrentItem(task.row)
+        self._update_selection_actions()
         owner.destroyed.connect(task.cancel)
         closed = getattr(owner, "closed", None)
         if closed is not None and hasattr(closed, "connect"):
@@ -242,14 +277,19 @@ class ExportTaskManager(QtCore.QObject):
 
     def _update_selection_actions(self) -> None:
         selected = self.tree.selectedItems()
-        self.cancel_selected_button.setEnabled(any(
+        cancel_selected = any(
             task.row in selected and not task.cancelled for task in self.tasks
-        ))
+        )
         task = self._selected_task()
         completed = bool(task is not None and task.done and task.stage.published)
-        self.open_file_button.setEnabled(completed)
-        self.open_folder_button.setEnabled(completed)
-        self.details_button.setEnabled(self._has_failure_details(task))
+        for button, available in (
+            (self.cancel_button, any(not item.cancelled for item in self.tasks)),
+            (self.cancel_selected_button, cancel_selected),
+            (self.open_file_button, completed), (self.open_folder_button, completed),
+            (self.details_button, self._has_failure_details(task)),
+        ):
+            button.setEnabled(available)
+            button.setVisible(available)
 
     def _open_selected_export(self, *, folder: bool) -> None:
         task = self._selected_task()
@@ -335,29 +375,25 @@ class ExportTaskManager(QtCore.QObject):
         self._dispatch()
         if not self.tasks:
             self.timer.stop()
-        counts = {"saved": 0, "cancelled": 0, "failed": 0}
-        for task in self.history:
-            if task.done:
-                key = "saved" if task.stage.published else "cancelled" if task.cancelled else "failed"
-                counts[key] += 1
+        counts = self._totals
         details = (
             f"{counts['saved']} exported · {counts['cancelled']} cancelled · "
             f"{counts['failed']} failed"
         )
         if self.tasks:
-            summary = f"Export in progress. {details} · {len(self.tasks)} pending."
-        elif counts['saved'] == len(self.history) and self.history:
-            if len(self.history) == 1:
+            summary = f"Export in progress. This session: {details} · {len(self.tasks)} pending."
+        elif counts['saved'] and not (counts['cancelled'] or counts['failed']):
+            if counts['saved'] == 1:
                 summary = (
                     "Export complete. Your file is ready:\n"
                     f"{self.history[0].destination.filename}"
                 )
             else:
-                summary = f"Exports complete. {counts['saved']} files are ready."
+                summary = f"Exports complete. {counts['saved']} files saved this session."
         else:
-            summary = f"Exports finished. {details}."
+            summary = f"This session: {details}." if self.history else "No exports yet."
         self.summary.setText(summary)
-        self.dismiss_button.setText("Hide" if self.tasks else "Done")
+        self.dismiss_button.setText("Hide" if self.tasks else "Done" if self.history else "Close")
         self.dismiss_button.setToolTip(
             "Hide this window while exports continue in the background."
             if self.tasks else "Close the export progress window."
@@ -404,6 +440,12 @@ class ExportTaskManager(QtCore.QObject):
                     pass
             task.writer = None
             task.before_publish = None
+        outcome = "saved" if task.stage.published else "cancelled" if task.cancelled else "failed"
+        self._totals[outcome] += 1
+        batch = task.row.parent()
+        if isinstance(batch, ExportBatchRow):
+            batch.finished += 1
+            batch.update_progress()
         task.bar.setRange(0, 100)
         task.bar.setValue(100 if task.stage.published else 0)
         status = "Export complete" if task.stage.published else "Cancelled" if task.cancelled else "Failed"
@@ -461,11 +503,11 @@ def export_task_manager(owner) -> ExportTaskManager:
 
 def start_export_task(owner, *, title, destination, writer,
                       before_publish=None, on_success=None, on_failure=None,
-                      source_keys=()) -> ExportTask:
+                      source_keys=(), batch=None) -> ExportTask:
     return export_task_manager(owner).start(
         owner, title=title, destination=destination, writer=writer,
         before_publish=before_publish, on_success=on_success,
-        on_failure=on_failure, source_keys=source_keys,
+        on_failure=on_failure, source_keys=source_keys, batch=batch,
     )
 
 

@@ -1,4 +1,4 @@
-from math import isfinite
+from math import gcd, isfinite
 from os import path
 from typing import TYPE_CHECKING, cast, final
 
@@ -28,6 +28,7 @@ from ._dragdrop import (
     preview_drop_is_compatible,
     run_preview_payloads_from_mime,
 )
+from ._export_tasks import cancel_owner_exports
 from ._help import add_help_menu
 from ._native_averaging import NativePlotItem, is_native_source_curve
 from ._native_transforms import LINE_DISPLAY_RANGE_MESSAGE, native_fft_coordinate_error
@@ -61,6 +62,7 @@ from ._refresh_interval import (
     remember_refresh_interval,
     set_refresh_interval,
 )
+from ._small_dialogs import confirm_action
 from ._subplots import custom_viewbox
 from ._widgets import (
     QDock_context,
@@ -72,6 +74,7 @@ from ._window_controls import (
     add_application_quit_action,
     add_standard_window_controls,
     main_window_for,
+    pending_export_message,
 )
 
 if TYPE_CHECKING:
@@ -119,7 +122,7 @@ class _PlotAreaSizeDialog(qtw.QDialog):
 
     def __init__(self, size: QtCore.QSize, parent: qtw.QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle("Custom plot area size")
+        self.setWindowTitle("Custom plot canvas size")
         layout = qtw.QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
@@ -150,7 +153,7 @@ class _PlotAreaSizeDialog(qtw.QDialog):
             "Clear this to change width and height independently."
         )
         self.lock_ratio.setChecked(True)
-        self._ratio_size = self.plot_area_size()
+        self._ratio_lock_changed(True)
         self.lock_ratio.toggled.connect(self._ratio_lock_changed)
         layout.addWidget(self.lock_ratio)
         self.width_spin.valueChanged.connect(
@@ -182,6 +185,11 @@ class _PlotAreaSizeDialog(qtw.QDialog):
     def _ratio_lock_changed(self, locked: bool) -> None:
         if locked:
             self._ratio_size = self.plot_area_size()
+            width, height = self._ratio_size.width(), self._ratio_size.height()
+            divisor = gcd(width, height)
+            self.lock_ratio.setText(f"Lock aspect ratio ({width // divisor}:{height // divisor})")
+        else:
+            self.lock_ratio.setText("Lock aspect ratio")
 
     def _dimension_changed(self, value: int, *, width: bool) -> None:
         if not self.lock_ratio.isChecked():
@@ -461,6 +469,14 @@ class plotWidget(
         # persistent operation message in the window header.
         if event.type() == QtCore.QEvent.Type.StatusTip:
             return True
+        if event.type() == QtCore.QEvent.Type.Close:
+            # Confirm before a specialised plot's closeEvent releases its data.
+            warning = pending_export_message(self)
+            if warning:
+                if not confirm_action(self, "Close plot?", warning, affirmative="Close plot"):
+                    event.ignore()
+                    return True
+                cancel_owner_exports(self)
         return super().event(event)
 
     def _install_preview_drop_target(self):

@@ -35,6 +35,17 @@ def _assert_no_stage(target):
     assert not list(target.parent.glob(f".{target.name}.*"))
 
 
+def test_empty_progress_offers_only_close(export_window):
+    from qplot.windows._export_tasks import export_task_manager
+
+    manager = export_task_manager(export_window[0])
+    manager.dialog.show()
+    assert manager.summary.text() == "No exports yet."
+    assert not manager.tree.isVisible()
+    assert [button.text() for button in manager.dialog.findChildren(QtWidgets.QPushButton)
+            if button.isVisible()] == ["Close"]
+
+
 def test_completed_export_opens_exact_file_and_folder(export_window, tmp_path, monkeypatch):
     window, _errors = export_window
     target = tmp_path / "shared data μ.csv"
@@ -295,7 +306,7 @@ def test_export_task_rejects_concurrent_target_replacement(export_window, tmp_pa
         wait_for(lambda: task.done)
 
 
-def test_main_window_shutdown_cancels_and_tracks_export_worker(export_window, tmp_path):
+def test_main_window_shutdown_cancels_and_tracks_export_worker(export_window, tmp_path, monkeypatch):
     window, errors = export_window
     target = tmp_path / "shutdown.csv"
     target.write_bytes(b"previous export")
@@ -314,6 +325,14 @@ def test_main_window_shutdown_cancels_and_tracks_export_worker(export_window, tm
     task = _start(window, target, writer)
     wait_for(started.is_set)
     assert window._shutdown.resources.inspect().active
+    replies = iter([False, True])
+    def confirm(parent, _title, message, *, affirmative):
+        assert parent is window and affirmative == "Quit qPlot"
+        assert "1 unfinished export." in message
+        return next(replies)
+    monkeypatch.setattr("qplot.windows.main.confirm_action", confirm)
+    window.close()
+    assert not task.cancelled and not window._shutdown.waiting
     window.close()
     wait_for(lambda: task.done and window._shutdown.ready)
     assert observed_cancel.is_set()
@@ -324,7 +343,7 @@ def test_main_window_shutdown_cancels_and_tracks_export_worker(export_window, tm
     _assert_no_stage(target)
 
 
-def test_shutdown_cleans_queued_exports_even_after_escalation(export_window, tmp_path):
+def test_shutdown_cleans_queued_exports_even_after_escalation(export_window, tmp_path, monkeypatch):
     window, errors = export_window
     first_target, queued_target = tmp_path / "active.csv", tmp_path / "queued.csv"
     first_target.write_bytes(b"previous active export")
@@ -348,7 +367,11 @@ def test_shutdown_cleans_queued_exports_even_after_escalation(export_window, tmp
     try:
         wait_for(started.is_set)
         assert not queued.done
+        messages = []
+        monkeypatch.setattr("qplot.windows.main.confirm_action",
+                            lambda _parent, _title, message, **_kw: messages.append(message) or True)
         window.close()
+        assert len(messages) == 1 and "2 unfinished exports" in messages[0]
         window._shutdown.resources.escalate_cleanup()
         assert first.cancelled and queued.cancelled
         assert window._shutdown.resources.inspect().active
@@ -510,10 +533,13 @@ def test_queued_export_rechecks_approval_when_it_starts(export_window, tmp_path)
         wait_for(lambda: not window._export_task_manager.tasks)
 
 
-def test_completion_callback_can_close_window_with_queued_exports(export_window, tmp_path):
+def test_completion_callback_can_close_window_with_queued_exports(export_window, tmp_path, monkeypatch):
     window, errors = export_window
     entered, release = threading.Event(), threading.Event()
     queued_writes = []
+    messages = []
+    monkeypatch.setattr("qplot.windows.main.confirm_action",
+                        lambda _parent, _title, message, **_kw: messages.append(message) or True)
 
     def first_writer(filename, _cancelled, _progress):
         entered.set()
@@ -531,6 +557,7 @@ def test_completion_callback_can_close_window_with_queued_exports(export_window,
         release.set()
         wait_for(lambda: first.done and queued.done and window._shutdown.ready)
         assert first.stage.published
+        assert len(messages) == 1 and "1 unfinished export." in messages[0]
         assert queued.cancelled and not queued.stage.published
         assert queued_writes == []
         assert errors == []

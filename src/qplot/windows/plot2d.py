@@ -1202,7 +1202,10 @@ class plot2d(
 
         rows, cols = selected.shape
         rect = self._snap_marquee_rect(self.marquee.normalized())
-        return self._format_marquee_stats_text(f"{cols}×{rows} points", values, rect)
+        return self._format_marquee_stats_text(
+            f"Selected grid: {cols} × {rows}", values, rect, heatmap=True,
+            contribution=f"{values.size} finite cells of {selected.size} selected in the displayed primary heatmap",
+        )
 
 
     def _marquee_color_levels(self) -> tuple[float, float] | None:

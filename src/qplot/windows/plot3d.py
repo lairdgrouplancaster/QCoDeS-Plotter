@@ -1,5 +1,6 @@
 """A coordinate-preserving 3D slice viewer built on the normal heatmap UI."""
 
+from contextlib import nullcontext
 from dataclasses import replace
 from typing import Any
 
@@ -374,6 +375,10 @@ class plot3d(plot2d):
         pair = (current["x"], current["y"])
         if pair == old_pair:
             return
+        with self._transposing_axis_scales() if pair == old_pair[::-1] else nullcontext():
+            self._change_slice_plane(old_pair, pair)
+
+    def _change_slice_plane(self, old_pair, pair):
         # Either orientation must restore the last edits to this physical plane.
         view = self.vb.viewRange()
         rect = self.marquee
@@ -387,12 +392,15 @@ class plot3d(plot2d):
             self.plane_changed.emit()
         self.oper_widget.restore_state(state)
         self._update_operation_labels()
-        self._axis_selection = current
+        self._axis_selection = self.axis_options
         self.clear_marquee()
         if rect is not None:
             # The previous plane's grid is still displayed until navigation completes.
             self._draw_marquee_rect(rect)
-        if ranges is not None:
+        if pair == old_pair[::-1]:
+            self._transpose_heatmap_axis_assignments()
+            self._transpose_trace_axis_assignments()
+        elif ranges is not None:
             self.vb.setRange(xRange=ranges[0], yRange=ranges[1], padding=0)
         else:
             self.vb.enableAutoRange()
@@ -773,9 +781,7 @@ class plot3d(plot2d):
 
     def _marquee_stats_text(self):
         text = super()._marquee_stats_text()
-        selected = self._marquee_selected_data()
-        count = int(np.count_nonzero(numeric_isfinite(selected))) if selected is not None else 0
-        return f"{self._slice_description()}\n{count} finite cells\n{text}" if text else text
+        return f"Slice: {self._slice_description()}\n{text}" if text else text
 
     def _add_marquee_color_context_action(self, menu):
         action = super()._add_marquee_color_context_action(menu)

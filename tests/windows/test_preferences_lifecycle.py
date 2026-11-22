@@ -68,7 +68,7 @@ def test_disposable_dialog_is_destroyed_after_return(dialog_owners, qapplication
     destroyed = []
     for iteration in range(2):
         def dismiss():
-            dialog = qapplication.activeModalWidget()
+            dialog = owner.resolution_ui._dialog if factory == "heatmap_downsample" else qapplication.activeModalWidget()
             assert isinstance(dialog, qtw.QDialog)
             dialog.destroyed.connect(lambda: destroyed.append(True))
             if accepted and isinstance(dialog, PreferencesDialog):
@@ -76,7 +76,8 @@ def test_disposable_dialog_is_destroyed_after_return(dialog_owners, qapplication
                 assert dialog.apply_preferences()
             dialog.accept() if accepted else dialog.reject()
 
-        QtCore.QTimer.singleShot(0, dismiss)
+        if factory != "heatmap_downsample":
+            QtCore.QTimer.singleShot(0, dismiss)
         if factory.endswith("preferences"):
             owner.show_preferences_dialog()
         elif factory.endswith("error"):
@@ -85,6 +86,10 @@ def test_disposable_dialog_is_destroyed_after_return(dialog_owners, qapplication
             owner.open_custom_plot_area_size_dialog()
         elif factory == "heatmap_downsample":
             owner.show_heatmap_downsample_dialog()
+            assert not owner.resolution_ui._dialog.isModal()
+            owner.show_heatmap_downsample_dialog()
+            assert len(owner.findChildren(qtw.QDialog)) == 1
+            dismiss()
         qapplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
         qapplication.processEvents()
         assert len(destroyed) == iteration + 1, f"{factory} retained its dismissed dialog"
@@ -95,7 +100,7 @@ def test_disposable_dialog_is_destroyed_after_return(dialog_owners, qapplication
         assert main.config.get("user_preference.theme") == "dark"
 
 
-@pytest.mark.parametrize("factory", ["main_preferences", "plot_preferences", "heatmap_downsample"])
+@pytest.mark.parametrize("factory", ["main_preferences", "plot_preferences"])
 def test_disposable_dialog_is_destroyed_if_exec_raises(dialog_owners, qapplication, monkeypatch, factory):
     main, plot = dialog_owners
     owner = main if factory.startswith("main_") else plot
@@ -107,10 +112,7 @@ def test_disposable_dialog_is_destroyed_if_exec_raises(dialog_owners, qapplicati
 
     monkeypatch.setattr(qtw.QDialog, "exec", fail_exec)
     with pytest.raises(RuntimeError, match="Modal event loop failed"):
-        if factory.endswith("preferences"):
-            owner.show_preferences_dialog()
-        else:
-            owner.show_heatmap_downsample_dialog()
+        owner.show_preferences_dialog()
     qapplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
     qapplication.processEvents()
     assert destroyed == [True]

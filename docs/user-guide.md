@@ -44,8 +44,8 @@ Long scalar keys and values remain compact in the tree and are marked locally.
 A `[display]` row counts these present-but-shortened cells; it is not a data-loss
 warning. Double-click a marked cell, press Enter on its row, or use **View
 Complete Value...** to open the current run's bounded read-only value viewer.
-The viewer has Select All and an explicit Copy button and does not touch the
-clipboard merely by opening. Traceback summaries retain both their beginning
+The viewer offers **Find next**, **Wrap lines**, **Select all** and **Copy entire
+value**. The copy shortcut in the text area copies the selected text. Traceback summaries retain both their beginning
 and final exception line. A global `[truncated]` row is reserved for actual
 source or structural omissions in Metadata and Raw. Raw categories open one
 level by default.
@@ -204,24 +204,18 @@ or uncommitted data. Finish the transaction or refresh after the writer pauses.
 
 ### Opening Databases from the File Manager
 
-On macOS and Windows, open **Settings → Set Up or Remove Desktop Integration…**, or use the
-**Desktop integration…** button in **About qPlot**. Choose whether to add a
-desktop shortcut and register file associations/icons, then click
-**Install/update**. File registration does not change your default opener;
-WAL and SHM files receive icons but are not opened. Use **Remove** in the same
-dialog to remove integration. For a custom installation, enter its launcher
-location first. Updates remove the previous owned launcher before installing
-the replacement; if installation fails, the dialog shows details and allows
-you to retry. Setup is never run automatically at startup.
+On macOS and Windows, open **Settings → Desktop integration…** or the same
+action in **About qPlot**. Choose the launcher location, optional desktop
+shortcut and file associations, then select **Install launcher**. File
+registration adds an Open With option and icons for the database and its WAL
+and SHM sidecars. Your default opener stays in place. For an existing qPlot
+launcher the dialog offers **Update launcher** and **Remove integration**.
+**Browse…** lets you choose an installation folder. Progress and error
+details appear when an operation runs.
 
-On the first interactive launch on macOS or Windows, qPlot offers **Set up…**,
-**Later**, and **Don’t ask again**. **Set up…** opens the same dialog; nothing is
-installed until you click **Install/update**. **Later** (or closing the invitation)
-asks again on the next launch. Choosing **Set up…** or **Don’t ask again** dismisses
-the invitation for this user across updates and Python environments. An existing
-qPlot launcher at the default location also suppresses the invitation. The choice
-is stored separately from viewer preferences, so resetting those preferences does
-not bring the invitation back. Custom launchers remain manageable through Help.
+After your first plot opens, the main window offers **Set up…** and **Dismiss**
+in its status bar. Both choices dismiss future invitations. qPlot also skips
+the invitation when it detects an existing launcher at the default location.
 
 **Recommended if you mainly work with QCoDeS databases:** create the desktop
 launcher and register the database, WAL and SHM icons with the command below.
@@ -392,7 +386,7 @@ The main window is the database and run-selection hub.
 Common actions:
 
 * `File -> Load Database...` loads a QCoDeS database.
-* `File -> Load Recent Database` reopens a recently used database.
+* `File -> Load Recent Database` reopens a recently used database. If qPlot cannot save the list, newly opened databases still appear here for this session. Choose **Details** in the notice to see the settings path and error. Opening a database again retries the save.
 * `File -> Refresh` checks the current database for new runs and refreshes all
   live plot windows once.
 * `File -> Open Database Folder` opens the folder containing the loaded
@@ -408,23 +402,26 @@ Common actions:
 * `File -> Generate Test Data from Template -> Export CSV Collection...` copies ten installed,
   cumulative instruction files for generating databases from approximately
   10 MB to 30 GB, then opens their folder.
-* `File -> Generate Test Data from Template -> Generate Database from CSV...` creates a
-  QCoDeS test database from an edited specification without blocking the qPlot
-  interface. The CSV dialogs remember the last folder used for CSV selection,
+* **File → Generate Test Data from Template → Generate database…** shows the
+  workload for a bundled template or your own specification. Choose an output
+  file and select **Generate database**. You can cancel in the progress window
+  and open or reveal the completed database. The CSV dialogs remember the last folder used for CSV selection,
   example creation, or collection export across application launches.
 * `Settings -> Preferences...` edits common theme, default
   load location, preview, refresh, confirmation, and runtime settings. On
   macOS this appears as `qPlot -> Preferences...`.
-  In Appearance, `Cursor significant figures` controls the x, y, and z
+  On the Plots page, `Cursor precision (significant figures)` controls the x, y, and z
   coordinate readouts, including snapped trace values (1–17; default 6).
-  Use `Restore Defaults` in that dialog to reset the shown preferences without
-  leaving the dialog.
-* `Options -> Reset All Settings...` resets all qPlot settings to their
-  defaults.
-* `Help -> Quick Start` shows the core workflow inside qPlot.
-* `Help -> Keyboard and Mouse Controls` shows the controls reference inside qPlot.
-* `Help -> About qPlot` shows the version, build status and available source
-  commit details. `Committed` is the Git committer date and time shown in UTC;
+  **Reset this page** stages defaults for the selected page. Choose **Apply**
+  or **OK** to save edits, or **Retry** after a failed save.
+* `Settings -> Advanced -> Reset All Settings...` restores all qPlot settings,
+  closes the current database and plot windows, and cancels their unfinished exports.
+* **Help → Quick start** shows how to load a database, select a run and open a plot.
+* **Help → Keyboard and mouse controls** lists the current window’s controls
+  first. Press `Ctrl+F` (`Cmd+F` on macOS) to search by action or gesture.
+  Choose **This window** to limit the results.
+* `Help -> About qPlot` shows the version. **Technical details** contains
+  copyable build, commit and installation information. `Committed` is the Git committer date and time shown in UTC;
   it describes the recorded commit, including when there are local changes.
   This information works offline in source checkouts and stamped packages.
   The date is omitted when unavailable; it is not a merge or publication date.
@@ -432,12 +429,12 @@ Common actions:
   environment running qPlot and the loaded package folder. Each has an
   `Open folder` link to open it in your file manager. For editable installations,
   the package can be in a source checkout outside the environment.
-* `Help -> Check for Updates…` checks PyPI for a newer qPlot release and shows
+* **Help → Check for updates…** checks PyPI for a newer qPlot release and shows
   release notes and upgrade instructions. Stable releases are selected by
   default; withdrawn releases and incompatible application wheels are ignored.
-  `Help -> About qPlot` also offers `Check for Updates`, with the result shown
-  below the installed version and build details in the same dialog.
-  `Preferences -> Updates` can enable checks on launch (off by default) and
+  `Help -> About qPlot` also offers **Check for updates**, with the result shown
+  below the installed version. Both dialogs offer **Retry** on failure.
+  `Preferences -> Application -> Updates` controls checks on launch (enabled by default) and can
   include pre-release versions. Launch checks run in the background, at most
   once every 24 hours, and notify you only when a newer release is available.
   Both checks have a five-second timeout. For source checkouts, update the
@@ -487,7 +484,7 @@ is projected or averaged implicitly. Mixed runs plot each supported quantity
 according to its own dependencies.
 
 Complex measurements, including QCoDeS array samples, use the persistent
-preferences in **Preferences → Appearance**. **1D complex plots** can show
+preferences in **Preferences → Plots**. **1D complex plots** can show
 magnitude, phase, Re or Im against the setpoint, or **Im vs Re** (Re horizontal,
 Im vertical). **Higher-dimensional complex plots** select magnitude, phase, Re
 or Im for heatmaps and 3D slices, retaining their usual setpoint axes. The
@@ -530,7 +527,7 @@ consecutive IDs. Each database has its own line. Hidden or fully transparent
 traces and heatmaps are omitted. This annotation is included in plot images,
 SVGs, PDFs, and printing.
 The annotation uses a shaded strip with a bold database name. In
-`Preferences -> Appearance`, `Show source annotation` controls its visibility
+`Preferences -> Plots`, `Show database and run details above plots` controls its visibility
 in all plots and exports. It is enabled by default. Hiding it also removes
 the space reserved for the strip.
 
@@ -558,54 +555,69 @@ Common plot controls:
 * Hold Shift while moving a selection to lock movement horizontally or vertically,
   according to the initial drag direction. Release Shift for free movement.
 * Right-click inside a marquee selection for zoom and statistics actions.
+  Statistics use the primary trace or heatmap identified in the report. A
+  heatmap report gives the grid dimensions and the number of finite cells
+  that contributed. **Copy** includes the run, measurement and quantity units.
+  For the full recorded measurement, choose statistics from its thumbnail.
+  You can continue working or cancel while qPlot calculates.
 * Press `Esc` or double-click the plot to clear a marquee selection.
-* Double-click an X or Y axis to open its scaling dialog, or use **View → Axis Scaling…**.
-* The axis-scaling tabs are **Bottom**, **Left**, **Top** and **Right**. Each
-  shows the plotted quantity above its range controls. Unused axes are disabled;
-  hover over a disabled tab for an explanation. **Link range to** identifies
-  each available target by plot title, axis position and quantity. Select
-  **None** to control the range independently.
-* Range controls default to `Min / Max`. Select `Centre / Span` to enter an
-  arithmetic midpoint and the full range width (`maximum - minimum`). Switching
-  formats leaves the plotted range and Auto/Manual mode unchanged. The readout
-  underneath shows the equivalent values without units; hover for full precision.
+* Double-click an axis to open **Plot settings → Axes** on that axis, or use
+  **View → Axis Scaling…**. Switch axes with the **Bottom**, **Left**, **Top**
+  and **Right** tabs at the top of the axis settings panel. The heading below
+  the tabs shows the plotted quantity and units for the selected side.
+  Hover over a shortened quantity name to read it in full. Unused sides are disabled.
+* Choose **Automatic** to follow the data. **Current limits** shows the
+  displayed range in data coordinates. To copy both endpoints at full precision,
+  right-click the readout and choose **Copy exact limits**. **Data range** sets
+  the percentage of the data used for autoscaling.
+* Choose **Manual** to edit the limits at full precision. The default format
+  is **Min / Max**. Select **Centre / Span** to enter an arithmetic midpoint
+  and the full width (`maximum - minimum`). Switching formats preserves
+  the plotted range. The readout below the fields shows the equivalent values.
   Each axis and colour scale retains its own format while the plot window is open.
   Values use data coordinates even on logarithmic axes, where both resulting
   limits must remain positive.
-* Use `Log Scale` in an axis-scaling tab to switch a line-plot axis between
-  linear and base-10 logarithmic scaling. Non-positive values are omitted.
+* Under **Axis behaviour**, **Log scale** switches a line-plot axis to
+  base-10 logarithmic scaling. Non-positive values are omitted. **Link range
+  to** lists other plot axes by plot title, axis position and quantity.
+  Select **None** to control the range independently.
 * Scroll over an axis to scale that axis. Right-drag on the plot has no scaling action.
 * The bottom toolbar shows cursor coordinates and array indices.
-* Use `Swap X/Y` in the Plot appearance dialog to exchange the plotted axes.
-* Open **View → Plot appearance…** to edit the plot with live preview.
-  Resize the split between the dataset list and the selected-dataset controls;
-  narrow windows stack these panes vertically, and the controls scroll when
-  needed. **Whole plot** contains the shared colour-map and axis-swap controls,
+* **Swap X/Y** on the Datasets page exchanges Bottom with Left and Top with Right.
+  Each quantity carries its zoom, manual or automatic range settings, log scale
+  and axis direction. A range link to another plot pauses while its two axes
+  have different orientations. **Link range to** shows the paused link and
+  reconnects it when the orientations match again. Choose **None** to remove it.
+* Open **View → Plot settings…** to preview edits on the current plot.
+  Choose **Datasets** for its measurements and drawing styles, **Axes** for its
+  coordinate ranges, or **Colour scale** when the plot includes a heatmap.
+  Drag the thin divider between the dataset list and the selected-dataset controls
+  to resize the panes. Narrow windows stack these panes vertically, and the controls
+  scroll when needed. **Whole plot** contains the shared colour-map and axis-swap controls,
   available independently of dataset selection. **Drawing** has compact **Line**
   and **Markers** rows for colour, width or size, and style or shape. Colour
   selectors show swatches; their tooltips and dropdowns give the hex codes.
   Visibility and opacity appear first, followed by Drawing and Trace axes.
   Line-style and marker-shape selectors show previews, with names in their
-  tooltips and dropdowns. The dialog opens with equal columns and a compact
-  height; resize it or move the divider to give either pane more room.
-  Choose `OK` to keep the changes, or `Cancel` to undo the session and close.
+  tooltips and dropdowns. The dialog sizes the two panes to fit the dataset
+  names and drawing controls.
+  Choose **Keep changes** to keep edits across the pages, or **Cancel** to undo the session and close.
   `Esc` and the window's close button also cancel. Cancellation undoes dataset
   additions and removals, and restores styles, axis assignments, drawing order, the colour map
-  and its range, Auto/Manual mode, symmetry and refresh-autoscaling choice.
-  Multiple selections show `Mixed` where their values differ. Controls affect only
-  selected datasets of the type being edited; the colour scale and axis swap apply
-  to the plot. Clearing the selection disables dataset-specific controls until
+  and its range, edited axes, Auto/Manual mode, symmetry and refresh-autoscaling choice.
+  Multiple selections show **Mixed** where their values differ. Visibility, opacity
+  and axis assignments apply to all selected datasets. Line and marker styles apply
+  to selected traces. The colour scale and axis swap apply to the whole plot.
+  Drag rows to change the drawing order, or select rows in the table and press
+  `Alt+Up` or `Alt+Down`. The first row is drawn on top.
+  Clearing the selection disables dataset-specific controls until
   you select a dataset again; refreshing does not select a dataset for you.
-  Hidden datasets remain in the list with a struck-through name and a dimmed
-  preview. Select the dataset and tick **Visible** to show it again.
+  To hide or show datasets, select their rows and change **Visible** in
+  **Selected datasets**. Hidden rows keep their struck-through names and dimmed previews.
   For heatmaps, click the colour-map name and gradient in **Whole plot** to
-  open **Choose colour map**. This dialog shares the full Colour Scale dialog's
-  searchable preview list, without the scaling controls. Selecting a map previews
-  it on the plot; `OK` keeps it, while `Cancel`, `Esc` or closing the dialog
-  restores the previous map. Colour limits and autoscaling are unaffected.
-  The name and gradient update together, and the gradient previews expand when
-  you widen either chooser. Cancelling the parent Appearance dialog also undoes
-  colour-map changes accepted in the chooser during that session.
+  open the **Colour scale** page. Selecting a map previews it on the plot.
+  The name and gradient update together. The same **Keep changes** and **Cancel**
+  buttons apply to the whole editing session.
 * **Colour scale** starts with **Colour map**, followed by **Set scaling** and
   **Choose colour map**. Search by map name or narrow the list with **Source** and
   **Category**; the available categories follow the chosen source. Filtering does
@@ -620,20 +632,21 @@ Common plot controls:
   precision. Display rounding never changes the actual limits. **Symmetric
   about zero** remains available in both Auto and Manual modes; only
   **Autoscale on refresh** is disabled in Manual mode.
-* **Preferences → Appearance → Default trace** sets the initial colour, line width
-  and line style in one row, using the same swatch and style previews as Plot
-  Appearance. Choose a preset colour or **Custom**. These defaults apply to new
-  plots and to traces added to existing plots; existing traces keep their styles.
-* Colour-map selection affects the current plot. Set **Preferences → Appearance
-  → Default colour map for new plots** to choose the default. Existing plots keep
-  their own colour maps. Preferences are saved with
+* Under **Preferences → Plots → New traces and heatmaps**, **Trace appearance**
+  sets the initial colour, line width and line style in one row, using the same
+  previews as **Plot settings → Datasets**.
+  Choose a preset colour or **Custom**. These defaults apply to new
+  plots and to traces added to existing plots. **Heatmap colour map** sets
+  the default for new heatmaps. Existing traces and heatmaps keep their appearance.
+  To change the colour map on the current plot, use **Plot settings → Colour scale**.
+* Preferences are saved with
   `Apply` or `OK`; `Cancel` discards changes that have not been applied.
   The Preferences dialog fits the available screen and can be resized. Pages scroll
   vertically when needed, with the action buttons kept outside the scrolling
   area. Labels reflow in narrow windows, and arrows reveal tab headings when
   they do not all fit.
 * Invalid range entries stay in the editor with an explanation underneath.
-  Correct the values to apply them, or choose `Auto` to discard the invalid entry.
+  Correct the values to apply them, or return to automatic scaling to discard the invalid entry.
   Correct an invalid entry before switching between `Min / Max` and `Centre / Span`;
   a blocked format change keeps your input and the current format.
 * Cut windows have a `Cut controls` panel for the cut direction and position.
@@ -644,7 +657,8 @@ Common plot controls:
 
 Line plots support multiple compatible traces in one window. When a snapshot
 fallback session supplies a preview thumbnail, drag it from the run table onto
-an existing line plot to add a trace. You can also use the left panel.
+an existing line plot to add a trace. In **View → Plot settings… → Datasets**,
+you can also choose a measurement from the dropdown and select **Add**.
 
 Compatible plots are matched by independent variable name. The source plot
 window for an added trace can be closed after the trace is added. Live updates
@@ -659,11 +673,11 @@ When multiple traces use different Y axes:
 ### Heatmaps
 
 When a heatmap is displayed at reduced resolution, its warning button opens a
-compact summary showing the source and displayed grid dimensions (columns ×
+modeless report showing the source and displayed grid dimensions (columns ×
 rows), where known. The summary distinguishes spatial averaging, aggregation
 and sampling. Expand **Details** for source-row counts, sampling and
-interpolation information; unavailable dimensions are not inferred. **Open
-Preferences…** opens **Performance**, where the heatmap limits can be adjusted.
+interpolation information. **Adjust heatmap limits…** opens **Performance** with the
+full-resolution limit selected. The report updates while you use the plot.
 
 `Preferences -> Performance -> Maximum heatmap grid cells` sets the total
 cell budget for aggregated heatmaps (250,000 by default). A grid that fits is
@@ -692,9 +706,9 @@ differ. If the two axes are in the opposite order, qPlot transposes the added
 layer automatically. An operation that temporarily makes units incompatible
 hides that layer until its units match again.
 
-The left panel lists the heatmap layers. Added layers are translucent so that
-overlapping maps remain visible; use each layer's opacity control or remove
-button to adjust the composition. All layers share one colour map and colour
+The **Datasets** page in **Plot settings** lists the heatmap layers. Added layers
+are translucent so overlapping maps remain visible. Select a layer to adjust
+its opacity or choose **Remove**. All layers share one colour map and colour
 range, which is autoscaled across their combined finite values. A hidden source
 plot remains live while its layer is present, just as it does for an added line
 trace. Large hidden heatmap sources also follow the visible window's viewport
@@ -707,10 +721,10 @@ colour-scale and cut controls.
 Colour-scale controls:
 
 * Right-click the plot and choose `Autoscale Colour`, or press `C`.
-* Double-click the colour scale bar to open the colour scaling dialog, or use **View → Colour Scale…**.
+* Double-click the colour scale bar to open **Plot settings** on the **Colour scale** page, or use **View → Colour Scale…**.
   Its range controls offer the same `Min / Max` and `Centre / Span` formats as
   the plot axes.
-* **Autoscale on refresh** in the colour-scale dialog is enabled by default for
+* **Autoscale on refresh** on the **Colour scale** page is enabled by default for
   2D plots. Manual limits, including adjustments made by dragging the colour
   bar, grey out this option without changing its value. Returning to **Auto**
   restores the option with your previous choice.
@@ -729,7 +743,7 @@ Colour-scale controls:
 * A cut window opens, with a cursor shown on the heatmap.
 * Close the cut window to remove its probe. In heatmaps and 3D slices, double-click a probe
   line to close its cut, or Shift+double-click a probe line to close all cuts on
-  that heatmap. Double-clicking elsewhere on the heatmap opens plot appearance.
+  that heatmap. Double-clicking elsewhere on the heatmap opens **Plot settings → Datasets**.
   Probe removal allows five extra screen pixels around the cursor, independent
   of zoom, and favours the nearest probe when hit areas overlap.
 * Move the cut position with the cut window slider or by dragging the cursor on
@@ -750,7 +764,7 @@ Colour-scale controls:
 ### 3D Slice Viewer
 
 A plot window can combine 1D traces, 2D heatmaps and one 3D measurement,
-added in any order using preview dragging or Appearance → Add. Adding a 3D
+added in any order by dragging previews or using **Plot settings → Datasets → Add**. Adding a 3D
 measurement brings up its slice controls; removing it removes those controls.
 Slice selection, plane selection and slice operations affect only that 3D
 measurement. Other datasets retain their coordinates and data. Each window
@@ -786,8 +800,9 @@ An em dash (`—`) marks an unavailable or nonfinite cursor value.
   background, with an explicitly provisional range and scan progress. Live
   limits expand without shrinking. Press C to recalculate; dragging the
   colourbar or using marquee colour zoom locks the limits. The **Colour** dropdown
-  is also available in the colour-scale dialog and stays in sync with the toolbar.
-  **Symmetric** is available in that dialog.
+  is also available on **Plot settings → Colour scale** and stays in sync with
+  the toolbar. Select **Symmetric about zero** there for matching positive and
+  negative limits.
 * **Slice operations** run independently on each full plane, regardless of
   zoom or marquee bounds. Swapping X/Y preserves the physical operation.
   Changing the depth parameter restores that plane's own operation settings,
@@ -803,8 +818,8 @@ An em dash (`—`) marks an unavailable or nonfinite cursor value.
   plane. Cuts retain their live source if its viewing window is closed.
 * The marquee menu offers **Mean within selection versus depth**. This averages
   finite cells in the same physical rectangle in each plane. **Coverage…** lists
-  the count for each depth; ordinary two-column mean-cut CSV exports also
-  include those counts.
+  the run, cut region, depth unit and finite versus selected cells for each
+  depth. Ordinary two-column mean-cut CSV exports also include the finite counts.
 * **Freeze Slice as 2D Plot** creates an independent processed snapshot with
   ordinary appearance, operations, H/V cuts and exports.
 
@@ -881,8 +896,9 @@ secondary axes, and the axis labels follow the displayed quantities.
 ## Export
 
 Use `File -> Export All Runs as Database…` to create a standalone `.db` for sharing.
-Choose a new filename; existing files and destinations with SQLite sidecars
-cannot be replaced. The copy includes committed data in the WAL and opens
+Choose a new filename. If it is occupied or SQLite sidecars are present, use
+**Choose another name…** to return to the same folder. The copy includes
+committed data in the WAL and opens
 without the original sidecar files. qPlot does not checkpoint or modify the
 source database or WAL.
 Databases whose measurements are stored in separate raw-data files cannot be
@@ -920,10 +936,11 @@ measurement shared by the selected runs under **Data to export**, then choose
 an output folder. If there are no shared measurement names, **Data to export**
 shows **All measurements in each run** as plain text. The review shows the
 number of selected runs and their run numbers in a single-line field that you
-can select and copy. qPlot writes one
-file per run and asks before replacing an existing file. Each run
-captures the committed data available when its export starts; a batch is not
-a common acquisition instant across all runs. Later live appends are excluded
+can select and copy. After folder selection, the filename review lists one CSV
+per run. Double-click a name to edit it, choose **Skip** to leave it out, or
+choose **Replace** for an existing file. Resolve duplicate names before
+selecting **Export** with the displayed file count. Each run captures the
+committed data available when its export starts. Later live appends are excluded
 from that run's captured export. Trusted live exports use the run-prefix reader
 and do not need a writer checkpoint or a whole-database copy.
 
@@ -931,7 +948,7 @@ You can also select individual measurement thumbnails in the run table or the
 Preview pane. Ctrl-click (Cmd-click on macOS) toggles a thumbnail; Shift-click
 selects a range in the current display order. Right-click a selected thumbnail
 and choose **Export Selected Measurements as CSV…**, then choose a folder. This
-writes one raw CSV per selected measurement, including its setpoints. Selecting
+opens the same filename review with one raw CSV per selected measurement, including its setpoints. Selecting
 two measurements from the same run produces two files. Selection is local to
 the run table or Preview pane, and remains highlighted as previews finish
 loading. Drag any highlighted thumbnail onto a plot to add the whole selection
@@ -939,9 +956,11 @@ in display order. The drag image shows the number of measurements being copied.
 Dragging an unselected thumbnail carries just that measurement. The usual
 axis compatibility choices and one-volume-per-window limit still apply.
 
-Database copies and CSV exports run in the background. The **Exports** window shows
-progress and lets you cancel selected or all pending exports. Hide it to keep
-working, and reopen it from `File -> View Export Progress…`. A failed or cancelled
+Database copies and CSV exports run in the background. The **Exports** window lists
+output filenames, groups selected-run and selected-measurement batches, and
+shows how many files have finished in each batch. Select a pending file to cancel
+it with **Cancel selected**, or use **Cancel all** for all unfinished exports.
+Choose **Hide** to keep working, and reopen the window from `File -> View Export Progress…`. A failed or cancelled
 export leaves its destination unchanged; files already completed remain saved.
 Successful exports show **Export complete** with a tick. When all exports have
 finished, **Hide** becomes **Done**; for a single successful export, the completion
@@ -950,10 +969,13 @@ completed export and use **Open file** to open it in its default application,
 or **Open folder** to open its destination folder. For a failed export, select
 the row and choose **Details…**, or double-click the row, to view and copy
 the error details.
-Switching or closing the database cancels pending database copies and raw exports. Closing a plot
-cancels its pending plot exports.
+Switching or closing the database cancels pending database copies and raw exports.
+Closing a plot cancels that plot’s pending exports. When closing plots, the database
+or qPlot would cancel unfinished exports, a confirmation shows how many are affected.
+This warning also appears when routine close confirmations are turned off. Completed
+files are kept.
 
-In a plot's export dialog, select **CSV data**, then choose **Data to export**.
+In a plot's export dialog, select **Plotted data**, then choose **Data to export**.
 Individual traces and heatmaps are identified by run number and measurement name.
 **All traces** combines the plot's measurement traces into columns; heatmaps are exported one
 at a time because their grids may have different coordinates. Hidden measurements
@@ -965,9 +987,9 @@ This is a single-choice list: choose one measurement or **All traces**.
 
 Check **Values** for the selected measurements:
 
-* **Underlying plot samples** includes applied Operations-panel processing,
+* **After Operations-panel processing** includes applied Operations-panel processing,
   before native FFT, differentiation, phase-map, or mean-subtraction controls.
-* **Transformed plot values** also includes those native controls. Both line
+* **After operations and plot transforms** also includes those native controls. Both line
   modes export all loaded samples from the selected traces in physical
   coordinates; zoom, rendering downsampling, and logarithmic axis display do not
   change their values. Transformed export does not support error bars.
@@ -980,18 +1002,20 @@ Plot CSV values are captured from the plot after the destination is chosen;
 later refreshes do not change the queued export. No plot CSV mode reads fresh
 database data. Use the main-window CSV action for raw measurements.
 
-Plot windows can export plot images and data through `File -> Export Plot...` or
-`Ctrl+E`. Choose **PNG image**, **SVG**, or **CSV data** in **Format**.
+Plot windows can export plot images and data through `File -> Export Plot...`
+or `Ctrl+E` (`Cmd+E` on macOS). On the **Figure** tab, choose **PNG image**,
+**SVG**, or **Plot-sized PDF**.
 Images and SVG export the complete plot, including colour scales and source
 annotations. Image dimensions start at the displayed plot size; editing width or
 height preserves its aspect ratio. **Background** offers **White**, **Transparent**
-and **Choose colour…**. Custom colours retain alpha support, and cancelling the
+and **Choose colour…**. For a custom background, **Opacity** ranges from
+0 (transparent) to 255 (opaque). Cancelling the
 colour picker keeps the previous background. The selected swatch shows a
 checkerboard for transparency or the hex code for a custom colour.
-**Invert brightness** is shown beside **Smooth edges**. CSV shows data options
-instead of image controls; the scope description has a tooltip with full details.
-Choosing **Tab** suggests a TSV file, while the final CSV/TSV file type determines
-the delimiter. **Save as…** leaves the dialog open for further exports.
+**Invert brightness** is shown beside **Smooth edges**. On **Plotted data**,
+choose **CSV (comma-separated)** or **TSV (tab-separated)**. That choice sets
+both the delimiter and the filename extension. The selection summary identifies
+included measurements, including hidden ones. **Save as…** leaves the dialog open for further exports.
 **Copy image** or **Copy SVG** copies the complete plot using the dimensions,
 background and options selected in this dialog. CSV has no clipboard action.
 
@@ -999,14 +1023,14 @@ Use `File -> Save Plot as PDF...` or
 the plot context menu to save a plot-sized PDF of the rendered plot area. Use
 `Edit -> Copy Plot Image`, `Ctrl+C`, or the plot context menu to copy it to the
 clipboard without the surrounding window menus or toolbars. The copy resolution
-is set in `Options -> Preferences...`: screen resolution preserves the current
-display pixels, while 300 dpi renders a higher-resolution clipboard image at the
+is set in **Preferences → Files & export → Copied plot image quality**. Screen
+resolution preserves the current display pixels, while 300 dpi renders a higher-resolution clipboard image at the
 same logical plot size, and vector SVG copies editable SVG data for applications
 that accept SVG from the clipboard.
 
 Use `Window -> Resize Plot Canvas -> Custom...` to change the displayed plot
 area in pixels. Width and Height start at the current canvas dimensions.
-**Lock aspect ratio** is selected initially; clear it to edit the dimensions
+**Lock aspect ratio** shows the locked width-to-height ratio. Clear it to edit the dimensions
 independently. Locking it again preserves the newly entered ratio, rounded to
 whole pixels. **Resize** applies the dimensions; **Cancel** or `Esc` discards
 the edits. Toolbars and window borders are excluded from the dimensions.
@@ -1032,6 +1056,10 @@ sources. Set the main interval to `0.0 s` for manual refresh only.
 
 ## Keyboard and Mouse Controls
 
+**Help → Keyboard and mouse controls** shows the bindings for your platform.
+For qPlot shortcuts shown below with `Ctrl`, use `Cmd` on macOS unless a
+Mac-specific combination is listed.
+
 General shortcuts:
 
 | Shortcut | Action |
@@ -1046,7 +1074,7 @@ General shortcuts:
 | `Ctrl+W` / `Cmd+W` | Close the current qPlot window |
 | `Ctrl+Q` / `Cmd+Q` | Quit qPlot |
 | `Ctrl+,` | Open preferences |
-| `Ctrl+M` / `Alt+Space, N` | Minimise the current window |
+| `Cmd+M` on macOS / `Alt+Space, N` on Windows | Minimise the current window |
 | `Alt+Space, X` / `Alt+Space, R` | Maximise or restore the current window on Windows |
 | `Ctrl+Cmd+F` / `F11` | Enter or leave full screen |
 | `Ctrl+C` / `Cmd+C` | Copy selected cells or rows in the run details pane |

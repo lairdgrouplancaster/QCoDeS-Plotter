@@ -345,6 +345,10 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         controls = getattr(self, "colorbar_scale_controls", None)
         if controls is None:
             return
+        open_settings = self.__dict__.get("_open_plot_settings_page")
+        if open_settings is not None:
+            open_settings(page="Colour scale")
+            return
 
         self._populate_colorbar_colormap_table()
         self._sync_colorbar_scale_controls()

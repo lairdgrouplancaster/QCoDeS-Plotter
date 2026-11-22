@@ -233,6 +233,8 @@ class RunControlsMixin:
             )
 
         self.infoBox = moreInfo(preview_size=self.preview_size)
+        self.infoBox.openSnapshotPlots.connect(self.open_selected_run_all)
+        self.infoBox.exportSnapshotCsv.connect(self.export_selected_runs_csv)
         self.infoBox.preview.plotRequested.connect(self.open_preview_plot)
         self.infoBox.preview.exportRequested.connect(self.export_preview_csv)
         self.infoBox.preview.batchExportRequested.connect(self.export_selected_previews_csv)

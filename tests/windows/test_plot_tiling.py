@@ -6,7 +6,6 @@ from unittest.mock import Mock
 import pytest
 from jsonschema import ValidationError
 from PyQt6 import QtCore
-from PyQt6 import QtWidgets as qtw
 
 from qplot.configuration.config import config
 from qplot.windows._plot_tiling import (
@@ -70,9 +69,9 @@ def test_preferences_persist_and_restore_grid(cfg, monkeypatch):
         assert dialog.apply_preferences()
         assert plot_tile_grid(config()) == (1, 3)
         monkeypatch.setattr(
-            qtw.QMessageBox, "question",
-            lambda *args, **kwargs: qtw.QMessageBox.StandardButton.Yes,
+            "qplot.windows._preferences.confirm_action", lambda *args, **kwargs: True,
         )
+        dialog.tabs.setCurrentIndex(1)
         assert dialog.restore_defaults()
         assert plot_tile_grid(config()) == (1, 3)
         assert dialog.apply_preferences()

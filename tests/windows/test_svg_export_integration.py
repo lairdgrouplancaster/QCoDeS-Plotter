@@ -75,9 +75,7 @@ def test_copy_plot_image_action_preserves_zoom_clipping(real_plot):
 def destination_dialogs(monkeypatch, target, *, replace=True):
     monkeypatch.setattr(qtw.QFileDialog, "getSaveFileName",
                         lambda *_args, **_kwargs: (str(target), ""))
-    monkeypatch.setattr(qtw.QMessageBox, "question", lambda *_args, **_kwargs: (
-        qtw.QMessageBox.StandardButton.Yes if replace else qtw.QMessageBox.StandardButton.No
-    ))
+    monkeypatch.setattr("qplot.windows._export_paths.confirm_action", lambda *_args, **_kwargs: replace)
 
 
 def rendered_svg(data):

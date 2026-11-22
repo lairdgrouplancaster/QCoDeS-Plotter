@@ -21,7 +21,7 @@ def click(widget):
 
 
 def reopen(window, axis):
-    window._axis_scale_dialog.close()
+    window._axis_scale_dialog.accept()
     window.open_axis_scale_dialog(axis)
     qtw.QApplication.processEvents()
 
@@ -37,6 +37,8 @@ def assert_data_bounds(bounds, expected):
 def edit_limits(window, axis, limits):
     window.open_axis_scale_dialog(axis)
     controls = window._axis_scale_controls[axis]
+    if not controls.manualRadio.isChecked():
+        click(controls.manualRadio)
     controls.minText.setText(str(limits[0]))
     controls.maxText.setText(str(limits[1]))
     QTest.keyClick(controls.maxText, QtCore.Qt.Key.Key_Return)
@@ -71,8 +73,8 @@ def test_visible_auto_follows_perpendicular_range(loaded_plot, sides, dimension,
     edit_limits(window, perpendicular, initial)
     window.open_axis_scale_dialog(auto_axis)
     controls = window._axis_scale_controls[auto_axis]
-    click(controls.visibleOnlyCheck)
     click(controls.autoRadio)
+    click(controls.visibleOnlyCheck)
     auto_vb = window._axis_scale_viewbox(auto_axis)
     assert_data_bounds(auto_vb.viewRange()[1 - dimension], [10, 20] if dimension == 0 else [0, 10])
     unrelated = {
@@ -158,6 +160,7 @@ def test_multiple_visible_auto_axes_keep_options_and_empty_regions(loaded_plot, 
     for axis in ("y", "y2"):
         window.open_axis_scale_dialog(axis)
         controls = window._axis_scale_controls[axis]
+        click(controls.autoRadio)
         click(controls.visibleOnlyCheck)
         controls.autoPercentSpin.setValue(60)
         if auto_pan:
@@ -203,8 +206,8 @@ def test_mutually_dependent_visible_auto_axes_settle_without_feedback(loaded_plo
     for axis in ("x", "y2"):
         window.open_axis_scale_dialog(axis)
         controls = window._axis_scale_controls[axis]
-        click(controls.visibleOnlyCheck)
         click(controls.autoRadio)
+        click(controls.visibleOnlyCheck)
     # These controls own different ViewBoxes, so both visible-only options can
     # be active even though the assigned trace's axes depend on one another.
     changes = []
@@ -246,9 +249,9 @@ def test_visible_auto_follows_qt_navigation(loaded_plot, gesture):
     edit_limits(window, "x", [20, 40])
     window.open_axis_scale_dialog("y")
     controls = window._axis_scale_controls["y"]
-    click(controls.visibleOnlyCheck)
     click(controls.autoRadio)
-    window._axis_scale_dialog.close()
+    click(controls.visibleOnlyCheck)
+    window._axis_scale_dialog.accept()
     before_x = window.vb.viewRange()[0][:]
     before_y = window.vb.viewRange()[1][:]
     if gesture == "pan":

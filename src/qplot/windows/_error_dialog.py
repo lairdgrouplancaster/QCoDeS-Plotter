@@ -5,6 +5,7 @@ from PyQt6 import QtWidgets as qtw
 
 from ._small_dialogs import (
     close_default,
+    copy_to_clipboard,
     dialog_layout,
     equal_button_widths,
     resize_dialog,
@@ -12,6 +13,8 @@ from ._small_dialogs import (
 
 
 class ErrorDialog(qtw.QDialog):
+    RecoveryRequested = 2
+
     def __init__(
         self,
         title: str,
@@ -68,10 +71,28 @@ class ErrorDialog(qtw.QDialog):
             text.setTabChangesFocus(True)
             text.setPlainText(details)
             text.setAccessibleName("Error details")
+            if "\n" in details or len(details) > 160:
+                toggle = qtw.QToolButton(self)
+                toggle.setText("Technical details")
+                toggle.setCheckable(True)
+                toggle.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+                toggle.setArrowType(QtCore.Qt.ArrowType.RightArrow)
+                layout.addWidget(toggle, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+                text.hide()
+
+                def show_details(expanded):
+                    toggle.setArrowType(QtCore.Qt.ArrowType.DownArrow if expanded else QtCore.Qt.ArrowType.RightArrow)
+                    text.setVisible(expanded)
+                    self.resize(self.width(), self.sizeHint().height())
+
+                toggle.toggled.connect(show_details)
+            else:
+                text.setFixedHeight(text.fontMetrics().lineSpacing() * 3 + 8)
             layout.addWidget(text, 1)
 
         buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close, self)
-        copy = buttons.addButton("Copy", qtw.QDialogButtonBox.ButtonRole.ActionRole)
+        self.buttons = buttons
+        copy = buttons.addButton("Copy details", qtw.QDialogButtonBox.ButtonRole.ActionRole)
         assert copy is not None
         copy.setObjectName("copyErrorButton")
         copy.clicked.connect(self.copy_error)
@@ -82,9 +103,12 @@ class ErrorDialog(qtw.QDialog):
         assert close is not None
         equal_button_widths(copy, close)
         close_default(buttons)
-        resize_dialog(self, 720 if details else 520, 420 if details else 220)
+        resize_dialog(self, 520, self.minimumSizeHint().height())
+
+    def add_recovery_action(self, label):
+        button = self.buttons.addButton(label, qtw.QDialogButtonBox.ButtonRole.ActionRole)
+        assert button is not None
+        button.clicked.connect(lambda: self.done(self.RecoveryRequested))
 
     def copy_error(self) -> None:
-        clipboard = qtw.QApplication.clipboard()
-        assert clipboard is not None
-        clipboard.setText(self._copy_text)
+        copy_to_clipboard(self._copy_text)

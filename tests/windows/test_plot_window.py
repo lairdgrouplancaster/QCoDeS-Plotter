@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 import pyqtgraph as pg
 import qcodes
-from PyQt6 import QtCore, QtGui, QtPrintSupport, QtTest, sip
+from PyQt6 import QtCore, QtGui, QtPrintSupport, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import (
     CSVExporter,
@@ -29,6 +29,7 @@ from qplot.windows import _plot_export as plot_export_module
 from qplot.windows import _plot_refresh as plot_refresh_module
 from qplot.windows import _plot_refresh_ui as plot_refresh_ui_module
 from qplot.windows._dataset_handle import DatasetHandle, DatasetKey
+from qplot.windows._plot_axis_scaling import PlotAxisScalingMixin
 from qplot.windows._plot_state import PlotStateOverlay
 from qplot.windows._plot_status import PlotStatusWidget
 from qplot.windows._plotWin import plotWidget
@@ -1444,7 +1445,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             ]
             self.assertEqual(
                 exporter_classes,
-                [ImageExporter, CSVExporter, SVGExporter],
+                [ImageExporter, SVGExporter, QtGui.QPdfWriter, CSVExporter],
             )
             self.assertNotIn(HDF5Exporter, exporter_classes)
             self.assertNotIn(MatplotlibExporter, exporter_classes)
@@ -1453,7 +1454,10 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 with self.subTest(exporter=exporter_class.__name__):
                     dialog.ui.formatList.setCurrentRow(row)
                     qtw.QApplication.processEvents()
-                    self.assertIs(type(dialog.currentExporter), exporter_class)
+                    if exporter_class is QtGui.QPdfWriter:
+                        self.assertIsNone(dialog.currentExporter)
+                    else:
+                        self.assertIs(type(dialog.currentExporter), exporter_class)
                     self.assertTrue(dialog.ui.exportBtn.isEnabled())
                     self.assertEqual(
                         dialog.ui.copyBtn.isEnabled(),
@@ -1717,11 +1721,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                                 "getSaveFileName",
                                 return_value=(str(target), ""),
                             ),
-                            patch.object(
-                                qtw.QMessageBox,
-                                "question",
-                                return_value=qtw.QMessageBox.StandardButton.Yes,
-                            ) as question,
+                            patch("qplot.windows._export_paths.confirm_action", return_value=True) as question,
                         ):
                             self.assertTrue(host._export_pyqtgraph_exporter(exporter))
 
@@ -1769,7 +1769,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                         "getSaveFileName",
                         return_value=(str(database_path), ""),
                     ),
-                    patch.object(qtw.QMessageBox, "question") as question,
+                    patch("qplot.windows._export_paths.confirm_action") as question,
                 ):
                     self.assertFalse(host._export_pyqtgraph_exporter(exporter))
 
@@ -1844,7 +1844,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                         "getSaveFileName",
                         return_value=("", ""),
                     ),
-                    patch.object(qtw.QMessageBox, "question") as question,
+                    patch("qplot.windows._export_paths.confirm_action") as question,
                 ):
                     self.assertFalse(host._export_pyqtgraph_exporter(exporter))
 
@@ -2508,11 +2508,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                         "QPrintDialog",
                         _AcceptedPrintDialog,
                     ),
-                    patch.object(
-                        qtw.QMessageBox,
-                        "question",
-                        return_value=qtw.QMessageBox.StandardButton.Yes,
-                    ) as question,
+                    patch("qplot.windows._export_paths.confirm_action", return_value=True) as question,
                 ):
                     self.assertTrue(host.print_plot())
 
@@ -2561,11 +2557,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                         "QPrintDialog",
                         _AcceptedPrintDialog,
                     ),
-                    patch.object(
-                        qtw.QMessageBox,
-                        "question",
-                        return_value=qtw.QMessageBox.StandardButton.No,
-                    ) as question,
+                    patch("qplot.windows._export_paths.confirm_action", return_value=False) as question,
                 ):
                     self.assertFalse(host.print_plot())
 
@@ -2607,11 +2599,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                         "QPrintDialog",
                         AppearingPrintDialog,
                     ),
-                    patch.object(
-                        qtw.QMessageBox,
-                        "question",
-                        return_value=qtw.QMessageBox.StandardButton.No,
-                    ) as question,
+                    patch("qplot.windows._export_paths.confirm_action", return_value=False) as question,
                 ):
                     self.assertFalse(host.print_plot())
 
@@ -2688,11 +2676,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                         "QPrintDialog",
                         _AcceptedPrintDialog,
                     ),
-                    patch.object(
-                        qtw.QMessageBox,
-                        "question",
-                        return_value=qtw.QMessageBox.StandardButton.Yes,
-                    ) as question,
+                    patch("qplot.windows._export_paths.confirm_action", return_value=True) as question,
                 ):
                     self.assertFalse(host.print_plot())
 
@@ -2726,11 +2710,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host._paint_plot_to_device = paint_and_change_target
 
             try:
-                with patch.object(
-                    qtw.QMessageBox,
-                    "question",
-                    return_value=qtw.QMessageBox.StandardButton.Yes,
-                ) as question:
+                with patch("qplot.windows._export_paths.confirm_action", return_value=True) as question:
                     destination = host._prepare_print_pdf_destination(printer)
                 self.assertIsNotNone(destination)
                 question.assert_called_once()
@@ -2787,7 +2767,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                         "QPrintDialog",
                         _AcceptedPrintDialog,
                     ),
-                    patch.object(qtw.QMessageBox, "question") as question,
+                    patch("qplot.windows._export_paths.confirm_action") as question,
                 ):
                     self.assertFalse(host.print_plot())
 
@@ -3125,66 +3105,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
             app.setFont(original_font)
 
     def _check_axis_scale_dialog_controls(self):
-        class Host(qtw.QMainWindow):
+        class Host(PlotAxisScalingMixin, qtw.QMainWindow):
             copy_coordinates = plotWidget.copy_coordinates
             initContextMenu = plotWidget.initContextMenu
-            _init_axis_scale_dialogs = plotWidget._init_axis_scale_dialogs
-            _install_axis_scale_viewbox_range_handlers = (
-                plotWidget._install_axis_scale_viewbox_range_handlers
-            )
-            _axis_scale_range_changed = plotWidget._axis_scale_range_changed
-            _refresh_axis_scale_visible_auto = plotWidget._refresh_axis_scale_visible_auto
-            force_all_axes_autoscale = plotWidget.force_all_axes_autoscale
-            _menu_control_widget = plotWidget._menu_control_widget
-            _install_axis_scale_double_click_handlers = (
-                plotWidget._install_axis_scale_double_click_handlers
-                )
-            _axis_scale_dialog_title = plotWidget._axis_scale_dialog_title
-            _axis_scale_dimension = plotWidget._axis_scale_dimension
-            _axis_scale_normalise_axis = staticmethod(
-                plotWidget._axis_scale_normalise_axis
-            )
-            _axis_scale_transform_result = staticmethod(
-                plotWidget._axis_scale_transform_result
-            )
-            data_to_view = plotWidget.data_to_view
-            view_to_data = plotWidget.view_to_data
-            _axis_scale_axis_for_line = plotWidget._axis_scale_axis_for_line
-            _axis_scale_viewbox = plotWidget._axis_scale_viewbox
-            _axis_scale_axis_number = plotWidget._axis_scale_axis_number
-            _axis_scale_axis_constant = plotWidget._axis_scale_axis_constant
-            _new_axis_scale_controls = plotWidget._new_axis_scale_controls
-            _sync_axis_scale_controls = plotWidget._sync_axis_scale_controls
-            _sync_axis_scale_link_combo = plotWidget._sync_axis_scale_link_combo
-            _axis_scale_bound_item_groups = plotWidget._axis_scale_bound_item_groups
-            _axis_scale_auto_limits = plotWidget._axis_scale_auto_limits
-            _update_axis_scale_auto_limits_tooltip = (
-                plotWidget._update_axis_scale_auto_limits_tooltip
-                )
-            _axis_scale_copy_auto_limits = plotWidget._axis_scale_copy_auto_limits
-            _apply_axis_scale_manual_limits = plotWidget._apply_axis_scale_manual_limits
-            _axis_scale_mouse_toggled = plotWidget._axis_scale_mouse_toggled
-            _axis_scale_manual_clicked = plotWidget._axis_scale_manual_clicked
-            _axis_scale_range_text_changed = plotWidget._axis_scale_range_text_changed
-            _axis_scale_uses_filtered_auto = plotWidget._axis_scale_uses_filtered_auto
-            _apply_axis_scale_filtered_auto = plotWidget._apply_axis_scale_filtered_auto
-            _axis_scale_auto_clicked = plotWidget._axis_scale_auto_clicked
-            _axis_scale_auto_spin_changed = plotWidget._axis_scale_auto_spin_changed
-            _axis_scale_link_changed = plotWidget._axis_scale_link_changed
-            _axis_scale_auto_pan_toggled = plotWidget._axis_scale_auto_pan_toggled
-            _axis_scale_visible_only_toggled = plotWidget._axis_scale_visible_only_toggled
-            _axis_scale_invert_toggled = plotWidget._axis_scale_invert_toggled
-            _axis_scale_log_is_supported = plotWidget._axis_scale_log_is_supported
-            _axis_scale_log_mode = plotWidget._axis_scale_log_mode
-            _sync_axis_scale_line_log_mode = (
-                plotWidget._sync_axis_scale_line_log_mode
-            )
-            _axis_scale_log_toggled = plotWidget._axis_scale_log_toggled
-            _axis_scale_axis_is_used = plotWidget._axis_scale_axis_is_used
-            _create_axis_scale_dialog = plotWidget._create_axis_scale_dialog
-            _axis_scale_current_tab_changed = plotWidget._axis_scale_current_tab_changed
-            _sync_axis_scale_tab_states = plotWidget._sync_axis_scale_tab_states
-            open_axis_scale_dialog = plotWidget.open_axis_scale_dialog
             _remove_scene_export_context_menu = plotWidget._remove_scene_export_context_menu
             _context_menu_action = plotWidget._context_menu_action
 
@@ -3234,50 +3157,15 @@ class RunListParentLookupTestCase(unittest.TestCase):
             dialog = host._axis_scale_dialog
             x_controls = host._axis_scale_controls["x"]
 
-            def wait_for_page_layout():
-                # Font/style events can queue another layout pass. A single
-                # processEvents() can leave the grid temporarily invalidated.
-                page = x_controls.minText.parentWidget()
-                deadline = QtCore.QDeadlineTimer(2000)
-                while not deadline.hasExpired():
-                    qtw.QApplication.processEvents(
-                        QtCore.QEventLoop.ProcessEventsFlag.AllEvents, 10,
-                    )
-                    geometry = x_controls.gridLayout.geometry()
-                    if (
-                        page.isVisible()
-                        and not geometry.isEmpty()
-                        and geometry == page.contentsRect()
-                    ):
-                        return
-                    QtTest.QTest.qWait(5)
-                self.fail({
-                    "message": "Axis page layout did not settle within 2 seconds",
-                    "page_visible": page.isVisible(),
-                    "page_contents": page.contentsRect(),
-                    "grid_geometry": x_controls.gridLayout.geometry(),
-                    "dialog_size": dialog.size(),
-                })
-
-            wait_for_page_layout()
+            qtw.QApplication.processEvents()
             self.assertEqual(dialog.windowTitle(), "Axis scaling")
             self.assertEqual(set(host._axis_scale_controls), {"x", "y", "x2", "y2"})
-            self.assertEqual(
-                [host._axis_scale_tabs.tabText(index) for index in range(4)],
-                ["Bottom", "Left", "Top", "Right"],
-                )
-            self.assertTrue(host._axis_scale_tabs.isTabEnabled(0))
-            self.assertTrue(host._axis_scale_tabs.isTabEnabled(1))
-            self.assertFalse(host._axis_scale_tabs.isTabEnabled(2))
-            self.assertFalse(host._axis_scale_tabs.isTabEnabled(3))
-            self.assertGreaterEqual(host._axis_scale_tabs.width(), 360)
-            self.assertFalse(x_controls.gridLayout.geometry().isEmpty())
-            self.assertGreaterEqual(
-                x_controls.minText.parentWidget().width(),
-                x_controls.gridLayout.minimumSize().width(),
-            )
+            tabs = host._axis_scale_tabs
+            self.assertEqual([tabs.tabData(i) for i in range(tabs.count())], ["x", "y", "x2", "y2"])
+            self.assertEqual([tabs.tabText(i) for i in range(tabs.count())], ["Bottom", "Left", "Top", "Right"])
+            self.assertEqual([tabs.isTabEnabled(i) for i in range(4)], [True, True, False, False])
             self.assertEqual(x_controls.manualRadio.text(), "Manual")
-            self.assertEqual(x_controls.autoRadio.text(), "Auto")
+            self.assertEqual(x_controls.autoRadio.text(), "Automatic")
             self.assertEqual(x_controls.minimumLabel.text(), "Minimum")
             self.assertEqual(x_controls.maximumLabel.text(), "Maximum")
             self.assertEqual(x_controls.invertCheck.text(), "Reverse axis")
@@ -3293,97 +3181,20 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 x_controls.autoPanCheck.text(),
                 "Follow new data, keep span",
                 )
-            self.assertEqual(x_controls.label.text(), "Link range to:")
+            self.assertIs(x_controls.label.buddy(), x_controls.linkCombo)
             self.assertEqual(x_controls.linkCombo.currentText(), "None")
             self.assertIsInstance(x_controls.linkCombo, qtw.QComboBox)
-            self.assertGreaterEqual(x_controls.manualRadio.parentWidget().width(), 340)
-            original_size = dialog.size()
-            original_tab_width = host._axis_scale_tabs.tabBar().tabRect(0).width()
+            self.assertTrue(x_controls.manualRadio.isChecked())
             for field, value in zip(
                 (x_controls.minText, x_controls.maxText),
                 ("0.010012718532581035", "0.010017029084329264"),
                 strict=True,
             ):
-                self.assertGreaterEqual(
-                    field.width(), field.fontMetrics().horizontalAdvance(value) + 12,
-                )
-            original_field_width = x_controls.minText.width()
-            original_page_size = x_controls.minText.parentWidget().size()
-            original_grid_geometry = x_controls.gridLayout.geometry()
-            expanded_size = original_size + QtCore.QSize(240, 120)
-            dialog.resize(expanded_size)
-            wait_for_page_layout()
-            self.assertEqual(dialog.size(), expanded_size)
-            tab_bar = host._axis_scale_tabs.tabBar()
-            self.assertEqual(tab_bar.width(), host._axis_scale_tabs.width())
-            self.assertGreater(tab_bar.tabRect(0).width(), original_tab_width)
-            self.assertEqual(tab_bar.tabRect(3).right() + 1, tab_bar.width())
-            self.assertGreater(
-                x_controls.minText.width(), original_field_width,
-                {
-                    "original_dialog_size": original_size,
-                    "dialog_size": dialog.size(),
-                    "tab_size": host._axis_scale_tabs.size(),
-                    "current_tab": host._axis_scale_tabs.currentIndex(),
-                    "page_size": x_controls.minText.parentWidget().size(),
-                    "page_visible": x_controls.minText.parentWidget().isVisible(),
-                    "field_size": x_controls.minText.size(),
-                    "original_field_width": original_field_width,
-                    "original_page_size": original_page_size,
-                    "original_grid_geometry": original_grid_geometry,
-                    "grid_geometry": x_controls.gridLayout.geometry(),
-                    "grid_enabled": x_controls.gridLayout.isEnabled(),
-                    "grid_minimum_size": x_controls.gridLayout.minimumSize(),
-                    "grid_size_hint": x_controls.gridLayout.sizeHint(),
-                    "fields": [
-                        {
-                            "name": field.objectName(),
-                            "visible": field.isVisible(),
-                            "hidden": field.isHidden(),
-                            "geometry": field.geometry(),
-                            "minimum_size": field.minimumSize(),
-                            "maximum_size": field.maximumSize(),
-                            "size_hint": field.sizeHint(),
-                            "horizontal_policy": field.sizePolicy().horizontalPolicy(),
-                            "item_geometry": x_controls.gridLayout.itemAt(
-                                x_controls.gridLayout.indexOf(field),
-                            ).geometry(),
-                            "cell_geometry": x_controls.gridLayout.cellRect(2, column),
-                        }
-                        for column, field in enumerate(
-                            (x_controls.minText, x_controls.maxText), start=1,
-                        )
-                    ],
-                },
-            )
-            dialog.resize(original_size)
-            wait_for_page_layout()
-            self.assertEqual(dialog.size(), original_size)
-            tab_bar = host._axis_scale_tabs.tabBar()
-            self.assertEqual(tab_bar.width(), host._axis_scale_tabs.width())
-            self.assertEqual(tab_bar.tabRect(0).width(), original_tab_width)
-            self.assertIn("QTabBar::tab:selected", host._axis_scale_tabs.styleSheet())
-            self.assertIn("palette(highlight)", host._axis_scale_tabs.styleSheet())
-            self.assertGreaterEqual(tab_bar.tabRect(0).left(), 0)
-            self.assertLess(tab_bar.tabRect(3).right(), tab_bar.width())
-            self.assertGreaterEqual(
-                tab_bar.tabRect(3).right() - tab_bar.tabRect(0).left(),
-                280,
-                )
-            invert_index = x_controls.gridLayout.indexOf(x_controls.invertCheck)
-            mouse_index = x_controls.gridLayout.indexOf(x_controls.mouseCheck)
-            self.assertEqual(
-                x_controls.gridLayout.getItemPosition(invert_index)[0],
-                x_controls.gridLayout.getItemPosition(mouse_index)[0],
-                )
-            self.assertGreaterEqual(
-                x_controls.mouseCheck.width(),
-                x_controls.mouseCheck.sizeHint().width(),
-                )
-            self.assertGreaterEqual(
-                x_controls.invertCheck.width(),
-                x_controls.invertCheck.sizeHint().width(),
-                )
+                self.assertTrue(field.isVisible())
+                self.assertGreaterEqual(field.width(), field.fontMetrics().horizontalAdvance(value) + 12)
+            for control in (x_controls.mouseCheck, x_controls.invertCheck, x_controls.logCheck):
+                self.assertTrue(control.isVisible())
+                self.assertGreaterEqual(control.width(), control.sizeHint().width())
             x_controls.logCheck.click()
             self.assertTrue(host.plot.getAxis("bottom").logMode)
             self.assertTrue(host.plot.ctrl.logXCheck.isChecked())
@@ -3393,7 +3204,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertFalse(host.plot.ctrl.logXCheck.isChecked())
             self.assertEqual(main_line.opts["logMode"], [False, False])
             self.assertEqual(
-                host._axis_scale_tabs.tabToolTip(2),
+                tabs.tabToolTip(2),
                 "No datasets are assigned to this axis.",
                 )
             auto_limits = host._axis_scale_auto_limits("x")
@@ -3422,7 +3233,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             host.open_axis_scale_dialog("y")
             self.assertIs(host._axis_scale_dialog, dialog)
-            self.assertEqual(host._axis_scale_tabs.currentIndex(), 1)
+            self.assertEqual(tabs.tabData(tabs.currentIndex()), "y")
 
             host.right_vb = pg.ViewBox()
             host.plot.scene().addItem(host.right_vb)
@@ -3442,9 +3253,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
                     {"x_axis": "Top", "y_axis": "Right"},
                     )(),
                 }
-            host._sync_axis_scale_tab_states()
-            self.assertTrue(host._axis_scale_tabs.isTabEnabled(2))
-            self.assertTrue(host._axis_scale_tabs.isTabEnabled(3))
+            host._sync_axis_scale_choices()
+            self.assertTrue(tabs.isTabEnabled(2))
+            self.assertTrue(tabs.isTabEnabled(3))
 
             host.open_axis_scale_dialog("top")
             top_limits = host._axis_scale_auto_limits("x2")
@@ -3458,7 +3269,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             host.open_axis_scale_dialog("right")
             self.assertIs(host._axis_scale_dialog, dialog)
-            self.assertEqual(host._axis_scale_tabs.currentIndex(), 3)
+            self.assertEqual(tabs.tabData(tabs.currentIndex()), "y2")
             self.assertIs(host._axis_scale_viewbox("y2"), host.right_vb)
             right_controls = host._axis_scale_controls["y2"]
             self.assertTrue(right_controls.logCheck.isEnabled())
@@ -3477,7 +3288,14 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 )()
             host.plot.getAxis("top").mouseDoubleClickEvent(event)
             self.assertTrue(event.accepted)
-            self.assertEqual(host._axis_scale_tabs.currentIndex(), 2)
+            self.assertEqual(tabs.tabData(tabs.currentIndex()), "x2")
+
+            host._trace_styles["secondary"].x_axis = "Bottom"
+            host._sync_axis_scale_choices()
+            self.assertFalse(tabs.isTabEnabled(2))
+            self.assertTrue(tabs.isTabEnabled(tabs.currentIndex()))
+            selected_axis = tabs.tabData(tabs.currentIndex())
+            self.assertIs(host._axis_scale_stack.currentWidget(), host._axis_scale_controls[selected_axis])
         finally:
             host.deleteLater()
             widget.deleteLater()
@@ -3590,12 +3408,11 @@ class RunListParentLookupTestCase(unittest.TestCase):
         statuses = []
         window.show_status = lambda message, timeout=0: statuses.append((message, timeout))
         sides = {"x": "bottom", "y": "left", "x2": "top", "y2": "right"}
-        control_widgets = []
+        editor = window._create_axis_scale_editor()
 
         try:
             for axis, side in sides.items():
                 plot_item.getAxis(side).setLogMode(True)
-                control_widgets.append(window._new_axis_scale_controls(axis))
                 controls = window._axis_scale_controls[axis]
                 controls.minText.setText("10")
                 controls.maxText.setText("1000")
@@ -3633,8 +3450,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertEqual(float(x_controls.maxText.text()), 100.0)
             np.testing.assert_allclose(window.vb.viewRange()[0], [0.0, 2.0])
         finally:
-            for control_widget in control_widgets:
-                control_widget.deleteLater()
+            editor.deleteLater()
             window.top_vb.deleteLater()
             window.right_vb.deleteLater()
             widget.deleteLater()

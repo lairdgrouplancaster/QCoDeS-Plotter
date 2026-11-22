@@ -52,6 +52,7 @@ def configure_opacity_spinbox(spin: qtw.QSpinBox) -> None:
     spin.setRange(0, 100)
     spin.setValue(100)
     spin.setSuffix("%")
+    spin.lineEdit().setPlaceholderText("Mixed")
     spin.setSingleStep(1)
     spin.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Fixed)
     # NoButtons clips the edit field with Qt's stylesheet style on Windows.
@@ -59,6 +60,30 @@ def configure_opacity_spinbox(spin: qtw.QSpinBox) -> None:
     spin.setStyleSheet(
         "QSpinBox::up-button, QSpinBox::down-button { width: 0px; height: 0px; border: none; }"
     )
+
+
+def dataset_axes_group(title, x_axis, y_axis):
+    group = qtw.QGroupBox(title)
+    form = qtw.QFormLayout(group)
+    form.setContentsMargins(8, 6, 8, 6)
+    form.setHorizontalSpacing(8)
+    form.setVerticalSpacing(4)
+    form.setRowWrapPolicy(qtw.QFormLayout.RowWrapPolicy.WrapLongRows)
+    form.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
+    form.setFormAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignTop)
+    for role, text, combo in (
+        (qtw.QFormLayout.ItemRole.LabelRole, "Horizontal", x_axis),
+        (qtw.QFormLayout.ItemRole.FieldRole, "Vertical", y_axis),
+    ):
+        pair = qtw.QHBoxLayout()
+        pair.setSpacing(6)
+        label = qtw.QLabel(text)
+        label.setBuddy(combo)
+        combo.setStyleSheet("QComboBox { padding: 0 2px; }")
+        pair.addWidget(label)
+        pair.addWidget(combo)
+        form.setLayout(0, role, pair)
+    return group
 
 
 def visibility_opacity_row(visible, slider, spin):

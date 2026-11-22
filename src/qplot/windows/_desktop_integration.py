@@ -6,7 +6,7 @@ from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets as qtw
 
 from qplot._icons import application_icon
-from qplot.desktop import default_destination
+from qplot.desktop import default_destination, is_owned_launcher
 
 from ._small_dialogs import (
     close_default,
@@ -42,9 +42,7 @@ class DesktopIntegrationDialog(qtw.QDialog):
         heading.addWidget(title, 1)
         layout.addLayout(heading)
         description = qtw.QLabel(
-            "Install a qPlot launcher and optional desktop shortcut. File associations "
-            "offer qPlot in Open With without changing your default opener. Database, "
-            "WAL and SHM files receive icons; WAL and SHM files are not opened."
+            "Install a launcher to open qPlot from your desktop or your file manager."
         )
         description.setWordWrap(True)
         layout.addWidget(description)
@@ -54,30 +52,37 @@ class DesktopIntegrationDialog(qtw.QDialog):
         self.destination.setToolTip("Location where the qPlot launcher will be installed or updated.")
         self.destination.setAccessibleName("Launcher location")
         destination_label.setBuddy(self.destination)
-        layout.addWidget(self.destination)
+        destination_row = qtw.QHBoxLayout()
+        destination_row.addWidget(self.destination, 1)
+        self.browse = qtw.QPushButton("Browse…")
+        self.browse.setToolTip("Choose the folder in which to install the launcher.")
+        self.browse.clicked.connect(self._browse)
+        destination_row.addWidget(self.browse)
+        layout.addLayout(destination_row)
+        self.installation_status = qtw.QLabel()
+        self.installation_status.setWordWrap(True)
+        layout.addWidget(self.installation_status)
         self.shortcut = qtw.QCheckBox("Add a desktop &shortcut")
         self.shortcut.setToolTip("Create a desktop shortcut to the installed qPlot launcher.")
         self.shortcut.setChecked(True)
         layout.addWidget(self.shortcut)
-        self.associations = qtw.QCheckBox("Register &file associations and database icons")
-        self.associations.setToolTip("Offer qPlot in Open With and register database icons without changing your default opener.")
+        self.associations = qtw.QCheckBox("Add qPlot to Open &With and show database icons")
+        self.associations.setToolTip(
+            "Keep your current default app for .db files. Database, WAL and SHM files get icons. "
+            "Open the .db file to view the measurement."
+        )
         self.associations.setChecked(True)
         layout.addWidget(self.associations)
-        note = qtw.QLabel(
-            "Install/update replaces an existing qPlot launcher at this location. "
-            "Remove deletes its registered integration and owned shortcut."
-        )
-        note.setWordWrap(True)
-        layout.addWidget(note)
         self.output = qtw.QPlainTextEdit()
         self.output.setToolTip("Progress and results of the desktop integration operation. Select text to copy it.")
         self.output.setReadOnly(True)
         self.output.setTabChangesFocus(True)
         self.output.setAccessibleName("Desktop integration progress")
         layout.addWidget(self.output, 1)
+        self.output.hide()
         buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
-        self.install_button = qtw.QPushButton("Install/update integration")
-        self.install_button.setToolTip("Install or replace the qPlot launcher at the chosen location with the selected integration options.")
+        self.install_button = qtw.QPushButton("Install launcher")
+        self.install_button.setToolTip("Install or update the launcher at the chosen location with these options.")
         buttons.addButton(self.install_button, qtw.QDialogButtonBox.ButtonRole.ActionRole)
         self.remove_button = qtw.QPushButton("Remove integration")
         self.remove_button.setToolTip("Remove the registered qPlot integration and its owned shortcut.")
@@ -102,22 +107,70 @@ class DesktopIntegrationDialog(qtw.QDialog):
         self.process.finished.connect(self._finished)
         self.process.errorOccurred.connect(self._error)
         try:
+            inspect_location = QtCore.QTimer(self)
+            inspect_location.setSingleShot(True)
+            inspect_location.setInterval(200)
+            inspect_location.timeout.connect(self._update_status)
+            self.destination.textChanged.connect(lambda: inspect_location.start())
+            self.destination.editingFinished.connect(self._update_status)
             self.destination.setText(str(default_destination()))
             self.destination.setCursorPosition(0)
+            self._update_status()
         except ValueError as error:
-            self.output.setPlainText(str(error))
+            self.installation_status.setText(str(error))
+            self.browse.setEnabled(False)
+            self.destination.setEnabled(False)
             self.install_button.setEnabled(False)
-            self.remove_button.setEnabled(False)
+            self.remove_button.hide()
 
-        resize_dialog(self, 680, 480)
+        resize_dialog(self, 640, 315)
+
+    def _browse(self):
+        current = self.destination.text().strip()
+        default = default_destination()
+        try:
+            path = Path(current).expanduser() if current else default
+        except (OSError, RuntimeError, ValueError):
+            path = default
+        folder = qtw.QFileDialog.getExistingDirectory(self, "Choose launcher installation folder", str(path.parent))
+        if folder:
+            directory = Path(folder)
+            destination = directory if is_owned_launcher(directory) else directory / (path.name or default.name)
+            self.destination.setText(str(destination))
+            self._update_status()
+
+    def _update_status(self):
+        current = self.destination.text().strip()
+        owned = False
+        available = False
+        if not current:
+            status = "Choose a launcher location."
+        else:
+            try:
+                location = Path(current).expanduser()
+                owned = is_owned_launcher(location)
+                available = owned or not (location.exists() or location.is_symlink())
+            except (OSError, ValueError, RuntimeError):
+                available = False
+            if owned:
+                status = "qPlot is installed at this location."
+            elif available:
+                status = "No launcher is installed at this location."
+            else:
+                status = "Choose an unused location or an existing qPlot launcher."
+        self.installation_status.setText(status)
+        self.install_button.setText("Update launcher" if owned else "Install launcher")
+        self.install_button.setEnabled(available and not self._busy)
+        self.remove_button.setVisible(owned)
+        self.remove_button.setEnabled(owned and not self._busy)
 
     def _start(self, action: str) -> None:
         if self._busy:
             return
-        if not self.destination.text().strip():
-            self.output.setPlainText("Choose a launcher location first.")
+        self._update_status()
+        if not self.install_button.isEnabled() or (action == "remove" and not self.remove_button.isEnabled()):
             return
-        destination = Path(self.destination.text()).expanduser().absolute()
+        destination = Path(self.destination.text().strip()).expanduser().absolute()
         common = ["--destination", str(destination)]
         command = [action, *common]
         if action == "setup":
@@ -131,16 +184,21 @@ class DesktopIntegrationDialog(qtw.QDialog):
             # before touching the existing launcher or its registrations.
             self._pending.insert(0, ["remove", *common])
         self._operation = action
+        self.output.show()
+        if self.height() < 430:
+            resize_dialog(self, 640, 430)
         self.output.setPlainText("Updating desktop integration…" if action == "setup" else "Removing desktop integration…")
         self._set_busy(True)
         self._next()
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
-        for control in (self.destination, self.shortcut, self.associations,
+        for control in (self.destination, self.browse, self.shortcut, self.associations,
                         self.install_button, self.remove_button, self.close_button):
             if control is not None:
                 control.setEnabled(not busy)
+        if not busy:
+            self._update_status()
 
     def _next(self) -> None:
         arguments = self._pending.pop(0)
@@ -159,7 +217,7 @@ class DesktopIntegrationDialog(qtw.QDialog):
         self._read_output()
         if code != 0 or status != QtCore.QProcess.ExitStatus.NormalExit:
             self._pending.clear()
-            self.output.appendPlainText("Desktop integration failed. See the details above; you can retry.")
+            self.output.appendPlainText("Desktop integration failed. Review the details above and try again.")
         elif self._pending:
             self._next()
             return

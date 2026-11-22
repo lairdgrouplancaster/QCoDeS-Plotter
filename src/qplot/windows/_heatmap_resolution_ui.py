@@ -12,6 +12,7 @@ from qplot.tools.heatmap_resolution import (
     resolution_details,
     resolution_summary,
 )
+from qplot.windows._small_dialogs import close_default
 
 if TYPE_CHECKING:
     from .plot2d import plot2d
@@ -38,6 +39,7 @@ class HeatmapResolutionUi(QtCore.QObject):
         self.button.setText("")
         self.button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.button.setToolTip("This heatmap is downsampled. Click for details.")
+        self.button.setAccessibleName("Show heatmap resolution")
         self.button.clicked.connect(lambda _checked=False: window.show_heatmap_downsample_dialog())
         self.button.hide()
 
@@ -76,23 +78,17 @@ class HeatmapResolutionUi(QtCore.QObject):
             return
         if details is not None:
             details.setPlainText(resolution_details(report))
-        if self._revision is not revision or self._dialog is not dialog:
-            return
-        layout = dialog.layout()
-        if layout is not None:
-            layout.activate()
-        if self._revision is revision and self._dialog is dialog:
-            dialog.resize(dialog.width(), dialog.sizeHint().height())
 
     def show(self) -> None:
         if self._report is None:
             return
-        dialog = self.new_dialog()
-        try:
-            dialog.exec()
-        finally:
-            self._forget_dialog(dialog)
-            dialog.deleteLater()
+        dialog = self._dialog
+        if dialog is None:
+            dialog = self.new_dialog()
+            dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def _forget_dialog(self, dialog: qtw.QDialog) -> None:
         if self._dialog is dialog:
@@ -105,9 +101,9 @@ class HeatmapResolutionUi(QtCore.QObject):
             raise RuntimeError("No displayed heatmap resolution report.")
         dialog = qtw.QDialog(self.window)
         self._dialog = dialog
+        dialog.finished.connect(lambda: self._forget_dialog(dialog))
         dialog.destroyed.connect(lambda: self._forget_dialog(dialog))
         dialog.setWindowTitle("Heatmap displayed at reduced resolution")
-        dialog.setModal(True)
 
         layout = qtw.QVBoxLayout(dialog)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -159,10 +155,10 @@ class HeatmapResolutionUi(QtCore.QObject):
         details_button.toggled.connect(toggle_details)
 
         button_box = qtw.QDialogButtonBox(
-            qtw.QDialogButtonBox.StandardButton.Ok,
+            qtw.QDialogButtonBox.StandardButton.Close,
             dialog,
             )
-        preferences_button = qtw.QPushButton("Open Preferences…", dialog)
+        preferences_button = qtw.QPushButton("Adjust heatmap limits…", dialog)
         button_box.addButton(
             preferences_button, qtw.QDialogButtonBox.ButtonRole.ActionRole
             )
@@ -170,15 +166,11 @@ class HeatmapResolutionUi(QtCore.QObject):
         preferences_button.clicked.connect(
             lambda: self._open_preferences(dialog)
             )
-        button_box.accepted.connect(dialog.accept)
-        ok_button = button_box.button(qtw.QDialogButtonBox.StandardButton.Ok)
-        assert ok_button is not None
-        ok_button.setDefault(True)
+        button_box.rejected.connect(dialog.close)
+        close_default(button_box)
         layout.addWidget(button_box)
         dialog.resize(520, dialog.sizeHint().height())
         return dialog
-
-
     def _open_preferences(self, dialog: qtw.QDialog) -> None:
         """Close the alert, then open the preference that controls this limit."""
         dialog.accept()

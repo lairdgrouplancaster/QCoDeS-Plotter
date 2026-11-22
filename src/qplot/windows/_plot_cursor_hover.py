@@ -110,6 +110,17 @@ class PlotCursorHoverMixin(_PlotCursorHoverBase):
             highlight.set_trace(line, axes, warning_axes=self._cursor_axis_warnings("trace", line))
             self._watch_cursor_trace(line)
 
+    def _highlighted_trace_key_at(self, scene_pos):
+        """Resolve the hover target at the click, even if the last move was throttled."""
+        lines = self.__dict__.get("lines", {})
+        if not lines or scene_pos is None or not self._cursor_inside_plot(scene_pos):
+            return None
+        self.mouseMoved(scene_pos)
+        line = self.__dict__.get("_cursor_hover_trace")
+        if line is not None:
+            return next((key for key, item in lines.items() if item is line), None)
+        return None
+
     def _highlight_cursor_heatmap(self):
         highlight = self._active_cursor_highlight()
         if highlight is None:

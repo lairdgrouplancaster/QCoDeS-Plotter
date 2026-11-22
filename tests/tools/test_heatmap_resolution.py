@@ -31,7 +31,7 @@ from qplot.tools.heatmap_resolution import (
 def test_heatmap_resolution_wording_follows_metadata(metadata, expected, absent):
     summary = resolution_summary(HeatmapResolutionReport.from_metadata(metadata))
     details = resolution_details(HeatmapResolutionReport.from_metadata(metadata))
-    assert summary.startswith("This heatmap is displayed at reduced resolution.")
+    assert summary.startswith("Source grid:")
     assert expected in summary
     assert absent not in summary + details
     assert "All matching source rows were read" not in details

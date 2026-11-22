@@ -55,8 +55,17 @@ qplot-cfg -reset
 ```
 
 Common settings can also be edited in the application with
-`Options -> Preferences...`. On macOS this appears as
+`Settings -> Preferences...`. On macOS this appears as
 `qPlot -> Preferences...`.
+
+**Application** contains interface, live refresh, confirmation and update settings.
+**Plots** contains settings for open plots and defaults for new windows, traces
+and heatmaps. **Files & export** controls opening and export options.
+**Performance** controls worker threads, heatmap limits and dataset retention.
+**Apply** saves pending edits across all four pages. If saving fails, **Retry**
+uses the same draft. **Reset this page** stages defaults for the current page.
+The main window's **Settings → Advanced → Reset All Settings…** restores all
+settings, closes the current database and plots, and cancels their unfinished exports.
 
 Python code can use the public `config` object directly:
 
@@ -139,11 +148,11 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `updates.include_prereleases` | boolean | `false` | `true` or `false` | Include beta, release-candidate, and development releases in update checks. |
 | `updates.last_check` | number | `0` | `0 <= value <= 253402300799` | Unix timestamp of the last attempted update check; maintained automatically. |
 
-`Preferences -> Updates` controls launch checks and pre-release notifications.
-Launch checks are disabled by default, time out after five seconds, and remain
+`Preferences -> Application -> Updates` controls launch checks and pre-release notifications.
+Launch checks are enabled by default, time out after five seconds, and remain
 quiet when offline or when no newer matching release is found. The timestamp
 also records failed attempts so repeated launches do not repeatedly contact PyPI.
-`Help -> Check for Updates…` always allows a manual check, even within the daily
+`Help -> Check for updates…` always allows a manual check, even within the daily
 interval. Checks offer release notes and upgrade instructions; installation is
 performed separately after closing qPlot.
 

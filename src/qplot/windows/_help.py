@@ -15,17 +15,43 @@ from qplot.diagnostics import default_log_file
 from ._commands import (
     COMMANDS,
     MOUSE_AND_SELECTION_HELP,
+    SHORTCUT_HELP_SECTIONS,
     create_action,
     shortcut_help_html,
 )
 from ._small_dialogs import (
     close_default,
+    copy_to_clipboard,
     dialog_layout,
-    equal_button_widths,
     resize_dialog,
 )
 
 _OPEN_HELP_DIALOGS: list[qtw.QDialog] = []
+
+
+class _HelpBrowser(qtw.QTextBrowser):
+    """Keep document links legible when the application palette changes."""
+
+    def setHtml(self, html: str | None) -> None:
+        self.ensurePolished()
+        self._source_html = html
+        self._dark = self.palette().base().color().lightness() < 128
+        link_colour = "#74cfff" if self._dark else "#075aa8"
+        document = cast(QtGui.QTextDocument, self.document())
+        document.setDefaultStyleSheet(f"a {{ color: {link_colour}; }}")
+        super().setHtml(html)
+
+    def changeEvent(self, event: QtCore.QEvent | None) -> None:
+        super().changeEvent(event)
+        if (event is not None and event.type() in (
+            QtCore.QEvent.Type.PaletteChange, QtCore.QEvent.Type.StyleChange,
+        ) and hasattr(self, "_source_html")
+                and self._dark != (self.palette().base().color().lightness() < 128)):
+            bar = self.verticalScrollBar()
+            position = bar.value() if bar is not None else 0
+            self.setHtml(self._source_html)
+            if bar is not None:
+                bar.setValue(position)
 
 
 QUICK_START_HTML = """
@@ -35,23 +61,11 @@ QUICK_START_HTML = """
       or use <b>File -&gt; Load Database...</b>.</li>
   <li><b>Select a run.</b> Click a row in the run table to see details,
       parameters, preview images, and metadata.</li>
-  <li><b>Open a plot.</b> Double-click a preview, right-click a run, or enter
-      a run ID and measurement number at the top of the main window.</li>
-  <li><b>Inspect the plot.</b> Use the mouse wheel to zoom, left-drag to select a region,
-  and middle-drag or Space+left-drag to pan. Hold Shift to constrain panning to one axis,
-      right-click for plot actions, and double-click axes for scale controls.</li>
-  <li><b>Export or print data and plots.</b> Use the CSV button or preview
-      context menu for measurement data. In plot windows, use
-      <b>File -&gt; Export Plot...</b> for images or data, or
-      <b>File -&gt; Save Plot as PDF...</b> for a plot-sized PDF. Use
-      <b>File -&gt; Print Plot...</b> for a printer or, when the system dialog
-      offers a concrete PDF destination, a page-formatted PDF. qPlot stages and
-      atomically publishes PDF file output.</li>
+  <li><b>Open a plot.</b> Double-click the measurement preview. You can also
+      select a run and press Enter to plot its measurements.</li>
 </ol>
-<p>Plot windows may appear before their data has finished loading. Check the
-status bar at the bottom of the window before assuming a load has failed.</p>
-<p>Set the refresh interval to <b>0.0 s</b> for manual refresh only. Press
-<b>F5</b> to refresh the active window, or <b>R</b> when the plot has focus.</p>
+<p>Use the mouse wheel to zoom. Double-click an axis to adjust its scale.
+Find more gestures in <b>Help → Keyboard and mouse controls</b>.</p>
 """
 
 
@@ -197,64 +211,74 @@ def show_about(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     html = (
         '<style>p { margin-top: 6px; margin-bottom: 6px; }</style>'
         + heading
-        + "".join(rows)
-        + '<p><a href="https://github.com/lairdgrouplancaster/QCoDeS-Plotter" '
-        'title="https://github.com/lairdgrouplancaster/QCoDeS-Plotter">'
-        "View project on GitHub</a></p>"
-        + "<hr>"
-        + "".join(location_rows)
+        + rows[0]
+        + '<p><a href="https://github.com/lairdgrouplancaster/QCoDeS-Plotter">View project on GitHub</a></p>'
     )
     dialog = _show_help_dialog(
-        parent, "About qPlot", html,
-        "qplotAboutDialog",
-        size=(640, 400),
-        icon=application_icon(),
+        parent, "About qPlot", html, "qplotAboutDialog", size=(560, 250), icon=application_icon(),
     )
     dialog.setProperty("qplotUpdatePrefixHtml", html + "<hr>")
-    browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
-    if browser is not None:
-        # QTextBrowser otherwise navigates local links inside the help panel.
+    layout = cast(qtw.QVBoxLayout, dialog.layout())
+    details_row = qtw.QHBoxLayout()
+    details_toggle = qtw.QToolButton()
+    details_toggle.setText("Technical details")
+    details_toggle.setCheckable(True)
+    details_toggle.setArrowType(QtCore.Qt.ArrowType.RightArrow)
+    details_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+    details_row.addWidget(details_toggle)
+    details_row.addStretch(1)
+    copy = qtw.QPushButton("Copy details")
+    copy.setObjectName("aboutCopyDetails")
+    copy.hide()
+    details_row.addWidget(copy)
+    layout.insertLayout(1, details_row)
+    technical = _HelpBrowser(dialog)
+    technical.setAccessibleName("Technical details")
+    technical.setObjectName("aboutTechnicalDetails")
+    technical.setTabChangesFocus(True)
+    technical.setWordWrapMode(QtGui.QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+    technical.setHtml("".join(rows + location_rows))
+    technical.hide()
+    layout.insertWidget(2, technical)
+    copy.clicked.connect(lambda: copy_to_clipboard(technical.toPlainText()))
+
+    def toggle_details(opened):
+        technical.setVisible(opened)
+        copy.setVisible(opened)
+        details_toggle.setArrowType(QtCore.Qt.ArrowType.DownArrow if opened else QtCore.Qt.ArrowType.RightArrow)
+        if opened:
+            resize_dialog(dialog, 600, 440)
+
+    details_toggle.toggled.connect(toggle_details)
+
+    def open_link(url):
+        if not QtGui.QDesktopServices.openUrl(url) and url.isLocalFile():
+            qtw.QMessageBox.warning(dialog, "Could not open folder",
+                                    "Copy the path from Technical details and open it in your file manager.\n\n"
+                                    + url.toLocalFile())
+
+    for browser in (technical, dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")):
         browser.setOpenLinks(False)
         browser.setOpenExternalLinks(False)
-        browser.setWordWrapMode(QtGui.QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
-
-        def open_link(url: QtCore.QUrl) -> None:
-            if not QtGui.QDesktopServices.openUrl(url) and url.isLocalFile():
-                qtw.QMessageBox.warning(
-                    dialog, "Could not open folder",
-                    "Could not open this folder in the file manager. "
-                    "You can copy its path from the About dialogue.\n\n"
-                    + url.toLocalFile(),
-                )
-
         browser.anchorClicked.connect(open_link)
-    buttons = dialog.findChild(qtw.QDialogButtonBox)
-    if buttons is not None:
-        check_button = qtw.QPushButton("Check for updates", buttons)
-        buttons.addButton(check_button, qtw.QDialogButtonBox.ButtonRole.ActionRole)
-        check_button.setObjectName("aboutCheckForUpdatesButton")
-        check_button.setToolTip("Check PyPI for a newer qPlot release.")
 
-        def check_about_updates():
-            from ._updates import update_checker
+    def check_about_updates():
+        from ._updates import update_checker
 
-            owner = parent
-            while owner is not None and not hasattr(owner, "config"):
-                owner = owner.parentWidget()
-            if owner is not None:
-                settings = cast(Any, owner).config
-            else:
-                from qplot.configuration.config import config
+        owner = parent
+        while owner is not None and not hasattr(owner, "config"):
+            owner = owner.parentWidget()
+        if owner is None:
+            from qplot.configuration.config import config
 
-                settings = config()
-            update_checker().show_in_about(dialog, settings)
+            settings = config()
+        else:
+            settings = cast(Any, owner).config
+        update_checker().show_in_about(dialog, settings)
 
-        check_button.clicked.connect(check_about_updates)
-        desktop = dialog.findChild(qtw.QPushButton, "desktopIntegrationButton")
-        if desktop is not None:
-            equal_button_widths(check_button, desktop)
-        close_default(buttons)
-        resize_dialog(dialog, 640, 400)
+    from ._updates import UpdateChecker
+
+    UpdateChecker.add_controls(dialog, check_about_updates, about=True)
     return dialog
 
 
@@ -268,6 +292,7 @@ def show_quick_start(parent: qtw.QWidget | None = None) -> qtw.QDialog:
         "qPlot quick start",
         QUICK_START_HTML,
         "qplotQuickStartDialog",
+        size=(520, 285),
         )
 
 
@@ -285,13 +310,51 @@ def show_keyboard_shortcuts(parent: qtw.QWidget | None = None) -> qtw.QDialog:
     ]
     labels.extend(label for rows in MOUSE_AND_SELECTION_HELP.values() for label, _ in rows)
     column_width = max(metrics.horizontalAdvance(label) for label in labels) + 24
-    return _show_help_dialog(
+    plot_kind = getattr(parent, "operation_kind", None)
+    applicable = ["Main and All Plot Windows", "Context Menus"]
+    if plot_kind:
+        applicable.insert(0, "All Plot Windows")
+        if plot_kind == "plot2d":
+            applicable.insert(0, "2D Heatmap Windows")
+        if plot_kind == "sweeper" or hasattr(parent, "cut_toolbar"):
+            applicable.insert(0, "Cut Windows")
+        if hasattr(parent, "slice_toolbar"):
+            applicable.insert(0, "3D Slice Windows")
+    else:
+        applicable = [s for s in SHORTCUT_HELP_SECTIONS if s.startswith("Main Window")] + applicable
+    ordered = applicable + [s for s in SHORTCUT_HELP_SECTIONS if s not in applicable]
+    dialog = _show_help_dialog(
         parent,
         "qPlot keyboard and mouse controls",
-        shortcut_help_html(column_width),
+        shortcut_help_html(column_width, sections=ordered),
         "qplotKeyboardShortcutsDialog",
         size=(max(800, column_width + 460), 600),
         )
+    search = qtw.QLineEdit(dialog)
+    search.setObjectName("shortcutSearch")
+    search.setPlaceholderText("Find an action or gesture…")
+    search.setAccessibleName("Find an action or gesture")
+    search.setClearButtonEnabled(True)
+    find = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Find, dialog)
+    find.activated.connect(search.setFocus)
+    search.setToolTip(f"Find an action or gesture ({find.key().toString(QtGui.QKeySequence.SequenceFormat.NativeText)}).")
+    scope = qtw.QComboBox(dialog)
+    scope.setAccessibleName("Shortcut reference scope")
+    scope.addItems(["All windows", "This window"])
+    filters = qtw.QHBoxLayout()
+    filters.addWidget(search, 1)
+    filters.addWidget(scope)
+    cast(qtw.QVBoxLayout, dialog.layout()).insertLayout(0, filters)
+    browser = dialog.findChild(qtw.QTextBrowser, "qplotHelpBrowser")
+    assert browser is not None
+
+    def filter_rows():
+        sections = applicable if scope.currentIndex() else ordered
+        browser.setHtml(shortcut_help_html(column_width, query=search.text(), sections=sections))
+
+    search.textChanged.connect(filter_rows)
+    scope.currentIndexChanged.connect(filter_rows)
+    return dialog
 
 
 def copy_diagnostic_log_path(parent: Any | None = None) -> str:
@@ -300,9 +363,7 @@ def copy_diagnostic_log_path(parent: Any | None = None) -> str:
 
     """
     path = str(default_log_file())
-    clipboard = qtw.QApplication.clipboard()
-    if clipboard is not None:
-        clipboard.setText(path)
+    copy_to_clipboard(path)
     if parent is not None and hasattr(parent, "show_status"):
         parent.show_status(f"Copied diagnostic log path: {path}", 5000)
     return path
@@ -340,7 +401,7 @@ def _show_help_dialog(
     dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose, True)
     dialog.setWindowTitle(title)
     layout = dialog_layout(dialog)
-    browser = qtw.QTextBrowser()
+    browser = _HelpBrowser(dialog)
     browser.setObjectName("qplotHelpBrowser")
     browser.setOpenExternalLinks(True)
     browser.setAccessibleName(title)

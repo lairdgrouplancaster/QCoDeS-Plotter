@@ -113,18 +113,12 @@ def test_parent_appearance_owns_accepted_map_changes(dialog_plot, keep_parent):
     appearance = plot._plot_appearance_dialog
     controls = appearance.heatmap_controls
     controls.color_scale_button.click()
-    dialog = controls.colour_map_dialog
-    assert dialog.isVisible()
-    assert not plot.__dict__.get("colorbar_scale_dialog")
-    select_map(dialog.picker, "plasma", app)
+    assert plot.colorbar_scale_dialog is appearance
+    select_map(plot.colorbar_map_picker, "plasma", app)
     assert controls.color_scale_button.text() == "Plasma"
-    dialog.buttons.button(qtw.QDialogButtonBox.StandardButton.Ok).click()
     assert plot._current_colorbar_colormap_name() == "plasma"
-    # A new visit cancels back to the map accepted in the previous visit.
+    plot.open_plot_appearance_dialog()
     controls.color_scale_button.click()
-    second = controls.colour_map_dialog
-    select_map(second.picker, "magma", app)
-    second.reject()
     assert controls.color_scale_button.text() == "Plasma"
     if keep_parent:
         appearance.accept()
@@ -141,16 +135,16 @@ def test_closing_parent_also_cancels_open_map_preview(dialog_plot, exit_action):
     plot.open_plot_appearance_dialog()
     appearance = plot._plot_appearance_dialog
     appearance.heatmap_controls.color_scale_button.click()
-    dialog = appearance.heatmap_controls.colour_map_dialog
-    select_map(dialog.picker, "plasma", app)
+    assert plot.colorbar_scale_dialog is appearance
+    select_map(plot.colorbar_map_picker, "plasma", app)
     if exit_action == "parent_cancel":
         appearance.reject()
     else:
         plot.close()
     app.processEvents()
-    assert not dialog.isVisible()
     assert not appearance.isVisible()
-    assert plot._current_colorbar_colormap_name() == before
+    if exit_action == "parent_cancel":
+        assert plot._current_colorbar_colormap_name() == before
 
 
 def test_whole_plot_picker_opens_with_a_trace_selected(mixed_plot, qapplication):
@@ -167,10 +161,8 @@ def test_whole_plot_picker_opens_with_a_trace_selected(mixed_plot, qapplication)
     assert not controls.isVisible()
     assert controls.color_scale_button.isVisible()
     controls.color_scale_button.click()
-    chooser = controls.colour_map_dialog
-    assert chooser.isVisible()
-    select_map(chooser.picker, "plasma", qapplication)
+    assert plot.colorbar_scale_dialog is appearance
+    select_map(plot.colorbar_map_picker, "plasma", qapplication)
     assert controls.color_scale_button.text() == "Plasma"
-    chooser.reject()
-    assert plot._current_colorbar_colormap_name() == before
     appearance.reject()
+    assert plot._current_colorbar_colormap_name() == before

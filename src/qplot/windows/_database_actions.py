@@ -53,13 +53,13 @@ from ._database_refresh_ui import DatabaseRefreshUi
 from ._dataset_handle import canonical_database_path
 from ._small_dialogs import (
     close_default,
+    copy_to_clipboard,
     dialog_layout,
     equal_button_widths,
     resize_dialog,
 )
 from ._widgets.details_tables import (
     CopyableTableWidget,
-    copy_to_clipboard,
     format_value,
 )
 
@@ -94,35 +94,41 @@ class DatabaseInfoDialog(qtw.QDialog):
 
     def __init__(self, rows, parent=None):
         super().__init__(parent)
-        self._rows = [(format_value(label), format_value(value)) for label, value in rows]
+        technical = {
+            "Folder", "File size", "Last modified", "SQLite allocated size",
+            "Database schema version", "SQLite application_id", "Tables", "Latest run GUID",
+        }
+        rows = [(format_value(label), format_value(value)) for label, value in rows]
+        summary = [row for row in rows if row[0] not in technical]
+        summary_order = {"Database": 0, "Experiments": 1, "Runs": 2, "Access mode": 3, "Path": 5}
+        summary.sort(key=lambda row: summary_order.get(row[0], 4))
+        self._rows = summary + [row for row in rows if row[0] in technical]
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setObjectName("databaseInfoDialog")
         self.setWindowTitle("Database information")
         layout = dialog_layout(self)
-
-        content_layout = qtw.QHBoxLayout()
-        content_layout.setSpacing(12)
-
-        icon_label = qtw.QLabel(self)
-        icon = self.style().standardIcon(qtw.QStyle.StandardPixmap.SP_MessageBoxInformation)
-        icon_label.setPixmap(icon.pixmap(32, 32))
-        icon_label.setAlignment(
-            QtCore.Qt.AlignmentFlag.AlignHCenter
-            | QtCore.Qt.AlignmentFlag.AlignTop
-            )
-        content_layout.addWidget(icon_label)
 
         self.table = CopyableTableWidget(self)
         self.table.setObjectName("databaseInfoTable")
         self.table.setAccessibleName("Database information")
         self._setup_table()
-        content_layout.addWidget(self.table, 1)
-        layout.addLayout(content_layout, 1)
+        layout.addWidget(self.table, 1)
+        if len(self._rows) > len(summary):
+            details = qtw.QCheckBox("Show storage and SQLite details", self)
+
+            def set_details(visible):
+                for index in range(len(summary), len(self._rows)):
+                    self.table.setRowHidden(index, not visible)
+
+            details.toggled.connect(set_details)
+            set_details(False)
+            layout.addWidget(details)
 
         buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close, self)
         self.copyButton = buttons.addButton(
-            "Copy",
+            "Copy full report",
             qtw.QDialogButtonBox.ButtonRole.ActionRole,
-            )
+        )
         self.copyButton.setObjectName("databaseInfoCopyButton")
         self.copyButton.clicked.connect(self.copyAll)
         buttons.rejected.connect(self.reject)
@@ -668,7 +674,9 @@ class DatabaseActionsMixin:
 
         """
         from ._export_tasks import cancel_owner_exports
+        from ._statistics_task import cancel_statistics
 
+        cancel_statistics(self)
         cancel_owner_exports(self)
         cancel_auto_plot(self)
         self._database_loader.invalidate()
@@ -807,6 +815,10 @@ class DatabaseActionsMixin:
 
 
     def _cancel_database_info(self):
+        dialog = getattr(self, "_database_info_dialog", None)
+        if dialog is not None:
+            dialog.close()
+            self._database_info_dialog = None
         worker = getattr(self, "_database_info_worker", None)
         if worker is not None:
             worker.cancel()
@@ -844,11 +856,17 @@ class DatabaseActionsMixin:
             return
 
         self.show_status("Database information loaded.", 3000)
-        dialog = DatabaseInfoDialog(rows, parent=self)
+        previous = getattr(self, "_database_info_dialog", None)
+        if previous is not None:
+            previous.close()
+        mode = "Trusted live reader" if self._database_access_mode == TRUSTED_LIVE_MODE else "Protected snapshot"
+        dialog = DatabaseInfoDialog([*rows, ("Access mode", mode)], parent=self)
+        self._database_info_dialog = dialog
+        dialog.finished.connect(lambda: setattr(self, "_database_info_dialog", None))
         dialog.copyButton.clicked.connect(
             lambda: self.show_status("Copied database information.", 3000)
             )
-        dialog.exec()
+        dialog.show()
 
 
     @QtCore.pyqtSlot()
@@ -1458,9 +1476,9 @@ class DatabaseActionsMixin:
         """
         filename = qtw.QFileDialog.getOpenFileName(
             self,
-            "Open file",
+            "Open QCoDeS database",
             self.database_open_directory(),
-            "Data Base File (*.db)",
+            "QCoDeS databases (*.db)",
         )[0]
 
         if os.path.isfile(filename):
@@ -1562,7 +1580,9 @@ class DatabaseActionsMixin:
         Returns recent database paths, newest first.
 
         """
-        paths = list(self.config.get("file.recent_file_paths"))
+        paths = self._session_recent_database_paths
+        if paths is None:
+            paths = self.config.get("file.recent_file_paths")
 
         deduped = []
         seen = set()
@@ -1578,7 +1598,7 @@ class DatabaseActionsMixin:
 
     def remember_loaded_database(self, filename):
         """
-        Persists the successfully loaded database path.
+        Keep the session's recent databases available even when saving fails.
 
         """
         abspath = os.path.abspath(filename)
@@ -1588,18 +1608,22 @@ class DatabaseActionsMixin:
         paths.insert(0, abspath)
         paths = paths[:10]
 
-        if current_paths == paths:
+        if current_paths == paths and self._session_recent_database_paths is None:
             return True
 
-        if not persist_config_value(
-                self,
-                self.config,
-                "file.recent_file_paths",
-                paths,
-                "the recent database list",
-                ):
+        try:
+            if current_paths != paths:
+                self.config.update("file.recent_file_paths", paths)
+        except Exception as error:
+            if self._session_recent_database_paths is None:
+                log_exception("Saving recent databases failed", error, __name__)
+            self._session_recent_database_paths = paths
+            self.recentDatabaseNotice.report_failure(self.config.default_file, error)
+            self.refresh_recent_database_menu()
             return False
 
+        self._session_recent_database_paths = None
+        self.recentDatabaseNotice.clear()
         self.refresh_recent_database_menu()
         return True
 
@@ -1775,7 +1799,9 @@ class DatabaseActionsMixin:
             return True
 
         from ._export_tasks import cancel_owner_exports
+        from ._statistics_task import cancel_statistics
 
+        cancel_statistics(self)
         cancel_owner_exports(self)
         DatabaseActionsMixin._cancel_database_refresh(self)
         DatabaseActionsMixin._cancel_database_info(self)
@@ -2311,8 +2337,8 @@ class DatabaseActionsMixin:
         elapsed = perf_counter() - load_started_at
         self.remember_loaded_database(abspath)
         run_count = self.RunList.topLevelItemCount()
+        run_word = "run" if run_count == 1 else "runs"
         if state.replacement_reload:
-            run_word = "run" if run_count == 1 else "runs"
             status = (
                 f"Database was replaced and reloaded: "
                 f"{os.path.basename(abspath)} ({run_count} {run_word})."
@@ -2323,7 +2349,7 @@ class DatabaseActionsMixin:
             status = self._loaded_empty_database_status(abspath, elapsed)
         else:
             status = (
-                f"Loaded {run_count} runs from "
+                f"Loaded {run_count} {run_word} from "
                 f"{os.path.basename(abspath)} in {elapsed:.2f} s."
             )
         self.show_status(status, 5000)
@@ -2812,9 +2838,8 @@ class DatabaseActionsMixin:
             set_error = getattr(self.infoBox, "set_snapshot_run_error", None)
             if callable(set_error):
                 set_error(
-                    "Detailed run metadata is unavailable during ordinary "
-                    "snapshot-fallback selection. Use an explicit plot or "
-                    "CSV action to materialise this run.",
+                    "Detailed run metadata is unavailable in snapshot mode. "
+                    "Open a plot or export raw CSV to inspect this run’s measurements.",
                     metadata,
                 )
         instance = DatabaseActionsMixin._selected_run_publication_instance(

@@ -106,13 +106,13 @@ def test_keyboard_edit_to_same_rounded_value_is_saved(precise_config):
 def test_restore_defaults_saves_even_matching_rounded_value(precise_config, monkeypatch):
     precise_config.update("user_preference.default_refresh_rate", 1.049)
     dialog = PreferencesDialog(precise_config)
-    monkeypatch.setattr(qtw.QMessageBox, "question", lambda *args: qtw.QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr("qplot.windows._preferences.confirm_action", lambda *args, **kwargs: True)
     try:
         assert dialog.refreshRateSpin.value() == 1.0
         assert dialog.restore_defaults()
         assert dialog.apply_preferences()
         assert precise_config.get("user_preference.default_refresh_rate") == 1.0
-        assert precise_config.get("user_preference.axis_tick_width") == 2.0
+        assert precise_config.get("user_preference.axis_tick_width") == 1.25
     finally:
         dialog.close()
 
@@ -120,7 +120,7 @@ def test_restore_defaults_saves_even_matching_rounded_value(precise_config, monk
 def test_cancel_discards_pending_edits_and_reset(precise_config, monkeypatch):
     before = json.loads(Path(precise_config.default_file).read_text(encoding="utf-8"))
     dialog = PreferencesDialog(precise_config)
-    monkeypatch.setattr(qtw.QMessageBox, "question", lambda *args: qtw.QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr("qplot.windows._preferences.confirm_action", lambda *args, **kwargs: True)
     try:
         assert dialog.restore_defaults()
         dialog.refreshRateSpin.setValue(0.2)
@@ -129,3 +129,23 @@ def test_cancel_discards_pending_edits_and_reset(precise_config, monkeypatch):
         assert json.loads(Path(precise_config.default_file).read_text(encoding="utf-8")) == before
     finally:
         dialog.close()
+
+
+def test_cancel_keeps_previous_apply_and_untouched_ok_is_quiet(precise_config):
+    from qplot.configuration.fonts import FONT_SIZE_KEY
+
+    dialog = PreferencesDialog(precise_config)
+    applied = []
+    dialog.preferencesApplied.connect(lambda: applied.append(True))
+    dialog._accept_preferences()
+    assert dialog.result() == qtw.QDialog.DialogCode.Accepted
+    assert applied == []
+    dialog.show()
+    original = dialog.fontSizeSpin.value()
+    dialog.fontSizeSpin.setValue(original + 1)
+    dialog.apply_button.click()
+    dialog.fontSizeSpin.setValue(original + 2)
+    dialog.buttonBox.button(qtw.QDialogButtonBox.StandardButton.Cancel).click()
+    assert precise_config.get(FONT_SIZE_KEY) == original + 1
+    assert applied == [True]
+    dialog.deleteLater()

@@ -30,7 +30,7 @@ class CutSelection:
 
 def extract_cut(volume, selection, operations, param, params, *, check=lambda: None,
                 cancelled=lambda: False, progress=lambda *_: None, complex_mode="magnitude",
-                recorded_samples=False):
+                recorded_samples=False, region_sizes: list[int] | None = None):
     axes = {"x": params[selection.x], "y": params[selection.y]}
     depths = volume.axes[selection.depth]
     display_param = param
@@ -71,6 +71,8 @@ def extract_cut(volume, selection, operations, param, params, *, check=lambda: N
             left, right, bottom, top = selection.bounds
             region = frame.values[np.ix_((frame.y >= bottom) & (frame.y <= top),
                                         (frame.x >= left) & (frame.x <= right))]
+            if region_sizes is not None:
+                region_sizes.append(region.size)
             finite = region[numeric_isfinite(region)]
             count = finite.size
             if count:

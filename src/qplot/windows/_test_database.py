@@ -37,7 +37,6 @@ from qplot.testdata import (
     example_csv_contents,
     generate_database,
     instruction_collection_contents,
-    read_specifications,
 )
 
 from ._config_persistence import persist_config_value
@@ -47,6 +46,7 @@ from ._export_paths import (
     write_export_atomically,
 )
 from ._file_manager import reveal_file_in_file_manager
+from ._generation_dialog import GenerationProgress, GenerationReview
 
 _TEST_DATABASE_READER_RELEASE_TIMEOUT_SECONDS = 10.0
 
@@ -73,6 +73,7 @@ class TestDatabaseGenerationSignals(QtCore.QObject):
     """Signals emitted by background test-database generation."""
 
     status = QtCore.pyqtSignal(str)
+    run_started = QtCore.pyqtSignal(str, int, int)
     finished = QtCore.pyqtSignal(str, object, object, bool)
 
 
@@ -113,6 +114,7 @@ class TestDatabaseGenerationWorker(QtCore.QRunnable):
                 overwrite=self.overwrite,
                 cancelled_callback=self._cancelled.is_set,
                 publication_callback=self._publication_completed.set,
+                run_started_callback=self.signals.run_started.emit,
             )
         except GenerationCancelled as err:
             error = err
@@ -368,57 +370,24 @@ class SyntheticDatabaseActionsMixin:
             )
             return False
 
-        csv_path = qtw.QFileDialog.getOpenFileName(
-            self,
-            "Select Test Database CSV",
-            self.test_database_csv_directory(),
-            "CSV Files (*.csv)",
-        )[0]
-        if not csv_path:
-            self.show_status("Test database generation cancelled.", 3000)
-            return False
-
-        self._remember_test_database_csv_directory(
-            os.path.dirname(os.path.abspath(csv_path))
-        )
+        review = GenerationReview(self)
         try:
-            specifications = read_specifications(csv_path)
-        except Exception as err:
-            log_exception("Test-data CSV validation failed", err, __name__)
-            self.show_error(
-                "Invalid Test Database CSV",
-                "The selected CSV could not be used to generate a database.",
-                str(err),
-            )
-            return False
-
-        suggested_path = str(os.path.splitext(os.path.abspath(csv_path))[0] + ".db")
-        database_path = qtw.QFileDialog.getSaveFileName(
-            self,
-            "Save Test Database",
-            suggested_path,
-            "QCoDeS Database (*.db)",
-            options=qtw.QFileDialog.Option.DontConfirmOverwrite,
-        )[0]
-        if not database_path:
-            self.show_status("Test database generation cancelled.", 3000)
-            return False
-        if not database_path.lower().endswith(".db"):
-            database_path += ".db"
-        database_path = os.path.abspath(database_path)
-        overwrite = os.path.exists(database_path)
-        if overwrite:
-            reply = qtw.QMessageBox.question(
-                self,
-                "Replace Test Database?",
-                f"{database_path} already exists.\n\nReplace it with the "
-                "generated test database?",
-                qtw.QMessageBox.StandardButton.Yes | qtw.QMessageBox.StandardButton.No,
-                qtw.QMessageBox.StandardButton.No,
-            )
-            if reply != qtw.QMessageBox.StandardButton.Yes:
+            if review.exec() != qtw.QDialog.DialogCode.Accepted:
                 self.show_status("Test database generation cancelled.", 3000)
                 return False
+            specifications = review.specifications
+            database_path = review.database_path
+            overwrite = review.overwrite
+        finally:
+            review.deleteLater()
+        if (
+            getattr(self, "_shutdown_started", False)
+            or getattr(self, "_database_load_active", False)
+            or getattr(self, "_test_database_replacement_state", None) is not None
+            or getattr(self, "_test_database_generation_active", False)
+        ):
+            self.show_status("The database view changed. Review generation again after loading finishes.", 5000)
+            return False
 
         try:
             self._start_test_database_generation(
@@ -482,17 +451,38 @@ class SyntheticDatabaseActionsMixin:
         )
         self._test_database_generation_worker = worker
         worker.signals.status.connect(self.test_database_generation_status)
+        worker.signals.run_started.connect(self.test_database_generation_run_started)
         worker.signals.finished.connect(self.test_database_generation_finished)
         self.show_status(
             f"Generating test database {os.path.basename(database_path)}...",
             0,
         )
+        previous = getattr(self, "_generation_progress", None)
+        if previous is not None:
+            previous.close()
+        progress = GenerationProgress(self, database_path, worker)
+        self._generation_progress = progress
+        progress.finished.connect(lambda: setattr(self, "_generation_progress", None))
+        progress.show()
         self.testDatabaseGenerationThreadPool.start(worker)
 
     @QtCore.pyqtSlot(str)
     def test_database_generation_status(self, message):
         if getattr(self, "_test_database_generation_active", False):
             self.show_status(message, 0)
+            progress = getattr(self, "_generation_progress", None)
+            if progress is not None and progress.dismiss.isEnabled():
+                progress.status.setText(message)
+
+    @QtCore.pyqtSlot(str, int, int)
+    def test_database_generation_run_started(self, message, run_number, total_runs):
+        self.test_database_generation_status(message)
+        progress = getattr(self, "_generation_progress", None)
+        if progress is not None and progress.worker is not None:
+            progress.bar.setRange(0, total_runs)
+            unit = "run" if total_runs == 1 else "runs"
+            progress.bar.setFormat(f"%v of %m {unit} complete")
+            progress.bar.setValue(run_number - 1)
 
     @QtCore.pyqtSlot(str, object, object, bool)
     def test_database_generation_finished(
@@ -510,11 +500,21 @@ class SyntheticDatabaseActionsMixin:
             getattr(self, "_shutdown_started", False)
             or getattr(self, "_shutdown_ready", False)
         )
+        cancelled = isinstance(error, GenerationCancelled)
+        progress = getattr(self, "_generation_progress", None)
+        if progress is not None:
+            outcome = "Database ready."
+            if cancelled:
+                outcome = "Generation cancelled."
+            elif error is not None:
+                outcome = "Database generation failed."
+            progress.finish(outcome, error is None)
+            if shutting_down:
+                progress.close()
         if shutting_down:
             self._clear_test_database_generation_transaction()
             return
 
-        cancelled = isinstance(error, GenerationCancelled)
         if cancelled:
             self.show_status("Test database generation cancelled.", 3000)
         elif error is not None:

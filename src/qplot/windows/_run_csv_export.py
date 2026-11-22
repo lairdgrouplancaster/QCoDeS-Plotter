@@ -12,9 +12,9 @@ from qplot.datahandling.readonly import DatabaseInstanceChangedError
 from qplot.datahandling.trusted_live_service import TRUSTED_LIVE_MODE
 from qplot.diagnostics import log_exception
 
+from ._csv_batch_review import CsvFilenameReview
 from ._export_names import suggested_export_filename
-from ._export_paths import approve_export_path
-from ._export_tasks import export_task_manager, start_export_task
+from ._export_tasks import ExportBatchRow, export_task_manager, start_export_task
 
 
 def run_export_request(window):
@@ -85,7 +85,7 @@ def _writer_for(window, key, selector):
     )
 
 
-def queue_raw_export(window, key, selector, *, run_id=None, destination=None):
+def queue_raw_export(window, key, selector, *, run_id=None, destination=None, batch=None):
     """Choose first, then capture the live source in a cancellable worker."""
     if isinstance(selector, (tuple, list)) and not selector:
         window.show_status("No measurements to export for this run.", 5000)
@@ -129,7 +129,7 @@ def queue_raw_export(window, key, selector, *, run_id=None, destination=None):
         return start_export_task(
             window, title=title,
             destination=destination, writer=write, before_publish=validate,
-            source_keys=(key,),
+            source_keys=(key,), batch=batch,
             on_failure=on_failure,
             on_success=lambda receipt: window.show_status(
                 f"Exported run {run_id}: {receipt.row_count:,} CSV rows · {destination}", 7000,
@@ -285,8 +285,7 @@ def export_selected_previews(window, targets):
 
 def _queue_csv_batch(window, requests, folder, generation, *, name_measurements=False):
     """Approve every exact output and bind every source before queuing work."""
-    planned = []
-    names_seen = set()
+    proposed = []
     try:
         if generation != getattr(window, "_database_load_generation", None):
             window.show_status("Batch CSV export cancelled because the database changed.", 5000)
@@ -302,22 +301,15 @@ def _queue_csv_batch(window, requests, folder, generation, *, name_measurements=
                 stem, ext = os.path.splitext(default)
                 if not stem.endswith(f"_{measurement}"):
                     default = f"{stem}_{measurement}{ext}"
-            filename = os.path.join(folder, os.path.basename(default))
-            normalized = os.path.normcase(os.path.realpath(filename)).casefold()
-            stem, ext = os.path.splitext(filename)
-            ordinal = 2
-            while normalized in names_seen:
-                filename = f"{stem}_{ordinal}{ext}"
-                normalized = os.path.normcase(os.path.realpath(filename)).casefold()
-                ordinal += 1
-            names_seen.add(normalized)
-            destination = approve_export_path(
-                window, filename, replace_title="Replace CSV File?", file_description="CSV file",
-            )
-            if destination is None:
-                window.show_status("Batch CSV export cancelled before starting.", 5000)
+            source = f"Run {run_id} · " + (", ".join(selector) if selector else "All measurements")
+            proposed.append((source, os.path.basename(default)))
+        review = CsvFilenameReview(window, folder, proposed)
+        try:
+            if review.exec() != qtw.QDialog.DialogCode.Accepted:
                 return
-            planned.append((key, run_id, selector, destination))
+            planned = [(*requests[row], target) for row, target in review.approved]
+        finally:
+            review.deleteLater()
         if generation != getattr(window, "_database_load_generation", None):
             window.show_status("Batch CSV export cancelled because the database changed.", 5000)
             return
@@ -328,8 +320,10 @@ def _queue_csv_batch(window, requests, folder, generation, *, name_measurements=
             key = window._bind_one_shot_dataset_key(key)
             window._require_run_csv_source_current(key)
             bound.append((key, run_id, selector, destination))
+        title = "Selected measurements" if name_measurements else "Selected runs"
+        batch = ExportBatchRow(f"{title} · {os.path.basename(folder) or folder}")
         for key, run_id, selector, destination in bound:
-            queue_raw_export(window, key, selector, run_id=run_id, destination=destination)
+            queue_raw_export(window, key, selector, run_id=run_id, destination=destination, batch=batch)
     except Exception as error:
         log_exception("Batch CSV export request failed", error, __name__)
         window.show_error("CSV Export Failed", "Could not prepare the selected exports.", str(error))

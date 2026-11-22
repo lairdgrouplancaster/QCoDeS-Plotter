@@ -35,6 +35,8 @@ def test_copy_auto_preserves_precise_limits_in_real_controls(qapplication, axis,
         expected_data = window.view_to_data(axis, expected)
         axis_number = window._axis_scale_axis_number(axis)
 
+        controls.manualRadio.click()
+        assert controls.copyAutoLimitsButton.isVisible()
         QtTest.QTest.mouseClick(
             controls.copyAutoLimitsButton, QtCore.Qt.MouseButton.LeftButton
         )

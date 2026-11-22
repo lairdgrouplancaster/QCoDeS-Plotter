@@ -62,7 +62,7 @@ def test_heatmap_resolution_dialog_details_resize_and_preferences(qapplication):
         qapplication.processEvents()
         assert dialog.size() == compact_size
         buttons = dialog.findChild(qtw.QDialogButtonBox)
-        assert buttons.button(qtw.QDialogButtonBox.StandardButton.Ok).isDefault()
+        assert buttons.button(qtw.QDialogButtonBox.StandardButton.Close).isDefault()
         preferences = dialog.findChild(qtw.QPushButton, "openHeatmapLimitPreferencesButton")
         preferences.click()
         assert dialog.result() == qtw.QDialog.DialogCode.Accepted
@@ -2186,7 +2186,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         stats_action.trigger()
 
         self.assertEqual(len(opened), 1)
-        self.assertIn("2×2 points", opened[0])
+        self.assertIn("Selected grid: 2 × 2", opened[0])
         self.assertIn("X range: 1.00 to 3.00", opened[0])
         self.assertIn("Y range: 1.00 to 3.00", opened[0])
         self.assertEqual(qtw.QApplication.clipboard().text(), "")

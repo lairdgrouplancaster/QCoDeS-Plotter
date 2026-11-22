@@ -920,9 +920,16 @@ class RunDetailsTabsTestCase(unittest.TestCase):
             "Detailed run metadata unavailable",
         )
         self.assertIn(
-            "deferred in snapshot fallback",
+            "unavailable in snapshot mode",
             widget.metadata.topLevelItem(0).text(1),
         )
+        requests = []
+        widget.openSnapshotPlots.connect(lambda: requests.append("plots"))
+        widget.exportSnapshotCsv.connect(lambda: requests.append("csv"))
+        actions = widget.overview.cellWidget(0, 1)
+        for button in actions.findChildren(qtw.QPushButton):
+            button.click()
+        self.assertEqual(requests, ["plots", "csv"])
 
     def test_trusted_detail_loading_error_and_clear_states_retain_basic_run(self):
         widget = treeWidgets.moreInfo()

@@ -1793,6 +1793,8 @@ class RunList(qtw.QTreeWidget):
 
 
 class moreInfo(qtw.QTabWidget):
+    openSnapshotPlots = QtCore.pyqtSignal()
+    exportSnapshotCsv = QtCore.pyqtSignal()
     snapshotPageRequested = QtCore.pyqtSignal(object)
     snapshotFullValueRequested = QtCore.pyqtSignal(object)
 
@@ -2157,13 +2159,26 @@ class moreInfo(qtw.QTabWidget):
         """
         run_metadata = self._trusted_run_metadata(run)
         message = (
-            "Detailed run metadata is deferred in snapshot fallback. "
-            "Use an explicit plot or CSV action to materialise this run."
+            "Detailed run metadata is unavailable in snapshot mode. "
+            "Use Open plots or Export raw CSV on the Overview tab to inspect this run."
         )
         # A detail update for the same row must not look like a reselection.
         self.clear(keep_preview=self.preview.current_guid == run_metadata.get("guid"))
         self._set_trusted_overview(run_metadata)
         self._set_parameter_message("Detailed run metadata unavailable")
+        actions = qtw.QWidget(self.overview)
+        buttons = qtw.QHBoxLayout(actions)
+        buttons.setContentsMargins(2, 1, 2, 1)
+        for title, signal in (("Open plots", self.openSnapshotPlots), ("Export raw CSV…", self.exportSnapshotCsv)):
+            button = qtw.QPushButton(title, actions)
+            button.clicked.connect(lambda _checked=False, request=signal: request.emit())
+            buttons.addWidget(button)
+        buttons.addStretch()
+        self.overview.insertRow(0)
+        self.overview.setItem(0, 0, qtw.QTableWidgetItem("Snapshot mode"))
+        self.overview.setItem(0, 1, qtw.QTableWidgetItem())
+        self.overview.setCellWidget(0, 1, actions)
+        self.overview.setRowHeight(0, actions.sizeHint().height())
         self.preview.set_current_guid(run_metadata.get("guid"))
         self._set_bounded_placeholder_views(run_metadata, "Status", message)
 

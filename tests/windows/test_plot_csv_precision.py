@@ -72,7 +72,7 @@ def test_default_dialog_round_trips_measurement_xy(
 ):
     plot, expected = precision_plot
     dialog = _open_csv_dialog(plot)
-    # Leave all displayed export options at their defaults.
+    dialog.currentExporter.params["separator"] = "tab" if suffix == "tsv" else "comma"
     assert dialog.currentExporter.params["columnMode"] == "(x,y) per plot"
     rows = _export_from_dialog(
         monkeypatch, plot, dialog, tmp_path / f"precise.{suffix}", delimiter,
@@ -100,6 +100,7 @@ def test_dialog_round_trips_merged_secondary_traces_and_column_modes(
     dialog = _open_csv_dialog(plot)
     # Reuse the actual dialog/exporter to check repeated exports as well as
     # both column layouts and padding for traces with different lengths.
+    dialog.currentExporter.params["separator"] = "tab" if suffix == "tsv" else "comma"
     for index, mode in enumerate(("(x,y) per plot", "(x,y,y,y) for all plots")):
         dialog.currentExporter.params["columnMode"] = mode
         rows = _export_from_dialog(
@@ -161,9 +162,7 @@ def test_successive_dialog_clicks_keep_shared_x_and_selected_options(
     names = [line.name() for line in lines]
     dialog = _open_csv_dialog(plot)
     exporter = dialog.currentExporter
-    # A conflicting filename suffix still determines the file's delimiter,
-    # without rewriting the option selected in the reused dialog.
-    exporter.params["separator"] = "tab" if suffix == "csv" else "comma"
+    exporter.params["separator"] = "tab" if suffix == "tsv" else "comma"
     shared_rows = None
     for index, mode in enumerate((initial_mode, "(x,y,y,y) for all plots", "(x,y,y,y) for all plots")):
         exporter.params["columnMode"] = mode
@@ -204,9 +203,7 @@ def test_dialog_retry_after_partial_csv_write_has_fresh_state(
     errors = []
     statuses = []
     prompts = []
-    answers = iter((qtw.QMessageBox.StandardButton.No,
-                    qtw.QMessageBox.StandardButton.Yes,
-                    qtw.QMessageBox.StandardButton.Yes))
+    answers = iter((False, True, True))
     monkeypatch.setattr(plot, "show_error", lambda *args: errors.append(args))
     monkeypatch.setattr(plot, "show_status", lambda *args: statuses.append(args))
     monkeypatch.setattr(
@@ -214,13 +211,13 @@ def test_dialog_retry_after_partial_csv_write_has_fresh_state(
         lambda *_args, **_kwargs: (str(target), ""),
     )
 
-    def approve_replacement(_parent, _title, message, *_args):
+    def approve_replacement(_parent, _title, message, *, affirmative):
         assert str(target) in message
         assert target.read_bytes() == original
         prompts.append(message)
         return next(answers)
 
-    monkeypatch.setattr(qtw.QMessageBox, "question", approve_replacement)
+    monkeypatch.setattr("qplot.windows._export_paths.confirm_action", approve_replacement)
     native_writer = csv.writer
     written_rows = []
 

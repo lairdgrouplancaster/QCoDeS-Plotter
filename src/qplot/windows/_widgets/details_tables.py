@@ -26,6 +26,7 @@ from qplot.datahandling.trusted_snapshot import (
 from .._commands import command_spec
 from .._small_dialogs import (
     close_default,
+    copy_to_clipboard,
     dialog_layout,
     equal_button_widths,
     resize_dialog,
@@ -173,7 +174,7 @@ class TrustedFullValueDialog(qtw.QDialog):
         self.text_edit.setLineWrapMode(qtw.QPlainTextEdit.LineWrapMode.NoWrap)
 
         self.select_all_button = qtw.QPushButton("Select all", self)
-        self.copy_button = qtw.QPushButton("Copy", self)
+        self.copy_button = qtw.QPushButton("Copy entire value", self)
         self.copy_button.setToolTip("Copy the complete metadata value, regardless of the text selection.")
         buttons = qtw.QDialogButtonBox(qtw.QDialogButtonBox.StandardButton.Close)
         close_button = buttons.button(qtw.QDialogButtonBox.StandardButton.Close)
@@ -187,6 +188,30 @@ class TrustedFullValueDialog(qtw.QDialog):
         buttons.addButton(self.copy_button, qtw.QDialogButtonBox.ButtonRole.ActionRole)
         layout = dialog_layout(self)
         layout.addWidget(self.path_label)
+        tools = qtw.QHBoxLayout()
+        self.search = qtw.QLineEdit(self)
+        self.search.setPlaceholderText("Find in value")
+        self.search.setAccessibleName("Find in value")
+        self.search.setClearButtonEnabled(True)
+        tools.addWidget(self.search, 1)
+        self.next_match = qtw.QPushButton("Find next", self)
+        self.next_match.setAutoDefault(False)
+        self.next_match.setEnabled(False)
+        tools.addWidget(self.next_match)
+        self.wrap = qtw.QCheckBox("Wrap lines", self)
+        tools.addWidget(self.wrap)
+        self.wrap.toggled.connect(lambda on: self.text_edit.setLineWrapMode(
+            qtw.QPlainTextEdit.LineWrapMode.WidgetWidth if on else qtw.QPlainTextEdit.LineWrapMode.NoWrap))
+        self.match_status = qtw.QLabel(self)
+        self.search.textChanged.connect(self._search_changed)
+        self.next_match.clicked.connect(self._find_next)
+        # Keep Return in the search field from also activating the default Close.
+        self.search.installEventFilter(self)
+        find = QtGui.QShortcut(QtGui.QKeySequence.StandardKey.Find, self)
+        find.activated.connect(self.search.setFocus)
+        layout.addLayout(tools)
+        layout.addWidget(self.match_status)
+        self.match_status.hide()
         layout.addWidget(self.text_edit, 1)
         layout.addWidget(buttons)
         equal_button_widths(self.select_all_button, self.copy_button, self.close_button)
@@ -195,6 +220,7 @@ class TrustedFullValueDialog(qtw.QDialog):
 
     def show_value(self, *, path: str, text: str, utf8_bytes: int) -> None:
         self._exact_text = text
+        self.search.clear()
         self.path_label.setText(f"{path} — {utf8_bytes} UTF-8 bytes")
         self.text_edit.setPlainText(text)
         cursor = self.text_edit.textCursor()
@@ -204,6 +230,34 @@ class TrustedFullValueDialog(qtw.QDialog):
         self.show()
         self.raise_()
         self.activateWindow()
+
+    def eventFilter(self, watched, event):
+        if (watched is self.search and event.type() == QtCore.QEvent.Type.KeyPress
+                and event.key() in (QtCore.Qt.Key.Key_Enter, QtCore.Qt.Key.Key_Return)):
+            self.next_match.click()
+            return True
+        return super().eventFilter(watched, event)
+
+    def _search_changed(self, text):
+        self.next_match.setEnabled(bool(text))
+        self.match_status.hide()
+
+    def _find_next(self):
+        term = self.search.text()
+        if not term:
+            return
+        document = self.text_edit.document()
+        assert document is not None
+        cursor = document.find(term, self.text_edit.textCursor())
+        if cursor.isNull():
+            cursor = document.find(term)
+        if cursor.isNull():
+            self.match_status.setText("No matches")
+            self.match_status.show()
+        else:
+            self.match_status.hide()
+            self.text_edit.setTextCursor(cursor)
+            self.text_edit.ensureCursorVisible()
 
     @QtCore.pyqtSlot()
     def copy_value(self) -> None:
@@ -1207,9 +1261,3 @@ def format_value(value, max_len=None):
 
 def row_text(item):
     return "\t".join(item.text(col) for col in range(item.columnCount()))
-
-
-def copy_to_clipboard(text):
-    clipboard = qtw.QApplication.clipboard()
-    if clipboard is not None:
-        clipboard.setText(text)

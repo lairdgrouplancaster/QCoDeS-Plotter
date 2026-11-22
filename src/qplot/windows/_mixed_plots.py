@@ -30,19 +30,20 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
 
     def initMenu(self):
         super().initMenu()
+        self._open_plot_settings_page = self.open_plot_appearance_dialog
         menu_bar = self.menuBar()
         for menu_action in menu_bar.actions() if menu_bar is not None else ():
             if menu_action.text().replace("&", "") == "View":
                 menu = menu_action.menu()
                 if menu is not None:
                     menu.addSeparator()
-                    action = QtGui.QAction("Plot appearance…", self)
+                    action = QtGui.QAction("Plot settings…", self)
                     action.triggered.connect(lambda _checked: self.open_plot_appearance_dialog())
                     menu.addAction(action)
                     self.appearance_action = action
                 break
 
-    def open_plot_appearance_dialog(self, key=None, *, kind=None):
+    def open_plot_appearance_dialog(self, key=None, *, kind=None, page="Datasets"):
         dialog = self.__dict__.get("_plot_appearance_dialog")
         if dialog is None:
             if "heatmaps" not in self.__dict__:
@@ -58,9 +59,11 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
                 dialog.select_heatmap(key)
             else:
                 dialog.select_trace(key)
+        dialog.show_page(page)
         dialog.show()
         dialog.raise_()
         dialog.activateWindow()
+        return dialog
 
     def open_trace_appearance_dialog(self, trace_key=None):
         self.open_plot_appearance_dialog(trace_key, kind="trace")
@@ -252,10 +255,11 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
         return mixin.plot_axes_swapped(self)
 
     def set_plot_axes_swapped(self, swapped):
-        before = self.axis_options
         mixin = Plot1DTraceMixin if self.operation_kind == "plot1d" else Plot2DLayerMixin
-        result = mixin.set_plot_axes_swapped(self, swapped)
-        if result and before != self.axis_options:
+        if not self.can_swap_plot_axes() or self.plot_axes_swapped() == swapped:
+            return mixin.set_plot_axes_swapped(self, swapped)
+        with self._transposing_axis_scales():
+            result = mixin.set_plot_axes_swapped(self, swapped)
             if self.operation_kind == "plot1d":
                 Plot2DLayerMixin._transpose_heatmap_axis_assignments(self)
             else:
@@ -284,9 +288,9 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
             label = getattr(parameter, "label", None) or getattr(parameter, "name", "")
             axis.setLabel(text=str(label), units=str(getattr(parameter, "unit", "") or ""))
         self._sync_unused_plot_axes()
-        sync_tabs = getattr(self, "_sync_axis_scale_tab_states", None)
-        if callable(sync_tabs):
-            sync_tabs()
+        sync_choices = getattr(self, "_sync_axis_scale_choices", None)
+        if callable(sync_choices):
+            sync_choices()
         self._refresh_appearance_axis_warnings()
 
     def _sync_unused_plot_axes(self):

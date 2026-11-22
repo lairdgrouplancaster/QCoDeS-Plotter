@@ -533,7 +533,7 @@ def test_depth_marker_tracks_physical_slice_when_cut_axis_is_logarithmic(tmp_pat
     cut.open_axis_scale_dialog("x")
     log = cut._axis_scale_controls["x"].logCheck
     log.click()
-    cut._axis_scale_dialog.close()
+    cut._axis_scale_dialog.accept()
     assert marker.isVisible() and marker.value() == pytest.approx(np.log10(5.))
 
     # The parent navigator still offers zero. Its marker has no log position,
@@ -557,7 +557,7 @@ def test_depth_marker_tracks_physical_slice_when_cut_axis_is_logarithmic(tmp_pat
     assert marker.value() == pytest.approx(np.log10(5.))
     cut.open_axis_scale_dialog("x")
     log.click()
-    cut._axis_scale_dialog.close()
+    cut._axis_scale_dialog.accept()
     assert marker.value() == 5.
     source.select_slice(0)
     wait_for(lambda: loaded(source) and source.slice_frame.depth == -3.)
@@ -771,11 +771,15 @@ def test_slice_colours_axis_swap_and_cut_marker_units(tmp_path, main):
     wait_for(lambda: loaded(plot) and plot.display_param.unit == "A/V")
     assert plot._color_mode != "locked"
     wait_for(lambda: loaded(cut) and cut.display_param.unit == "A/V")
+    plot.vb.setRange(xRange=(-1.25, 1.75), yRange=(3.0, 5.0), padding=0)
+    plot.vb.invertX(True)
     plot.set_plot_axes_swapped(True)
     wait_for(lambda: loaded(plot) and plot.axis_options["x"] == "bias")
     wait_for(lambda: loaded(cut) and cut.selection.kind == "v")
     assert cut.selection.varying == "gate"
     assert cut.marker.isVisible()
+    assert plot.vb.viewRange() == [[3.0, 5.0], [-1.25, 1.75]]
+    assert plot.vb.yInverted() and not plot.vb.xInverted()
     assert plot._applied_operation_state.entries[0].key == "derivative_y"
     assert not np.array_equal(cut.axis_data["y"], old_values)
     assert not errors
@@ -856,6 +860,9 @@ def test_snapshot_fallback_array_volume_and_region_coverage(tmp_path, main, monk
                     if dialog.windowTitle() == "Mean-cut coverage by depth")
     table = coverage.findChild(qtw.QTableWidget)
     assert [table.item(row, 1).text() for row in range(3)] == ["2", "2", "2"]
+    assert [table.item(row, 2).text() for row in range(3)] == ["2", "2", "2"]
+    assert table.verticalHeader().isHidden()
+    assert "Run " in coverage.findChild(qtw.QLabel).text()
     buttons = coverage.findChild(qtw.QDialogButtonBox)
     close = buttons.button(qtw.QDialogButtonBox.StandardButton.Close)
     assert close.isDefault()

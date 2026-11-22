@@ -5,6 +5,14 @@ from typing import Any
 from PyQt6 import QtCore
 
 
+def close_superseded_plot(window: Any) -> None:
+    """Retire a replaced source or temporary preview during internal cleanup."""
+    from ._export_tasks import cancel_owner_exports
+
+    cancel_owner_exports(window)
+    window.close()
+
+
 def retire_closed_plot(window: Any) -> None:
     """Queue native deletion; retained overlay sources stay available."""
     if not isinstance(window, QtCore.QObject):

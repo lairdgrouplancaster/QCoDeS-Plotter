@@ -16,6 +16,7 @@ from qplot.tools.sample_statistics import (
 )
 
 from ._plot_host import PlotHost
+from ._plot_transform_labels import native_axis_quantities, quantity_text
 from ._small_dialogs import (
     close_default,
     dialog_layout,
@@ -74,7 +75,10 @@ class _MarqueeDragState(TypedDict):
 
 
 if TYPE_CHECKING:
+    from ._dataset_handle import DatasetKey
+
     class _PlotMarqueeBase(PlotHost, qtw.QMainWindow):
+        _dataset_key: DatasetKey
         _marquee_drag_state: _MarqueeDragState | None
         _marquee_stats_dialog: qtw.QDialog
         marquee: QtCore.QRectF | None
@@ -496,6 +500,8 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             values: Any,
             rect: QtCore.QRectF | None = None,
             *,
+            contribution: str,
+            heatmap: bool = False,
             x_axis: str = "x",
             y_axis: str = "y",
             ) -> str:
@@ -504,6 +510,27 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             rect = marquee.normalized()
 
         lines = [size_text]
+        source = self.__dict__.get("_plot_source_info")
+        if source is not None:
+            lines.append(f"Run: {source[1]} ({self._dataset_key.guid})")
+        parameter = self.__dict__.get("param")
+        if parameter is not None:
+            lines.append(f"Measurement: {quantity_text(parameter)}")
+        axes = self.__dict__.get("axis_param", {})
+        if not heatmap:
+            line = self.__dict__.get("line")
+            axes = native_axis_quantities(axes.get("x"), axes.get("y"), getattr(line, "opts", {}))
+        for axis in ("x", "y"):
+            quantity = quantity_text(axes.get(axis))
+            if quantity:
+                lines.append(f"{axis.upper()} quantity: {quantity}")
+        measured = self.__dict__.get("display_param", parameter) if heatmap else axes.get("y")
+        if quantity_text(measured):
+            lines.append(f"Statistics quantity: {quantity_text(measured)}")
+        lines.append(f"Data: {contribution}")
+        cut = self.__dict__.get("_displayed_description")
+        if cut:
+            lines.append(f"Cut: {cut}")
         if rect is not None:
             view_to_data = getattr(self, "view_to_data", None)
             if callable(view_to_data):
@@ -772,6 +799,8 @@ def new_statistics_dialog(parent, stats_text, title):
     assert close is not None
     equal_button_widths(copy_button, close)
     close_default(buttons)
-    resize_dialog(dialog, 560, 380)
+    # Leave room for the numerical results below the source and axis rows.
+    # The shared size helper caps long reports at the available screen space.
+    resize_dialog(dialog, 640, max(380, 88 + 34 * stats_table.rowCount()))
 
     return dialog
