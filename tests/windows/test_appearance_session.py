@@ -339,16 +339,22 @@ def test_cancel_restores_volume_colour_scope(volume_main, tmp_path, mode):
     window.openPlot(runs[3][0])
     _wait_for(lambda: bool(window.windows) and loaded(window.windows[-1]) and window.windows[-1]._range_complete)
     plot = window.windows[-1]
+    plot.color_mode.setCurrentIndex(plot.color_mode.findData("slice"))
+    plot.colorbar_range_entry.percent.setValue(91)
     plot.color_mode.setCurrentIndex(plot.color_mode.findData(mode))
     last_auto = plot._last_auto_mode
     plot.open_plot_appearance_dialog()
     dialog = plot._plot_appearance_dialog
     plot.open_colorbar_scale_dialog()
-    plot.colorbar_scope.setCurrentIndex(plot.colorbar_scope.findData("slice" if mode != "slice" else "volume"))
+    plot.colour_source_buttons["slice"].click()
+    plot.colorbar_range_entry.percent.setValue(74)
+    plot.colour_source_buttons["volume"].click()
     dialog.reject()
     assert plot._color_mode == mode
     assert plot._last_auto_mode == last_auto
     assert plot.color_mode.currentData() == mode
-    assert plot.colorbar_scope.currentData() == last_auto
+    assert plot.colour_source_buttons[last_auto].isChecked()
+    plot.colour_source_buttons["slice"].click()
+    assert plot.colorbar_range_entry.percent.value() == 91
     assert not plot.colorbar_scale_dialog.isVisible()
     assert not errors

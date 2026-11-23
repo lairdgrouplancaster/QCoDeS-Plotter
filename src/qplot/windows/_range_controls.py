@@ -181,9 +181,11 @@ class _RangeIcon(QtGui.QIconEngine):
             painter.drawLine(QtCore.QLineF(0, 2, 0, 4.5))
             shackle = QtGui.QPainterPath(QtCore.QPointF(-3.5, -1))
             shackle.lineTo(-3.5, -4)
-            shackle.cubicTo(-3.5, -8.5, 3.5, -8.5, 3.5, -4)
             if state == QtGui.QIcon.State.On:
+                shackle.cubicTo(-3.5, -8.5, 3.5, -8.5, 3.5, -4)
                 shackle.lineTo(3.5, -1)
+            else:
+                shackle.cubicTo(-3.5, -8.5, -8, -8.5, -8, -4)
             painter.drawPath(shackle)
         painter.restore()
 
@@ -235,59 +237,57 @@ class _RangeEdit(CompactNumberEdit):
 
 
 class _FieldBox(qtw.QWidget):
-    """Keep the data action next to its lock while the field is being used."""
+    """Keep the hold toggle with the label and the data action with the value."""
 
     def __init__(self, prefix: str, field: str, parent: qtw.QWidget):
         super().__init__(parent)
-        layout = qtw.QHBoxLayout(self)
+        layout = qtw.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        self.edit = _RangeEdit(self)
-        self.edit.setAccessibleName(f"{prefix} {_NAMES[field].lower()}")
-        self.edit.setSizePolicy(qtw.QSizePolicy.Policy.Ignored, qtw.QSizePolicy.Policy.Fixed)
-        self.edit.setMinimumWidth(self.fontMetrics().horizontalAdvance("0.00"))
-        layout.addWidget(self.edit, 1)
-        self.use = qtw.QToolButton(self)
-        self.use.setIcon(QtGui.QIcon(_RangeIcon("fit")))
-        self.use.setAccessibleName(f"Use data {_NAMES[field].lower()}")
-        self.use.setToolTip(self.use.accessibleName())
-        policy = self.use.sizePolicy()
-        policy.setRetainSizeWhenHidden(True)
-        self.use.setSizePolicy(policy)
+        layout.setSpacing(2)
+        heading = qtw.QHBoxLayout()
+        heading.setSpacing(3)
+        layout.addLayout(heading)
+        self.label = qtw.QLabel(_NAMES[field], self)
+        heading.addWidget(self.label)
         self.lock = qtw.QToolButton(self)
+        self.lock.setObjectName("rangeFieldLock")
+        self.lock.setAutoRaise(True)
         self.lock.setCheckable(True)
         self.lock.setIcon(QtGui.QIcon(_RangeIcon("lock")))
         self.lock.setAccessibleName(f"Hold {_NAMES[field].lower()}")
-        for button in (self.use, self.lock):
-            button.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
-            button.setIconSize(QtCore.QSize(15, 15))
-            height = self.edit.sizeHint().height()
-            button.setFixedSize(max(21, height), height)
-            layout.addWidget(button)
-        self.touch = any(device.type() == QtGui.QInputDevice.DeviceType.TouchScreen
-                         for device in QtGui.QInputDevice.devices())
-        self.use.setVisible(self.touch)
-        app = qtw.QApplication.instance()
-        if isinstance(app, qtw.QApplication):
-            app.focusChanged.connect(self._focus_changed)
+        self.lock.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.lock.setIconSize(QtCore.QSize(15, 15))
+        self.lock.setFixedSize(22, max(17, self.label.sizeHint().height()))
+        heading.addWidget(self.lock)
+        heading.addStretch()
 
-    def _focus_changed(self, _old: qtw.QWidget | None, new: qtw.QWidget | None) -> None:
-        self.use.setVisible(self.touch or self.underMouse() or (new is not None and self.isAncestorOf(new)))
-
-    def enterEvent(self, event: QtGui.QEnterEvent | None) -> None:
-        self.use.show()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event: QtCore.QEvent | None) -> None:
-        focus = qtw.QApplication.focusWidget()
-        self.use.setVisible(self.touch or (focus is not None and self.isAncestorOf(focus)))
-        super().leaveEvent(event)
+        value = qtw.QHBoxLayout()
+        value.setSpacing(0)
+        value.setAlignment(QtCore.Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(value)
+        self.edit = _RangeEdit(self)
+        self.label.setBuddy(self.edit)
+        self.edit.setObjectName("rangeFieldValue")
+        self.edit.setAccessibleName(f"{prefix} {_NAMES[field].lower()}")
+        self.edit.setSizePolicy(qtw.QSizePolicy.Policy.Ignored, qtw.QSizePolicy.Policy.Fixed)
+        self.edit.setMinimumWidth(self.fontMetrics().horizontalAdvance("0.00"))
+        value.addWidget(self.edit, 1)
+        self.use = qtw.QToolButton(self)
+        self.use.setObjectName("rangeFieldUseData")
+        self.use.setIcon(QtGui.QIcon(_RangeIcon("fit")))
+        self.use.setAccessibleName(f"Use data {_NAMES[field].lower()}")
+        self.use.setToolTip(self.use.accessibleName())
+        self.use.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.use.setIconSize(QtCore.QSize(15, 15))
+        self.use.setSizePolicy(qtw.QSizePolicy.Policy.Fixed, qtw.QSizePolicy.Policy.Ignored)
+        value.addWidget(self.use)
 
 
 class RangeControls(qtw.QWidget):
     """Shared Range section. The owner validates and applies each proposed state."""
 
-    def __init__(self, prefix: str, *, colour: bool = False, parent: qtw.QWidget | None = None):
+    def __init__(self, prefix: str, *, colour: bool = False, source_controls: qtw.QWidget | None = None,
+                 parent: qtw.QWidget | None = None):
         super().__init__(parent)
         self.state = RangeState()
         self._units = ""
@@ -348,15 +348,12 @@ class RangeControls(qtw.QWidget):
         for i, field in enumerate(_NAMES):
             row, column = divmod(i, 2)
             box = _FieldBox(prefix, field, self)
-            label = qtw.QLabel(_NAMES[field], self)
-            label.setBuddy(box.edit)
-            grid.addWidget(label, row * 2, column)
-            grid.addWidget(box, row * 2 + 1, column)
+            grid.addWidget(box, row, column)
             grid.setColumnStretch(column, 1)
             self.fields[field] = box.edit
             self.locks[field] = box.lock
             self.use_buttons[field] = box.use
-            self.labels[field] = label
+            self.labels[field] = box.label
             box.edit.textEdited.connect(partial(self._begin, field))
             box.edit.accepted.connect(partial(self._finish, field, False))
             box.edit.left.connect(partial(self._finish, field, True))
@@ -366,31 +363,40 @@ class RangeControls(qtw.QWidget):
             box.edit.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
             box.edit.customContextMenuRequested.connect(partial(self._context_menu, field))
         body.addLayout(grid)
-        options = qtw.QFormLayout()
+        if source_controls is not None:
+            source_label = qtw.QLabel("Use data from", self)
+            source_label.setFont(font)
+            source_label.setBuddy(source_controls)
+            form.addRow(source_label, source_controls)
+        self.filter_row = qtw.QWidget(self)
+        options = qtw.QFormLayout(self.filter_row)
         options.setContentsMargins(0, 0, 0, 0)
         options.setRowWrapPolicy(qtw.QFormLayout.RowWrapPolicy.WrapLongRows)
         options.setFieldGrowthPolicy(qtw.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        self.visible_only = qtw.QCheckBox("Autoscale from visible data", self)
-        self.visible_only.setToolTip("Use samples within the current view on the other axes.")
+        self.visible_only = qtw.QCheckBox("Visible area only" if colour else "Autoscale from visible data", self)
+        self.visible_only.setToolTip("Use samples inside the current horizontal and vertical limits." if colour else
+                                    "Use samples within the current view on the other axes.")
         self.percent = qtw.QSpinBox(self)
         self.percent.setRange(1, 100)
         self.percent.setValue(100)
         self.percent.setSuffix("%")
-        self.percent.setAccessibleName("Colour data range percentage")
+        self.percent.setAccessibleName("Central percentage")
         self.percent.setToolTip("Use the central percentage of eligible colour values.")
         self.percent.setKeyboardTracking(False)
         if colour:
+            options.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
             percentage = qtw.QHBoxLayout()
             percentage.addStretch()
-            percent_label = qtw.QLabel("Data range", self)
+            percent_label = qtw.QLabel("Central percentage", self)
             percent_label.setBuddy(self.percent)
             percentage.addWidget(percent_label)
             percentage.addWidget(self.percent)
             options.addRow(self.visible_only, percentage)
+            form.addRow("", self.filter_row)
         else:
             options.addRow(self.visible_only)
             self.percent.hide()
-        body.addLayout(options)
+            body.addWidget(self.filter_row)
         self.error_label = qtw.QLabel(self)
         self.error_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.error_label.setObjectName("rangeEntryError")

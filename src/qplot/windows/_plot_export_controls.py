@@ -1,5 +1,6 @@
 """Compact, format-specific controls for the existing plot exporters."""
 
+from math import gcd
 from typing import Any
 
 from PyQt6 import QtCore, QtGui
@@ -111,25 +112,6 @@ class _ExportBackgroundCombo(qtw.QComboBox):
         painter.drawControl(qtw.QStyle.ControlElement.CE_ComboBoxLabel, option)
 
 
-class _AspectRatioLink(qtw.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setFixedSize(20, 24)
-        self.setObjectName("aspectRatioLink")
-        self.setAccessibleName("Aspect ratio locked")
-        self.setToolTip("Width and height stay linked to preserve the plot's aspect ratio.")
-
-    def paintEvent(self, event):
-        painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        painter.setPen(QtGui.QPen(self.palette().color(QtGui.QPalette.ColorRole.WindowText), 1.4))
-        painter.translate(QtCore.QRectF(self.rect()).center())
-        painter.rotate(-35)
-        painter.drawRoundedRect(QtCore.QRectF(-8, -3, 10, 6), 3, 3)
-        painter.drawRoundedRect(QtCore.QRectF(-2, -3, 10, 6), 3, 3)
-        painter.end()
-
-
 class PlotExportControls(qtw.QWidget):
     def __init__(self, dialog: Any):
         super().__init__(dialog)
@@ -138,6 +120,7 @@ class PlotExportControls(qtw.QWidget):
         self._syncing = False
         self._parameters: list[Any] = []
         self.fields: dict[str, Any] = {}
+        self.aspect_ratio_label: qtw.QLabel | None = None
         layout = qtw.QVBoxLayout(self)
         self.body_layout = layout
         layout.setContentsMargins(0, 0, 0, 0)
@@ -145,7 +128,7 @@ class PlotExportControls(qtw.QWidget):
         self.output_tabs = qtw.QTabBar()
         self.output_tabs.setAccessibleName("Export output")
         self.output_tabs.addTab("&Figure")
-        self.output_tabs.addTab("Plotted &data")
+        self.output_tabs.addTab("&Data")
         layout.addWidget(self.output_tabs)
         form = qtw.QFormLayout()
         self.format_form = form
@@ -165,6 +148,7 @@ class PlotExportControls(qtw.QWidget):
         layout.addWidget(self.settings)
         self.format_combo.currentIndexChanged.connect(self._format_changed)
         self.output_tabs.currentChanged.connect(self._format_changed)
+        dialog.scene.getViewWidget().sigDeviceTransformChanged.connect(self._update_aspect_ratio)
 
     def _format_changed(self):
         if self._syncing:
@@ -178,6 +162,7 @@ class PlotExportControls(qtw.QWidget):
     def set_exporter(self, exporter, *, pdf=False):
         self.clear_bindings()
         self.fields.clear()
+        self.aspect_ratio_label = None
         self.exporter = exporter
         self.dialog.csv_scope.setParent(self.dialog)
         self.dialog.csv_scope.hide()
@@ -232,7 +217,6 @@ class PlotExportControls(qtw.QWidget):
             row.setContentsMargins(0, 0, 0, 0)
             for name in ("width", "height"):
                 if name == "height":
-                    row.addWidget(_AspectRatioLink())
                     row.addWidget(qtw.QLabel("Height"))
                 spin = qtw.QDoubleSpinBox() if type(exporter) is SVGExporter else qtw.QSpinBox()
                 spin.setRange(1, 20_000)
@@ -246,6 +230,11 @@ class PlotExportControls(qtw.QWidget):
                 self.fields[name] = spin
                 row.addWidget(spin, 1)
             form.addRow("Width", sizes)
+            self.aspect_ratio_label = qtw.QLabel()
+            self.aspect_ratio_label.setObjectName("exportAspectRatio")
+            self.aspect_ratio_label.setToolTip("Editing either dimension adjusts the other to preserve the plot's proportions.")
+            form.addRow("", self.aspect_ratio_label)
+            self._update_aspect_ratio()
             colour = _ExportBackgroundCombo(self.settings)
             colour.colourChanged.connect(lambda value: self._write("background", value))
             self.fields["background"] = colour
@@ -270,6 +259,25 @@ class PlotExportControls(qtw.QWidget):
         self.settings.ensurePolished()
         self.body_layout.invalidate()
         self.dialog.fit_export_controls()
+
+    @QtCore.pyqtSlot()
+    def _update_aspect_ratio(self):
+        label = self.aspect_ratio_label
+        if label is None:
+            return
+        source = self.exporter.getSourceRect()
+        width, height = source.width(), source.height()
+        if width <= 0 or height <= 0:
+            label.setText("Fixed aspect ratio")
+            return
+        divisor = gcd(width, height)
+        text = f"Fixed aspect ratio · {width // divisor}:{height // divisor}"
+        if label.text() and label.text() != text:
+            # The plot canvas was resized while the dialog was open. Keep the
+            # chosen export width and let the exporter calculate its new height.
+            self.exporter.widthChanged()
+            self._sync_values()
+        label.setText(text)
 
     def clear_bindings(self):
         for parameter in self._parameters:

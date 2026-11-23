@@ -113,19 +113,23 @@ def type_draft(widget, field, value):
     QtTest.QTest.keyClicks(edit, value)
 
 
-def test_revealing_use_data_preserves_field_and_lock_geometry(editor, qapplication):
+def test_each_label_has_its_lock_and_each_value_has_a_permanent_data_action(editor, qapplication):
     for field, edit in editor.fields.items():
         editor.auto_radio.setFocus()
         button = editor.use_buttons[field]
-        button.hide()
-        qapplication.processEvents()
         lock = editor.locks[field]
-        resting = edit.geometry(), lock.geometry()
+        label = editor.labels[field]
+        assert label.buddy() is edit
+        assert label.geometry().right() < lock.x() <= label.geometry().right() + 6
+        assert lock.geometry().bottom() < edit.y()
+        assert label.x() == edit.x()
+        assert button.isVisible() and button.toolTip() == f"Use data {label.text().lower()}"
+        assert edit.geometry().right() + 1 == button.x()
+        resting = edit.geometry(), button.geometry()
         edit.setFocus()
         qapplication.processEvents()
         assert button.isVisible()
-        assert (edit.geometry(), lock.geometry()) == resting
-        assert edit.geometry().right() < button.x() <= button.geometry().right() < lock.x()
+        assert (edit.geometry(), button.geometry()) == resting
 
 
 def test_numeric_events_and_rejected_blur_restore_automatic(editor, qapplication):

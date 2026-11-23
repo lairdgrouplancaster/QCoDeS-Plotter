@@ -582,7 +582,7 @@ Common plot controls:
   **Esc** cancels the pending edit.
 * In Manual, the two most recently edited fields determine the range. On the
   first edit, Minimum and Maximum are paired, as are Centre and Span. Click
-  a padlock to hold one field while editing another or fitting to data.
+  the padlock beside a field's label to hold that value while editing another or fitting to data.
   Clicking a second padlock transfers the lock. In Automatic, editing the held
   field refits the range and keeps tracking live data. In Manual, it preserves
   the most recently edited other field.
@@ -590,8 +590,8 @@ Common plot controls:
   Holding Minimum or Maximum fits the opposite endpoint. Holding Centre gives
   equal reach on each side, enough to cover the data. Holding Span centres that
   width on the data midpoint. If a fit is impossible, the previous limits stay in use.
-* To take just one value from the data, hover over or focus its field and use
-  the button beside its padlock, or right-click the field and choose **Use
+* To take just one value from the data, click the **Use data** button at the
+  right edge of its number box, or right-click the field and choose **Use
   data minimum**, **Use data maximum**, **Use data centre** or **Use data span**.
   For example, with Centre held, **Use data span** copies the measured width
   and keeps it centred on your chosen value.
@@ -644,9 +644,9 @@ Common plot controls:
   row; filters are cleared if they hide it. Click the **Name** or **Type** heading
   to sort, and click again to reverse the order. Category tooltips explain the
   different kinds of colour map.
-  **Data range** selects the central percentage of eligible colour values.
-  For example, 98% uses the 1st and 99th percentiles. Turn on **Autoscale
-  from visible data** to use samples in the current horizontal and vertical view.
+  **Visible area only** uses samples inside the current horizontal and vertical
+  limits. **Central percentage** selects the proportion of those eligible
+  colour values to include. For example, 98% uses the 1st and 99th percentiles.
 * **Preferences → Plots → Plot display** groups the settings for open plots,
   including axis styling, cursor precision and the warning when adding data
   with incompatible axes. **New plot defaults** groups window placement,
@@ -806,15 +806,15 @@ An em dash (`—`) marks an unavailable or nonfinite cursor value.
   the heatmap continues to zoom. Navigation does not wrap.
 * Enter an index or a coordinate; coordinate entry selects the nearest recorded
   plane and shows the selected value. X/Y zoom and marquee bounds persist.
-* Choose **Whole volume**, **Current slice**, or **Locked** colour limits.
+* Choose **Whole volume**, **Current slice**, or **Manual** colour limits.
   Whole-volume limits include slice operations and are calculated in the
   background, with an explicitly provisional range and scan progress. Live
   limits expand without shrinking. Press C to recalculate; dragging the
   colourbar or using marquee colour zoom locks the limits. In **Plot settings →
-  Colour scale**, **Data source** selects the whole volume or the current slice,
-  and **Manual** holds the current limits. Select **Current slice** to fit a central
-  percentage or the visible region of that slice. Lock **Centre** at zero for matching positive
-  and negative limits.
+  Colour scale**, **Use data from** selects **Current slice** or **Whole volume**.
+  **Current slice** enables **Visible area only** and **Central percentage**.
+  **Whole volume** uses the full extent of the data. Switching back to the slice
+  restores its filters. Hold **Centre** at zero for matching positive and negative limits.
 * **Slice operations** run independently on each full plane, regardless of
   zoom or marquee bounds. Swapping X/Y preserves the physical operation.
   Changing the depth parameter restores that plane's own operation settings,
@@ -990,7 +990,7 @@ or qPlot would cancel unfinished exports, a confirmation shows how many are affe
 This warning also appears when routine close confirmations are turned off. Completed
 files are kept.
 
-In a plot's export dialog, select **Plotted data**, then choose **Data to export**.
+In a plot's export dialog, select **Data**, then choose **Data to export**.
 Individual traces and heatmaps are identified by run number and measurement name.
 **All traces** combines the plot's measurement traces into columns; heatmaps are exported one
 at a time because their grids may have different coordinates. Hidden measurements
@@ -1021,13 +1021,14 @@ Plot windows can export plot images and data through `File -> Export Plot...`
 or `Ctrl+E` (`Cmd+E` on macOS). On the **Figure** tab, choose **PNG image**,
 **SVG**, or **Plot-sized PDF**.
 Images and SVG export the complete plot, including colour scales and source
-annotations. Image dimensions start at the displayed plot size; editing width or
-height preserves its aspect ratio. **Background** offers **White**, **Transparent**
+annotations. Image dimensions start at the displayed plot size. The fixed aspect
+ratio appears below **Width** and **Height**. Editing either dimension adjusts
+the other to preserve that ratio. **Background** offers **White**, **Transparent**
 and **Choose colour…**. For a custom background, **Opacity** ranges from
 0 (transparent) to 255 (opaque). Cancelling the
 colour picker keeps the previous background. The selected swatch shows a
 checkerboard for transparency or the hex code for a custom colour.
-**Invert brightness** is shown beside **Smooth edges**. On **Plotted data**,
+**Invert brightness** is shown beside **Smooth edges**. On the **Data** tab,
 choose **CSV (comma-separated)** or **TSV (tab-separated)**. That choice sets
 both the delimiter and the filename extension. The selection summary identifies
 included measurements, including hidden ones. **Save as…** leaves the dialog open for further exports.

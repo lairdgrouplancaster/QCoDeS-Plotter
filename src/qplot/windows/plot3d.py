@@ -2,6 +2,7 @@
 
 from contextlib import nullcontext
 from dataclasses import replace
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -127,9 +128,10 @@ class plot3d(plot2d):
         self.color_mode.setMinimumWidth(85)
         self.color_mode.setSizeAdjustPolicy(
             qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        for label, mode in (("Whole volume", "volume"), ("Current slice", "slice"), ("Locked", "locked")):
+        for label, mode in (("Whole volume", "volume"), ("Current slice", "slice"), ("Manual", "locked")):
             self.color_mode.addItem(label, mode)
-        self.color_mode.setToolTip("Scope of automatic colour limits; whole-volume limits include slice operations.")
+        self.color_mode.setToolTip("Use the whole volume or current slice for automatic colour limits. "
+                                   "Manual keeps the chosen limits.")
         self.color_mode.currentIndexChanged.connect(self._color_mode_changed)
         color_row = qtw.QHBoxLayout()
         color_row.setSpacing(6)
@@ -572,26 +574,24 @@ class plot3d(plot2d):
             progress = task.progress
             self._set_range_status(f"Provisional range · {progress.completed}/{progress.total or '?'} slices")
 
-    def _init_colorbar_scope_controls(self, layout):
-        self.colorbar_scope = qtw.QComboBox()
-        self.colorbar_scope.setMinimumContentsLength(10)
-        self.colorbar_scope.setSizeAdjustPolicy(
-            qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        for value in ("volume", "slice"):
-            index = self.color_mode.findData(value)
-            self.colorbar_scope.addItem(self.color_mode.itemText(index), value)
-        self.colorbar_scope.setToolTip(
-            "Whole volume fits its extrema. Current slice also supports a visible area and a data percentage."
-        )
-        self.colorbar_scope.currentIndexChanged.connect(self._colour_scope_changed)
-        label = qtw.QLabel("Data source")
-        label.setBuddy(self.colorbar_scope)
-        layout.addWidget(label)
-        layout.addWidget(self.colorbar_scope)
-        self._sync_color_mode_controls()
+    def _create_colour_source_controls(self) -> qtw.QWidget:
+        row = qtw.QWidget()
+        layout = qtw.QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.colour_source_buttons = {}
+        for scope in ("slice", "volume"):
+            button = qtw.QRadioButton(self.color_mode.itemText(self.color_mode.findData(scope)), row)
+            button.setChecked(scope == self._effective_colour_scope())
+            button.clicked.connect(partial(self._colour_scope_changed, scope))
+            layout.addWidget(button)
+            self.colour_source_buttons[scope] = button
+        layout.addStretch()
+        row.setFocusProxy(self.colour_source_buttons[self._effective_colour_scope()])
+        return row
 
-    def _colour_scope_changed(self):
-        scope = self.colorbar_scope.currentData()
+    def _colour_scope_changed(self, scope):
+        if scope == self._effective_colour_scope():
+            return
         if self._color_mode == "locked":
             self._last_auto_mode = scope
             self._color_mode_changed()
@@ -599,21 +599,15 @@ class plot3d(plot2d):
             self.color_mode.setCurrentIndex(self.color_mode.findData(scope))
 
     def _sync_color_mode_controls(self):
-        scope = self.__dict__.get("colorbar_scope")
-        if scope is not None:
-            with QtCore.QSignalBlocker(scope):
-                scope.setCurrentIndex(scope.findData(self._effective_colour_scope()))
         entry = self.__dict__.get("colorbar_range_entry")
         if entry is not None:
-            slice_scope = self._effective_colour_scope() == "slice"
-            for option, tooltip in (
-                (entry.visible_only, "Use samples inside the horizontal and vertical limits of the current slice."),
-                (entry.percent, "Use the central percentage of eligible colour values in the current slice."),
-            ):
-                option.setEnabled(slice_scope)
-                option.setToolTip(tooltip if slice_scope else
-                                  "Choose Current slice to fit a percentage or the visible area of its data.")
+            button = self.colour_source_buttons[self._effective_colour_scope()]
+            button.setChecked(True)
+            self._sync_colour_filter_controls()
             self._sync_colorbar_scale_mode()
+
+    def _colour_filters_enabled(self) -> bool:
+        return self._effective_colour_scope() == "slice"
 
     def _effective_colour_scope(self):
         return self._last_auto_mode if self._color_mode == "locked" else self._color_mode

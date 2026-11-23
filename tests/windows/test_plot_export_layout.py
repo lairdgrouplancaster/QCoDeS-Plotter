@@ -47,11 +47,36 @@ def test_figure_tab_saves_plot_sized_pdf(real_plot, tmp_path, monkeypatch):
     dialog = plot.widget.scene().exportDialog
     combo = dialog.controls.format_combo
     combo.setCurrentIndex(combo.findData(QtGui.QPdfWriter))
+    assert dialog.controls.settings.findChild(qtw.QLabel, "exportAspectRatio") is None
     assert dialog.ui.exportBtn.isEnabled() and dialog.ui.copyBtn.isHidden()
     target = tmp_path / "figure.pdf"
     monkeypatch.setattr(qtw.QFileDialog, "getSaveFileName", lambda *_a, **_kw: (str(target), ""))
     dialog.ui.exportBtn.click()
     assert target.read_bytes().startswith(b"%PDF-")
+    assert not errors
+
+
+def test_figure_dimensions_show_fixed_source_ratio(real_plot):
+    plot, _database, errors, _dimensions = real_plot
+    plot.widget.setFixedSize(400, 300)
+    qtw.QApplication.processEvents()
+    plot.open_export_dialog()
+    dialog = plot.widget.scene().exportDialog
+    for kind in (ImageExporter, SVGExporter):
+        _format(dialog, kind)
+        label = dialog.controls.settings.findChild(qtw.QLabel, "exportAspectRatio")
+        assert label.isVisible() and label.text() == "Fixed aspect ratio · 4:3"
+        width, height = (dialog.controls.fields[name] for name in ("width", "height"))
+        width.setValue(401)
+        assert height.value() == (300 if kind is ImageExporter else 300.75)
+        height.setValue(303)
+        assert width.value() == 404
+        assert label.text() == "Fixed aspect ratio · 4:3"
+    plot.widget.setFixedSize(300, 400)
+    qtw.QApplication.processEvents()
+    assert label.text() == "Fixed aspect ratio · 3:4"
+    assert width.value() == 404
+    assert height.value() == pytest.approx(404 * 4 / 3, abs=0.005)
     assert not errors
 
 
@@ -182,6 +207,8 @@ def test_visual_exports_always_use_complete_scene_and_csv_uses_plot_data(real_pl
     assert dialog.ui.itemTree.topLevelItem(0).childCount() == 0
     _format(dialog, CSVExporter)
     assert dialog.currentExporter.item is plot.plot
+    assert controls.output_tabs.tabText(1).replace("&", "") == "Data"
+    assert controls.settings.findChild(qtw.QLabel, "exportAspectRatio") is None
     assert dialog.ui.copyBtn.isHidden()
     assert dialog.ui.itemTree.isHidden()
     assert not dialog.selectBox.isVisible()

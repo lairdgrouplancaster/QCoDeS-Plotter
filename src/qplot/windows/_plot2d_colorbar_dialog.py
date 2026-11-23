@@ -65,9 +65,11 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         font.setBold(True)
         self.colorbar_quantity.setFont(font)
         layout.addWidget(self.colorbar_quantity)
-        entry = self.colorbar_range_entry = RangeControls("Colour scale", colour=True, parent=panel)
+        entry = self.colorbar_range_entry = RangeControls(
+            "Colour scale", colour=True, source_controls=self._create_colour_source_controls(), parent=panel)
         layout.addWidget(entry)
         self._colour_range_state = RangeState()
+        self._colour_filter_settings = (False, 100)
         entry.bind(self._finite_data_colorbar_range, self._apply_colour_range_state, fit_range=self._colour_fit_target)
         entry.visible_only.toggled.connect(self._colour_fit_options_changed)
         entry.percent.valueChanged.connect(self._colour_fit_options_changed)
@@ -76,11 +78,7 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
         self.colorbar_min_text = entry.fields["min"]
         self.colorbar_max_text = entry.fields["max"]
         self.colorbar_copy_auto_limits_button = entry.fit_button
-        options = qtw.QHBoxLayout()
-        self._init_colorbar_scope_controls(options)
-        if options.count():
-            options.addStretch()
-            layout.addLayout(options)
+        self._sync_colour_filter_controls()
 
         self.colorbar_choose_map = qtw.QPushButton("Choose colour map…")
         self.colorbar_choose_map.setAutoDefault(False)
@@ -101,8 +99,21 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         self._sync_colorbar_scale_controls()
 
-    def _init_colorbar_scope_controls(self, layout):
-        """Allow volume plots to expose their automatic colour scope here."""
+    def _create_colour_source_controls(self) -> qtw.QWidget | None:
+        return None
+
+    def _colour_filters_enabled(self) -> bool:
+        return True
+
+    def _sync_colour_filter_controls(self) -> None:
+        entry = self.colorbar_range_entry
+        enabled = self._colour_filters_enabled()
+        visible, percent = self._colour_filter_settings if enabled else (False, 100)
+        with QtCore.QSignalBlocker(entry.visible_only), QtCore.QSignalBlocker(entry.percent):
+            entry.visible_only.setChecked(visible)
+            entry.percent.setValue(percent)
+        entry.filter_row.setEnabled(enabled)
+        entry.filter_row.setToolTip("" if enabled else "Select Current slice to use these filters.")
 
     def _apply_colour_range_state(self, state: RangeState) -> None:
         self._colour_fit_error = ""
@@ -116,21 +127,20 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
             self.setColorbarManualRange(*state.limits)
 
     def _colour_fit_options_changed(self) -> None:
-        self.colorbar_range_entry.show_error("")
+        entry = self.colorbar_range_entry
+        self._colour_filter_settings = entry.visible_only.isChecked(), entry.percent.value()
+        entry.show_error("")
         if self.__dict__.get("_colorbar_manual_levels") is None:
             self.scaleColorbar()
 
     def _capture_colour_range_settings(self):
-        entry = self.colorbar_range_entry
-        return self._colour_range_state, entry.visible_only.isChecked(), entry.percent.value()
+        return self._colour_range_state, *self._colour_filter_settings
 
     def _restore_colour_range_settings(self, saved):
         state, visible, percent = saved
-        entry = self.colorbar_range_entry
-        entry.restore()
-        with QtCore.QSignalBlocker(entry.visible_only), QtCore.QSignalBlocker(entry.percent):
-            entry.visible_only.setChecked(visible)
-            entry.percent.setValue(percent)
+        self.colorbar_range_entry.restore()
+        self._colour_filter_settings = visible, percent
+        self._sync_colour_filter_controls()
         self._apply_colour_range_state(state)
         if state.automatic:
             self.scaleColorbar()

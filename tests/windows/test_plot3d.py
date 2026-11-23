@@ -51,15 +51,24 @@ def test_color_dialog_scope_sync_and_symmetric_lock(tmp_path, main):
     entry = plot.colorbar_range_entry
     assert not plot.slice_panel.isAncestorOf(entry)
     assert not entry.percent.isEnabled()
-    plot.colorbar_scope.setCurrentIndex(1)
+    assert plot.colour_source_buttons["volume"].isChecked()
+    plot.colour_source_buttons["slice"].click()
     assert plot.color_mode.currentData() == plot._color_mode == "slice"
     assert entry.percent.isEnabled()
     entry.percent.setValue(80)
+    entry.visible_only.setChecked(True)
+    plot.colour_source_buttons["volume"].click()
+    assert entry.percent.value() == 100 and not entry.percent.isEnabled()
+    assert not entry.visible_only.isChecked() and not entry.visible_only.isEnabled()
+    plot.colour_source_buttons["slice"].click()
+    assert entry.percent.value() == 80 and entry.visible_only.isChecked()
+    entry.visible_only.setChecked(False)
     entry.locks["centre"].click()
     enter_colour_value(plot, "centre", 0)
     assert plot.bar.levels()[0] == -plot.bar.levels()[1]
     plot.color_mode.setCurrentIndex(2)
-    assert plot.colorbar_scope.currentData() == "slice"
+    assert plot.color_mode.currentText() == "Manual"
+    assert plot.colour_source_buttons["slice"].isChecked()
     assert not entry.state.automatic
     levels = tuple(plot.bar.levels())
     entry.locks["centre"].click()
@@ -72,10 +81,11 @@ def test_color_dialog_scope_sync_and_symmetric_lock(tmp_path, main):
     enter_colour_value(plot, "max", 10)
     assert plot.bar.levels() == (-10., 10.)
     plot.colorbar_auto_radio.click()
-    assert plot.colorbar_scope.currentData() == plot.color_mode.currentData() == "slice"
+    assert plot.colour_source_buttons["slice"].isChecked()
+    assert plot.color_mode.currentData() == "slice"
     plot.color_mode.setCurrentIndex(0)
     wait_for(lambda: plot._range_complete)
-    assert plot.colorbar_scope.currentData() == "volume"
+    assert plot.colour_source_buttons["volume"].isChecked()
     assert plot.bar.levels()[0] == -plot.bar.levels()[1]
     assert not errors
 

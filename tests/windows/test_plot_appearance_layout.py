@@ -377,9 +377,20 @@ def test_range_pages_match_at_the_datasets_default_width(mixed_plot, qapplicatio
         assert dialog.width() == default_width
         assert dialog.pages.currentWidget().horizontalScrollBar().maximum() == 0
         positions.append([(field.mapTo(dialog, field.rect().topLeft()).x(),
-                           editor.locks[name].mapTo(dialog, editor.locks[name].rect().topRight()).x())
+                           editor.use_buttons[name].mapTo(dialog, editor.use_buttons[name].rect().topRight()).x())
                           for name, field in editor.fields.items()])
     assert positions[0] == positions[1]
+    entry = plot.colorbar_range_entry
+    assert entry.visible_only.text() == "Visible area only"
+    assert entry.percent.isEnabled() and entry.visible_only.isEnabled()
+    assert all(label.text() != "Use data from" for label in entry.findChildren(qtw.QLabel))
+    # Native styles can give buttons and spin boxes different outer margins.
+    margin = dialog.fontMetrics().horizontalAdvance(" ")
+    checkbox_left = entry.visible_only.mapTo(dialog, entry.visible_only.rect().topLeft()).x()
+    assert abs(checkbox_left - positions[1][0][0]) <= margin
+    choose_map = plot.colorbar_choose_map
+    percentage_right = entry.percent.mapTo(dialog, entry.percent.rect().topRight()).x()
+    assert abs(percentage_right - choose_map.mapTo(dialog, choose_map.rect().topRight()).x()) <= margin
     dialog.reject()
 
 
