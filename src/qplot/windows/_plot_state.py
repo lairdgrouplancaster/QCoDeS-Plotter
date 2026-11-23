@@ -9,6 +9,10 @@ from qplot.datahandling.plot_progress import PlotProgress
 from ._plot_status import PlotStatusWidget
 
 
+_PROGRESS_DELAY_SECONDS = 0.2
+_RENDERING_PROGRESS = PlotProgress("Rendering plot", stage=2)
+
+
 class PlotStateOverlay(QtCore.QObject):
     """
     Keep empty/error explanations in the plot and loading progress in its toolbar.
@@ -75,6 +79,7 @@ class PlotStateOverlay(QtCore.QObject):
         self._started_at: float | None = None
         self._rendering = False
         self.progress_timer = QtCore.QTimer(self)
+        self.progress_timer.setTimerType(QtCore.Qt.TimerType.PreciseTimer)
         self.progress_timer.setInterval(100)
         self.progress_timer.timeout.connect(self._poll_progress)
 
@@ -128,10 +133,8 @@ class PlotStateOverlay(QtCore.QObject):
         self.elapsed_label.hide()
         self.feedback.finish_progress()
 
-    def _update_elapsed(self) -> None:
-        if self._started_at is None:
-            return
-        seconds = max(0, int(perf_counter() - self._started_at))
+    def _update_elapsed(self, elapsed: float) -> None:
+        seconds = int(elapsed)
         minutes, seconds = divmod(seconds, 60)
         hours, minutes = divmod(minutes, 60)
         duration = (f"{hours}h {minutes:02d}m {seconds:02d}s" if hours else
@@ -143,16 +146,17 @@ class PlotStateOverlay(QtCore.QObject):
 
     def _poll_progress(self) -> None:
         worker = self._worker
-        if worker is None:
+        if worker is None or self._started_at is None:
             return
         if worker.is_cancelled():
             self.show("Plot load cancelled")
             return
-        self._update_elapsed()
-        self.feedback.show_progress()
-        if self._rendering:
+        elapsed = perf_counter() - self._started_at
+        if elapsed < _PROGRESS_DELAY_SECONDS:
             return
-        progress = worker.progress
+        self._update_elapsed(elapsed)
+        self.feedback.show_progress()
+        progress = _RENDERING_PROGRESS if self._rendering else worker.progress
         if progress == self._last_progress:
             return
         self._last_progress = progress
@@ -172,13 +176,7 @@ class PlotStateOverlay(QtCore.QObject):
         if worker is not self._worker:
             return
         self._rendering = True
-        self._update_elapsed()
-        progress = PlotProgress("Rendering plot", stage=2)
-        self.detail_label.setText(progress.title)
-        self.feedback.set_progress_details(progress, self.title_label.text())
-        self.feedback.show_progress()
-        self.progress_bar.setRange(0, 0)
-        self.progress_bar.setFormat("")
+        self._poll_progress()
 
     def finish(self, worker: Any) -> None:
         if worker is self._worker:

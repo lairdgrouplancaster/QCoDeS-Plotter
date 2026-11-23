@@ -70,10 +70,11 @@ class PlotStatusWidget(qtw.QWidget):
         self.stack.setCurrentWidget(self.status_label)
 
     def start_progress(self) -> None:
-        # Never restore an earlier operation's message when this load ends.
+        # Keep the previous text visible during the delay, but only restore
+        # messages from this load when it finishes.
         self.message = ""
         self._progress_active = True
-        self.show_progress()
+        self.stack.setCurrentWidget(self.status_label)
 
     def show_progress(self) -> None:
         self.stack.setCurrentWidget(self.progress_panel)

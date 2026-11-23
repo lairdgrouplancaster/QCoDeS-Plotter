@@ -179,7 +179,7 @@ def test_cursor_fields_stay_left_aligned_and_stationary_across_index_digits(tmp_
     assert not errors
 
 
-def test_keyboard_coordinate_and_mouse_navigation(tmp_path, main):
+def test_keyboard_coordinate_and_mouse_navigation(tmp_path, main, monkeypatch):
     window, errors = main
     path = tmp_path / "navigation.db"
     guid = build_volume(path)
@@ -221,6 +221,13 @@ def test_keyboard_coordinate_and_mouse_navigation(tmp_path, main):
     handle = slider.style().subControlRect(
         qtw.QStyle.ComplexControl.CC_Slider, option,
         qtw.QStyle.SubControl.SC_SliderHandle, slider)
+    # Exercise a 20 ms slice load regardless of the speed of the test machine.
+    monkeypatch.setattr('qplot.windows._plot_state.perf_counter', lambda: plot.worker.started_at + 0.020)
+    feedback = plot.plot_status
+    previous_message = feedback.status_label.text()
+    status_at_selection = []
+    slider.valueChanged.connect(lambda: status_at_selection.append(feedback.status_label.text()))
+    header_changes = QtTest.QSignalSpy(feedback.stack.currentChanged)
     QtTest.QTest.mousePress(slider, QtCore.Qt.MouseButton.LeftButton, pos=handle.center())
     try:
         assert slider.cursor().shape() == QtCore.Qt.CursorShape.ClosedHandCursor
@@ -229,6 +236,9 @@ def test_keyboard_coordinate_and_mouse_navigation(tmp_path, main):
         wait_for(lambda: loaded(plot) and plot.slice_frame.depth == 4.)
         assert slider.isSliderDown()
         np.testing.assert_array_equal(plot.dataGrid, [[404, 400, 425], [434, 430, 455]])
+        assert status_at_selection == [previous_message]
+        assert len(header_changes) == 0
+        assert feedback.status_label.text().startswith("Loaded 6 points in ")
     finally:
         QtTest.QTest.mouseRelease(slider, QtCore.Qt.MouseButton.LeftButton)
     assert slider.cursor().shape() == QtCore.Qt.CursorShape.OpenHandCursor
