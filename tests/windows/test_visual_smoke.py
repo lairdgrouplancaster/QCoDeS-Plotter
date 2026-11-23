@@ -9,7 +9,7 @@ EXPECTED_SCREENSHOTS = {
     "qplot-main-window.png": (900, 500),
     "qplot-line-plot.png": (700, 450),
     "qplot-heatmap.png": (700, 450),
-    "qplot-color-scale-dialog.png": (450, 450),
+    "qplot-color-scale-dialog.png": (700, 360),
 }
 
 
