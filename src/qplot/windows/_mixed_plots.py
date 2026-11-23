@@ -439,11 +439,7 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
                 self._colorbar_manual_levels = None
                 self._init_colorbar_scale_controls()
             items = self._heatmap_colorbar_items()
-            self.bar = self.plot.addColorBar(
-                items, colorMap=self._colorbar_colormap(),
-                rounding=self._data_colorbar_rounding(), width=self._configured_colorbar_width(),
-                colorMapMenu=False,
-            )
+            self.bar = self._add_heatmap_colorbar(items, self._data_colorbar_rounding())
             self._heatmap_colorbar_item_ids = tuple(id(item) for item in items)
             self._set_colorbar_tick_formatter()
             if line_host:

@@ -743,7 +743,7 @@ Colour-scale controls:
 * To keep positive and negative limits symmetric about zero, lock **Centre**
   and set its value to zero. In Automatic, the colour limits expand or shrink
   equally on both sides as the heatmap changes.
-* Drag one colour-scale handle to adjust a limit.
+* Move the pointer over the colour strip to reveal both handles. Drag one handle to adjust a limit.
 * Drag between handles to slide the range.
 * Drag outside the handles to widen or narrow the range.
 

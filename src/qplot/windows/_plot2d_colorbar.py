@@ -25,6 +25,51 @@ COLORBAR_WIDTH_KEY = "user_preference.colorbar_width"
 DEFAULT_COLORBAR_WIDTH = 15
 
 
+class _ColorbarHandleHover(QtCore.QObject):
+    """Reveal both handles over the colour strip and throughout a left drag."""
+
+    def __init__(self, bar):
+        super().__init__(bar)
+        self.view = bar.getViewWidget()
+        self.strip = bar.getViewBox()
+        self.pens = [(line, line.pen, line.hoverPen) for line in bar.region.lines]
+        self.transparent = pg.mkPen((0, 0, 0, 0))
+        self.dragging = False
+        self.handles_visible = True
+        self.set_handles_visible(False)
+        # Observe the raw pointer before pyqtgraph rate-limits scene hover events.
+        self.view.viewport().installEventFilter(self)
+
+    def set_handles_visible(self, visible: bool) -> None:
+        if visible == self.handles_visible:
+            return
+        self.handles_visible = visible
+        for line, pen, hover_pen in self.pens:
+            line.setPen(pen if visible else self.transparent)
+            line.setHoverPen(hover_pen if visible else self.transparent)
+
+    def eventFilter(self, source, event):
+        kind = event.type()
+        types = QtCore.QEvent.Type
+        if kind in (types.MouseMove, types.MouseButtonPress, types.MouseButtonRelease):
+            scene_pos = self.view.mapToScene(event.position().toPoint())
+            inside = self.strip.isVisible() and self.strip.rect().contains(
+                self.strip.mapFromScene(scene_pos)
+            )
+            left = QtCore.Qt.MouseButton.LeftButton
+            if kind == types.MouseButtonPress and event.button() == left:
+                self.dragging = inside
+            elif not event.buttons() & left:
+                self.dragging = False
+            self.set_handles_visible(inside or self.dragging)
+        elif kind == types.Leave:
+            self.set_handles_visible(self.dragging)
+        elif kind in (types.Hide, types.WindowDeactivate, types.UngrabMouse):
+            self.dragging = False
+            self.set_handles_visible(False)
+        return False
+
+
 class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
     """
     Heatmap colorbar controls for plot2d windows.
@@ -61,6 +106,14 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
 
         def _reset_heatmap_hover(self) -> None: ...
         def _set_sweep_lines_visible(self, visible: bool) -> None: ...
+
+    def _add_heatmap_colorbar(self, items, rounding):
+        bar = self.plot.addColorBar(
+            items, colorMap=self._colorbar_colormap(), rounding=rounding,
+            width=self._configured_colorbar_width(), colorMapMenu=False,
+        )
+        _ColorbarHandleHover(bar)
+        return bar
 
     @QtCore.pyqtSlot(bool)
     def scaleColorbar(self, event = None):

@@ -553,12 +553,9 @@ class plot2d(
                 # Produce color bar on first run
                 if not hasattr(self, "bar"):
                     colorbar_items = self._heatmap_colorbar_items()
-                    self.bar = self.plot.addColorBar(
+                    self.bar = self._add_heatmap_colorbar(
                         colorbar_items,
-                        colorMap=self._colorbar_colormap(),
-                        rounding=self._colorbar_rounding_for_levels(*color_levels) if color_levels else 1e-5,
-                        width=self._configured_colorbar_width(),
-                        colorMapMenu=False,
+                        self._colorbar_rounding_for_levels(*color_levels) if color_levels else 1e-5,
                         )
                     self._heatmap_colorbar_item_ids = tuple(
                         id(item) for item in colorbar_items

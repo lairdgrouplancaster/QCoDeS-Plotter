@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from PyQt6 import QtCore, QtTest, sip
+from PyQt6 import QtCore, QtGui, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter
 
@@ -80,6 +80,63 @@ def test_snap_defaults_and_heatmap_trace_readout(mixed_plot):
         target.mouseMoved(point)
         assert not target.pos_labels["z"].isHidden()
         assert float(target.pos_labels["z"].text()) == 11
+
+
+def test_colour_handles_follow_strip_hover_and_stay_visible_during_drag(mixed_plot, qapplication):
+    _main, plot, runs = mixed_plot
+    if plot.operation_kind == "plot1d":
+        _drop(plot, runs["heatmap"])
+        _added(plot, runs["heatmap"])
+    plot.resize(850, 600)
+    plot.show()
+    qapplication.processEvents()
+    bar = plot.bar
+    viewport = plot.widget.viewport()
+    button = QtCore.Qt.MouseButton
+    lines = bar.region.lines
+
+    def strip_point(y):
+        return plot.widget.mapFromScene(bar.getViewBox().mapViewToScene(QtCore.QPointF(0.5, y)))
+
+    def move(point, buttons=button.NoButton):
+        event = QtGui.QMouseEvent(
+            QtCore.QEvent.Type.MouseMove, QtCore.QPointF(point),
+            QtCore.QPointF(viewport.mapToGlobal(point)), button.NoButton, buttons,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+        qapplication.sendEvent(viewport, event)
+
+    def handle_alphas():
+        return [line.currentPen.color().alpha() for line in lines]
+
+    outside = strip_point(128) + QtCore.QPoint(35, 0)
+    move(outside)
+    assert handle_alphas() == [0, 0]
+    for y in (24, 128, 232):
+        move(strip_point(y))
+        assert handle_alphas() == [255, 255]
+    move(outside)
+    assert handle_alphas() == [0, 0]
+
+    start = strip_point(lines[1].value())
+    end = start + QtCore.QPoint(-45, -25)
+    QtTest.QTest.qWait(30)  # Let pyqtgraph pick the handle for the next drag.
+    move(start)
+    original_limits = bar.levels()
+    QtTest.QTest.mousePress(viewport, button.LeftButton, pos=start)
+    QtTest.QTest.qWait(30)
+    move(end, button.LeftButton)
+    assert handle_alphas() == [255, 255]
+    QtTest.QTest.mouseRelease(viewport, button.LeftButton, pos=end)
+    assert handle_alphas() == [0, 0]
+    assert bar.levels()[0] == pytest.approx(original_limits[0], abs=bar.rounding)
+    assert bar.levels()[1] > original_limits[1] + bar.rounding
+    centre = strip_point(128)
+    move(centre)
+    QtTest.QTest.mouseClick(viewport, button.LeftButton, pos=centre)
+    assert handle_alphas() == [255, 255]
+    qapplication.sendEvent(viewport, QtCore.QEvent(QtCore.QEvent.Type.Leave))
+    assert handle_alphas() == [0, 0]
 
 
 def test_double_click_selects_highlighted_trace_over_heatmap(mixed_plot, qapplication):
