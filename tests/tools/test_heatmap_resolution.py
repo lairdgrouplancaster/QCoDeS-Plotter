@@ -6,6 +6,8 @@ from types import SimpleNamespace
 import pytest
 
 from qplot.tools.heatmap_resolution import (
+    FULL_HEATMAP_POINTS_KEY,
+    HEATMAP_GRID_CELLS_KEY,
     GridSize,
     HeatmapResolutionReport,
     resolution_details,
@@ -13,6 +15,22 @@ from qplot.tools.heatmap_resolution import (
     resolution_summary,
     source_grid_size,
 )
+
+
+@pytest.mark.parametrize("metadata, expected", [
+    ({"source_aggregated": True, "source_row_count": 101}, FULL_HEATMAP_POINTS_KEY),
+    ({"grid_binned": True, "unique_x_count": 11, "unique_y_count": 10}, FULL_HEATMAP_POINTS_KEY),
+    ({"source_aggregated": True, "source_row_count": 101, "grid_cell_limit_reached": True},
+     HEATMAP_GRID_CELLS_KEY),
+    ({"grid_binned": True, "source_grid_cell_count": 300, "unique_x_count": 4, "unique_y_count": 4}, None),
+    ({"source_aggregated": True, "source_row_count": 101, "estimated_range_rows": 20,
+      "axis_ranges": {"x": (0, 1)}}, None),
+    ({"source_sampled": True, "source_row_count": 100}, None),
+    ({"empty_bins_filled": True}, None),
+])
+def test_limit_focus_uses_observed_points_or_display_budget(metadata, expected):
+    report = HeatmapResolutionReport.from_metadata({"full_resolution_point_limit": 100, **metadata})
+    assert report.limiting_preference == expected
 
 
 @pytest.mark.parametrize("metadata, expected, absent", [

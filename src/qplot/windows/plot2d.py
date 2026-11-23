@@ -1164,7 +1164,9 @@ class plot2d(
         rect = self._snap_marquee_rect(self.marquee.normalized())
         return self._format_marquee_stats_text(
             f"Selected grid: {cols} × {rows}", values, rect, heatmap=True,
-            contribution=f"{values.size} finite cells of {selected.size} selected in the displayed primary heatmap",
+            contribution=f"{values.size} of {selected.size} selected "
+                         f"{'cells' if selected.size != 1 else 'cell'} contributed "
+                         "finite values from the displayed primary heatmap.",
         )
 
 

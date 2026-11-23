@@ -80,6 +80,9 @@ def test_heatmap_report_identifies_the_primary_grid_and_finite_cells(measured_pl
     assert "X quantity: Coordinate (x) [V]" in text
     assert "Statistics quantity: Signal (signal) [A]" in text
     assert "Selected grid: 10 × 10" in text
-    assert "83 finite cells of 100 selected" in text
+    summary = dialog.findChild(qtw.QLabel, "statisticsContribution")
+    assert summary.isVisible() and summary.y() < table.y()
+    assert "83 of 100 selected cells contributed" in summary.text()
+    assert summary.text() in text
     assert "Average: 58.0" in text
     dialog.close()

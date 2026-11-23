@@ -557,9 +557,9 @@ Common plot controls:
 * Right-click inside a marquee selection for zoom and statistics actions.
   Statistics use the primary trace or heatmap identified in the report. A
   heatmap report gives the grid dimensions and the number of finite cells
-  that contributed. The report starts with the measured quantity, units and run,
-  followed by the average, standard deviation and extrema. **Selection and source**
-  contains the coordinate bounds and contributing data. **Copy full report**
+  that contributed. The contributing sample count appears beneath the measured
+  quantity, units and run, above the average, standard deviation and extrema.
+  **Selection and source** contains the coordinate bounds and source details. **Copy full report**
   copies all results and source details. To copy individual rows, select them
   and use **Copy Selection**.
   For the full recorded measurement, choose statistics from its thumbnail.
@@ -578,7 +578,7 @@ Common plot controls:
   coordinate axis to samples inside the other axis's current limits. Editing
   an unlocked field selects **Manual**. Press **Enter** or leave the field
   to apply the value. If you select **Keep changes** with an invalid axis or
-  colour limit, the dialog selects the value and explains what to correct.
+  colour limit, the dialog returns to its tab, selects the value and explains what to correct.
   **Esc** cancels the pending edit.
 * In Manual, the two most recently edited fields determine the range. On the
   first edit, Minimum and Maximum are paired, as are Centre and Span. Click
@@ -586,7 +586,7 @@ Common plot controls:
   Clicking a second padlock transfers the lock. In Automatic, editing the held
   field refits the range and keeps tracking live data. In Manual, it preserves
   the most recently edited other field.
-* **Fit once to data** refits the whole range and keeps Manual selected.
+* **Set range from data** updates the range once, keeps any held value and leaves Manual selected.
   Holding Minimum or Maximum fits the opposite endpoint. Holding Centre gives
   equal reach on each side, enough to cover the data. Holding Span centres that
   width on the data midpoint. If a fit is impossible, the previous limits stay in use.
@@ -636,7 +636,9 @@ Common plot controls:
   open the colour-map chooser directly.
 * **Colour scale** shows the quantity, its **Range**, and the current map name
   and gradient. Select **Choose colour map…** to browse. The chooser opens at
-  the active map. Search by name or filter by **Source** and **Category**.
+  the selected map. Under **Available colour maps**, search by name or filter
+  by **Source** and **Category**. If no maps match, **Clear filters** restores
+  the full list and keeps the map shown under **Preview**.
   Selecting a row previews that map on the plot. **OK** keeps the preview in
   Plot settings. **Cancel** restores the map you started browsing with. The
   **Keep changes** and **Cancel** buttons in Plot settings apply to the whole session.
@@ -693,8 +695,11 @@ When a heatmap is displayed at reduced resolution, its warning button opens a
 modeless report showing the source and displayed grid dimensions (columns ×
 rows), where known. The summary distinguishes spatial averaging, aggregation
 and sampling. Expand **Details** for source-row counts, sampling and
-interpolation information. **Adjust heatmap limits…** opens **Performance** with the
-full-resolution limit selected. The report updates while you use the plot.
+interpolation information. **Adjust heatmap limits…** opens **Preferences → Performance**
+at **Heatmap resolution**. It focuses **Maximum heatmap grid cells** when that
+budget constrained the displayed grid, or **Full-resolution heatmap limit** when
+the point threshold caused the reduction. If the cause is unclear, keyboard
+focus stays on the **Performance** tab. The report updates while you use the plot.
 
 `Preferences -> Performance -> Maximum heatmap grid cells` sets the total
 cell budget for aggregated heatmaps (250,000 by default). A grid that fits is
@@ -950,7 +955,9 @@ shows **All measurements in each run** as plain text. The review shows the
 number of selected runs and their run numbers in a single-line field that you
 can select and copy. After folder selection, the filename review lists one CSV
 per run. Double-click a name to edit it, choose **Skip** to leave it out, or
-choose **Replace** for an existing file. The footer counts files that are ready,
+choose **Replace** for an existing file. **Change folder…** keeps edited filenames
+and skipped rows, and checks for conflicts in the new destination. Choose **Replace**
+again for any existing file you want to overwrite there. The footer counts files that are ready,
 need attention or are skipped. **Next issue** opens the next filename that needs
 attention. **Use unique names** adds numbered suffixes to resolve conflicts,
 preserving explicit replacement choices where possible. Select **Export** when
@@ -1019,7 +1026,8 @@ database data. Use the main-window CSV action for raw measurements.
 
 Plot windows can export plot images and data through `File -> Export Plot...`
 or `Ctrl+E` (`Cmd+E` on macOS). On the **Figure** tab, choose **PNG image**,
-**SVG**, or **Plot-sized PDF**.
+**SVG**, or **Plot-sized PDF**. Each format retains its settings when you switch
+formats or tabs while this dialog is open.
 Images and SVG export the complete plot, including colour scales and source
 annotations. Image dimensions start at the displayed plot size. The fixed aspect
 ratio appears below **Width** and **Height**. Editing either dimension adjusts

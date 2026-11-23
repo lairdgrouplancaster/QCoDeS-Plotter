@@ -724,6 +724,8 @@ class PlotProcessor:
             "grid_cell_count": int(data_grid.size),
             "grid_binned": True,
             "grid_cell_limit": int(max_cells),
+            # A smaller effective budget can come from the point cap or sample density.
+            "grid_cell_limit_reached": bool(max_cells == display_limit and exact_cells > display_limit),
             "empty_bins_filled": empty_bins_filled,
         }
         return x_axis, y_axis, data_grid
@@ -747,6 +749,7 @@ class PlotProcessor:
 
         source_x_count, source_y_count = self._spatial_heatmap_source_unique_counts
         source_grid_cell_count = int(source_grid_rows * source_grid_columns)
+        display_limit = getattr(self, "max_heatmap_grid_cells", MAX_SQL_HEATMAP_GRID_CELLS)
         self._heatmap_grid_info = {
             "unique_x_count": int(source_x_count),
             "unique_y_count": int(source_y_count),
@@ -760,11 +763,9 @@ class PlotProcessor:
             "grid_binned": (
                 x_axis.size < source_x_count or y_axis.size < source_y_count
             ),
-            "grid_cell_limit": getattr(
-                self,
-                "max_heatmap_grid_cells",
-                MAX_SQL_HEATMAP_GRID_CELLS,
-            ),
+            "grid_cell_limit": display_limit,
+            # Even a bounded coordinate count can prove the budget was exceeded.
+            "grid_cell_limit_reached": bool(source_x_count * source_y_count > display_limit),
             # Spatial aggregation averages only observations assigned to each
             # cell.  Empty cells represent coordinate pairs that were never
             # measured and must remain missing.
@@ -844,6 +845,7 @@ class PlotProcessor:
             "grid_cell_count": grid_info.get("grid_cell_count"),
             "grid_binned": grid_reduced,
             "grid_cell_limit": grid_info.get("grid_cell_limit"),
+            "grid_cell_limit_reached": grid_info.get("grid_cell_limit_reached", False),
             "full_resolution_point_limit": getattr(
                 self,
                 "max_full_heatmap_points",

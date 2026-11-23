@@ -69,7 +69,7 @@ def test_heatmap_resolution_dialog_details_resize_and_preferences(qapplication):
         assert not dialog.isVisible()
         assert calls == []
         qapplication.processEvents()
-        assert calls == [{"initial_tab": "Performance"}]
+        assert calls == [{"initial_tab": "Performance", "focus_setting": None}]
     finally:
         dialog.deleteLater()
         host.deleteLater()

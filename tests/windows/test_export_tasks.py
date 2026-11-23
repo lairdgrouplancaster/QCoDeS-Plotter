@@ -35,6 +35,17 @@ def _assert_no_stage(target):
     assert not list(target.parent.glob(f".{target.name}.*"))
 
 
+def test_separate_single_exports_keep_access_to_history(export_window, tmp_path):
+    window, _errors = export_window
+    for name in ("first.csv", "second.csv"):
+        task = _start(window, tmp_path / name, lambda path, *_: Path(path).write_text("data"))
+        wait_for(lambda task=task: task.done)
+        assert task.manager.tree.isHidden()
+        assert task.manager._selected_task() is task
+    task.manager.history_button.click()
+    assert task.manager.tree.isVisible() and task.manager.tree.topLevelItemCount() == 2
+
+
 def test_empty_progress_offers_only_close(export_window):
     from qplot.windows._export_tasks import export_task_manager
 

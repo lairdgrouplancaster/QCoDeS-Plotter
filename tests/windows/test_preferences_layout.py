@@ -62,6 +62,21 @@ def test_initial_size_fits_available_screen_and_tabs_keep_size(
             assert child.geometry().right() < page.widget().width(), (index, child.objectName(), child.geometry())
 
 
+@pytest.mark.parametrize("font_size", [9, 14])
+def test_roomy_screen_fits_preferences_without_scrolling(preferences, monkeypatch, qapplication, font_size):
+    dialog = preferences
+    monkeypatch.setattr(dialog, "_available_geometry", lambda: QtCore.QRect(0, 0, 1280, 1000))
+    dialog.setStyleSheet(f"QWidget {{ font-size: {font_size}pt; }}")
+    dialog.show()
+    qapplication.processEvents()
+    initial_size = dialog.size()
+    for index in range(dialog.tabs.count()):
+        dialog.tabs.setCurrentIndex(index)
+        qapplication.processEvents()
+        assert dialog.size() == initial_size
+        assert dialog.tabs.currentWidget().verticalScrollBar().maximum() == 0
+
+
 def test_narrow_pages_scroll_and_keep_actions_visible(preferences, qapplication):
     dialog = preferences
     dialog.show()
@@ -78,6 +93,8 @@ def test_narrow_pages_scroll_and_keep_actions_visible(preferences, qapplication)
         qapplication.processEvents()
         page = dialog.tabs.currentWidget()
         assert not page.horizontalScrollBar().isVisible()
+        if field is dialog.defaultColourMapButton:
+            assert page.verticalScrollBar().maximum() > 0
         assert page.widget().width() <= page.viewport().width(), (index, page.widget().minimumSizeHint())
         field.setFocus()
         qapplication.processEvents()

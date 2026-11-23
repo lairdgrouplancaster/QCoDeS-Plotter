@@ -132,7 +132,6 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         self.add_item_combo.setSizeAdjustPolicy(
             qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
-        self.add_item_combo.setToolTip("Choose a 1D, 2D or 3D dataset to add.")
         self.add_item_button = qtw.QPushButton("Add", self)
         self.add_item_button.setToolTip("Add the selected dataset to this plot.")
         self.remove_item_button = qtw.QPushButton("Remove", self)
@@ -503,8 +502,24 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
                 dialog.close()
 
     def accept(self):
-        for entry in self.findChildren(RangeControls):
-            if entry.isVisibleTo(self) and not entry.commit_pending():
+        if self.axes_page.widget() is not None:
+            tabs = self.owner._axis_scale_tabs
+            for index in range(tabs.count()):
+                entry = self.owner._axis_scale_controls[tabs.tabData(index)].rangeEntry
+                if not tabs.isTabEnabled(index):
+                    entry.restore()
+                elif not entry.commit_pending():
+                    self.show_page("Axis scales")
+                    tabs.setCurrentIndex(index)
+                    entry.focus_invalid()
+                    return
+        if self.colour_page.widget() is not None:
+            entry = self.owner.colorbar_range_entry
+            if not self.pages.isTabEnabled(2):
+                entry.restore()
+            elif not entry.commit_pending():
+                self.show_page("Colour scale")
+                entry.focus_invalid()
                 return
         if not self._session_active:
             super().accept()
@@ -546,6 +561,8 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
                 return
             self._session_finishing = True
             self._action_token["cancelled"] = True
+            for entry in self.findChildren(RangeControls):
+                entry.restore()
             for window in self._preview_owners:
                 window._appearance_action_token = None
             self._close_colour_editor()
@@ -754,6 +771,12 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
                 for label, key in provider():
                     if key not in registry:
                         self.add_item_combo.addItem(f"{label} ({kind})", (kind, key, label))
+            available = self.add_item_combo.count() > 1
+            self.add_item_combo.setEnabled(available)
+            self.add_item_combo.setToolTip("Choose a 1D, 2D or 3D dataset to add." if available
+                                           else "All available measurements are already on the plot.")
+            if not available:
+                self.add_item_combo.setItemText(0, "No measurements to add")
             self.add_item_combo.setCurrentIndex(max(0, self.add_item_combo.findData(previous)))
         finally:
             self.add_item_combo.blockSignals(blocked)

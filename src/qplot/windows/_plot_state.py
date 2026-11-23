@@ -8,7 +8,6 @@ from qplot.datahandling.plot_progress import PlotProgress
 
 from ._plot_status import PlotStatusWidget
 
-
 _PROGRESS_DELAY_SECONDS = 0.2
 _RENDERING_PROGRESS = PlotProgress("Rendering plot", stage=2)
 

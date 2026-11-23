@@ -97,6 +97,40 @@ def test_default_height_keeps_actions_accessible_on_small_screens(real_plot, mon
     assert not errors
 
 
+def test_size_limits_and_choices_survive_format_and_tab_changes(real_plot):
+    plot, _database, errors, _dimensions = real_plot
+    plot.widget.setFixedSize(400, 300)
+    qtw.QApplication.processEvents()
+    plot.open_export_dialog()
+    dialog = plot.widget.scene().exportDialog
+    controls = dialog.controls
+    for kind in (ImageExporter, SVGExporter):
+        _format(dialog, kind)
+        controls.fields["width"].setValue(1)
+        for key in ("width", "height"):
+            assert controls.fields[key].value() == dialog.currentExporter.params[key] >= 1
+        controls.fields["height"].setValue(20_000)
+        for key, value in (("width", 20_000), ("height", 15_000)):
+            assert controls.fields[key].value() == dialog.currentExporter.params[key] == value
+        controls.fields["width"].setValue(804 if kind is ImageExporter else 408)
+    _format(dialog, ImageExporter)
+    controls.fields["antialias"].setChecked(False)
+    figure_save_position = dialog.ui.exportBtn.mapToGlobal(QtCore.QPoint())
+    _format(dialog, CSVExporter)
+    assert dialog.ui.exportBtn.mapToGlobal(QtCore.QPoint()) == figure_save_position
+    controls.fields["separator"].setCurrentIndex(controls.fields["separator"].findData("tab"))
+    _format(dialog, SVGExporter)
+    assert controls.fields["width"].value() == 408
+    _format(dialog, ImageExporter)
+    assert controls.fields["width"].value() == 804 and not controls.fields["antialias"].isChecked()
+    _format(dialog, CSVExporter)
+    assert dialog.currentExporter.params["separator"] == "tab"
+    dialog.close()
+    plot.open_export_dialog()
+    assert dialog.currentExporter.params["separator"] == "comma"
+    assert not errors
+
+
 def test_image_fields_export_full_scene_at_chosen_size(real_plot, tmp_path, monkeypatch):
     plot, _database, errors, _dimensions = real_plot
     plot.open_export_dialog()

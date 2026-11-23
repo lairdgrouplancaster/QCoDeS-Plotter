@@ -57,6 +57,38 @@ def dialog_owners(tmp_path, monkeypatch, qapplication):
         close_main_window(main)
 
 
+@pytest.mark.parametrize("metadata, control", [
+    ({"source_aggregated": True, "source_row_count": 25, "full_resolution_point_limit": 10},
+     "maxFullHeatmapPointsSpin"),
+    ({"grid_binned": True, "grid_cell_limit_reached": True}, "maxHeatmapGridCellsSpin"),
+    ({"grid_binned": True}, None),
+])
+def test_adjust_heatmap_limits_focuses_the_displayed_reports_setting(
+        dialog_owners, qapplication, monkeypatch, metadata, control):
+    _, plot = dialog_owners
+    ui = plot.resolution_ui
+    ui.show()
+    ui.sync(HeatmapResolutionReport.from_metadata(metadata))
+    observed = []
+    original_exec = PreferencesDialog.exec
+
+    def inspect_preferences(dialog):
+        def inspect_and_close():
+            page = dialog.tabs.currentWidget()
+            target = getattr(dialog, control) if control else dialog.tabs.tabBar()
+            observed.append((dialog.tabs.tabText(dialog.tabs.currentIndex()), dialog.focusWidget() is target,
+                             page.verticalScrollBar().value(), dialog.apply_button.isEnabled()))
+            dialog.reject()
+
+        QtCore.QTimer.singleShot(0, inspect_and_close)
+        return original_exec(dialog)
+
+    monkeypatch.setattr(PreferencesDialog, "exec", inspect_preferences)
+    ui._dialog.findChild(qtw.QPushButton, "openHeatmapLimitPreferencesButton").click()
+    qapplication.processEvents()
+    assert observed == [("Performance", True, 0, False)]
+
+
 @pytest.mark.parametrize("factory", [
     "main_preferences", "plot_preferences", "main_error", "plot_error",
     "plot_size", "heatmap_downsample",

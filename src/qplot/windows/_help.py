@@ -25,6 +25,7 @@ from ._small_dialogs import (
     dialog_layout,
     resize_dialog,
 )
+from ._window_controls import focus_qplot_window
 
 _OPEN_HELP_DIALOGS: list[qtw.QDialog] = []
 
@@ -297,10 +298,13 @@ def show_quick_start(parent: qtw.QWidget | None = None) -> qtw.QDialog:
 
 
 def show_keyboard_shortcuts(parent: qtw.QWidget | None = None) -> qtw.QDialog:
-    """
-    Opens the keyboard-shortcuts help dialog.
-
-    """
+    """Open or raise this window's keyboard and mouse reference."""
+    name = "qplotKeyboardShortcutsDialog"
+    dialogs = _OPEN_HELP_DIALOGS if parent is None else getattr(parent, "_help_dialogs", ())
+    for existing in dialogs:
+        if existing.objectName() == name and existing.isVisible():
+            focus_qplot_window(existing)
+            return existing
     font = QtGui.QFont(parent.font() if parent is not None else qtw.QApplication.font())
     font.setBold(True)
     metrics = QtGui.QFontMetrics(font)
@@ -327,7 +331,7 @@ def show_keyboard_shortcuts(parent: qtw.QWidget | None = None) -> qtw.QDialog:
         parent,
         "qPlot keyboard and mouse controls",
         shortcut_help_html(column_width, sections=ordered),
-        "qplotKeyboardShortcutsDialog",
+        name,
         size=(max(800, column_width + 460), 600),
         )
     search = qtw.QLineEdit(dialog)

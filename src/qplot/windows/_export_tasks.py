@@ -117,6 +117,7 @@ class ExportTaskManager(QtCore.QObject):
         self.main = main
         self.tasks: set[ExportTask] = set()
         self.history: list[ExportTask] = []
+        self._single_export: ExportTask | None = None
         self._totals = {"saved": 0, "cancelled": 0, "failed": 0}
         self._polling = False
         self.pool = main._shutdown.resources.create_pool(
@@ -164,6 +165,10 @@ class ExportTaskManager(QtCore.QObject):
         self.details_button.clicked.connect(self._show_selected_failure)
         buttons.addWidget(self.details_button)
         buttons.addStretch()
+        self.history_button = qtw.QPushButton("Export history")
+        self.history_button.clicked.connect(self._show_history)
+        self.history_button.hide()
+        buttons.addWidget(self.history_button)
         self.cancel_selected_button = qtw.QPushButton("Cancel selected")
         self.cancel_selected_button.setToolTip("Cancel the selected unfinished exports. Completed files are kept.")
         self.cancel_selected_button.setEnabled(False)
@@ -193,6 +198,8 @@ class ExportTaskManager(QtCore.QObject):
             raise ValueError("An export to this destination is already in progress.")
         task = ExportTask(self, owner, title, destination, writer,
                           before_publish, on_success, on_failure, source_keys)
+        self._single_export = task if not self.tasks and batch is None else None
+        self.history_button.hide()
         self.tasks.add(task)
         self.history.append(task)
         while len(self.history) > 200:
@@ -257,6 +264,13 @@ class ExportTaskManager(QtCore.QObject):
         except BaseException as error:
             task.error = error.with_traceback(None)
             task._written.set()
+
+    def _show_history(self) -> None:
+        self._single_export = None
+        self.history_button.hide()
+        self.tree.show()
+        self.dialog.resize(660, 280)
+        self.poll()
 
     def cancel_all(self) -> None:
         for task in tuple(self.tasks):
@@ -384,14 +398,18 @@ class ExportTaskManager(QtCore.QObject):
         )
         if self.tasks:
             summary = f"Export in progress. This session: {details} · {len(self.tasks)} pending."
+        elif self._single_export is not None and self._single_export.stage.published:
+            task = self._single_export
+            summary = f"Export complete\n{task.destination.filename}"
+            if not self.tree.isHidden():
+                self.tree.clearSelection()
+                self.tree.setCurrentItem(task.row)
+                task.row.setSelected(True)
+                self.tree.hide()
+            self.history_button.setVisible(len(self.history) > 1)
         elif counts['saved'] and not (counts['cancelled'] or counts['failed']):
-            if counts['saved'] == 1:
-                summary = (
-                    "Export complete. Your file is ready:\n"
-                    f"{self.history[0].destination.filename}"
-                )
-            else:
-                summary = f"Exports complete. {counts['saved']} files saved this session."
+            noun = "file" if counts["saved"] == 1 else "files"
+            summary = f"Exports complete. {counts['saved']} {noun} saved this session."
         else:
             summary = f"This session: {details}." if self.history else "No exports yet."
         self.summary.setText(summary)
@@ -402,6 +420,9 @@ class ExportTaskManager(QtCore.QObject):
         )
         self.cancel_button.setEnabled(bool(self.tasks))
         self._update_selection_actions()
+
+        if self.history and self.tree.isHidden():
+            self.dialog.resize(440, self.dialog.heightForWidth(440))
 
     def _finish(self, task: ExportTask) -> None:
         try:

@@ -7,6 +7,9 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any
 
+FULL_HEATMAP_POINTS_KEY = "runtime_settings.max_full_heatmap_points"
+HEATMAP_GRID_CELLS_KEY = "runtime_settings.max_heatmap_grid_cells"
+
 
 def _count(value: Any) -> int | None:
     """Accept known non-negative whole counts; invalid values stay unknown."""
@@ -97,10 +100,26 @@ class HeatmapResolutionReport:
     full_resolution_limit: int | None = None
     x_range: tuple[float, float] | None = None
     y_range: tuple[float, float] | None = None
+    grid_cell_limit_reached: bool = False
+    grid_cell_limit: int | None = None
 
     @property
     def reduced(self) -> bool:
         return self.sampled or self.aggregated or self.binned or self.interpolated or self.inferred_reduction
+
+    @property
+    def limiting_preference(self) -> str | None:
+        """Identify an adjustable limit evidenced by this displayed result."""
+        if self.grid_cell_limit_reached:
+            return HEATMAP_GRID_CELLS_KEY
+        if self.full_resolution_limit is None or not (self.sampled or self.aggregated or self.binned):
+            return None
+        cropped = self.x_range is not None or self.y_range is not None
+        rows = self.estimated_range_rows if cropped else self.source_rows
+        cells = (self.unique_x or 0) * (self.unique_y or 0)
+        if max(rows or 0, cells) > self.full_resolution_limit:
+            return FULL_HEATMAP_POINTS_KEY
+        return None
 
     @classmethod
     def from_metadata(cls, info: Mapping[str, Any]) -> HeatmapResolutionReport:
@@ -125,6 +144,8 @@ class HeatmapResolutionReport:
             unique_x=_count(info.get("unique_x_count")),
             unique_y=_count(info.get("unique_y_count")),
             full_resolution_limit=_count(info.get("full_resolution_point_limit")),
+            grid_cell_limit_reached=bool(info.get("grid_cell_limit_reached")),
+            grid_cell_limit=_count(info.get("grid_cell_limit")),
             x_range=_range(ranges.get("x")),
             y_range=_range(ranges.get("y")),
         )
@@ -207,6 +228,13 @@ def resolution_summary(report: HeatmapResolutionReport) -> str:
                       if grid.columns is not None and grid.rows is not None
                       else "Exact dimensions unavailable")
         lines.append(f"{label} grid: {dimensions}")
+    if report.limiting_preference == HEATMAP_GRID_CELLS_KEY:
+        if report.grid_cell_limit is not None:
+            lines.append(f"The display grid is limited to {report.grid_cell_limit:,} cells.")
+        else:
+            lines.append("The display grid cell limit was reached.")
+    elif report.limiting_preference == FULL_HEATMAP_POINTS_KEY and report.full_resolution_limit is not None:
+        lines.append(f"The full-resolution heatmap limit of {report.full_resolution_limit:,} points was exceeded.")
     lines.append("")
     if report.sampled:
         lines.append("A subset of source rows was sampled before plotting.")

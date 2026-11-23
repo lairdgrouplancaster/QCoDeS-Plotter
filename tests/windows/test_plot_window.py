@@ -3203,7 +3203,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             auto_limits = host._axis_scale_auto_limits("x")
             self.assertIsNotNone(auto_limits)
             copy_button = x_controls.copyAutoLimitsButton
-            self.assertEqual(copy_button.text(), "Fit once to data")
+            self.assertEqual(copy_button.text(), "Set range from data")
 
             host._axis_scale_custom_auto_axes.add("x")
             host.vb.setXRange(-3.0, 4.0, padding=0)

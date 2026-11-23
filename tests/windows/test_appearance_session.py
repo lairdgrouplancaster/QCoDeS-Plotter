@@ -90,7 +90,13 @@ def test_keep_changes_returns_to_invalid_range(mixed_plot, qapplication):
     assert dialog.isVisible() and span.selectedText() == "oops"
     keep.setFocus()
     entry.fields["max"].setFocus()
-    assert entry.state.automatic == initial.automatic and span.text() != "oops"
+    assert entry.state.automatic == initial.automatic and span.text() == "oops"
+    if plot.operation_kind == "plot1d":
+        plot.open_axis_scale_dialog("y")
+    dialog.show_page("Datasets")
+    QtTest.QTest.mouseClick(keep, QtCore.Qt.MouseButton.LeftButton)
+    assert dialog.isVisible() and span.isVisible() and span.hasFocus()
+    assert span.selectedText() == "oops" and entry.error_label.isVisible()
     span.setFocus()
     span.selectAll()
     QtTest.QTest.keyClicks(span, "3")

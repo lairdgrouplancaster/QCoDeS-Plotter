@@ -1570,7 +1570,7 @@ class plotWidget(
             viewport().update()
 
 
-    def show_preferences_dialog(self, initial_tab: str | None = None):
+    def show_preferences_dialog(self, initial_tab: str | None = None, *, focus_setting: str | None = None):
         """
         Opens the shared preferences dialog from a plot window.
 
@@ -1584,17 +1584,7 @@ class plotWidget(
 
         dialog = PreferencesDialog(config, self)
         if initial_tab is not None:
-            tab_widget = dialog.findChild(qtw.QTabWidget)
-            if tab_widget is not None:
-                for index in range(tab_widget.count()):
-                    if tab_widget.tabText(index) == initial_tab:
-                        tab_widget.setCurrentIndex(index)
-                        break
-        if initial_tab == "Performance":
-            QtCore.QTimer.singleShot(
-                0,
-                dialog.maxFullHeatmapPointsSpin.setFocus,
-                )
+            dialog.select_page(initial_tab, focus_setting)
         if hasattr(owner, "apply_current_settings"):
             dialog.preferencesApplied.connect(owner.apply_current_settings)
         else:

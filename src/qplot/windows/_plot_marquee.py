@@ -433,7 +433,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         return True
 
     def _new_marquee_stats_dialog(self, stats_text: str) -> qtw.QDialog:
-        return new_statistics_dialog(self, stats_text, "Marquee statistics")
+        return new_statistics_dialog(self, stats_text, "Marquee statistics", show_contribution=True)
 
     @staticmethod
     def _new_marquee_stats_table(results: list[tuple[str, str]], details: list[tuple[str, str]]) -> CopyableTableWidget:
@@ -785,7 +785,9 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
             }
 
 
-def _statistics_sections(stats_text: str) -> tuple[str, list[tuple[str, str]], list[tuple[str, str]]]:
+def _statistics_sections(
+    stats_text: str, show_contribution: bool,
+) -> tuple[str, str, list[tuple[str, str]], list[tuple[str, str]]]:
     rows = PlotMarqueeMixin._marquee_stats_table_rows(stats_text)
     fields = dict(rows)
     # For a transformed trace, the result units belong to the plotted
@@ -795,22 +797,25 @@ def _statistics_sections(stats_text: str) -> tuple[str, list[tuple[str, str]], l
     heading = " · ".join(part for part in (quantity, f"Run {run}" if run else "") if part)
     results = []
     details = []
+    contribution = ""
     for field, value in rows:
         if field in ("Average", "Standard deviation", "Max", "Min", "Statistics"):
             results.append((field, value))
         elif field == "Run":
             if guid:
                 details.append(("Run GUID", guid.removesuffix(")")))
+        elif field == "Data" and show_contribution:
+            contribution = value
         elif field not in ("Measurement", "Statistics quantity") or value != quantity:
             details.append((field, value))
-    return heading, results, details
+    return heading, contribution, results, details
 
 
-def new_statistics_dialog(parent, stats_text, title):
+def new_statistics_dialog(parent, stats_text, title, *, show_contribution=False):
     dialog = qtw.QDialog(parent)
     dialog.setWindowTitle(title)
     layout = dialog_layout(dialog)
-    heading, results, details = _statistics_sections(stats_text)
+    heading, contribution, results, details = _statistics_sections(stats_text, show_contribution)
     if heading:
         label = qtw.QLabel()
         label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
@@ -823,6 +828,14 @@ def new_statistics_dialog(parent, stats_text, title):
         font.setBold(True)
         label.setFont(font)
         layout.addWidget(label)
+    if contribution:
+        samples = qtw.QLabel()
+        samples.setObjectName("statisticsContribution")
+        samples.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        samples.setText(contribution)
+        samples.setWordWrap(True)
+        samples.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(samples)
     stats_table = PlotMarqueeMixin._new_marquee_stats_table(results, details)
     stats_table.setAccessibleName(title)
     layout.addWidget(stats_table, 1)

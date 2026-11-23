@@ -54,6 +54,16 @@ def test_oversized_legacy_budget_cannot_allocate_an_unbounded_grid():
         worker.processing._bounded_grid_shape(100000, 100000)
 
 
+@pytest.mark.parametrize("grid_budget, expected", [(4, True), (25, False)])
+def test_grid_report_distinguishes_display_budget_from_a_smaller_point_cap(grid_budget, expected):
+    worker = narrow_worker(max_heatmap_grid_cells=grid_budget)
+    axis = np.arange(5, dtype=float)
+    worker.processing._heatmap_grid_from_arrays(axis, axis, axis, max_cells=4)
+    info = worker.processing._heatmap_downsample_info()
+    assert info["grid_binned"]
+    assert info["grid_cell_limit_reached"] is expected
+
+
 @pytest.mark.parametrize("streaming", [False, True])
 def test_narrow_heatmap_keeps_coordinates_and_values(streaming, monkeypatch):
     from qplot.tools import worker as worker_module

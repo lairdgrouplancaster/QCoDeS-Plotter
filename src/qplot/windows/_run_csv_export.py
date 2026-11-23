@@ -307,6 +307,7 @@ def _queue_csv_batch(window, requests, folder, generation, *, name_measurements=
         try:
             if review.exec() != qtw.QDialog.DialogCode.Accepted:
                 return
+            folder = review.folder
             planned = [(*requests[row], target) for row, target in review.approved]
         finally:
             review.deleteLater()

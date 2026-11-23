@@ -55,11 +55,38 @@ def test_scale_shows_only_limits_and_current_map(heatmap):
 
 
 def test_chooser_has_search_and_sortable_headers(picker):
+    assert picker.current_heading.text() == "Preview"
+    assert picker.picker_heading.text() == "Available colour maps"
+    assert picker.current_heading.font().bold() and picker.picker_heading.font().bold()
+    assert picker.current_heading.x() == picker.picker_heading.x()
     assert picker.search.placeholderText() == "Search names…"
     for column in (0, 2):
         assert "click again to reverse" in picker.table.horizontalHeaderItem(column).toolTip()
     header = picker.table.horizontalHeader()
     assert header.fontMetrics().height() + 2 <= header.height() <= picker.table.rowHeight(0) + 2
+
+
+def test_search_enter_requires_a_match_and_applies_the_only_result(heatmap, picker):
+    dialog = heatmap.colorbar_map_dialog
+    assert dialog.focusWidget() is picker.search
+    picker.search.setText("zzzzzz")
+    QtTest.QTest.keyClick(picker.search, QtCore.Qt.Key.Key_Return)
+    assert dialog.isVisible()
+    picker.search.setText("plasma")
+    assert heatmap._current_colorbar_colormap_name() == "viridis"
+    QtTest.QTest.keyClick(picker.search, QtCore.Qt.Key.Key_Return)
+    assert not dialog.isVisible() and heatmap._current_colorbar_colormap_name() == "plasma"
+
+
+def test_down_moves_from_search_to_filtered_results(heatmap, picker):
+    picker.search.setText("blue")
+    QtTest.QTest.keyClick(picker.search, QtCore.Qt.Key.Key_Down)
+    dialog = heatmap.colorbar_map_dialog
+    assert dialog.focusWidget() is picker.table
+    item = picker.table.item(picker.table.currentRow(), 0)
+    assert item.data(QtCore.Qt.ItemDataRole.UserRole) == heatmap._current_colorbar_colormap_name()
+    QtTest.QTest.keyClick(picker.table, QtCore.Qt.Key.Key_Return)
+    assert not dialog.isVisible()
 
 
 def test_colour_fit_options_available_in_manual(heatmap):
@@ -217,6 +244,40 @@ def test_empty_results_and_clearing_search_preserve_active_selection(heatmap, pi
     assert visible_names(picker)
     assert not picker.no_matches.isVisible()
     assert picker.table.currentRow() == picker.row_for_name("viridis")
+
+
+def test_empty_list_centres_clear_filters_and_restores_all_results(picker, qapplication):
+    names = visible_names(picker)
+    table = picker.table
+    table.sortItems(2, QtCore.Qt.SortOrder.DescendingOrder)
+    selected = QtTest.QSignalSpy(picker.mapSelected)
+    choose(picker.source_combo, "cet")
+    choose(picker.category_combo, "linear")
+    heading = picker.picker_heading.geometry()
+    picker.search.setText("no such map")
+    qapplication.processEvents()
+    assert picker.picker_heading.isVisible() and picker.picker_heading.geometry() == heading
+    button = picker.clear_filters_button
+    assert button.isVisible() and button.text() == "Clear filters"
+    message_rect = picker.no_matches.geometry()
+    button_rect = button.geometry()
+    assert message_rect.width() >= picker.no_matches.fontMetrics().horizontalAdvance(picker.no_matches.text())
+    assert message_rect.right() < button_rect.left()
+    assert abs(message_rect.center().y() - button_rect.center().y()) <= 1
+    centre = message_rect.united(button_rect).center()
+    assert (centre - table.viewport().rect().center()).manhattanLength() <= 2
+
+    button.setFocus()
+    QtTest.QTest.keyClick(button, QtCore.Qt.Key.Key_Space)
+    qapplication.processEvents()
+    assert picker.search.text() == ""
+    assert picker.source_combo.currentData() == picker.category_combo.currentData() == "all"
+    assert visible_names(picker) == names
+    assert not button.isVisible() and not picker.no_matches.isVisible()
+    assert table.currentRow() == picker.row_for_name("viridis")
+    assert table.horizontalHeader().sortIndicatorSection() == 2
+    assert table.horizontalHeader().sortIndicatorOrder() == QtCore.Qt.SortOrder.DescendingOrder
+    assert not selected
 
 
 def test_selecting_search_result_updates_persistent_preview(heatmap, qapplication, picker):

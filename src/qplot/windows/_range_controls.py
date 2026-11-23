@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import re
+import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import partial
 from math import isclose, isfinite
 
-from PyQt6 import QtCore, QtGui
+from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 
 from ._range_entry import CompactNumberEdit, _center_span, _compact_range_numbers
@@ -140,12 +141,13 @@ class RangeState:
 class _RangeIcon(QtGui.QIconEngine):
     """Small palette-aware fit and padlock symbols that follow the display scale."""
 
-    def __init__(self, symbol: str):
+    def __init__(self, symbol: str, button: weakref.ReferenceType[qtw.QAbstractButton]):
         super().__init__()
         self.symbol = symbol
+        self.button = button
 
     def clone(self) -> _RangeIcon:
-        return _RangeIcon(self.symbol)
+        return _RangeIcon(self.symbol, self.button)
 
     def pixmap(self, size: QtCore.QSize, mode: QtGui.QIcon.Mode, state: QtGui.QIcon.State) -> QtGui.QPixmap:
         return self.scaledPixmap(size, mode, state, 1.0)
@@ -164,7 +166,9 @@ class _RangeIcon(QtGui.QIconEngine):
               state: QtGui.QIcon.State) -> None:
         if painter is None:
             return
-        palette = qtw.QApplication.palette()
+        # Stylesheets theme the button locally even when the OS palette is light.
+        button = self.button()
+        palette = button.palette() if button is not None and not sip.isdeleted(button) else qtw.QApplication.palette()
         group = QtGui.QPalette.ColorGroup.Disabled if mode == QtGui.QIcon.Mode.Disabled else QtGui.QPalette.ColorGroup.Active
         painter.save()
         painter.translate(QtCore.QRectF(rect).center())
@@ -253,7 +257,7 @@ class _FieldBox(qtw.QWidget):
         self.lock.setObjectName("rangeFieldLock")
         self.lock.setAutoRaise(True)
         self.lock.setCheckable(True)
-        self.lock.setIcon(QtGui.QIcon(_RangeIcon("lock")))
+        self.lock.setIcon(QtGui.QIcon(_RangeIcon("lock", weakref.ref(self.lock))))
         self.lock.setAccessibleName(f"Hold {_NAMES[field].lower()}")
         self.lock.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
         self.lock.setIconSize(QtCore.QSize(15, 15))
@@ -274,7 +278,7 @@ class _FieldBox(qtw.QWidget):
         value.addWidget(self.edit, 1)
         self.use = qtw.QToolButton(self)
         self.use.setObjectName("rangeFieldUseData")
-        self.use.setIcon(QtGui.QIcon(_RangeIcon("fit")))
+        self.use.setIcon(QtGui.QIcon(_RangeIcon("fit", weakref.ref(self.use))))
         self.use.setAccessibleName(f"Use data {_NAMES[field].lower()}")
         self.use.setToolTip(self.use.accessibleName())
         self.use.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
@@ -295,6 +299,7 @@ class RangeControls(qtw.QWidget):
         self._fit_range: Callable[[], Limits | None] = self._data_range
         self._apply_state: Callable[[RangeState], None] = lambda _state: None
         self._draft: str | None = None
+        self._invalid: dict[str, str] = {}
         self._origin: RangeState | None = None
         self._revision = 0
         self.fields: dict[str, _RangeEdit] = {}
@@ -330,9 +335,10 @@ class RangeControls(qtw.QWidget):
         modes.setSpacing(6)
         self.auto_radio = qtw.QRadioButton("Automatic", self)
         self.manual_radio = qtw.QRadioButton("Manual", self)
-        self.fit_button = qtw.QPushButton(QtGui.QIcon(_RangeIcon("fit")), "Fit once to data", self)
+        self.fit_button = qtw.QPushButton("Set range from data", self)
+        self.fit_button.setIcon(QtGui.QIcon(_RangeIcon("fit", weakref.ref(self.fit_button))))
         self.fit_button.setAutoDefault(False)
-        self.fit_button.setToolTip("Fit this range to the data once, keeping any held value.")
+        self.fit_button.setToolTip("Update the range once and stay in Manual mode, keeping any held value.")
         modes.addWidget(self.auto_radio)
         modes.addWidget(self.manual_radio)
         modes.addStretch()
@@ -357,12 +363,22 @@ class RangeControls(qtw.QWidget):
             box.edit.textEdited.connect(partial(self._begin, field))
             box.edit.accepted.connect(partial(self._finish, field, False))
             box.edit.left.connect(partial(self._finish, field, True))
-            box.edit.abandoned.connect(self._cancel)
+            box.edit.abandoned.connect(partial(self._discard_field, field))
             box.use.clicked.connect(partial(self._use_data, field))
             box.lock.clicked.connect(partial(self._toggle_lock, field))
             box.edit.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
             box.edit.customContextMenuRequested.connect(partial(self._context_menu, field))
         body.addLayout(grid)
+        self.error_label = qtw.QLabel(self)
+        self.error_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.error_label.setObjectName("rangeEntryError")
+        self.error_label.setWordWrap(True)
+        self.error_label.setAccessibleName("Range message")
+        self.error_label.setMinimumHeight(self.error_label.fontMetrics().lineSpacing())
+        policy = self.error_label.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        self.error_label.setSizePolicy(policy)
+        body.addWidget(self.error_label)
         if source_controls is not None:
             source_label = qtw.QLabel("Use data from", self)
             source_label.setFont(font)
@@ -397,12 +413,6 @@ class RangeControls(qtw.QWidget):
             options.addRow(self.visible_only)
             self.percent.hide()
             body.addWidget(self.filter_row)
-        self.error_label = qtw.QLabel(self)
-        self.error_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.error_label.setObjectName("rangeEntryError")
-        self.error_label.setWordWrap(True)
-        self.error_label.setAccessibleName("Range message")
-        body.addWidget(self.error_label)
         self._sync()
 
     def bind(self, data_range: Callable[[], Limits | None], apply_state: Callable[[RangeState], None],
@@ -429,7 +439,7 @@ class RangeControls(qtw.QWidget):
         compact = (*_compact_range_numbers((values["min"], values["max"])),
                    *_compact_range_numbers((values["centre"], values["span"])))
         for (field, widget), short in zip(self.fields.items(), compact, strict=True):
-            if field != self._draft:
+            if field != self._draft and field not in self._invalid:
                 text = repr(float(values[field]))
                 if widget.text() != text or widget.isModified():
                     widget.setText(text)
@@ -451,10 +461,15 @@ class RangeControls(qtw.QWidget):
             widget.setToolTip(tooltip)
 
     def show_error(self, message: str) -> None:
+        message = message or next(iter(self._invalid.values()), "")
         self.error_label.setText(message)
         self.error_label.setVisible(bool(message))
 
     def restore(self) -> None:
+        self._invalid.clear()
+        self._end_draft()
+
+    def _end_draft(self) -> None:
         self._draft = None
         self._origin = None
         self._sync()
@@ -481,7 +496,7 @@ class RangeControls(qtw.QWidget):
             raise
 
     def _apply_mode_or_lock(self, state: RangeState, *, resume: bool = False) -> None:
-        self.restore()
+        self._end_draft()
         message = ""
         try:
             if state.automatic:
@@ -506,6 +521,7 @@ class RangeControls(qtw.QWidget):
             self.show_error(str(exc))
 
     def _begin(self, field: str, _text: str) -> None:
+        self._invalid.pop(field, None)
         if self._draft != field:
             self._origin = self.state
             self._draft = field
@@ -517,9 +533,13 @@ class RangeControls(qtw.QWidget):
                     return
         self.show_error("")
 
-    def _cancel(self) -> None:
+    def _discard_field(self, field: str) -> None:
+        self._invalid.pop(field, None)
+        self._rollback_draft()
+
+    def _rollback_draft(self) -> None:
         origin = self._origin
-        self.restore()
+        self._end_draft()
         if origin is not None and origin.automatic and not self.state.automatic:
             self._apply_mode_or_lock(origin, resume=True)
 
@@ -529,11 +549,15 @@ class RangeControls(qtw.QWidget):
 
     def commit_pending(self) -> bool:
         field = self._draft
-        if field is None or self._finish(field, leaving=False):
-            return True
+        if field is not None:
+            self._finish(field, leaving=False)
+        return not self._invalid
+
+    def focus_invalid(self) -> None:
+        field = next(iter(self._invalid))
+        self.show_error(self._invalid[field])
         self.fields[field].setFocus()
         self.fields[field].selectAll()
-        return False
 
     def _finish(self, field: str, leaving: bool) -> bool:
         widget = self.fields[field]
@@ -545,11 +569,15 @@ class RangeControls(qtw.QWidget):
                 raise ValueError("Enter a finite number using a decimal point.")
             self._apply_value(field, float(text))
         except ValueError as exc:
+            self._invalid[field] = str(exc)
             if leaving:
-                self._cancel()
+                # Resume the previous live range while the rejected text
+                # remains available, including after a page or axis change.
+                self._rollback_draft()
             self.show_error(str(exc))
             return False
-        self.restore()
+        self._invalid.pop(field, None)
+        self._end_draft()
         return True
 
     def _use_data(self, field: str, _checked: bool = False) -> None:
@@ -561,7 +589,8 @@ class RangeControls(qtw.QWidget):
         except ValueError as exc:
             self.show_error(str(exc))
             return
-        self.restore()
+        self._invalid.pop(field, None)
+        self._end_draft()
 
     def _context_menu(self, field: str, pos: QtCore.QPoint) -> None:
         widget = self.fields[field]

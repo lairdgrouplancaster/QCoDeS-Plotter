@@ -13,6 +13,7 @@ from ._export_paths import (
     export_path_alias_key,
     inspect_export_destination,
 )
+from ._small_dialogs import resize_dialog
 
 
 @dataclass
@@ -22,6 +23,7 @@ class _FileRow:
     action: qtw.QComboBox
     target: ExportDestinationTransaction | None = None
     message: str = ""
+    needs_action: bool = False
 
 
 class CsvFilenameReview(qtw.QDialog):
@@ -33,10 +35,18 @@ class CsvFilenameReview(qtw.QDialog):
         self.issue_rows: list[int] = []
         self.approved: list[tuple[int, ExportDestinationTransaction]] = []
         layout = qtw.QVBoxLayout(self)
-        folder_label = qtw.QLabel(self.folder)
-        folder_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        folder_label.setWordWrap(True)
-        layout.addWidget(folder_label)
+        destination = qtw.QHBoxLayout()
+        self.folder_path = qtw.QLineEdit(self.folder)
+        self.folder_path.setReadOnly(True)
+        self.folder_path.setAccessibleName("Destination folder")
+        self.folder_path.setToolTip(self.folder)
+        destination.addWidget(qtw.QLabel("Destination"))
+        destination.addWidget(self.folder_path, 1)
+        change_folder = qtw.QPushButton("Change folder…")
+        change_folder.setAutoDefault(False)
+        change_folder.clicked.connect(self._change_folder)
+        destination.addWidget(change_folder)
+        layout.addLayout(destination)
         hint = qtw.QLabel("Double-click a filename to edit it. Choose Replace to overwrite an existing file.")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -89,12 +99,38 @@ class CsvFilenameReview(qtw.QDialog):
         self.table.itemChanged.connect(self._edited)
         header = self.table.horizontalHeader()
         assert header is not None
-        for column in (0, 3):
-            header.setSectionResizeMode(column, qtw.QHeaderView.ResizeMode.ResizeToContents)
-        for column in (1, 2):
-            header.setSectionResizeMode(column, qtw.QHeaderView.ResizeMode.Stretch)
+        metrics = self.table.fontMetrics()
+        header.resizeSection(0, min(self.table.sizeHintForColumn(0) + 12, metrics.horizontalAdvance("M" * 17)))
+        header.setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Stretch)
+        header.resizeSection(2, metrics.horizontalAdvance("Duplicate filename") + 20)
+        header.setSectionResizeMode(3, qtw.QHeaderView.ResizeMode.ResizeToContents)
         self._update()
-        self.resize(840, min(500, 185 + 32 * len(proposed)))
+        resize_dialog(self, 840, min(500, 195 + 32 * len(proposed)))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        screen = self.screen()
+        if screen is not None:
+            bounds = screen.availableGeometry().adjusted(8, 8, -8, -8)
+            frame = self.frameGeometry()
+            if not bounds.contains(frame):
+                self.move(max(bounds.left(), min(frame.left(), bounds.right() - frame.width() + 1)),
+                          max(bounds.top(), min(frame.top(), bounds.bottom() - frame.height() + 1)))
+
+    def _change_folder(self):
+        folder = qtw.QFileDialog.getExistingDirectory(self, "Choose CSV destination", self.folder)
+        if not folder or os.path.abspath(folder) == self.folder:
+            return
+        self.folder = os.path.abspath(folder)
+        self.folder_path.setText(self.folder)
+        self.folder_path.setToolTip(self.folder)
+        for row in self.rows:
+            skipped = row.action.currentText() == "Skip"
+            self._inspect(row)
+            if skipped:
+                with QtCore.QSignalBlocker(row.action):
+                    row.action.setCurrentText("Skip")
+        self._update()
 
     def _edited(self, item):
         if item.column() == 1:
@@ -141,6 +177,7 @@ class CsvFilenameReview(qtw.QDialog):
         count = 0
         for index, row in enumerate(self.rows):
             status = row.message
+            row.needs_action = False
             action = row.action.currentText()
             if action == "Skip":
                 skipped += 1
@@ -149,6 +186,7 @@ class CsvFilenameReview(qtw.QDialog):
                 self.issue_rows.append(index)
                 can_rename = True
             elif action == "Review":
+                row.needs_action = row.target is not None and row.target.target_existed
                 self.issue_rows.append(index)
                 can_rename |= row.target is not None
             else:
@@ -168,12 +206,17 @@ class CsvFilenameReview(qtw.QDialog):
     def _next_issue(self):
         if self.issue_rows:
             start = self.table.currentRow()
-            if self.table.currentColumn() == 1:
+            if self.table.currentColumn() in (1, 3):
                 start += 1
             index = next((i for i in self.issue_rows if i >= start), self.issue_rows[0])
-            self.table.setFocus()
-            self.table.setCurrentItem(self.rows[index].filename)
-            self.table.editItem(self.rows[index].filename)
+            row = self.rows[index]
+            if row.needs_action:
+                self.table.setCurrentCell(index, 3)
+                row.action.setFocus()
+            else:
+                self.table.setFocus()
+                self.table.setCurrentItem(row.filename)
+                self.table.editItem(row.filename)
 
     def _use_unique_names(self):
         active = [row for row in self.rows if row.target is not None and row.action.currentText() != "Skip"]

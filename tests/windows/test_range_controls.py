@@ -3,7 +3,7 @@
 from itertools import permutations
 
 import pytest
-from PyQt6 import QtCore, QtTest
+from PyQt6 import QtCore, QtGui, QtTest
 from PyQt6 import QtWidgets as qtw
 
 from qplot.windows._range_controls import RangeControls, RangeFitError, RangeState
@@ -196,6 +196,16 @@ def test_range_icons_have_transparent_backgrounds_at_both_scales(editor):
             assert image.width() == round(16 * scale)
             assert image.pixelColor(0, 0).alpha() == 0
             assert any(image.pixelColor(x, y).alpha() > 0
+                       for x in range(image.width()) for y in range(image.height()))
+
+
+def test_range_icons_follow_the_controls_local_text_colour(editor, qapplication):
+    editor.setStyleSheet("QToolButton { color: #ddeeff; background: #171717; }")
+    qapplication.processEvents()
+    for button in (editor.locks["min"], editor.use_buttons["span"]):
+        for state in (QtGui.QIcon.State.Off, QtGui.QIcon.State.On):
+            image = button.icon().pixmap(button.iconSize(), QtGui.QIcon.Mode.Normal, state).toImage()
+            assert any(image.pixelColor(x, y).name() == "#ddeeff" and image.pixelColor(x, y).alpha() > 200
                        for x in range(image.width()) for y in range(image.height()))
 
 
