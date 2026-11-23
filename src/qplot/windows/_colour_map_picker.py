@@ -45,7 +45,7 @@ class _GradientDelegate(qtw.QStyledItemDelegate):
 
 
 class ColourMapButton(qtw.QPushButton):
-    """One native button containing the map name, gradient and chooser arrow."""
+    """Show the map name and gradient on the button that opens the chooser."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -77,11 +77,6 @@ class ColourMapButton(qtw.QPushButton):
         if self.isDown():
             rect.translate(style.pixelMetric(qtw.QStyle.PixelMetric.PM_ButtonShiftHorizontal),
                            style.pixelMetric(qtw.QStyle.PixelMetric.PM_ButtonShiftVertical))
-        arrow = qtw.QStyleOption()
-        arrow.initFrom(self)
-        arrow.rect = QtCore.QRect(rect.right() - 10, rect.center().y() - 4, 10, 8)
-        style.drawPrimitive(qtw.QStyle.PrimitiveElement.PE_IndicatorArrowDown, arrow, painter, self)
-        rect.setRight(arrow.rect.left() - 10)
         name_width = min(self.fontMetrics().horizontalAdvance(self.text()), int(rect.width() * 0.4))
         name_rect = QtCore.QRect(rect.left(), rect.top(), name_width, rect.height())
         label = self.fontMetrics().elidedText(self.text(), QtCore.Qt.TextElideMode.ElideRight, name_width)
