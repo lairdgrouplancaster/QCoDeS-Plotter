@@ -4,6 +4,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from time import monotonic, perf_counter
 from typing import TYPE_CHECKING
 
@@ -1588,9 +1589,10 @@ class DatabaseActionsMixin:
         seen = set()
         for path in paths:
             abspath = os.path.abspath(path)
-            if abspath in seen:
+            key = os.path.normcase(abspath)
+            if key in seen:
                 continue
-            seen.add(abspath)
+            seen.add(key)
             deduped.append(abspath)
 
         return deduped[:10]
@@ -1604,7 +1606,7 @@ class DatabaseActionsMixin:
         abspath = os.path.abspath(filename)
         current_paths = list(self.config.get("file.recent_file_paths"))
 
-        paths = [path for path in self.recent_database_paths() if path != abspath]
+        paths = [path for path in self.recent_database_paths() if not _database_paths_equal(path, abspath)]
         paths.insert(0, abspath)
         paths = paths[:10]
 
@@ -1630,7 +1632,7 @@ class DatabaseActionsMixin:
 
     def refresh_recent_database_menu(self):
         """
-        Rebuilds the File -> Load Recent Database menu.
+        Rebuilds the File -> Recent databases menu.
 
         """
         if not hasattr(self, "recentDatabaseMenu"):
@@ -1641,14 +1643,20 @@ class DatabaseActionsMixin:
         self.recentDatabaseMenu.setEnabled(bool(paths))
 
         if not paths:
-            empty_action = QtGui.QAction("No Recent Databases", self)
+            empty_action = QtGui.QAction("No recent databases", self)
             empty_action.setEnabled(False)
             self.recentDatabaseMenu.addAction(empty_action)
             return
 
+        recent = [Path(path) for path in paths]
         for index, path in enumerate(paths, start=1):
-            label = f"{index}. {os.path.basename(path) or path}"
-            action = QtGui.QAction(label, self)
+            entry = recent[index - 1]
+            for depth in range(1, len(entry.parts) + 1):
+                suffix = Path(*entry.parts[-depth:])
+                if all(other == entry or Path(*other.parts[-depth:]) != suffix for other in recent):
+                    break
+            label = f"{index}. {suffix}"
+            action = QtGui.QAction(label.replace("&", "&&"), self)
             action.setToolTip(path)
             action.setStatusTip(path)
             action.setEnabled(os.path.isfile(path))

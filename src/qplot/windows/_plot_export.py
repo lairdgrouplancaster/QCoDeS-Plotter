@@ -151,7 +151,7 @@ if (
                 actions.addWidget(button)
                 button.show()
             self.ui.gridLayout.addLayout(actions, 2, 0, 1, 3)
-            self.setWindowTitle("Export plot")
+            self.setWindowTitle("Export figure or plot data")
             self.ui.gridLayout.setContentsMargins(16, 16, 16, 12)
             self.ui.gridLayout.setSpacing(12)
             self.ui.gridLayout.setRowStretch(0, 1)
@@ -1158,7 +1158,7 @@ class PlotExportMixin(_PlotExportBase):
                 selected_csv_measurements(self, exporter, validate=True)
             destination = choose_export_path_with_suffixes(
                 self,
-                caption="Export Plot",
+                caption="Export figure or plot data",
                 suggested_path=suggested_path,
                 name_filter=name_filter,
                 allowed_suffixes=suffixes,

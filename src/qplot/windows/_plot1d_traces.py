@@ -491,7 +491,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             install_axis_handler(line)
 
     def _install_trace_appearance_click_handler(self, trace_key: Any, line: Any) -> None:
-        """Open Trace Appearance for a trace when it is double-clicked."""
+        """Open Trace appearance for a trace when it is double-clicked."""
 
         if line is None or getattr(line, "_qplot_trace_click_handler", False):
             return
@@ -536,7 +536,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         if view_menu is None:
             return
         view_menu.addSeparator()
-        trace_action = QtGui.QAction("Trace Appearance…", self)
+        trace_action = QtGui.QAction("Trace appearance…", self)
         trace_action.triggered.connect(self.open_trace_appearance_dialog)
         view_menu.addAction(trace_action)
 
@@ -594,7 +594,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             self.axes_dock.toggleViewAction().setVisible(False)
         
         # Keep the legacy picker widgets only as an internal bridge for
-        # preview drops and hidden-source construction. Trace Appearance is
+        # preview drops and hidden-source construction. Trace appearance is
         # the sole visible trace-control surface.
         self.lines = {}
         self.line = self.__dict__.get("line")
@@ -750,7 +750,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
             dialog.refresh_available_traces()
 
     def add_trace_from_dialog(self, label: str, trace_key: Any) -> None:
-        """Add a trace selected in Trace Appearance."""
+        """Add a trace selected in Trace appearance."""
 
         request = self.__dict__.get("_trace_add_request")
         dataset_key = getattr(trace_key, "dataset_key", None)
@@ -785,7 +785,7 @@ class Plot1DTraceMixin(_Plot1DTraceBase):
         self.add_line(label, trace_key)
 
     def available_trace_candidates(self) -> list[tuple[str, Any]]:
-        """Return database-backed traces eligible for Trace Appearance."""
+        """Return database-backed traces eligible for Trace appearance."""
 
         provider = self.__dict__.get("_trace_candidate_provider")
         if callable(provider):
@@ -1354,7 +1354,7 @@ class _TraceAppearanceDialog(qtw.QDialog):
     def __init__(self, owner: Plot1DTraceMixin):
         super().__init__(owner)
         self.owner = owner
-        self.setWindowTitle("Trace Appearance")
+        self.setWindowTitle("Trace appearance")
         self.resize(780, 360)
         self.setMinimumSize(700, 300)
         self._building = False

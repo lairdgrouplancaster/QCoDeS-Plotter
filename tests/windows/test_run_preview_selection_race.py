@@ -148,7 +148,7 @@ def test_selected_actions_use_latest_row_after_thumbnail_completion(
         ])
     else:
         command = next(action for action in window.findChildren(QtGui.QAction)
-                       if action.text() == "Plot All Measurements in Selected Run")
+                       if action.text() == "Plot all measurements in selected run")
         command.trigger()
         _drain_launches(window)
         assert {plot.ds.guid for plot in window.windows} == set(guids)

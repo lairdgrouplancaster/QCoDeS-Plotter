@@ -99,9 +99,9 @@ class HelpMenuTestCase(unittest.TestCase):
                 )
             self.assertEqual(
                 actions["copyDiagnosticLogPathAction"].text(),
-                "Copy Path to &Diagnostic Log",
+                "Copy path to &diagnostic log",
                 )
-            self.assertIn("Show Diagnostic Log", actions["showDiagnosticLogAction"].text())
+            self.assertIn("Show diagnostic log", actions["showDiagnosticLogAction"].text())
             self.assertEqual(actions["aboutQplotAction"].text(), "&About qPlot")
             self.assertEqual(
                 actions["aboutQplotAction"].menuRole(),

@@ -109,7 +109,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "database.load": CommandSpec(
         "database.load",
-        "&Load Database...",
+        "&Load database…",
         "Load a QCoDeS database",
         "Ctrl+L",
         help_section="Main Window",
@@ -129,7 +129,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "window.close": CommandSpec(
         "window.close",
-        "&Close Window",
+        "&Close window",
         "Close the current qPlot window",
         _standard_shortcuts(QKeySequence.StandardKey.Close, ["Ctrl+W"]),
         help_section="Main and All Plot Windows",
@@ -145,7 +145,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "preferences.open": CommandSpec(
         "preferences.open",
-        "&Preferences...",
+        "&Preferences…",
         "Open qPlot preferences",
         "Ctrl+,",
         help_section="Main and All Plot Windows",
@@ -159,7 +159,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "window.maximize_restore": CommandSpec(
         "window.maximize_restore",
-        "Ma&ximise / Restore",
+        "Ma&ximise / restore",
         "Maximise or restore this window",
         _platform_shortcuts(windows=["Alt+Space, X", "Alt+Space, R"]),
         help_section="Main and All Plot Windows",
@@ -167,7 +167,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "window.full_screen": CommandSpec(
         "window.full_screen",
-        "&Full Screen",
+        "&Full screen",
         "Enter or leave full screen",
         lambda: standard_key_sequences(
             QKeySequence.StandardKey.FullScreen,
@@ -180,7 +180,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "copy.selection": CommandSpec(
         "copy.selection",
-        "Copy Selection",
+        "Copy selection",
         "Copy selected cells or rows in the run details pane",
         _standard_shortcuts(QKeySequence.StandardKey.Copy, ["Ctrl+C"]),
         QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
@@ -188,7 +188,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "copy.cell": CommandSpec(
         "copy.cell",
-        "Copy Cell",
+        "Copy cell",
         "Copy the current cell or value in the run details pane",
         "Ctrl+Shift+C",
         QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
@@ -196,41 +196,41 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "context.show": CommandSpec(
         "context.show",
-        "Show Context Menu",
+        "Show context menu",
         "Open the focused widget's context menu",
         "Shift+F10",
         help_section="Context Menus",
     ),
     "database.open_folder": CommandSpec(
         "database.open_folder",
-        "Open Database &Folder",
+        "Open database &folder",
         "Open the current database folder",
         "Ctrl+Shift+D",
         help_section="Main Window",
     ),
     "run.export_selected": CommandSpec(
         "run.export_selected",
-        "Export Selected Runs as &CSV…",
+        "Export &selected runs as CSV…",
         "Export raw measurements from selected runs, one CSV per run",
         object_name="exportSelectedRunsCsvAction",
     ),
     "database.export_selected": CommandSpec(
         "database.export_selected",
-        "Export Selected Runs as Database…",
+        "Export selected runs as &database…",
         "Create a standalone QCoDeS database containing all measurements and metadata "
         "from the selected runs",
         object_name="exportSelectedRunsDatabaseAction",
     ),
     "database.export_copy": CommandSpec(
         "database.export_copy",
-        "Export All Runs as Database…",
+        "Save &a copy of the database…",
         "Create a standalone QCoDeS database containing committed data, including "
         "data in the WAL. The original is unchanged.",
         object_name="exportDatabaseCopyAction",
     ),
     "exports.show": CommandSpec(
         "exports.show",
-        "View Export &Progress…",
+        "Show &exports",
         "Show background exports and cancellation controls",
         object_name="showCsvExportsAction",
     ),
@@ -260,35 +260,35 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "window.main_front_back": CommandSpec(
         "window.main_front_back",
-        "Move Main Window to &Front/Back",
+        "Move main window to front/back",
         "Bring the main window to front, or behind the graph windows",
         "Ctrl+Shift+M",
         help_section="Main and All Plot Windows",
     ),
     "run.plot_entered": CommandSpec(
         "run.plot_entered",
-        "Plot Entered Run and Measurement",
+        "Plot entered run and measurement",
         "Plot the requested run and measurement",
         "Ctrl+Return",
         help_section="Main Window",
     ),
     "run.plot_selected_all": CommandSpec(
         "run.plot_selected_all",
-        "Plot All Measurements in Selected Run",
+        "Plot all measurements in selected run",
         "Plot all measurements in the selected run",
         "Ctrl+Shift+Return",
         help_section="Main Window",
     ),
     "run.plot_selected_measurements": CommandSpec(
         "run.plot_selected_measurements",
-        "Plot Measurements 1 to 9 in Selected Run",
+        "Plot measurements 1 to 9 in selected run",
         "Plot measurements 1 to 9 in the selected run",
         help_section="Main Window",
         help_shortcut=_measurement_range_shortcut,
     ),
     "plots.close_all": CommandSpec(
         "plots.close_all",
-        "Close all &plot windows",
+        "Close all plot &windows",
         "Close all plot windows",
         "Ctrl+Shift+W",
         help_section="Main and All Plot Windows",
@@ -309,7 +309,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "plot.copy_image": CommandSpec(
         "plot.copy_image",
-        "&Copy Plot Image",
+        "Copy plot &image",
         "Copy the plot image using the selected copy format or resolution",
         _standard_shortcuts(QKeySequence.StandardKey.Copy, ["Ctrl+C"]),
         object_name="copyPlotImageAction",
@@ -317,7 +317,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "plot.copy_coordinates": CommandSpec(
         "plot.copy_coordinates",
-        "Copy Coordinates",
+        "Copy coordinates",
         "Copy the current cursor indices and coordinates as text",
         "Ctrl+Shift+C",
         object_name="copyCoordinatesAction",
@@ -325,7 +325,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "plot.print": CommandSpec(
         "plot.print",
-        "&Print Plot...",
+        "&Print plot…",
         "Print the visible plot area",
         _standard_shortcuts(QKeySequence.StandardKey.Print, ["Ctrl+P"]),
         object_name="printPlotAction",
@@ -333,7 +333,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "plot.export": CommandSpec(
         "plot.export",
-        "&Export Plot...",
+        "&Export figure or plot data…",
         "Open the plot export dialog",
         "Ctrl+E",
         object_name="exportPlotAction",
@@ -369,7 +369,7 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "plot.snap_to_trace": CommandSpec(
         "plot.snap_to_trace",
-        "Snap to &Trace",
+        "Snap cursor to &trace",
         "Toggle snapping the coordinate readout to the nearest line-trace point (including overlays)",
         "S",
         help_section="All Plot Windows",
@@ -417,21 +417,21 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "plot.clear_selection": CommandSpec(
         "plot.clear_selection",
-        "Clear Rectangular Selection",
+        "Clear rectangular selection",
         "Clear the rectangular plot selection, if present",
         help_section="All Plot Windows",
         help_shortcut="Escape",
     ),
     "preview.open": CommandSpec(
         "preview.open",
-        "Open Preview",
+        "Open preview",
         "Open the focused measurement preview as a plot",
         help_section="Main Window — Measurement Preview Focused",
         help_shortcut="Return / Enter",
     ),
     "preview.context": CommandSpec(
         "preview.context",
-        "Preview Context Menu",
+        "Preview context menu",
         "Open the focused measurement preview's context menu",
         help_section="Main Window — Measurement Preview Focused",
         help_shortcut=lambda: shortcut_display_text(key_sequences(["Shift+F10"]))
@@ -439,20 +439,20 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "heatmap.move_cut": CommandSpec(
         "heatmap.move_cut",
-        "Move Selected Cut",
+        "Move selected cut",
         "Move the selected cut cursor by one cell (a cut must be open)",
         help_section="2D Heatmap Windows",
         help_shortcut="Arrow keys",
     ),
     "heatmap.next_cut": CommandSpec(
-        "heatmap.next_cut", "Select Next Cut",
+        "heatmap.next_cut", "Select next cut",
         "Select the next visible cut in creation order on the canvas",
         "Ctrl+Tab",
         shortcut_context=QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
         help_section="2D Heatmap Windows",
     ),
     "heatmap.previous_cut": CommandSpec(
-        "heatmap.previous_cut", "Select Previous Cut",
+        "heatmap.previous_cut", "Select previous cut",
         "Select the previous visible cut in creation order on the canvas",
         "Ctrl+Shift+Tab",
         shortcut_context=QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut,
@@ -489,7 +489,7 @@ def plot_measurement_command_spec(index: int) -> CommandSpec:
     number = index + 1
     return CommandSpec(
         f"run.plot_selected_measurement_{number}",
-        f"Plot Measurement {number} in Selected Run",
+        f"Plot measurement {number} in selected run",
         f"Plot measurement {number} in the selected run",
         f"Ctrl+{number}",
     )

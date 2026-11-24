@@ -55,8 +55,8 @@ qplot-cfg -reset
 ```
 
 Common settings can also be edited in the application with
-`Settings -> Preferences...`. On macOS this appears as
-`qPlot -> Preferences...`.
+`Settings -> Preferences…`. On macOS this appears as
+`qPlot -> Preferences…`.
 
 **Application** contains interface, live refresh, confirmation and update settings.
 **Plots** contains settings for open plots and defaults for new windows, traces
@@ -136,7 +136,7 @@ Config keys use dotted paths in code and in `qplot-cfg`, for example
 | `user_preference.confirm_close` | boolean | `false` | `true` or `false` | Ask before closing the main window. |
 | `user_preference.confirm_close_all` | boolean | `true` | `true` or `false` | Ask before closing all plot windows. |
 | `user_preference.auto_plot` | boolean | `false` | `true` or `false` | Automatically open newly detected runs. |
-| `user_preference.copy_plot_image_resolution` | string | `"screen"` | `screen`, `dpi_300`, or `svg` | Format/resolution used by plot-window Copy Plot Image. |
+| `user_preference.copy_plot_image_resolution` | string | `"screen"` | `screen`, `dpi_300`, or `svg` | Format/resolution used by plot-window Copy plot image. |
 | `user_preference.default_refresh_rate` | number | `1` | `0 <= value <= 10000` | Shared interval for the run table and all live plots, in seconds; zero disables automatic refresh everywhere. |
 | `runtime_settings.max_threads` | integer | `4` | `1 <= value <= 999` | Maximum worker threads for background loading. |
 | `runtime_settings.max_full_heatmap_points` | integer | `2000000` | `1 <= value <= 2000000000` | Maximum estimated points loaded at full resolution before 2D plot windows use SQL spatial aggregation. |

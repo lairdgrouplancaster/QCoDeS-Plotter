@@ -31,6 +31,13 @@ from tests.support.windows.plot_overlay_integration import (
 loaded_plot = _loaded_plot_fixture
 
 
+def test_snap_menu_label_displays_the_registered_shortcut_once(loaded_plot):
+    action = loaded_plot.snap_to_trace_action
+    assert action.text().replace("&", "") == "Snap cursor to trace"
+    assert action.shortcut().toString() == "S"
+    assert action.isShortcutVisibleInContextMenu()
+
+
 @pytest.fixture
 def no_callback_errors(monkeypatch, qapplication):
     errors = []

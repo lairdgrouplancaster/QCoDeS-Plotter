@@ -7,7 +7,7 @@ problems, see [troubleshooting.md](troubleshooting.md).
 
 1. Start qPlot with `qplot` or `python -m qplot`.
 2. Drag a QCoDeS `.db` file onto the database path field, or select
-   `File -> Load Database...`.
+   `File -> Load database…`.
 3. The main window shows database controls at the top, the run table in the
    middle, and selected-run details at the bottom.
 
@@ -44,7 +44,7 @@ Long scalar keys and values remain compact in the tree and are marked locally.
 A `[display]` row counts these present-but-shortened cells; it is not a data-loss
 warning. For a shortened value, **Copy displayed value** copies the preview shown
 in the tree. To open the full value when available, double-click the marked cell,
-press Enter on its row, or choose **View Complete Value…**.
+press Enter on its row, or choose **View complete value…**.
 The viewer offers **Find next**, **Wrap lines**, **Select all** and **Copy entire
 value**. The copy shortcut in the text area copies the selected text. Traceback summaries retain both their beginning
 and final exception line. A global `[truncated]` row is reserved for actual
@@ -58,7 +58,7 @@ fetches only its first bounded page; deeper
 containers remain lazy. Expand one to fetch its children, and activate `Load
 more…` to reveal each later page without omissions or duplicates. No page
 creates more than 128 children or 32 KiB of displayed text. A shortened
-Snapshot scalar shows a preview and a **View Complete Value…** action for its exact
+Snapshot scalar shows a preview and a **View complete value…** action for its exact
 contents. `Load more…` is pagination, not a truncation warning; Snapshot
 `malformed`, `truncated`, or `unavailable` is reserved for an actual source,
 validation, or consistency failure.
@@ -386,11 +386,11 @@ The main window is the database and run-selection hub.
 
 Common actions:
 
-* `File -> Load Database...` loads a QCoDeS database.
-* `File -> Load Recent Database` reopens a recently used database. If qPlot cannot save the list, newly opened databases still appear here for this session. Choose **Details** in the notice to see the settings path and error. Opening a database again retries the save.
+* `File -> Load database…` loads a QCoDeS database.
+* **File → Recent databases** reopens a recently used database. When filenames match, the menu includes enough parent folders to distinguish them. If qPlot cannot save the list, newly opened databases still appear here for this session. Choose **Details** in the notice to see the settings path and error. Opening a database again retries the save.
 * **File → Refresh runs and live plots** checks the current database for new runs and refreshes all
   live plot windows once.
-* `File -> Open Database Folder` opens the folder containing the loaded
+* `File -> Open database folder` opens the folder containing the loaded
   database.
 * **File → Close database** closes its plot windows, cancels background database
   work, and releases the current database.
@@ -403,14 +403,14 @@ Common actions:
   your file manager. **Save example CSV template…** writes a starting file and
   shows its location. **Save bundled CSV templates…** copies the ten templates for
   generating databases from approximately 10 MB to 30 GB, then opens their folder.
-* `Settings -> Preferences...` edits common theme, default
+* `Settings -> Preferences…` edits common theme, default
   load location, preview, refresh, confirmation, and runtime settings. On
-  macOS this appears as `qPlot -> Preferences...`.
+  macOS this appears as `qPlot -> Preferences…`.
   On the Plots page, `Cursor precision (significant figures)` controls the x, y, and z
   coordinate readouts, including snapped trace values (1–17; default 6).
   **Reset this page** stages defaults for the selected page. Choose **Apply**
   or **OK** to save edits, or **Retry** after a failed save.
-* `Settings -> Advanced -> Reset All Settings...` restores all qPlot settings,
+* `Settings -> Advanced -> Reset all settings…` restores all qPlot settings,
   closes the current database and plot windows, and cancels their unfinished exports.
 * **Help → Quick start** shows how to load a database, select a run and open a plot.
 * **Help → Keyboard and mouse controls** lists the current window’s controls
@@ -437,10 +437,10 @@ Common actions:
   checkout using your usual Git workflow; for installed releases, the dialog
   provides a command targeting the Python environment running qPlot. Use
   `Copy upgrade command` to copy it exactly, then close qPlot before running it.
-* `Help -> Copy Path to Diagnostic Log` copies the log file location for support
+* `Help -> Copy path to diagnostic log` copies the log file location for support
   or troubleshooting.
-* `Help -> Show Diagnostic Log in Finder` reveals the log on macOS. On Windows,
-  `Show Diagnostic Log in File Explorer` selects the log in its folder.
+* `Help -> Show diagnostic log in Finder` reveals the log on macOS. On Windows,
+  `Show diagnostic log in File Explorer` selects the log in its folder.
 * `File -> Quit qPlot` closes the database and exits. Its shortcut is `Cmd+Q`
   on macOS and `Ctrl+Q` on Windows and Linux.
   Closing the database window also quits qPlot. To release the database and
@@ -515,7 +515,7 @@ load to complete.
 ## Plot Windows
 
 Each plot window has plot controls, optional toolbars, and dock
-panels. Toolbars and dock panels can be shown or hidden from `View -> Panels and Toolbars`,
+panels. Toolbars and dock panels can be shown or hidden from `View -> Panels and toolbars`,
 by right-clicking a toolbar or panel, or with keyboard shortcuts.
 
 Above the plot, qPlot identifies the displayed sources, for example
@@ -529,8 +529,11 @@ The annotation uses a shaded strip with a bold database name. In
 in all plots and exports. It is enabled by default. Hiding it also removes
 the space reserved for the strip.
 
-Windows are titled **Plot 1**, **Plot 2**, and so on. These numbers remain stable
-when other windows close or a plot's primary source changes.
+Each plot has a stable number in its title and in the **Window** menu, for example
+**Plot 3 — Run 42, conductance**. A shared plot lists both measurements or runs
+when they fit the short form. Larger or mixed selections show the measurement
+and run counts. Hover over the Window menu entry for the full list with database
+paths. The number stays with the window when its primary source changes.
 In a plot's File menu, **Close this plot** closes that window. **Close all plot windows**
 closes every plot and leaves the database window open.
 
@@ -563,7 +566,7 @@ Common plot controls:
   quantity, units and run, above the average, standard deviation and extrema.
   **Selection and source** contains the coordinate bounds and source details. **Copy full report**
   copies all results and source details. To copy individual rows, select them
-  and use **Copy Selection**.
+  and use **Copy selection**.
   For the full recorded measurement, right-click its thumbnail and choose **Measurement statistics…**.
   You can continue working or cancel while qPlot calculates.
 * Press `Esc` or double-click the plot to clear a marquee selection.
@@ -809,7 +812,7 @@ are ordered numerically, independently of acquisition order.
 
 The compact cursor readout shows `[X index, Y index, depth index]` followed by
 `(X, Y, depth, value)`. Hover over it for parameter names, units and the ordering.
-Copy Coordinates includes all four values.
+Copy coordinates includes all four values.
 An em dash (`—`) marks an unavailable or nonfinite cursor value.
 
 * Use the slider, Slice spinbox arrows, or Page Up/Page Down to step. Home/End
@@ -827,7 +830,7 @@ An em dash (`—`) marks an unavailable or nonfinite cursor value.
   **Whole volume** uses the full extent of the data. Switching back to the slice
   restores its filters. Hold **Centre** at zero for matching positive and negative limits.
 * Open **Slice operations** from the plot's right-click menu or **View → Panels
-  and Toolbars**, or press `Ctrl+Alt+O` (`Cmd+Option+O` on macOS). Operations run
+  and toolbars**, or press `Ctrl+Alt+O` (`Cmd+Option+O` on macOS). Operations run
   independently on each full plane, regardless of zoom or marquee bounds. Swapping X/Y preserves the physical operation.
   Changing the depth parameter restores that plane's own operation settings,
   initially empty. Derivative labels and units follow the named parameter.
@@ -910,7 +913,8 @@ Select operations in the panel, drag active operations to control order, then
 choose `Apply/Refresh`.
 
 Line plots and 1D cuts also expose native controls in the plot context menu
-under `Plot Options -> Transforms`. FFT and `dy/dx` can each be used alone or
+under **Plot options → Transforms**. Right-click the canvas or press **Shift+F10**
+in the plot window to open the menu. FFT and `dy/dx` can each be used alone or
 with mean subtraction. Outside phase map, enabling FFT clears `dy/dx`, and
 enabling `dy/dx` clears FFT. Phase map allows both controls to remain checked;
 it plots the original Y samples against their derivative, overriding the FFT
@@ -921,7 +925,7 @@ secondary axes, and the axis labels follow the displayed quantities.
 
 ## Export
 
-Use `File -> Export All Runs as Database…` to create a standalone `.db` for sharing.
+Use **File → Save a copy of the database…** to create a standalone `.db` for sharing.
 Choose a new filename. If it is occupied or SQLite sidecars are present, use
 **Choose another name…** to return to the same folder. The copy includes
 committed data in the WAL and opens
@@ -930,7 +934,7 @@ source database or WAL.
 Databases whose measurements are stored in separate raw-data files cannot be
 exported as a standalone database by this command.
 
-Use `File -> Export Selected Runs as Database…` to export only the selected
+Use `File -> Export selected runs as database…` to export only the selected
 runs. This includes every measurement, snapshot and metadata field in those
 runs, with their experiment records. Run IDs and GUIDs are preserved. Links to
 unselected runs remain as provenance references; those runs are not included.
@@ -948,7 +952,7 @@ promised to be byte-for-byte identical to the original file.
 The main-window **Export CSV…** button exports raw measurement values, including their
 setpoints, without plot operations. Select or enter a Run ID and choose a
 measurement number, or `*` for all measurements. Preview context menus can also
-export one measurement using **Export This Measurement as CSV…**. The button
+export one measurement using **Export this measurement as CSV…**. The button
 always uses the neighbouring Run ID and Measurement controls, regardless of
 the table selection. Independent measurements are placed side by side, with
 parameter names prefixed when exporting several measurements; shorter columns
@@ -957,7 +961,7 @@ samples without rounding stored integer or extended-precision values.
 
 To export several runs, use Shift-click or Ctrl-click (Cmd-click on macOS) to
 select rows, then use the selected rows' context menu or
-`File -> Export Selected Runs as CSV…`. Choose all measurements or a named
+`File -> Export selected runs as CSV…`. Choose all measurements or a named
 measurement shared by the selected runs under **Data to export**, then choose
 an output folder. If there are no shared measurement names, **Data to export**
 shows **All measurements in each run** as plain text. The review shows the
@@ -978,7 +982,7 @@ and do not need a writer checkpoint or a whole-database copy.
 You can also select individual measurement thumbnails in the run table or the
 Preview pane. Ctrl-click (Cmd-click on macOS) toggles a thumbnail; Shift-click
 selects a range in the current display order. Right-click a selected thumbnail
-and choose **Export Selected Measurements as CSV…**, then choose a folder. This
+and choose **Export selected measurements as CSV…**, then choose a folder. This
 opens the same filename review with one raw CSV per selected measurement, including its setpoints. Selecting
 two measurements from the same run produces two files. Selection is local to
 the run table or Preview pane, and remains highlighted as previews finish
@@ -991,7 +995,7 @@ Database copies and CSV exports run in the background. The **Exports** window li
 output filenames, groups selected-run and selected-measurement batches, and
 shows how many files have finished in each batch. Select a pending file to cancel
 it with **Cancel selected**, or use **Cancel all** for all unfinished exports.
-Choose **Hide** to keep working, and reopen the window from `File -> View Export Progress…`. A failed or cancelled
+Choose **Hide** to keep working, and reopen the window from **File → Show exports**. A failed or cancelled
 export leaves its destination unchanged; files already completed remain saved.
 Successful exports show **Export complete** with a tick. When all exports have
 finished, **Hide** becomes **Done**; for a single successful export, the completion
@@ -1033,7 +1037,7 @@ Plot CSV values are captured from the plot after the destination is chosen;
 later refreshes do not change the queued export. No plot CSV mode reads fresh
 database data. Use the main-window CSV action for raw measurements.
 
-Plot windows can export plot images and data through `File -> Export Plot...`
+Plot windows can export plot images and data through **File → Export figure or plot data…**
 or `Ctrl+E` (`Cmd+E` on macOS). On the **Figure** tab, choose **PNG image**,
 **SVG**, or **Plot-sized PDF**. Each format retains its settings when you switch
 formats or tabs while this dialog is open.
@@ -1052,29 +1056,29 @@ included measurements, including hidden ones. **Save as…** leaves the dialog o
 **Copy image** or **Copy SVG** copies the complete plot using the dimensions,
 background and options selected in this dialog. CSV has no clipboard action.
 
-Use `File -> Save Plot as PDF...` or
+Use `File -> Save plot as PDF…` or
 the plot context menu to save a plot-sized PDF of the rendered plot area. Use
-`Edit -> Copy Plot Image`, `Ctrl+C`, or the plot context menu to copy it to the
+`Edit -> Copy plot image`, `Ctrl+C`, or the plot context menu to copy it to the
 clipboard without the surrounding window menus or toolbars. The copy resolution
 is set in **Preferences → Files & export → Copied plot image quality**. Screen
 resolution preserves the current display pixels, while 300 dpi renders a higher-resolution clipboard image at the
 same logical plot size, and vector SVG copies editable SVG data for applications
 that accept SVG from the clipboard.
 
-Use `Window -> Resize Plot Canvas -> Custom...` to change the displayed plot
+Use `Window -> Resize plot canvas -> Custom…` to change the displayed plot
 area in pixels. Width and Height start at the current canvas dimensions.
 **Lock aspect ratio** shows the locked width-to-height ratio. Clear it to edit the dimensions
 independently. Locking it again preserves the newly entered ratio, rounded to
 whole pixels. **Resize** applies the dimensions; **Cancel** or `Esc` discards
 the edits. Toolbars and window borders are excluded from the dimensions.
 
-Use `File -> Print Plot...`, `Ctrl+P`, or `Cmd+P` to open the system print
+Use `File -> Print plot…`, `Ctrl+P`, or `Cmd+P` to open the system print
 dialog. Printing includes only the visible plot area, scales it to the printable
 page without stretching or cropping, and excludes the plot-window controls.
-When the system dialog exposes a concrete PDF destination, `Print Plot...` can
+When the system dialog exposes a concrete PDF destination, `Print plot…` can
 also produce a page-formatted PDF. qPlot stages that file beside the selected
 destination and publishes it atomically only after rendering succeeds. Use
-`Save Plot as PDF...` instead when you want a plot-sized PDF without the printer
+`Save plot as PDF…` instead when you want a plot-sized PDF without the printer
 page layout.
 
 ## Live Data
@@ -1131,7 +1135,7 @@ Plot-window shortcuts:
 | `Ctrl+Alt+C` | Show or hide the coordinates toolbar |
 | `Ctrl+Alt+A` | Show or hide Cut controls in a cut window |
 | `Ctrl+Alt+O` | Show or hide Slice operations in a 3D window or Data operations in other plots |
-| `S` | Snap the 1D coordinate readout to the nearest trace point |
+| `S` | Toggle **Snap cursor to trace** to read coordinates at the nearest trace point |
 
 Heatmap shortcuts:
 

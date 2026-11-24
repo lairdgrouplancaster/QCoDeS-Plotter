@@ -1383,17 +1383,17 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 ]
             preferences_action = next(
                 action for action in menus["Settings"].actions()
-                if action.text().replace("&", "") == "Preferences..."
+                if action.text().replace("&", "") == "Preferences…"
                 )
 
-            self.assertIn("Preferences...", option_texts)
+            self.assertIn("Preferences…", option_texts)
             self.assertEqual(
                 preferences_action.menuRole(),
                 QtGui.QAction.MenuRole.PreferencesRole,
                 )
             self.assertEqual(menus["View"].actions()[0].text(), "Axis scales…")
-            self.assertNotIn("Confirm Before Closing All Plot Windows", option_texts)
-            self.assertNotIn("Confirm Before Quit", option_texts)
+            self.assertNotIn("Confirm before closing all plot windows", option_texts)
+            self.assertNotIn("Confirm before quit", option_texts)
         finally:
             host.deleteLater()
 
@@ -1954,9 +1954,9 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 host.printPlotAction.shortcutContext(),
                 QtCore.Qt.ShortcutContext.WindowShortcut,
                 )
-            self.assertIn("Copy Plot Image", context_actions)
-            self.assertIn("Save Plot as PDF...", context_actions)
-            self.assertNotIn("Copy Plot Image at Size...", context_actions)
+            self.assertIn("Copy plot image", context_actions)
+            self.assertIn("Save plot as PDF…", context_actions)
+            self.assertNotIn("Copy plot image at Size...", context_actions)
             self.assertIn(host.savePlotPdfAction, menus["File"].actions())
             self.assertIn(host.printPlotAction, menus["File"].actions())
             file_actions = menus["File"].actions()
@@ -1967,7 +1967,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertTrue(file_actions[-2].isSeparator())
             self.assertIn(host.copyPlotImageAction, menus["Edit"].actions())
             self.assertIn(host.copyCoordinatesAction, menus["Edit"].actions())
-            self.assertIn("Copy Coordinates", context_actions)
+            self.assertIn("Copy coordinates", context_actions)
             self.assertIn(host.copyCoordinatesAction, host.actions())
             self.assertEqual(host.copyCoordinatesAction.shortcut().toString(), "Ctrl+Shift+C")
             host.pos_labels = {
@@ -2049,7 +2049,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 action.menu()
                 for action in window_menu.actions()
                 if action.menu() is not None
-                and action.text().replace("&", "") == "Resize Plot Canvas"
+                and action.text().replace("&", "") == "Resize plot canvas"
                 )
             resize_actions = {
                 action.text().replace("&", ""): action
@@ -2057,23 +2057,23 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 if not action.isSeparator()
                 }
 
-            self.assertIn("A4 Landscape (1123 x 794 px)", resize_actions)
-            self.assertIn("A4 Portrait (794 x 1123 px)", resize_actions)
-            self.assertIn("PowerPoint Standard (960 x 720 px)", resize_actions)
-            self.assertIn("PowerPoint Widescreen (1280 x 720 px)", resize_actions)
+            self.assertIn("A4 landscape (1123 x 794 px)", resize_actions)
+            self.assertIn("A4 portrait (794 x 1123 px)", resize_actions)
+            self.assertIn("PowerPoint standard (960 x 720 px)", resize_actions)
+            self.assertIn("PowerPoint widescreen (1280 x 720 px)", resize_actions)
             self.assertIn("Square (850 x 850 px)", resize_actions)
-            self.assertIn("Custom...", resize_actions)
+            self.assertIn("Custom…", resize_actions)
             self.assertFalse(
-                resize_actions["A4 Landscape (1123 x 794 px)"].icon().isNull()
+                resize_actions["A4 landscape (1123 x 794 px)"].icon().isNull()
                 )
             self.assertFalse(
-                resize_actions["A4 Portrait (794 x 1123 px)"].icon().isNull()
+                resize_actions["A4 portrait (794 x 1123 px)"].icon().isNull()
                 )
             self.assertFalse(
-                resize_actions["PowerPoint Standard (960 x 720 px)"].icon().isNull()
+                resize_actions["PowerPoint standard (960 x 720 px)"].icon().isNull()
                 )
             self.assertFalse(
-                resize_actions["PowerPoint Widescreen (1280 x 720 px)"].icon().isNull()
+                resize_actions["PowerPoint widescreen (1280 x 720 px)"].icon().isNull()
                 )
             self.assertFalse(
                 resize_actions["Square (850 x 850 px)"].icon().isNull()
@@ -3150,8 +3150,8 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
             self.assertNotIn("X axis", action_texts)
             self.assertNotIn("Y axis", action_texts)
-            self.assertEqual(host.plot.ctrlMenu.title(), "Options")
-            self.assertEqual(host.plot.ctrlMenu.menuAction().text(), "Options")
+            self.assertEqual(host.plot.ctrlMenu.title(), "Plot options")
+            self.assertEqual(host.plot.ctrlMenu.menuAction().text(), "Plot options")
             self.assertTrue(host.plot.ctrl.logXCheck.isHidden())
             self.assertTrue(host.plot.ctrl.logYCheck.isHidden())
 

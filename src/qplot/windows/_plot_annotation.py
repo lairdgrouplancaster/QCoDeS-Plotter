@@ -2,6 +2,7 @@
 
 from html import escape
 from pathlib import Path
+from typing import cast
 
 import pyqtgraph as pg
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -9,6 +10,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from qplot.configuration.fonts import FONT_SIZE_KEY
 
 from ._plot_host import PlotHost
+from ._plot_title import update_plot_title
 
 SHOW_SOURCE_ANNOTATION_KEY = "user_preference.show_source_annotation"
 
@@ -201,6 +203,7 @@ class PlotAnnotationMixin(PlotHost):
         annotation = self.__dict__.get("source_annotation")
         if annotation is None:
             return
+        update_plot_title(cast(QtWidgets.QWidget, self))
         visible = self.config.get(SHOW_SOURCE_ANNOTATION_KEY)
         self._set_plot_annotation_visible(visible)
         if not visible:

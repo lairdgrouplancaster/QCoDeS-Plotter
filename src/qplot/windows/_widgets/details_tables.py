@@ -321,12 +321,12 @@ class infoTree(qtw.QTreeWidget):
         self.itemExpanded.connect(self._request_expanded_snapshot_container)
 
         self.copy_value_action = copy_action(
-            "Copy Value", COPY_CELL_SHORTCUTS, self.copyValue, self
+            "Copy value", COPY_CELL_SHORTCUTS, self.copyValue, self
         )
         self.copy_selection_action = copy_action(
-            "Copy Selection", COPY_SELECTION_SHORTCUTS, self.copySelection, self
+            "Copy selection", COPY_SELECTION_SHORTCUTS, self.copySelection, self
         )
-        self.view_full_value_action = QtGui.QAction("View Complete Value…", self)
+        self.view_full_value_action = QtGui.QAction("View complete value…", self)
         self.view_full_value_action.triggered.connect(self._request_current_full_value)
         self.addActions(
             [
@@ -1082,11 +1082,11 @@ class infoTree(qtw.QTreeWidget):
         copied_selection = "\n".join(row_text(selected) for selected in selected_items)
         previous_copy_label = self.copy_value_action.text()
         self.copy_value_action.setText(
-            "Copy displayed value" if item.data(1, VALUE_SHORTENED_ROLE) else "Copy Value"
+            "Copy displayed value" if item.data(1, VALUE_SHORTENED_ROLE) else "Copy value"
         )
         menu.addAction(self.copy_value_action)
 
-        copy_row = QtGui.QAction("Copy Row", menu)
+        copy_row = QtGui.QAction("Copy row", menu)
         copy_row.triggered.connect(lambda: copy_to_clipboard(copied_row))
         menu.addAction(copy_row)
 
@@ -1133,10 +1133,10 @@ class CopyableTableWidget(qtw.QTableWidget):
         self.customContextMenuRequested.connect(self.openCopyMenu)
 
         self.copy_cell_action = copy_action(
-            "Copy Cell", COPY_CELL_SHORTCUTS, self.copyCell, self
+            "Copy cell", COPY_CELL_SHORTCUTS, self.copyCell, self
         )
         self.copy_selection_action = copy_action(
-            "Copy Selection", COPY_SELECTION_SHORTCUTS, self.copySelection, self
+            "Copy selection", COPY_SELECTION_SHORTCUTS, self.copySelection, self
         )
         self.addActions([self.copy_cell_action, self.copy_selection_action])
 

@@ -340,7 +340,7 @@ class MainWindow(
         loadAction.triggered.connect(self.getfile)
         fileMenu.addAction(loadAction)
         
-        self.recentDatabaseMenu = cast(qtw.QMenu, fileMenu.addMenu("Load &Recent Database"))
+        self.recentDatabaseMenu = cast(qtw.QMenu, fileMenu.addMenu("Recent data&bases"))
         self.refresh_recent_database_menu()
 
         self.closeDatabaseAction = create_action("database.close", self)

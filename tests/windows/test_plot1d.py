@@ -1804,7 +1804,7 @@ class SnapToTraceTestCase(unittest.TestCase):
                 )
             action_texts = [action.text() for action in view_menu.actions()]
 
-            self.assertIn("Trace Appearance…", action_texts)
+            self.assertIn("Trace appearance…", action_texts)
         finally:
             host.deleteLater()
 

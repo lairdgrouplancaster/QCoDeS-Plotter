@@ -59,7 +59,7 @@ QUICK_START_HTML = """
 <h2>Quick start</h2>
 <ol>
   <li><b>Load a database.</b> Drop a QCoDeS .db file onto the database field,
-      or use <b>File -&gt; Load Database...</b>.</li>
+      or use <b>File -&gt; Load database…</b>.</li>
   <li><b>Select a run.</b> Click a row in the run table to see details,
       parameters, preview images, and metadata.</li>
   <li><b>Open a plot.</b> Double-click the measurement preview. You can also
@@ -96,7 +96,7 @@ def add_help_menu(
 
     help_menu.addSeparator()
 
-    copy_log_path_action = QtGui.QAction("Copy Path to &Diagnostic Log", window)
+    copy_log_path_action = QtGui.QAction("Copy path to &diagnostic log", window)
     copy_log_path_action.setObjectName("copyDiagnosticLogPathAction")
     copy_log_path_action.setStatusTip("Copy the qPlot diagnostic log file path")
     copy_log_path_action.triggered.connect(lambda: copy_diagnostic_log_path(window))
@@ -107,7 +107,7 @@ def add_help_menu(
         else "File Explorer" if sys.platform == "win32"
         else "File Manager"
     )
-    show_log_action = QtGui.QAction(f"&Show Diagnostic Log in {file_manager}", window)
+    show_log_action = QtGui.QAction(f"&Show diagnostic log in {file_manager}", window)
     show_log_action.setObjectName("showDiagnosticLogAction")
     show_log_action.setStatusTip("Show the qPlot diagnostic log in your file manager")
     show_log_action.triggered.connect(lambda: show_diagnostic_log(window))

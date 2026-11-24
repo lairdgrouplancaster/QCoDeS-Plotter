@@ -21,7 +21,7 @@ class CommandRegistryTestCase(unittest.TestCase):
         try:
             action = create_action("database.load", window)
 
-            self.assertEqual(action.text(), "&Load Database...")
+            self.assertEqual(action.text(), "&Load database…")
             self.assertEqual(action.shortcut().toString(), "Ctrl+L")
             self.assertEqual(action.statusTip(), "Load a QCoDeS database")
             self.assertEqual(
@@ -68,7 +68,7 @@ class CommandRegistryTestCase(unittest.TestCase):
     def test_dynamic_measurement_command_uses_expected_number(self):
         spec = plot_measurement_command_spec(2)
 
-        self.assertEqual(spec.text, "Plot Measurement 3 in Selected Run")
+        self.assertEqual(spec.text, "Plot measurement 3 in selected run")
         self.assertEqual(spec.resolved_shortcuts()[0].toString(), "Ctrl+3")
         self.assertEqual(spec.status_tip, "Plot measurement 3 in the selected run")
 

@@ -34,7 +34,7 @@ def _native_menu(plot, level):
                            pos=point)
     menu = plot.vbMenu
     wait_for(menu.isVisible)
-    for title in (() if level == "root" else ("Options", level)):
+    for title in (() if level == "root" else ("Plot options", level)):
         action = next(action for action in menu.actions() if action.text() == title)
         menu.setActiveAction(action)
         QtTest.QTest.keyClick(menu, QtCore.Qt.Key.Key_Right)
@@ -50,6 +50,20 @@ def _close_native_menus(plot):
         for menu in root.findChildren(qtw.QMenu):
             menu.close()
         root.close()
+
+
+def test_first_keyboard_popup_includes_the_native_plot_options(merged_plots, monkeypatch):
+    _main, (plot, *_others), _x, _y = merged_plots
+    plot.activateWindow()
+    plot.widget.setFocus()
+    qtw.QApplication.processEvents()
+    menus = []
+    monkeypatch.setattr(qtw.QMenu, "exec", lambda menu, *_: menus.append(menu))
+    for _ in range(2):
+        QtTest.QTest.keyClick(plot.widget, QtCore.Qt.Key.Key_F10, QtCore.Qt.KeyboardModifier.ShiftModifier)
+        assert menus.pop() is plot.vbMenu
+        options = [a.menu() for a in plot.vbMenu.actions() if a.text() == "Plot options"]
+        assert options == [plot.plot.ctrlMenu]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows locks an open SQLite main file against replacement.")

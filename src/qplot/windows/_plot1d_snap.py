@@ -38,7 +38,6 @@ else:
 
 
 SNAP_TO_TRACE_COMMAND = command_spec("plot.snap_to_trace")
-SNAP_TO_TRACE_SHORTCUT_LABEL = SNAP_TO_TRACE_COMMAND.shortcut_display_text()
 # Qt scene coordinates use logical pixels, so the capture radius stays the
 # same size when zooming data or moving between display pixel densities.
 SNAP_RADIUS_PIXELS = 12.0
@@ -269,7 +268,6 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         self.snap_to_trace_action = create_action(
             SNAP_TO_TRACE_COMMAND,
             self,
-            text=f"Snap to Trace ({SNAP_TO_TRACE_SHORTCUT_LABEL})",
             status_tip="Toggle snap-to-trace cursor readout",
             checkable=True,
             )

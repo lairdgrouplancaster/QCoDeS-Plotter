@@ -29,7 +29,7 @@ retains its read-only dataset route.
 
 ## Explicit database-copy export
 
-`File -> Export All Runs as Database…` runs an incremental SQLite backup in a separate
+`File -> Save a copy of the database…` runs an incremental SQLite backup in a separate
 spawned process. Trusted sources use the pinned `TrustedLiveReader` VFS with
 256-page backup steps, source-identity validation and transaction-release
 checks after every step. Snapshot sources use the existing protected snapshot

@@ -617,7 +617,7 @@ class Plot2DLayerMixin(PlotHost):
             self._checking_heatmap_view_transforms = False
 
     def initMenu(self) -> None:
-        """Add Heatmap Appearance to the standard View menu."""
+        """Add Heatmap appearance to the standard View menu."""
 
         super().initMenu()
         if callable(getattr(self, "open_plot_appearance_dialog", None)):
@@ -634,7 +634,7 @@ class Plot2DLayerMixin(PlotHost):
             return
         view_menu.addSeparator()
         action = QtGui.QAction(
-            "Heatmap Appearance…",
+            "Heatmap appearance…",
             cast(QtCore.QObject, self),
         )
         action.triggered.connect(self.open_heatmap_appearance_dialog)
@@ -1715,7 +1715,7 @@ class _HeatmapAppearanceControls(qtw.QWidget):
         super().__init__(cast(qtw.QWidget, owner))
         self.owner = owner
         self._building = False
-        self.setWindowTitle("Heatmap Appearance")
+        self.setWindowTitle("Heatmap appearance")
         if table is None:
             self.resize(780, 360)
             self.setMinimumSize(700, 300)

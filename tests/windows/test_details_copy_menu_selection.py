@@ -60,7 +60,7 @@ def _choose_menu_action(widget, position, command, application, owned):
 
 
 @pytest.mark.parametrize("target", ["first", "second", "outside"])
-@pytest.mark.parametrize("command", ["Copy Selection", "Copy Cell", "cancel"])
+@pytest.mark.parametrize("command", ["Copy selection", "Copy cell", "cancel"])
 def test_overview_context_menu_preserves_selected_rows(
     details_window, qapplication, target, command,
 ):
@@ -94,7 +94,7 @@ def test_overview_context_menu_preserves_selected_rows(
 
     expected_rows = {outside} if target == "outside" else {first, second}
     assert {item.row() for item in table.selectedItems()} == expected_rows
-    if command == "Copy Cell":
+    if command == "Copy cell":
         expected = {"first": "unicode", "second": dataset.guid,
                     "outside": "Run α & <sample> 🧪"}[target]
     elif command == "cancel" or target != "outside":
@@ -139,7 +139,7 @@ def test_copy_menu_preserves_multicell_tsv_and_exact_unicode(qapplication):
     owned = []
     try:
         _choose_menu_action(table, table.visualItemRect(table.item(1, 2)).center(),
-                            "Copy Selection", qapplication, owned)
+                            "Copy selection", qapplication, owned)
         assert len(table.selectedItems()) == 6
         assert qapplication.clipboard().text() == expected
     finally:
@@ -192,7 +192,7 @@ def test_tree_copy_menu_names_shortened_values(qapplication, monkeypatch, source
 
             tree.openCopyMenu(position)
             assert qapplication.clipboard().text() == displayed
-        assert labels == ["Copy displayed value", "Copy Value"]
+        assert labels == ["Copy displayed value", "Copy value"]
     finally:
         tree.close()
         tree.deleteLater()

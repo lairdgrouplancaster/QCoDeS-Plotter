@@ -1753,21 +1753,21 @@ class OptionsMenuTestCase(unittest.TestCase):
             preferences_action = next(
                 action
                 for action in menus["Settings"].actions()
-                if action.text().replace("&", "") == "Preferences..."
+                if action.text().replace("&", "") == "Preferences…"
             )
 
-            self.assertIn("Preferences...", option_texts)
+            self.assertIn("Preferences…", option_texts)
             self.assertEqual(
                 preferences_action.menuRole(),
                 QtGui.QAction.MenuRole.PreferencesRole,
             )
             advanced = next(a.menu() for a in menus["Settings"].actions() if a.text() == "Advanced")
-            self.assertIn("Reset All Settings...", [a.text() for a in advanced.actions()])
+            self.assertIn("Reset all settings…", [a.text() for a in advanced.actions()])
             self.assertNotIn("Open Location", option_texts)
             self.assertNotIn("Theme", option_texts)
             self.assertNotIn("Preview Size", option_texts)
-            self.assertNotIn("Confirm Before Closing All Plot Windows", option_texts)
-            self.assertNotIn("Confirm Before Quit", option_texts)
+            self.assertNotIn("Confirm before closing all plot windows", option_texts)
+            self.assertNotIn("Confirm before quit", option_texts)
         finally:
             window.deleteLater()
 
@@ -1820,10 +1820,15 @@ class OptionsMenuTestCase(unittest.TestCase):
                 if not action.isSeparator()
             }
 
+            access_keys = [
+                action.text().split("&", 1)[1][0].casefold()
+                for action in file_menu.actions() if "&" in action.text()
+            ]
+            self.assertEqual(len(access_keys), len(set(access_keys)))
             close_shortcuts = command_spec("window.close").resolved_shortcuts()
             close_action = next(a for a in window.actions() if a.shortcuts() == close_shortcuts)
             self.assertNotIn(close_action, file_menu.actions())
-            self.assertNotIn("Close Window", actions)
+            self.assertNotIn("Close window", actions)
 
             actions["Close database"].trigger()
             actions["Quit qPlot"].trigger()
@@ -2458,8 +2463,8 @@ class CloseAllPlotsTestCase(unittest.TestCase):
             self.assertEqual(
                 [action.text() for action in actions],
                 [
-                    "Confirm Before Closing All Plot Windows",
-                    "Confirm Before Quit",
+                    "Confirm before closing all plot windows",
+                    "Confirm before quit",
                 ],
             )
             self.assertTrue(actions[0].isChecked())
@@ -2486,7 +2491,7 @@ class CloseAllPlotsTestCase(unittest.TestCase):
 
         try:
             action = add_restore_defaults_option(window, menu)
-            self.assertEqual(action.text(), "Reset All Settings...")
+            self.assertEqual(action.text(), "Reset all settings…")
 
             action.trigger()
 

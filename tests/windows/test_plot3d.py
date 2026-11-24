@@ -119,7 +119,7 @@ def test_slice_operations_menus_share_the_panel_shortcut(tmp_path, main, qapplic
     wait_for(lambda: window.windows and loaded(window.windows[0]))
     plot = window.windows[0]
     view = next(action.menu() for action in plot.menuBar().actions() if action.text() == "&View")
-    panels = next(action.menu() for action in view.actions() if action.text() == "Panels and Toolbars")
+    panels = next(action.menu() for action in view.actions() if action.text() == "Panels and toolbars")
     toggle = plot.oper_dock.toggleViewAction()
     assert toggle.text() == "Slice operations"
     assert plot._context_menu_action("Slice operations") is toggle

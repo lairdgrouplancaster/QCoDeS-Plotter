@@ -345,7 +345,7 @@ class RunControlsMixin:
         plot_selected_all.triggered.connect(self.open_selected_run_all)
         self.addAction(plot_selected_all)
         self.plotSelectedRunAction = plot_selected_all
-        table_enter = QtGui.QAction("Plot Selected Run", self.RunList)
+        table_enter = QtGui.QAction("Plot selected run", self.RunList)
         table_enter.setShortcuts([QtGui.QKeySequence("Return"), QtGui.QKeySequence("Enter")])
         table_enter.setShortcutContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
         table_enter.triggered.connect(self.open_selected_run_all)

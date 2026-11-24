@@ -90,22 +90,22 @@ _POWERPOINT_WIDESCREEN_PLOT_AREA_SIZE = QtCore.QSize(1280, 720)
 _SQUARE_PLOT_AREA_SIZE = QtCore.QSize(850, 850)
 _PLOT_AREA_RESIZE_PRESETS = (
     (
-        "A4 Landscape",
+        "A4 landscape",
         "resizePlotAreaA4LandscapeAction",
         _A4_LANDSCAPE_PLOT_AREA_SIZE,
         ),
     (
-        "A4 Portrait",
+        "A4 portrait",
         "resizePlotAreaA4PortraitAction",
         _A4_PORTRAIT_PLOT_AREA_SIZE,
         ),
     (
-        "PowerPoint Standard",
+        "PowerPoint standard",
         "resizePlotAreaPowerPointStandardAction",
         _POWERPOINT_STANDARD_PLOT_AREA_SIZE,
         ),
     (
-        "PowerPoint Widescreen",
+        "PowerPoint widescreen",
         "resizePlotAreaPowerPointWidescreenAction",
         _POWERPOINT_WIDESCREEN_PLOT_AREA_SIZE,
         ),
@@ -909,8 +909,8 @@ class plotWidget(
         self.mouseModeAction = self._context_menu_action("Mouse Mode")
         self._remove_scene_export_context_menu()
         if getattr(self.plot, "ctrlMenu", None) is not None:
-            self.plot.ctrlMenu.setTitle("Options")
-            self.plot.ctrlMenu.menuAction().setText("Options")
+            self.plot.ctrlMenu.setTitle("Plot options")
+            self.plot.ctrlMenu.menuAction().setText("Plot options")
 
         self.exportPlotAction = create_action("plot.export", self)
         self.register_shortcut(
@@ -919,7 +919,7 @@ class plotWidget(
             )
         self.exportPlotAction.triggered.connect(self.open_export_dialog)
 
-        self.savePlotPdfAction = QtGui.QAction("Save Plot as &PDF...", self)
+        self.savePlotPdfAction = QtGui.QAction("&Save plot as PDF…", self)
         self.savePlotPdfAction.setObjectName("savePlotPdfAction")
         self.savePlotPdfAction.setStatusTip("Save the visible plot area as a PDF")
         self.savePlotPdfAction.triggered.connect(self.save_plot_pdf)
@@ -1033,6 +1033,10 @@ class plotWidget(
 
         """
         if not _window_is_retired(self):
+            options = self.plot.getContextMenus(None)
+            if options is not None and options.menuAction() not in self.vbMenu.actions():
+                self.vbMenu.addSeparator()
+                self.vbMenu.addMenu(options)
             self.vbMenu.exec(self.widget.mapToGlobal(self.widget.rect().center()))
 
 
@@ -1041,7 +1045,7 @@ class plotWidget(
         Adds fixed plot-area resize actions to the Window menu.
 
         """
-        resize_menu = qtw.QMenu("&Resize Plot Canvas", self)
+        resize_menu = qtw.QMenu("&Resize plot canvas", self)
         resize_menu.setObjectName("plotAreaResizeMenu")
 
         for label, object_name, size in _PLOT_AREA_RESIZE_PRESETS:
@@ -1063,7 +1067,7 @@ class plotWidget(
             resize_menu.addAction(action)
 
         resize_menu.addSeparator()
-        custom_action = QtGui.QAction("&Custom...", self)
+        custom_action = QtGui.QAction("&Custom…", self)
         custom_action.setObjectName("resizePlotAreaCustomAction")
         custom_action.setStatusTip("Resize the copied plot area to a custom pixel size")
         custom_action.triggered.connect(self.open_custom_plot_area_size_dialog)
@@ -1360,7 +1364,7 @@ class plotWidget(
         main_menu.addAction(refreshAction)
         
         toolbar_menu = self.createPopupMenu()
-        toolbar_menu.setTitle("Panels and Toolbars")
+        toolbar_menu.setTitle("Panels and toolbars")
         main_menu.addMenu(toolbar_menu)
         main_menu.addAction(self.vbMenu.viewAll)
         mouse_mode_action = getattr(self, "mouseModeAction", None)
