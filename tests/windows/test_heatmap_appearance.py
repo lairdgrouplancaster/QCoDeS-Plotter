@@ -32,7 +32,7 @@ def test_heatmap_appearance_matches_trace_dialog_structure_with_image_preview(no
     try:
         dialog.refresh_rows()
 
-        assert dialog.windowTitle() == "Heatmap Appearance"
+        assert dialog.windowTitle() == "Heatmap appearance"
         assert dialog.table.columnCount() == 3
         assert [
             dialog.table.horizontalHeaderItem(index).text()

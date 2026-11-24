@@ -114,6 +114,10 @@ def test_select_trace_in_line_or_heatmap_plot(mixed_plot, tmp_path, monkeypatch,
     values = dialog.controls.fields["values"]
     if transformed:
         values.setCurrentIndex(values.findData(CSV_TRANSFORMED_VALUES))
+    dialog.controls.output_tabs.setCurrentIndex(0)
+    dialog.controls.output_tabs.setCurrentIndex(1)
+    assert dialog.controls.fields["measurements"].currentText() == label
+    assert (dialog.controls.fields["values"].currentData() == CSV_TRANSFORMED_VALUES) == transformed
     headers, data, choices = _save(target, dialog, tmp_path / "trace.csv", monkeypatch)
     expected = [[4., 10.], [5., 10.]] if transformed else [[4., 40.], [5., 50.], [6., 60.]]
     np.testing.assert_allclose(data, expected)

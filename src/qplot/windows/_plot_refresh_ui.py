@@ -86,7 +86,6 @@ class PlotRefreshUi:
 
     def prepare_worker(self, worker: Any) -> None:
         window = self.window
-        worker._qplot_operation_apply_generation = int(getattr(window.oper_widget, "_apply_generation", 0))
         key = getattr(window, "_dataset_key", None)
         if key is not None:
             worker.expected_database_path = key.database_path
@@ -118,9 +117,6 @@ class PlotRefreshUi:
         worker = session.worker
         message = (request.status_message if request.status_message is not None
                    else f"Loading data for {window.param.name}...")
-        window.show_status(message, 0)
-        if not controller.accepts(session):
-            return
         window.show_plot_state(message, kind="loading")
         if not controller.accepts(session):
             return
@@ -129,6 +125,8 @@ class PlotRefreshUi:
         overlay = window.__dict__.get("plot_state_overlay")
         if overlay is not None:
             overlay.track(worker)
+        else:
+            window.show_status(message, 0)
         if not controller.accepts(session):
             return
         will_start = getattr(type(window), "_refresh_worker_will_start", None)

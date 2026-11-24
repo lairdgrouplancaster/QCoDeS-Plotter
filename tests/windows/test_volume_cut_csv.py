@@ -55,7 +55,7 @@ def test_phase_map_cut_csv_units_follow_the_chosen_values(main, tmp_path, monkey
     protected = trusted_database_artifact_state(path)
     volume = open_volume(window, path, guid)
     volume.show_hover_pixel_outline(1, 0)
-    next(action for action in volume.vbMenu.actions() if action.text() == "Horizontal Cut").trigger()
+    next(action for action in volume.vbMenu.actions() if action.text() == "Horizontal cut").trigger()
     wait_for(lambda: len(window.windows) == 2 and window.windows[-1]._qplot_display_synchronized)
     cut = window.windows[-1]
     click_control(cut, "phasemapCheck")

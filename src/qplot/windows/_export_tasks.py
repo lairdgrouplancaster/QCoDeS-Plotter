@@ -14,6 +14,7 @@ from qplot.diagnostics import log_exception
 
 from ._error_dialog import ErrorDialog
 from ._export_paths import ExportDestinationTransaction, StagedExport
+from ._file_manager import reveal_file_in_file_manager
 from ._window_controls import _window_is_retired
 
 
@@ -116,6 +117,7 @@ class ExportTaskManager(QtCore.QObject):
         self.main = main
         self.tasks: set[ExportTask] = set()
         self.history: list[ExportTask] = []
+        self._single_export: ExportTask | None = None
         self._totals = {"saved": 0, "cancelled": 0, "failed": 0}
         self._polling = False
         self.pool = main._shutdown.resources.create_pool(
@@ -139,7 +141,7 @@ class ExportTaskManager(QtCore.QObject):
         layout.addWidget(self.summary)
         self.tree = qtw.QTreeWidget()
         self.tree.setToolTip(
-            "Select a completed export to open its file or folder. Select a failed "
+            "Select a completed export to open it or show it in its folder. Select a failed "
             "export for details, or unfinished exports to cancel."
         )
         self.tree.setHeaderLabels(["Filename", "Status", "Progress"])
@@ -154,8 +156,8 @@ class ExportTaskManager(QtCore.QObject):
         self.open_file_button.setToolTip("Open the selected completed export in its default application.")
         self.open_file_button.clicked.connect(lambda: self._open_selected_export(folder=False))
         buttons.addWidget(self.open_file_button)
-        self.open_folder_button = qtw.QPushButton("Open folder")
-        self.open_folder_button.setToolTip("Open the folder containing the selected completed export.")
+        self.open_folder_button = qtw.QPushButton("Show in folder")
+        self.open_folder_button.setToolTip("Show the selected completed export in your file manager.")
         self.open_folder_button.clicked.connect(lambda: self._open_selected_export(folder=True))
         buttons.addWidget(self.open_folder_button)
         self.details_button = qtw.QPushButton("Details…")
@@ -163,6 +165,10 @@ class ExportTaskManager(QtCore.QObject):
         self.details_button.clicked.connect(self._show_selected_failure)
         buttons.addWidget(self.details_button)
         buttons.addStretch()
+        self.history_button = qtw.QPushButton("Export history")
+        self.history_button.clicked.connect(self._show_history)
+        self.history_button.hide()
+        buttons.addWidget(self.history_button)
         self.cancel_selected_button = qtw.QPushButton("Cancel selected")
         self.cancel_selected_button.setToolTip("Cancel the selected unfinished exports. Completed files are kept.")
         self.cancel_selected_button.setEnabled(False)
@@ -192,6 +198,8 @@ class ExportTaskManager(QtCore.QObject):
             raise ValueError("An export to this destination is already in progress.")
         task = ExportTask(self, owner, title, destination, writer,
                           before_publish, on_success, on_failure, source_keys)
+        self._single_export = task if not self.tasks and batch is None else None
+        self.history_button.hide()
         self.tasks.add(task)
         self.history.append(task)
         while len(self.history) > 200:
@@ -257,6 +265,13 @@ class ExportTaskManager(QtCore.QObject):
             task.error = error.with_traceback(None)
             task._written.set()
 
+    def _show_history(self) -> None:
+        self._single_export = None
+        self.history_button.hide()
+        self.tree.show()
+        self.dialog.resize(660, 280)
+        self.poll()
+
     def cancel_all(self) -> None:
         for task in tuple(self.tasks):
             task.cancel()
@@ -296,13 +311,14 @@ class ExportTaskManager(QtCore.QObject):
         if task is None or not task.done or not task.stage.published:
             return
         filename = task.destination.filename
-        location = os.path.dirname(filename) if folder else filename
-        title = "Could not open export folder" if folder else "Could not open exported file"
-        available = os.path.isdir(location) if folder else os.path.isfile(location)
-        if not available:
-            self._show_details(title, "The export location is no longer available.", location)
-        elif not QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(location)):
-            self._show_details(title, "Your system could not open the export location.", location)
+        title = "Could not show export in folder" if folder else "Could not open exported file"
+        if not os.path.isfile(filename):
+            self._show_details(title, "The exported file is no longer available.", filename)
+        elif folder:
+            if not reveal_file_in_file_manager(filename):
+                self._show_details(title, "Your file manager could not show the exported file.", filename)
+        elif not QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(filename)):
+            self._show_details(title, "Your system could not open the exported file.", filename)
 
     def _show_details(self, title: str, message: str, details: str) -> None:
         dialog = ErrorDialog(title, message, details, self.dialog)
@@ -382,14 +398,18 @@ class ExportTaskManager(QtCore.QObject):
         )
         if self.tasks:
             summary = f"Export in progress. This session: {details} · {len(self.tasks)} pending."
+        elif self._single_export is not None and self._single_export.stage.published:
+            task = self._single_export
+            summary = f"Export complete\n{task.destination.filename}"
+            if not self.tree.isHidden():
+                self.tree.clearSelection()
+                self.tree.setCurrentItem(task.row)
+                task.row.setSelected(True)
+                self.tree.hide()
+            self.history_button.setVisible(len(self.history) > 1)
         elif counts['saved'] and not (counts['cancelled'] or counts['failed']):
-            if counts['saved'] == 1:
-                summary = (
-                    "Export complete. Your file is ready:\n"
-                    f"{self.history[0].destination.filename}"
-                )
-            else:
-                summary = f"Exports complete. {counts['saved']} files saved this session."
+            noun = "file" if counts["saved"] == 1 else "files"
+            summary = f"Exports complete. {counts['saved']} {noun} saved this session."
         else:
             summary = f"This session: {details}." if self.history else "No exports yet."
         self.summary.setText(summary)
@@ -400,6 +420,9 @@ class ExportTaskManager(QtCore.QObject):
         )
         self.cancel_button.setEnabled(bool(self.tasks))
         self._update_selection_actions()
+
+        if self.history and self.tree.isHidden():
+            self.dialog.resize(440, self.dialog.heightForWidth(440))
 
     def _finish(self, task: ExportTask) -> None:
         try:

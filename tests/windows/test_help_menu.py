@@ -99,9 +99,9 @@ class HelpMenuTestCase(unittest.TestCase):
                 )
             self.assertEqual(
                 actions["copyDiagnosticLogPathAction"].text(),
-                "Copy Path to &Diagnostic Log",
+                "Copy path to &diagnostic log",
                 )
-            self.assertIn("Show Diagnostic Log", actions["showDiagnosticLogAction"].text())
+            self.assertIn("Show diagnostic log", actions["showDiagnosticLogAction"].text())
             self.assertEqual(actions["aboutQplotAction"].text(), "&About qPlot")
             self.assertEqual(
                 actions["aboutQplotAction"].menuRole(),
@@ -349,3 +349,34 @@ def test_shortcut_help_prioritises_window_and_filters(qapplication, plot_kind, e
     finally:
         sip.delete(dialog)
         sip.delete(window)
+
+
+def test_reopening_shortcut_help_restores_the_owning_windows_search(qapplication):
+    plot = qtw.QMainWindow()
+    other = qtw.QMainWindow()
+    plot.operation_kind = "plot2d"
+    try:
+        dialog = show_keyboard_shortcuts(plot)
+        search = dialog.findChild(qtw.QLineEdit, "shortcutSearch")
+        scope = dialog.findChild(qtw.QComboBox)
+        search.setText("zoom")
+        scope.setCurrentText("This window")
+        separate = show_keyboard_shortcuts(other)
+        assert separate is not dialog
+        assert separate.findChild(qtw.QLineEdit, "shortcutSearch").text() == ""
+
+        dialog.showMinimized()
+        qapplication.processEvents()
+        assert show_keyboard_shortcuts(plot) is dialog
+        assert not dialog.isMinimized()
+        assert search.text() == "zoom"
+        assert scope.currentText() == "This window"
+
+        dialog.close()
+        fresh = show_keyboard_shortcuts(plot)
+        assert fresh is not dialog
+        assert fresh.findChild(qtw.QLineEdit, "shortcutSearch").text() == ""
+        assert show_keyboard_shortcuts(other) is separate
+    finally:
+        sip.delete(other)
+        sip.delete(plot)

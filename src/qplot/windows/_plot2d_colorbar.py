@@ -25,6 +25,51 @@ COLORBAR_WIDTH_KEY = "user_preference.colorbar_width"
 DEFAULT_COLORBAR_WIDTH = 15
 
 
+class _ColorbarHandleHover(QtCore.QObject):
+    """Reveal both handles over the colour strip and throughout a left drag."""
+
+    def __init__(self, bar):
+        super().__init__(bar)
+        self.view = bar.getViewWidget()
+        self.strip = bar.getViewBox()
+        self.pens = [(line, line.pen, line.hoverPen) for line in bar.region.lines]
+        self.transparent = pg.mkPen((0, 0, 0, 0))
+        self.dragging = False
+        self.handles_visible = True
+        self.set_handles_visible(False)
+        # Observe the raw pointer before pyqtgraph rate-limits scene hover events.
+        self.view.viewport().installEventFilter(self)
+
+    def set_handles_visible(self, visible: bool) -> None:
+        if visible == self.handles_visible:
+            return
+        self.handles_visible = visible
+        for line, pen, hover_pen in self.pens:
+            line.setPen(pen if visible else self.transparent)
+            line.setHoverPen(hover_pen if visible else self.transparent)
+
+    def eventFilter(self, source, event):
+        kind = event.type()
+        types = QtCore.QEvent.Type
+        if kind in (types.MouseMove, types.MouseButtonPress, types.MouseButtonRelease):
+            scene_pos = self.view.mapToScene(event.position().toPoint())
+            inside = self.strip.isVisible() and self.strip.rect().contains(
+                self.strip.mapFromScene(scene_pos)
+            )
+            left = QtCore.Qt.MouseButton.LeftButton
+            if kind == types.MouseButtonPress and event.button() == left:
+                self.dragging = inside
+            elif not event.buttons() & left:
+                self.dragging = False
+            self.set_handles_visible(inside or self.dragging)
+        elif kind == types.Leave:
+            self.set_handles_visible(self.dragging)
+        elif kind in (types.Hide, types.WindowDeactivate, types.UngrabMouse):
+            self.dragging = False
+            self.set_handles_visible(False)
+        return False
+
+
 class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
     """
     Heatmap colorbar controls for plot2d windows.
@@ -62,6 +107,14 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         def _reset_heatmap_hover(self) -> None: ...
         def _set_sweep_lines_visible(self, visible: bool) -> None: ...
 
+    def _add_heatmap_colorbar(self, items, rounding):
+        bar = self.plot.addColorBar(
+            items, colorMap=self._colorbar_colormap(), rounding=rounding,
+            width=self._configured_colorbar_width(), colorMapMenu=False,
+        )
+        _ColorbarHandleHover(bar)
+        return bar
+
     @QtCore.pyqtSlot(bool)
     def scaleColorbar(self, event = None):
         """
@@ -75,32 +128,46 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         """
         levels = self._data_colorbar_levels()
         if levels is None:
+            self._sync_colorbar_scale_mode()
             return
 
         self._colorbar_manual_levels = None
-        self._sync_colorbar_scale_mode()
         minimum, maximum = levels
         self._set_colorbar_levels(minimum, maximum)
 
     def _data_colorbar_levels(self):
-        """
-        Return finite min/max levels from the current heatmap data.
+        """Calculate the automatic fit, preserving a held value across updates."""
+        target = self._colour_fit_target()
+        self._colour_fit_error = ""
+        state = self.__dict__.get("_colour_range_state")
+        entry = self.__dict__.get("colorbar_range_entry")
+        if state is None or entry is None:
+            return target
+        if target is None or state.lock:
+            try:
+                return state.fit(target).limits
+            except ValueError as exc:
+                self._colour_fit_error = str(exc)
+                entry.show_error(self._colour_fit_error)
+                return state.limits if self.__dict__.get("bar") is not None else None
+        return target
 
-        """
+    def _colour_fit_target(self):
+        """Provide a drawable interval even for a single finite colour value."""
         data_range = self._finite_data_colorbar_range()
         if data_range is None:
             return None
 
         vmin, vmax = data_range
         if vmin == vmax:
-            if self.__dict__.get("_colorbar_symmetric", False) and vmin != 0:
-                return self._symmetric_colorbar_levels(vmin, vmax)
-            levels = self._constant_colorbar_levels(vmin)
-            return None if levels is None else self._symmetric_colorbar_levels(*levels)
+            state = self.__dict__.get("_colour_range_state")
+            if state is not None and state.lock:
+                return vmin, vmax
+            return self._constant_colorbar_levels(vmin)
         if vmin > vmax:
             return None
 
-        return self._symmetric_colorbar_levels(vmin, vmax)
+        return vmin, vmax
 
     @staticmethod
     def _constant_colorbar_levels(value):
@@ -141,6 +208,8 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             data = getattr(self, "dataGrid", None)
             arrays = () if data is None else (data,)
 
+        _, percent = self._colour_fit_options()
+        samples = []
         lower = None
         upper = None
         for data in arrays:
@@ -148,11 +217,32 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             finite_values = values[np.isfinite(values)]
             if finite_values.size == 0:
                 continue
+            if percent < 100:
+                samples.append(finite_values)
+                continue
             data_lower = float(np.min(finite_values))
             data_upper = float(np.max(finite_values))
             lower = data_lower if lower is None else min(lower, data_lower)
             upper = data_upper if upper is None else max(upper, data_upper)
 
+        if samples:
+            values = samples[0] if len(samples) == 1 else np.concatenate(samples)
+            # Partition the eligible displayed samples once. Interpolate across
+            # opposite signs without overflowing their difference.
+            tail = (100 - percent) / 200
+            positions = [(values.size - 1) * q for q in (tail, 1 - tail)]
+            indices = [math.floor(position) for position in positions]
+            values.partition([*indices, *(math.ceil(position) for position in positions)])
+            bounds = []
+            for index, position in zip(indices, positions, strict=True):
+                left = float(values[index])
+                right = float(values[math.ceil(position)])
+                weight = position - index
+                if left < 0 < right:
+                    bounds.append(left * (1 - weight) + right * weight)
+                else:
+                    bounds.append(left + (right - left) * weight)
+            return tuple(bounds)
         if lower is None or upper is None:
             return None
         return lower, upper
@@ -188,7 +278,6 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         Apply levels to the colorbar and mirror them in the menu fields.
 
         """
-        vmin, vmax = self._symmetric_colorbar_levels(vmin, vmax)
         if not np.isfinite(float(vmax) - float(vmin)):
             self._reject_heatmap_color_range()
             return False
@@ -210,7 +299,6 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
             self._sync_colorbar_axis_scaling()
 
         self._colorbar_last_levels = (vmin, vmax)
-        self._sync_colorbar_scale_mode()
         self._sync_colorbar_level_fields(vmin, vmax)
         return True
 
@@ -956,11 +1044,17 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         if levels is None:
             return
 
-        if self.__dict__.get("_colorbar_symmetric", False):
-            previous = self.__dict__.get("_colorbar_last_levels", levels)
-            changed = [i for i in (0, 1) if levels[i] != previous[i]]
-            extent = abs(levels[changed[0]]) if len(changed) == 1 else max(map(abs, levels))
-            levels = (-extent, extent) if extent > 0 and np.isfinite(2 * extent) else previous
+        state = self.__dict__.get("_colour_range_state")
+        if state is not None and state.lock:
+            target = levels
+            if state.lock == "centre":
+                changed = [v for v, old in zip(levels, state.limits, strict=True) if v != old]
+                if len(changed) == 1:
+                    target = (changed[0], changed[0])
+            try:
+                levels = state.fit(target).limits
+            except ValueError:
+                levels = state.limits
             with QtCore.QSignalBlocker(bar):
                 bar.setLevels(levels)
         self._colorbar_last_levels = levels
@@ -972,14 +1066,14 @@ class Plot2DColorbarMixin(ColorbarScaleDialogMixin):
         Persist interactively adjusted colorbar levels as manual scaling.
 
         """
-        if self.__dict__.get("_colorbar_symmetric", False):
+        state = self.__dict__.get("_colour_range_state")
+        if state is not None and state.lock:
             self._colorbar_interactive_levels_changed(bar)
         levels = self._colorbar_levels_from_bar(bar)
         if levels is None:
             return
 
         self._colorbar_manual_levels = levels
-        self._sync_colorbar_scale_mode()
         self._sync_colorbar_level_fields(*levels)
 
     def _current_colorbar_levels(self):

@@ -53,9 +53,9 @@ def _row(window, section):
     pytest.param(section, label, action, id=f"{section}-{identifier}-{action}")
     for section in ("metadata", "raw", "snapshot", "overview")
     for identifier, label in (
-        (("cell", "Copy Cell"), ("selection", "Copy Selection"))
+        (("cell", "Copy cell"), ("selection", "Copy selection"))
         if section == "overview" else
-        (("row", "Copy Row"), ("value", "Copy Value"), ("selection", "Copy Selection"))
+        (("row", "Copy row"), ("value", "Copy value"), ("selection", "Copy selection"))
     )
     for action in ("live_copy", "copy", "live_cancel", "live_key")
     if identifier != "row" or action != "live_key"
@@ -65,7 +65,7 @@ def test_menu_copies_capture_clicked_content_across_live_refresh(
 ):
     window, dataset, database, fixture_state = details_window
     tree, item, expected = _row(window, section)
-    if copy_action in ("Copy Value", "Copy Cell"):
+    if copy_action in ("Copy value", "Copy cell"):
         expected = expected.split("\t", 1)[1]
     window.activateWindow()
     tree.setFocus()

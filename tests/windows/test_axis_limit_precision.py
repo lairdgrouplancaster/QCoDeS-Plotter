@@ -66,10 +66,9 @@ def test_copy_auto_preserves_precise_limits_in_real_controls(qapplication, axis,
             controls.minText.setText(invalid)
             QtTest.QTest.keyClick(controls.minText, QtCore.Qt.Key.Key_Return)
             assert controls.minText.text() == invalid
-            assert controls.rangeEntry._error
-            assert controls.rangeEntry.summary.text()
+            assert controls.rangeEntry.error_label.isVisible()
+            assert controls.rangeEntry.error_label.text()
             np.testing.assert_array_equal(window.vb.viewRange()[axis_number], expected)
-        assert window.statuses
     finally:
         if window._axis_scale_dialog is not None:
             window._axis_scale_dialog.close()

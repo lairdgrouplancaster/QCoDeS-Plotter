@@ -69,7 +69,7 @@ def test_heatmap_resolution_dialog_details_resize_and_preferences(qapplication):
         assert not dialog.isVisible()
         assert calls == []
         qapplication.processEvents()
-        assert calls == [{"initial_tab": "Performance"}]
+        assert calls == [{"initial_tab": "Performance", "focus_setting": None}]
     finally:
         dialog.deleteLater()
         host.deleteLater()
@@ -669,10 +669,6 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
             def value(self):
                 return 0.2
 
-        class Toggle:
-            def isChecked(self):
-                return False
-
         class EndWait:
             def emit(self):
                 pass
@@ -715,8 +711,7 @@ class Plot2dLiveRefreshTestCase(unittest.TestCase):
         window._has_plottable_heatmap_data = lambda: True
         window._update_heatmap_geometry = lambda: HeatmapGeometry.from_centres([0., 1.], [0., 1.])
         window._primary_heatmap_viewbox = lambda: SimpleNamespace(width=lambda: 500., height=lambda: 300.)
-        window.relevel_refresh = Toggle()
-        window.bar = SimpleNamespace(levels=lambda: (1.0, 4.0), show=lambda: None)
+        window.bar = SimpleNamespace(levels=lambda: (1.0, 4.0), setLevels=lambda _levels: None, show=lambda: None)
         window._sync_colorbar_axis_scaling = lambda: None
         window._restore_heatmap_interactions = lambda: None
         window._colorbar_manual_levels = None
@@ -2072,7 +2067,10 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         menu = window._new_marquee_context_menu()
         action_texts = [action.text() for action in menu.actions()]
 
-        self.assertEqual(action_texts, ["Zoom", "Zoom X", "Zoom Y", "Zoom colour", "Stats..."])
+        self.assertEqual(action_texts, [
+            "Zoom to selection", "Zoom X only", "Zoom Y only",
+            "Fit colour range to selection", "Selection statistics…",
+        ])
 
     def test_context_menu_uses_short_cut_labels(self):
         class Host(plot2d):
@@ -2096,8 +2094,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             host.initContextMenu()
             action_texts = [action.text().replace("&", "") for action in host.vbMenu.actions()]
 
-            self.assertIn("Horizontal Cut", action_texts)
-            self.assertIn("Vertical Cut", action_texts)
+            self.assertIn("Horizontal cut", action_texts)
+            self.assertIn("Vertical cut", action_texts)
             self.assertNotIn("Plot Horizontal Cut", action_texts)
             self.assertNotIn("Plot Vertical Cut", action_texts)
         finally:
@@ -2131,7 +2129,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         host.open_subplot.connect(lambda *args: opened.append(args))
         try:
             host.initContextMenu()
-            for label, expected in (("Horizontal Cut", 3.0), ("Vertical Cut", 2.0)):
+            for label, expected in (("Horizontal cut", 3.0), ("Vertical cut", 2.0)):
                 host.z_index = [2, 3]
                 host.vbMenu.popup(QtCore.QPoint(20, 20))
                 host.hide_hover_pixel_outline()
@@ -2150,7 +2148,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             host.deleteLater()
             widget.deleteLater()
 
-    def test_zoom_color_uses_data_inside_marquee(self):
+    def test_fit_colour_range_uses_data_inside_selection(self):
         window = plot2d.__new__(plot2d)
         window.marquee = QtCore.QRectF(1.0, 1.0, 2.0, 2.0)
         self.configure_geometry(
@@ -2162,7 +2160,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         window.bar = self.Colorbar()
         window._colorbar_manual_levels = None
 
-        self.assertTrue(window.zoom_marquee_color())
+        menu = window._new_marquee_context_menu()
+        next(action for action in menu.actions() if action.text() == "Fit colour range to selection").trigger()
 
         self.assertEqual(window._colorbar_manual_levels, (5.0, 10.0))
         self.assertEqual(window.bar.values, (5.0, 10.0))
@@ -2182,7 +2181,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         qtw.QApplication.clipboard().clear()
 
         menu = window._new_marquee_context_menu()
-        stats_action = next(action for action in menu.actions() if action.text() == "Stats...")
+        stats_action = next(action for action in menu.actions() if action.text() == "Selection statistics…")
         stats_action.trigger()
 
         self.assertEqual(len(opened), 1)
@@ -2207,21 +2206,22 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         stats_table = dialog.findChild(qtw.QTableWidget)
         copy_button = next(
             button for button in dialog.findChildren(qtw.QPushButton)
-            if button.text() == "Copy"
+            if button.text() == "Copy full report"
             )
         copy_button.click()
 
         self.assertIsNotNone(stats_table)
-        self.assertEqual(stats_table.rowCount(), 3)
+        self.assertEqual(stats_table.rowCount(), 4)
         self.assertEqual(stats_table.horizontalHeaderItem(0).text(), "Field")
         self.assertEqual(stats_table.horizontalHeaderItem(1).text(), "Value")
-        self.assertEqual(stats_table.item(0, 0).text(), "Selection")
-        self.assertEqual(stats_table.item(0, 1).text(), "2×2 points")
-        self.assertEqual(stats_table.item(1, 0).text(), "X range")
-        self.assertEqual(stats_table.item(1, 1).text(), "1.000 to 3.000")
+        self.assertEqual(stats_table.item(0, 0).text(), "Average")
+        self.assertEqual(stats_table.item(1, 0).text(), "Selection and source")
+        self.assertEqual(stats_table.item(2, 1).text(), "2×2 points")
+        self.assertEqual(stats_table.item(3, 0).text(), "X range")
+        self.assertEqual(stats_table.item(3, 1).text(), "1.000 to 3.000")
         self.assertEqual(qtw.QApplication.clipboard().text(), stats_text)
 
-        stats_table.selectRow(2)
+        stats_table.selectRow(0)
         stats_table.copySelection()
         self.assertEqual(qtw.QApplication.clipboard().text(), "Average\t7.5")
 
@@ -2705,7 +2705,6 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
     def test_manual_colorbar_range_sets_levels_and_disables_refresh_autoscale(self):
         window = plot2d.__new__(plot2d)
         window.bar = self.Colorbar()
-        window.relevel_refresh = self.CheckBox(checked=True)
         window._colorbar_manual_levels = None
 
         applied = window.setColorbarManualRange(10, 20)
@@ -2713,21 +2712,16 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         self.assertTrue(applied)
         self.assertEqual(window._colorbar_manual_levels, (10.0, 20.0))
         self.assertEqual(window.bar.values, (10, 20))
-        self.assertTrue(window.relevel_refresh.checked)
-        self.assertFalse(window.relevel_refresh.enabled)
 
     def test_auto_colorbar_clears_manual_range_and_uses_data_range(self):
         window = plot2d.__new__(plot2d)
         window.bar = self.Colorbar()
-        window.relevel_refresh = self.CheckBox(checked=False)
         window._colorbar_manual_levels = (10.0, 20.0)
         window.dataGrid = np.array([[0.0, 40.0], [20.0, np.nan]])
 
         window.setColorbarAuto()
 
         self.assertIsNone(window._colorbar_manual_levels)
-        self.assertFalse(window.relevel_refresh.checked)
-        self.assertTrue(window.relevel_refresh.enabled)
         self.assertEqual(window.bar.values, (0.0, 40.0))
 
     def test_colorbar_autoscale_ignores_empty_and_all_nonfinite_data(self):
@@ -2843,7 +2837,6 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 window.bar.horizontal = False
                 window.bar.lo_lim = None
                 window.bar.hi_lim = None
-                window.relevel_refresh = self.CheckBox(checked=True)
                 window._colorbar_manual_levels = None
 
                 window._install_colorbar_alt_range_drag_handler(window.bar)
@@ -2871,8 +2864,6 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
                 self.assertTrue(finish_event.accepted)
                 self.assertEqual(window.bar.values, (-6.0, 106.0))
                 self.assertEqual(window._colorbar_manual_levels, (-6.0, 106.0))
-                self.assertTrue(window.relevel_refresh.checked)
-                self.assertFalse(window.relevel_refresh.enabled)
                 self.assertEqual(window.bar.region.lines[0].position, 63.0)
                 self.assertEqual(window.bar.region.lines[1].position, 191.0)
 
@@ -2928,7 +2919,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             host.initContextMenu()
             auto_color = next(
                 action for action in host.vbMenu.actions()
-                if action.text().replace("&", "") == "Autoscale Colour"
+                if action.text().replace("&", "") == "Autoscale colour range"
                 )
 
             self.assertEqual(auto_color.shortcut().toString(), "C")

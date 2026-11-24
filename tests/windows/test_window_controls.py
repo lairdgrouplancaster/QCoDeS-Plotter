@@ -30,6 +30,9 @@ class FakeWindow:
         self.raise_calls = 0
         self.activate_calls = 0
 
+    def windowTitle(self):
+        return self.label
+
     def isActiveWindow(self):
         return self.active
 
@@ -130,14 +133,14 @@ def test_application_quit_shortcut_works_while_modal_dialog_is_open():
 def test_window_menu_lists_qplot_windows_and_focuses_selected_window():
     menu_owner = qtw.QMainWindow()
     main_window = FakeWindow(active=True)
-    one_dimensional = FakeWindow(label="ID:42 signal", operation_kind="plot1d")
+    one_dimensional = FakeWindow(label="Plot 1 — Run 42, signal")
     two_dimensional = FakeWindow(
-        label="ID:57 conductance",
+        label="Plot 2 — Run 57, conductance (2D heatmap)",
         operation_kind="plot2d",
         minimized=True,
         )
     cut = FakeWindow(
-        label="ID:57 conductance [cut 2]",
+        label="Plot 3 — Run 57, conductance (cut 2)",
         operation_kind="sweeper",
         )
     main_window.windows = [one_dimensional, two_dimensional, cut]
@@ -153,9 +156,9 @@ def test_window_menu_lists_qplot_windows_and_focuses_selected_window():
         actions = _window_list_actions(menu)
         assert [action.text() for action in actions] == [
             "qPlot",
-            "1D — ID:42 signal",
-            "2D — ID:57 conductance",
-            "Cut — ID:57 conductance [cut 2]",
+            one_dimensional.windowTitle(),
+            two_dimensional.windowTitle(),
+            cut.windowTitle(),
         ]
         assert actions[0].isChecked()
 
@@ -171,8 +174,8 @@ def test_window_menu_lists_qplot_windows_and_focuses_selected_window():
 def test_window_menu_refreshes_entries_and_disambiguates_duplicate_labels():
     menu_owner = qtw.QMainWindow()
     main_window = FakeWindow()
-    first_plot = FakeWindow(label="ID:42 signal", operation_kind="plot1d")
-    second_plot = FakeWindow(label="ID:42 signal", operation_kind="plot1d")
+    first_plot = FakeWindow(label="Plot 1 — Run 42, signal")
+    second_plot = FakeWindow(label="Plot 2 — Run 42, signal")
     main_window.windows = [first_plot, second_plot]
 
     try:
@@ -184,8 +187,8 @@ def test_window_menu_refreshes_entries_and_disambiguates_duplicate_labels():
             menu.aboutToShow.emit()
             assert [action.text() for action in _window_list_actions(menu)] == [
                 "qPlot",
-                "1D — ID:42 signal (1)",
-                "1D — ID:42 signal (2)",
+                first_plot.windowTitle(),
+                second_plot.windowTitle(),
             ]
 
             main_window.windows = [second_plot]
@@ -193,7 +196,7 @@ def test_window_menu_refreshes_entries_and_disambiguates_duplicate_labels():
 
         assert [action.text() for action in _window_list_actions(menu)] == [
             "qPlot",
-            "1D — ID:42 signal",
+            second_plot.windowTitle(),
         ]
     finally:
         menu_owner.deleteLater()

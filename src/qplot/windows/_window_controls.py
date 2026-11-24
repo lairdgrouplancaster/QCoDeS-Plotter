@@ -1,5 +1,3 @@
-from collections import Counter
-
 from PyQt6 import QtCore, QtGui, sip
 from PyQt6 import QtWidgets as qtw
 
@@ -16,11 +14,6 @@ DO_NOT_ASK_AGAIN_LABEL = "Don't ask again"
 
 _WINDOW_LIST_ACTIONS_ATTRIBUTE = "_qplot_window_list_actions"
 _WINDOW_LIST_ENTRY_PROPERTY = "qplotWindowListEntry"
-_WINDOW_KIND_LABELS = {
-    "plot1d": "1D",
-    "plot2d": "2D",
-    "sweeper": "Cut",
-    }
 
 
 def sync_close_all_plots_actions(window):
@@ -120,6 +113,7 @@ def add_standard_window_controls(window):
 
     """
     window_menu = window.menuBar().addMenu("&Window")
+    window_menu.setToolTipsVisible(True)
     closed = getattr(window, "closed", None)
     if closed is not None and callable(getattr(closed, "connect", None)):
         closed.connect(window_menu.close)
@@ -129,9 +123,9 @@ def add_standard_window_controls(window):
     def update_front_back_label():
         main = main_window_for(window)
         main_front_back_action.setText(
-            "Send Main Window Behind Plot Windows"
+            "Send main window behind plot windows"
             if main is not None and main.isActiveWindow()
-            else "Bring Main Window to Front"
+            else "Bring main window to front"
         )
     window_menu.aboutToShow.connect(update_front_back_label)
     update_front_back_label()
@@ -195,17 +189,12 @@ def populate_available_window_actions(window, window_menu):
 
     plot_windows = tuple(plot for plot in (getattr(main_window, "windows", ()) or ())
                          if not getattr(plot, "_appearance_preview_hidden", False))
-    labels = [_plot_window_menu_label(plot_window) for plot_window in plot_windows]
-    label_counts = Counter(labels)
-    label_indexes = Counter()
-
     actions = [window_menu.addSeparator()]
     actions.append(_add_window_menu_action(window_menu, main_window, "qPlot"))
-    for plot_window, label in zip(plot_windows, labels, strict=True):
-        label_indexes[label] += 1
-        if label_counts[label] > 1:
-            label = f"{label} ({label_indexes[label]})"
-        actions.append(_add_window_menu_action(window_menu, plot_window, label))
+    for plot_window in plot_windows:
+        action = _add_window_menu_action(window_menu, plot_window, plot_window.windowTitle())
+        action.setToolTip(plot_window.__dict__.get("_plot_sources_tooltip", action.text()))
+        actions.append(action)
 
     setattr(window_menu, _WINDOW_LIST_ACTIONS_ATTRIBUTE, actions)
 
@@ -219,23 +208,10 @@ def _remove_available_window_actions(window_menu):
     setattr(window_menu, _WINDOW_LIST_ACTIONS_ATTRIBUTE, ())
 
 
-def _plot_window_menu_label(plot_window):
-    """Return a concise, recognisable label for a qPlot graph window."""
-
-    operation_kind = getattr(plot_window, "operation_kind", None)
-    kind_label = _WINDOW_KIND_LABELS.get(operation_kind)
-    label = str(getattr(plot_window, "label", "")).strip()
-    if not label:
-        window_title = getattr(plot_window, "windowTitle", None)
-        label = str(window_title()).strip() if callable(window_title) else "Plot"
-
-    return f"{kind_label} — {label}" if kind_label is not None else label
-
-
 def _add_window_menu_action(menu, target_window, text):
     """Create a checked-as-active menu action that focuses ``target_window``."""
 
-    action = QtGui.QAction(text, menu)
+    action = QtGui.QAction(text.replace("&", "&&"), menu)
     action.setCheckable(True)
     action.setChecked(target_window.isActiveWindow())
     action.setProperty(_WINDOW_LIST_ENTRY_PROPERTY, True)
@@ -282,14 +258,14 @@ def add_confirmation_options(window, menu):
     close_all_action = add_config_checkbox_action(
         window,
         menu,
-        "Confirm Before Closing All Plot Windows",
+        "Confirm before closing all plot windows",
         CONFIRM_CLOSE_ALL_KEY,
         "Ask before closing every open plot window",
         )
     quit_action = add_config_checkbox_action(
         window,
         menu,
-        "Confirm Before Quit",
+        "Confirm before quit",
         CONFIRM_QUIT_KEY,
         "Ask before quitting qPlot",
         )
@@ -301,7 +277,7 @@ def add_restore_defaults_option(window, menu):
     Adds a reset-all-settings action to a menu.
 
     """
-    action = QtGui.QAction("Reset All Settings...", window)
+    action = QtGui.QAction("Reset all settings…", window)
     action.setStatusTip("Reset all qPlot settings to their defaults")
     action.triggered.connect(lambda: request_restore_defaults(window))
     menu.addAction(action)

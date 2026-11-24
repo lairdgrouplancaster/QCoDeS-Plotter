@@ -231,6 +231,7 @@ def verify_snapshot_cleanup(records, *, trusted_service=None):
 def capture_screenshots(database_path, line_guid, heatmap_guid):
     import numpy as np
     from PyQt6 import QtCore, QtGui, QtWidgets, sip
+    from screenshot_support import SIZES
 
     from qplot.__main__ import _configure_application_identity
     from qplot.configuration.config import config
@@ -267,7 +268,7 @@ def capture_screenshots(database_path, line_guid, heatmap_guid):
         main_window.config.config["user_preference"]["confirm_close"] = False
         main_window.config.config["user_preference"]["confirm_close_all"] = False
         main_window.close_database(status=False)
-        main_window.resize(1120, 760)
+        main_window.resize(*SIZES["qplot-main-window.png"])
         main_window.load_file(str(database_path))
         wait_for(
             app,
@@ -304,7 +305,7 @@ def capture_screenshots(database_path, line_guid, heatmap_guid):
         main_window.open_selected_measurement("current")
         wait_for(app, lambda: len(main_window.windows) == 1)
         line_window = main_window.windows[-1]
-        line_window.resize(920, 620)
+        line_window.resize(*SIZES["qplot-line-plot.png"])
         wait_for(
             app,
             lambda: (
@@ -326,7 +327,7 @@ def capture_screenshots(database_path, line_guid, heatmap_guid):
         main_window.open_selected_measurement("conductance")
         wait_for(app, lambda: len(main_window.windows) == 2)
         heatmap_window = main_window.windows[-1]
-        heatmap_window.resize(980, 660)
+        heatmap_window.resize(*SIZES["qplot-heatmap.png"])
         wait_for(
             app,
             lambda: (
@@ -347,7 +348,7 @@ def capture_screenshots(database_path, line_guid, heatmap_guid):
         heatmap_window.show_status("45 × 35 synthetic samples")
         heatmap_window.open_colorbar_scale_dialog()
         dialog = heatmap_window.colorbar_scale_dialog
-        dialog.resize(700, 700)
+        dialog.resize(*SIZES["qplot-color-scale-dialog.png"])
         wait_for(app, dialog.isVisible)
         heatmap_path = save_widget(app, heatmap_window, "qplot-heatmap.png")
         colorbar_path = save_widget(app, dialog, "qplot-color-scale-dialog.png")

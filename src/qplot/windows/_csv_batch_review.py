@@ -13,6 +13,7 @@ from ._export_paths import (
     export_path_alias_key,
     inspect_export_destination,
 )
+from ._small_dialogs import resize_dialog
 
 
 @dataclass
@@ -22,6 +23,7 @@ class _FileRow:
     action: qtw.QComboBox
     target: ExportDestinationTransaction | None = None
     message: str = ""
+    needs_action: bool = False
 
 
 class CsvFilenameReview(qtw.QDialog):
@@ -30,12 +32,21 @@ class CsvFilenameReview(qtw.QDialog):
         self.setWindowTitle("Review CSV filenames")
         self.folder = os.path.abspath(folder)
         self.rows: list[_FileRow] = []
+        self.issue_rows: list[int] = []
         self.approved: list[tuple[int, ExportDestinationTransaction]] = []
         layout = qtw.QVBoxLayout(self)
-        folder_label = qtw.QLabel(self.folder)
-        folder_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        folder_label.setWordWrap(True)
-        layout.addWidget(folder_label)
+        destination = qtw.QHBoxLayout()
+        self.folder_path = qtw.QLineEdit(self.folder)
+        self.folder_path.setReadOnly(True)
+        self.folder_path.setAccessibleName("Destination folder")
+        self.folder_path.setToolTip(self.folder)
+        destination.addWidget(qtw.QLabel("Destination"))
+        destination.addWidget(self.folder_path, 1)
+        change_folder = qtw.QPushButton("Change folder…")
+        change_folder.setAutoDefault(False)
+        change_folder.clicked.connect(self._change_folder)
+        destination.addWidget(change_folder)
+        layout.addLayout(destination)
         hint = qtw.QLabel("Double-click a filename to edit it. Choose Replace to overwrite an existing file.")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -53,7 +64,20 @@ class CsvFilenameReview(qtw.QDialog):
         self.export_button = export_button
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        footer = qtw.QHBoxLayout()
+        self.summary = qtw.QLabel()
+        footer.addWidget(self.summary)
+        self.next_issue = qtw.QPushButton("Next issue")
+        self.next_issue.clicked.connect(self._next_issue)
+        self.unique_names = qtw.QPushButton("Use unique names")
+        self.unique_names.setToolTip("Add numbered suffixes to resolve filename conflicts.")
+        self.unique_names.clicked.connect(self._use_unique_names)
+        for button in (self.next_issue, self.unique_names):
+            button.setAutoDefault(False)
+            footer.addWidget(button)
+        footer.addStretch()
+        footer.addWidget(buttons)
+        layout.addLayout(footer)
         for row, (source, name) in enumerate(proposed):
             source_item = qtw.QTableWidgetItem(source)
             source_item.setToolTip(source)
@@ -75,12 +99,38 @@ class CsvFilenameReview(qtw.QDialog):
         self.table.itemChanged.connect(self._edited)
         header = self.table.horizontalHeader()
         assert header is not None
-        for column in (0, 3):
-            header.setSectionResizeMode(column, qtw.QHeaderView.ResizeMode.ResizeToContents)
-        for column in (1, 2):
-            header.setSectionResizeMode(column, qtw.QHeaderView.ResizeMode.Stretch)
+        metrics = self.table.fontMetrics()
+        header.resizeSection(0, min(self.table.sizeHintForColumn(0) + 12, metrics.horizontalAdvance("M" * 17)))
+        header.setSectionResizeMode(1, qtw.QHeaderView.ResizeMode.Stretch)
+        header.resizeSection(2, metrics.horizontalAdvance("Duplicate filename") + 20)
+        header.setSectionResizeMode(3, qtw.QHeaderView.ResizeMode.ResizeToContents)
         self._update()
-        self.resize(840, min(500, 185 + 32 * len(proposed)))
+        resize_dialog(self, 840, min(500, 195 + 32 * len(proposed)))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        screen = self.screen()
+        if screen is not None:
+            bounds = screen.availableGeometry().adjusted(8, 8, -8, -8)
+            frame = self.frameGeometry()
+            if not bounds.contains(frame):
+                self.move(max(bounds.left(), min(frame.left(), bounds.right() - frame.width() + 1)),
+                          max(bounds.top(), min(frame.top(), bounds.bottom() - frame.height() + 1)))
+
+    def _change_folder(self):
+        folder = qtw.QFileDialog.getExistingDirectory(self, "Choose CSV destination", self.folder)
+        if not folder or os.path.abspath(folder) == self.folder:
+            return
+        self.folder = os.path.abspath(folder)
+        self.folder_path.setText(self.folder)
+        self.folder_path.setToolTip(self.folder)
+        for row in self.rows:
+            skipped = row.action.currentText() == "Skip"
+            self._inspect(row)
+            if skipped:
+                with QtCore.QSignalBlocker(row.action):
+                    row.action.setCurrentText("Skip")
+        self._update()
 
     def _edited(self, item):
         if item.column() == 1:
@@ -121,23 +171,79 @@ class CsvFilenameReview(qtw.QDialog):
             export_path_alias_key(row.target.filename) for row in self.rows
             if row.target is not None and row.action.currentText() != "Skip"
         )
-        ready = True
+        self.issue_rows.clear()
+        can_rename = False
+        skipped = 0
         count = 0
-        for row in self.rows:
+        for index, row in enumerate(self.rows):
             status = row.message
+            row.needs_action = False
             action = row.action.currentText()
-            if action != "Skip":
-                if row.target and counts[export_path_alias_key(row.target.filename)] > 1:
-                    status = f"Duplicate filename · {status}"
-                    ready = False
-                elif action == "Review":
-                    ready = False
-                else:
-                    count += 1
+            if action == "Skip":
+                skipped += 1
+            elif row.target and counts[export_path_alias_key(row.target.filename)] > 1:
+                status = f"Duplicate filename · {status}"
+                self.issue_rows.append(index)
+                can_rename = True
+            elif action == "Review":
+                row.needs_action = row.target is not None and row.target.target_existed
+                self.issue_rows.append(index)
+                can_rename |= row.target is not None
+            else:
+                count += 1
             row.status.setText(status)
             row.status.setToolTip(status)
+        issues = len(self.issue_rows)
+        summary = f"{count} ready · {issues} {'needs' if issues == 1 else 'need'} attention"
+        if skipped:
+            summary += f" · {skipped} skipped"
+        self.summary.setText(summary)
+        self.next_issue.setEnabled(bool(issues))
+        self.unique_names.setEnabled(can_rename)
         self.export_button.setText(f"Export {count} {'file' if count == 1 else 'files'}")
-        self.export_button.setEnabled(ready and count > 0)
+        self.export_button.setEnabled(not issues and count > 0)
+
+    def _next_issue(self):
+        if self.issue_rows:
+            start = self.table.currentRow()
+            if self.table.currentColumn() in (1, 3):
+                start += 1
+            index = next((i for i in self.issue_rows if i >= start), self.issue_rows[0])
+            row = self.rows[index]
+            if row.needs_action:
+                self.table.setCurrentCell(index, 3)
+                row.action.setFocus()
+            else:
+                self.table.setFocus()
+                self.table.setCurrentItem(row.filename)
+                self.table.editItem(row.filename)
+
+    def _use_unique_names(self):
+        active = [row for row in self.rows if row.target is not None and row.action.currentText() != "Skip"]
+        reserved = {export_path_alias_key(row.filename.text()) for row in active}
+        kept = set()
+        next_suffix: dict[str, int] = {}
+        # Honour an explicit replacement even if its row follows a duplicate.
+        for row in sorted(active, key=lambda row: row.action.currentText() != "Replace"):
+            name = row.filename.text()
+            key = export_path_alias_key(name)
+            if key not in kept and row.action.currentText() != "Review":
+                kept.add(key)
+                continue
+            number = next_suffix.get(key, 2)
+            stem, ext = os.path.splitext(name)
+            while True:
+                candidate = f"{stem} ({number}){ext}"
+                number += 1
+                alias = export_path_alias_key(candidate)
+                if alias not in reserved and not os.path.lexists(os.path.join(self.folder, candidate)):
+                    break
+            reserved.add(alias)
+            next_suffix[key] = number
+            with QtCore.QSignalBlocker(self.table):
+                row.filename.setText(candidate)
+            self._inspect(row)
+        self._update()
 
     def accept(self):
         if not self.export_button.isEnabled():

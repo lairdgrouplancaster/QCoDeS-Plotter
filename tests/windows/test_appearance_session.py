@@ -32,16 +32,20 @@ def test_plot_settings_pages_preview_and_restore_axis_edits(mixed_plot):
     controls.invertCheck.click()
     controls.mouseCheck.click()
     controls.manualRadio.click()
-    controls.minText.setText("-6")
-    controls.maxText.setText("10")
-    controls.maxText.setFocus()
-    QtTest.QTest.keyClick(controls.maxText, QtCore.Qt.Key.Key_Return)
+    for field, value in ((controls.minText, "-6"), (controls.maxText, "10")):
+        field.setFocus()
+        field.selectAll()
+        QtTest.QTest.keyClicks(field, value)
+        QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
+    controls.rangeEntry.locks["max"].click()
+    assert controls.rangeEntry.state.lock == "max"
     assert editor.isVisible()
     assert plot.vb.state["targetRange"][0] == [-6, 10]
     plot.open_plot_appearance_dialog()
     assert editor.pages.currentIndex() == 0
     editor.reject()
     restored = plot._capture_axis_settings("x")
+    assert controls.rangeEntry.state.lock is None
     assert restored.mouse == initial.mouse and restored.inverted == initial.inverted
     assert restored.auto == initial.auto and restored.filtered_auto == initial.filtered_auto
     if initial.auto is False and not initial.filtered_auto:
@@ -53,6 +57,60 @@ def test_plot_settings_pages_preview_and_restore_axis_edits(mixed_plot):
     QtTest.QTest.keyClick(keep, QtCore.Qt.Key.Key_Return)
     assert not editor.isVisible()
     assert plot._capture_axis_settings("x").inverted != initial.inverted
+
+
+def test_keep_changes_returns_to_invalid_range(mixed_plot, qapplication):
+    _main, plot, _runs = mixed_plot
+    plot.open_axis_scale_dialog("x")
+    dialog = plot._plot_appearance_dialog
+    if plot.operation_kind == "plot1d":
+        entry = plot._axis_scale_controls["x"].rangeEntry
+    else:
+        dialog.show_page("Colour scale")
+        entry = plot.colorbar_range_entry
+    dialog.activateWindow()
+    qapplication.processEvents()
+    keep = dialog.appearance_buttons.button(qtw.QDialogButtonBox.StandardButton.Ok)
+    span = entry.fields["span"]
+    initial = entry.state
+    span.setFocus()
+    span.selectAll()
+    QtTest.QTest.keyClicks(span, "-1")
+    QtTest.QTest.mouseClick(keep, QtCore.Qt.MouseButton.LeftButton)
+    qapplication.processEvents()
+    assert dialog.isVisible() and span.hasFocus() and span.selectedText() == "-1"
+    assert entry.error_label.isVisible() and "greater than zero" in entry.error_label.text()
+    assert entry.state.limits == initial.limits
+    QtTest.QTest.keyClick(span, QtCore.Qt.Key.Key_Escape)
+    assert entry.state.automatic == initial.automatic and not entry.error_label.isVisible()
+    span.selectAll()
+    QtTest.QTest.keyClicks(span, "oops")
+    keep.setFocus()
+    QtTest.QTest.keyClick(keep, QtCore.Qt.Key.Key_Return)
+    assert dialog.isVisible() and span.selectedText() == "oops"
+    keep.setFocus()
+    entry.fields["max"].setFocus()
+    assert entry.state.automatic == initial.automatic and span.text() == "oops"
+    if plot.operation_kind == "plot1d":
+        plot.open_axis_scale_dialog("y")
+    dialog.show_page("Datasets")
+    QtTest.QTest.mouseClick(keep, QtCore.Qt.MouseButton.LeftButton)
+    assert dialog.isVisible() and span.isVisible() and span.hasFocus()
+    assert span.selectedText() == "oops" and entry.error_label.isVisible()
+    span.setFocus()
+    span.selectAll()
+    QtTest.QTest.keyClicks(span, "3")
+    QtTest.QTest.mouseClick(keep, QtCore.Qt.MouseButton.LeftButton)
+    assert not dialog.isVisible() and entry.state.value("span") == pytest.approx(3)
+    dialog.show()
+    dialog.activateWindow()
+    qapplication.processEvents()
+    span.setFocus()
+    span.selectAll()
+    QtTest.QTest.keyClicks(span, "-1")
+    cancel = dialog.appearance_buttons.button(qtw.QDialogButtonBox.StandardButton.Cancel)
+    QtTest.QTest.mouseClick(cancel, QtCore.Qt.MouseButton.LeftButton)
+    assert not dialog.isVisible() and entry.state.value("span") == pytest.approx(3)
 
 
 def test_mixed_selection_applies_shared_controls_and_reorders(mixed_plot):
@@ -287,16 +345,22 @@ def test_cancel_restores_volume_colour_scope(volume_main, tmp_path, mode):
     window.openPlot(runs[3][0])
     _wait_for(lambda: bool(window.windows) and loaded(window.windows[-1]) and window.windows[-1]._range_complete)
     plot = window.windows[-1]
+    plot.color_mode.setCurrentIndex(plot.color_mode.findData("slice"))
+    plot.colorbar_range_entry.percent.setValue(91)
     plot.color_mode.setCurrentIndex(plot.color_mode.findData(mode))
     last_auto = plot._last_auto_mode
     plot.open_plot_appearance_dialog()
     dialog = plot._plot_appearance_dialog
     plot.open_colorbar_scale_dialog()
-    plot.colorbar_scope.setCurrentIndex(plot.colorbar_scope.findData("slice" if mode != "slice" else "volume"))
+    plot.colour_source_buttons["slice"].click()
+    plot.colorbar_range_entry.percent.setValue(74)
+    plot.colour_source_buttons["volume"].click()
     dialog.reject()
     assert plot._color_mode == mode
     assert plot._last_auto_mode == last_auto
     assert plot.color_mode.currentData() == mode
-    assert plot.colorbar_scope.currentData() == mode
+    assert plot.colour_source_buttons[last_auto].isChecked()
+    plot.colour_source_buttons["slice"].click()
+    assert plot.colorbar_range_entry.percent.value() == 91
     assert not plot.colorbar_scale_dialog.isVisible()
     assert not errors

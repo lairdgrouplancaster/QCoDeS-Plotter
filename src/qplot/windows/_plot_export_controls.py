@@ -1,5 +1,6 @@
 """Compact, format-specific controls for the existing plot exporters."""
 
+from math import gcd
 from typing import Any
 
 from PyQt6 import QtCore, QtGui
@@ -11,6 +12,7 @@ from ._plot_csv_selection import csv_selection_description, selected_csv_measure
 FIGURE_FORMATS = (
     ("PNG image", ImageExporter), ("SVG", SVGExporter), ("Plot-sized PDF", QtGui.QPdfWriter),
 )
+MAX_IMAGE_DIMENSION = 20_000
 
 
 class _ExportBackgroundCombo(qtw.QComboBox):
@@ -111,33 +113,16 @@ class _ExportBackgroundCombo(qtw.QComboBox):
         painter.drawControl(qtw.QStyle.ControlElement.CE_ComboBoxLabel, option)
 
 
-class _AspectRatioLink(qtw.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setFixedSize(20, 24)
-        self.setObjectName("aspectRatioLink")
-        self.setAccessibleName("Aspect ratio locked")
-        self.setToolTip("Width and height stay linked to preserve the plot's aspect ratio.")
-
-    def paintEvent(self, event):
-        painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        painter.setPen(QtGui.QPen(self.palette().color(QtGui.QPalette.ColorRole.WindowText), 1.4))
-        painter.translate(QtCore.QRectF(self.rect()).center())
-        painter.rotate(-35)
-        painter.drawRoundedRect(QtCore.QRectF(-8, -3, 10, 6), 3, 3)
-        painter.drawRoundedRect(QtCore.QRectF(-2, -3, 10, 6), 3, 3)
-        painter.end()
-
-
 class PlotExportControls(qtw.QWidget):
     def __init__(self, dialog: Any):
         super().__init__(dialog)
         self.dialog = dialog
         self.exporter: Any = None
         self._syncing = False
+        self.size_axis = "width"
         self._parameters: list[Any] = []
         self.fields: dict[str, Any] = {}
+        self.aspect_ratio_label: qtw.QLabel | None = None
         layout = qtw.QVBoxLayout(self)
         self.body_layout = layout
         layout.setContentsMargins(0, 0, 0, 0)
@@ -145,7 +130,7 @@ class PlotExportControls(qtw.QWidget):
         self.output_tabs = qtw.QTabBar()
         self.output_tabs.setAccessibleName("Export output")
         self.output_tabs.addTab("&Figure")
-        self.output_tabs.addTab("Plotted &data")
+        self.output_tabs.addTab("&Data")
         layout.addWidget(self.output_tabs)
         form = qtw.QFormLayout()
         self.format_form = form
@@ -165,6 +150,7 @@ class PlotExportControls(qtw.QWidget):
         layout.addWidget(self.settings)
         self.format_combo.currentIndexChanged.connect(self._format_changed)
         self.output_tabs.currentChanged.connect(self._format_changed)
+        dialog.scene.getViewWidget().sigDeviceTransformChanged.connect(self._update_aspect_ratio)
 
     def _format_changed(self):
         if self._syncing:
@@ -175,10 +161,12 @@ class PlotExportControls(qtw.QWidget):
                 self.dialog.ui.formatList.setCurrentRow(row)
                 return
 
-    def set_exporter(self, exporter, *, pdf=False):
+    def set_exporter(self, exporter, *, pdf=False, size_axis="width"):
         self.clear_bindings()
         self.fields.clear()
+        self.aspect_ratio_label = None
         self.exporter = exporter
+        self.size_axis = size_axis
         self.dialog.csv_scope.setParent(self.dialog)
         self.dialog.csv_scope.hide()
         previous = self.settings
@@ -208,15 +196,30 @@ class PlotExportControls(qtw.QWidget):
             note.setWordWrap(True)
             form.addRow(note)
         elif csv:
-            self._combo(form, "Data to export", "measurements")
-            self.fields["measurements"].setAccessibleName("Data to export")
-            self.fields["measurements"].setToolTip(
-                "Exporting: " + csv_selection_description(self.dialog._qplot_owner, exporter)
-                + "\nHidden measurements are included when selected."
-            )
-            self._combo(form, "Values", "values")
+            measurements = exporter.params.child("measurements").opts["limits"]
+            if len(measurements) == 1:
+                measurement = qtw.QLabel()
+                measurement.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+                measurement.setText(next(iter(measurements)))
+                measurement.setWordWrap(True)
+                font = measurement.font()
+                font.setBold(True)
+                measurement.setFont(font)
+                form.addRow(measurement)
+            else:
+                self._combo(form, "Data to export", "measurements")
+                self.fields["measurements"].setAccessibleName("Data to export")
+                self.fields["measurements"].setToolTip(
+                    "Exporting: " + csv_selection_description(self.dialog._qplot_owner, exporter)
+                    + "\nHidden measurements are included when selected."
+                )
+            if len(exporter.params.child("values").opts["limits"]) > 1:
+                self._combo(form, "Values", "values")
             self.dialog.csv_scope.setParent(self.settings)
-            form.addRow("", self.dialog.csv_scope)
+            if "measurements" in self.fields or "values" in self.fields:
+                form.addRow("", self.dialog.csv_scope)
+            else:
+                form.addRow(self.dialog.csv_scope)
             self.dialog.csv_scope.show()
             selection = selected_csv_measurements(self.dialog._qplot_owner, exporter)
             if "columnMode" in exporter.params.names and selection and len(selection) > 1:
@@ -232,20 +235,24 @@ class PlotExportControls(qtw.QWidget):
             row.setContentsMargins(0, 0, 0, 0)
             for name in ("width", "height"):
                 if name == "height":
-                    row.addWidget(_AspectRatioLink())
                     row.addWidget(qtw.QLabel("Height"))
                 spin = qtw.QDoubleSpinBox() if type(exporter) is SVGExporter else qtw.QSpinBox()
-                spin.setRange(1, 20_000)
+                spin.setRange(1, MAX_IMAGE_DIMENSION)
                 if isinstance(spin, qtw.QDoubleSpinBox):
                     spin.setDecimals(2)
                 spin.setSuffix(" px")
                 spin.setKeyboardTracking(False)
                 spin.setAccessibleName(f"Export {name}")
                 spin.setToolTip(f"Export {name} in pixels. Changing it also adjusts the other dimension.")
-                spin.valueChanged.connect(lambda value, key=name: self._write(key, value))
+                spin.valueChanged.connect(lambda value, key=name: self._set_dimension(key, value))
                 self.fields[name] = spin
                 row.addWidget(spin, 1)
             form.addRow("Width", sizes)
+            self.aspect_ratio_label = qtw.QLabel()
+            self.aspect_ratio_label.setObjectName("exportAspectRatio")
+            self.aspect_ratio_label.setToolTip("Editing either dimension adjusts the other to preserve the plot's proportions.")
+            form.addRow("", self.aspect_ratio_label)
+            self._update_aspect_ratio()
             colour = _ExportBackgroundCombo(self.settings)
             colour.colourChanged.connect(lambda value: self._write("background", value))
             self.fields["background"] = colour
@@ -270,6 +277,50 @@ class PlotExportControls(qtw.QWidget):
         self.settings.ensurePolished()
         self.body_layout.invalidate()
         self.dialog.fit_export_controls()
+
+    @QtCore.pyqtSlot()
+    def _update_aspect_ratio(self):
+        label = self.aspect_ratio_label
+        if label is None:
+            return
+        source = self.exporter.getSourceRect()
+        width, height = source.width(), source.height()
+        if width <= 0 or height <= 0:
+            label.setText("Fixed aspect ratio")
+            return
+        divisor = gcd(width, height)
+        text = f"Fixed aspect ratio · {width // divisor}:{height // divisor}"
+        if label.text() != text:
+            # Keep the edited dimension on format changes and the width on a canvas resize.
+            axis = "width" if label.text() else self.size_axis
+            self._set_dimension(axis, self.exporter.params[axis])
+        label.setText(text)
+
+    def _set_dimension(self, axis, value):
+        if self._syncing:
+            return
+        source = self.exporter.getSourceRect()
+        if source.width() <= 0 or source.height() <= 0:
+            return
+        self.size_axis = axis
+        ratio = source.height() / source.width() if axis == "width" else source.width() / source.height()
+        other = "height" if axis == "width" else "width"
+
+        def pixels(n):
+            return int(n) if type(self.exporter) is ImageExporter else round(n, 2)
+
+        value = max(1, min(MAX_IMAGE_DIMENSION, pixels(value)))
+        linked = pixels(value * ratio)
+        bounded = max(1, min(MAX_IMAGE_DIMENSION, linked))
+        if bounded != linked:
+            value = max(1, min(MAX_IMAGE_DIMENSION, pixels(bounded / ratio)))
+            bounded = max(1, min(MAX_IMAGE_DIMENSION, pixels(value * ratio)))
+        # Publish a single pair, including SVG's displayed precision. Letting
+        # each upstream callback recalculate its partner can undo the bounds.
+        params = self.exporter.params
+        params.child(axis).setValue(value, blockSignal=getattr(self.exporter, axis + "Changed"))
+        params.child(other).setValue(bounded, blockSignal=getattr(self.exporter, other + "Changed"))
+        self._sync_values()
 
     def clear_bindings(self):
         for parameter in self._parameters:

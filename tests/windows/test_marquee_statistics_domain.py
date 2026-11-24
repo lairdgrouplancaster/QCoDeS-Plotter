@@ -39,16 +39,18 @@ def _select(plot, heatmap, start, count):
 def _open_and_copy(plot, expected, qapplication):
     menu = plot._new_marquee_context_menu()
     try:
-        action = next(action for action in menu.actions() if action.text() == "Stats...")
+        action = next(action for action in menu.actions() if action.text() == "Selection statistics…")
         assert action.isEnabled()
         action.trigger()
         dialog = plot._marquee_stats_dialog
         assert dialog.isVisible()
         buttons = dialog.findChild(qtw.QDialogButtonBox)
-        next(button for button in buttons.buttons() if button.text() == "Copy").click()
+        next(button for button in buttons.buttons() if button.text() == "Copy full report").click()
         assert qapplication.clipboard().text() == expected
         table = dialog.findChild(qtw.QTableWidget)
-        assert table.rowCount() == len(expected.splitlines())
+        first = "Statistics" if "outside the statistics display range" in expected else "Average"
+        assert table.item(0, 0).text() == first
+        assert table.findItems("Selection and source", QtCore.Qt.MatchFlag.MatchExactly)
         dialog.close()
     finally:
         menu.close()

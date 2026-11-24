@@ -1,4 +1,4 @@
-"""Selection statistics through real QCoDeS samples and the Stats action."""
+"""Selection statistics through real QCoDeS samples and the selection menu."""
 
 from fractions import Fraction
 
@@ -53,7 +53,7 @@ def test_stats_action_retains_recorded_variation(measured_plots, no_callback_err
     assert f'Average: {host.formatNum(mean)}' in text
     assert f'Standard deviation: {host.formatNum(deviation)}' in text
     menu = host._new_marquee_context_menu()
-    next(action for action in menu.actions() if action.text() == 'Stats...').trigger()
+    next(action for action in menu.actions() if action.text() == 'Selection statistics…').trigger()
     assert host._marquee_stats_dialog.isVisible()
     host._marquee_stats_dialog.close()
 
@@ -68,13 +68,21 @@ def test_heatmap_report_identifies_the_primary_grid_and_finite_cells(measured_pl
     plot.set_marquee_rect(QtCore.QRectF(-.5, -.5, 10, 10))
     assert plot.show_marquee_stats_dialog()
     dialog = plot._marquee_stats_dialog
-    next(b for b in dialog.findChild(qtw.QDialogButtonBox).buttons() if b.text() == "Copy").click()
+    assert dialog.findChild(qtw.QLabel).text() == f"Signal (signal) [A] · Run {plot.ds.run_id}"
+    table = dialog.findChild(qtw.QTableWidget)
+    fields = [table.item(row, 0).text() for row in range(table.rowCount())]
+    assert fields[:5] == ["Average", "Standard deviation", "Max", "Min", "Selection and source"]
+    assert table.item(fields.index("Run GUID"), 1).text() == plot.ds.guid
+    next(b for b in dialog.findChild(qtw.QDialogButtonBox).buttons() if b.text() == "Copy full report").click()
     text = qtw.QApplication.clipboard().text()
     assert f"Run: {plot.ds.run_id} ({plot.ds.guid})" in text
     assert "Measurement: Signal (signal) [A]" in text
     assert "X quantity: Coordinate (x) [V]" in text
     assert "Statistics quantity: Signal (signal) [A]" in text
     assert "Selected grid: 10 × 10" in text
-    assert "83 finite cells of 100 selected" in text
+    summary = dialog.findChild(qtw.QLabel, "statisticsContribution")
+    assert summary.isVisible() and summary.y() < table.y()
+    assert "83 of 100 selected cells contributed" in summary.text()
+    assert summary.text() in text
     assert "Average: 58.0" in text
     dialog.close()

@@ -29,8 +29,6 @@ if TYPE_CHECKING:
 
         def initLabels(self) -> None: ...
 
-        def initMenu(self) -> None: ...
-
         def mouseMoved(self, pos: object) -> None: ...
 
 
@@ -40,7 +38,6 @@ else:
 
 
 SNAP_TO_TRACE_COMMAND = command_spec("plot.snap_to_trace")
-SNAP_TO_TRACE_SHORTCUT_LABEL = SNAP_TO_TRACE_COMMAND.shortcut_display_text()
 # Qt scene coordinates use logical pixels, so the capture radius stays the
 # same size when zooming data or moving between display pixel densities.
 SNAP_RADIUS_PIXELS = 12.0
@@ -271,7 +268,6 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
         self.snap_to_trace_action = create_action(
             SNAP_TO_TRACE_COMMAND,
             self,
-            text=f"Snap to Trace ({SNAP_TO_TRACE_SHORTCUT_LABEL})",
             status_tip="Toggle snap-to-trace cursor readout",
             checkable=True,
             )
@@ -288,38 +284,6 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             )
         self.snap_to_trace_action.toggled.connect(self._snap_to_trace_toggled)
         self.snap_to_trace_action.setChecked(True)
-
-
-    def initMenu(self):
-        """
-        Adds trace snapping to the plot window menu bar.
-
-        """
-        super().initMenu()
-
-        view_menu = self._menu_by_title("&View")
-        if view_menu is None or self.snap_to_trace_action is None:
-            return
-
-        actions = view_menu.actions()
-        before = actions[0] if actions else None
-        view_menu.insertAction(before, self.snap_to_trace_action)
-        view_menu.insertSeparator(before)
-
-
-    def _menu_by_title(self, title):
-        """
-        Returns the menu matching a top-level menu title.
-
-        """
-        menu_bar = self.menuBar()
-        if menu_bar is None:
-            return None
-
-        for action in menu_bar.actions():
-            if action.text() == title:
-                return action.menu()
-        return None
 
 
     @QtCore.pyqtSlot(bool)

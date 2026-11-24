@@ -51,7 +51,11 @@ from ._plot_csv_selection import (
     csv_selection_description,
     selected_csv_measurements,
 )
-from ._plot_export_controls import FIGURE_FORMATS, PlotExportControls
+from ._plot_export_controls import (
+    FIGURE_FORMATS,
+    MAX_IMAGE_DIMENSION,
+    PlotExportControls,
+)
 from ._plot_transform_labels import native_axis_quantities
 from ._preferences import (
     COPY_PLOT_IMAGE_RESOLUTION_300_DPI,
@@ -65,7 +69,7 @@ from ._window_controls import _window_is_retired
 if TYPE_CHECKING:
     from ._dataset_handle import DatasetKey
 
-_MAX_EXPORTED_IMAGE_SIZE = 20_000
+_MAX_EXPORTED_IMAGE_SIZE = MAX_IMAGE_DIMENSION
 _HIGH_DPI_COPY_RESOLUTION = 300
 _INCHES_PER_METER = 39.370_078_740_157_48
 _DpiAxis = Literal["x", "y"]
@@ -112,8 +116,12 @@ if (
     class _SafePyqtgraphExportDialog(_PyqtgraphExportDialog):
         """PyQtGraph's format UI with qPlot-owned file publication."""
 
+        currentExporter: Any
+
         def __init__(self, scene: Any, owner: Any):
             self._qplot_owner_ref = weakref.ref(owner)
+            self._format_settings: dict[type, dict[str, Any]] = {}
+            self._opening_height = 0
             super().__init__(scene)
             self.setParent(owner, QtCore.Qt.WindowType.Window)
             self.setObjectName("plotExportDialog")
@@ -143,7 +151,7 @@ if (
                 actions.addWidget(button)
                 button.show()
             self.ui.gridLayout.addLayout(actions, 2, 0, 1, 3)
-            self.setWindowTitle("Export plot")
+            self.setWindowTitle("Export figure or plot data")
             self.ui.gridLayout.setContentsMargins(16, 16, 16, 12)
             self.ui.gridLayout.setSpacing(12)
             self.ui.gridLayout.setRowStretch(0, 1)
@@ -154,10 +162,22 @@ if (
             owner.destroyed.connect(self._qplot_owner_destroyed)
 
         def show(self, item: Any = None) -> None:
+            opening = not self.isVisible()
+            if opening:
+                self._format_settings.clear()
+                self._opening_height = 0
+                self.currentExporter = None
             self.updateItemList()
             super().show()
             self.selectBox.hide()
             self.fit_export_controls()
+            if opening and self.currentExporter is not None:
+                # The Data form depends on the plotted measurements. Measure it
+                # before the first paint so either tab fits at the opening size.
+                tabs = self.controls.output_tabs
+                first = tabs.currentIndex()
+                tabs.setCurrentIndex(1 - first)
+                tabs.setCurrentIndex(first)
 
         def updateItemList(self, select: Any = None) -> None:
             # Keep the inherited exporter plumbing fixed to the complete
@@ -171,8 +191,7 @@ if (
         def fit_export_controls(self) -> None:
             if not self.isVisible():
                 return
-            buttons = [button for button in (self.ui.copyBtn, self.ui.exportBtn, self.ui.closeBtn)
-                       if not button.isHidden()]
+            buttons = (self.ui.copyBtn, self.ui.exportBtn, self.ui.closeBtn)
             width = max(button.sizeHint().width() for button in buttons)
             for button in buttons:
                 button.setFixedWidth(width)
@@ -182,7 +201,8 @@ if (
             self.controls.body_layout.activate()
             preferred = self.controls.sizeHint()
             margins = self.ui.gridLayout.contentsMargins()
-            target_width = min(max(480, preferred.width() + margins.left() + margins.right()), bounds.width() - 40)
+            # Both tabs share a width. Let long measurement descriptions wrap.
+            target_width = min(max(480, 40 * self.fontMetrics().horizontalAdvance("M")), bounds.width() - 40)
             # Resolve the real viewport width, including theme padding and
             # borders, before measuring wrapped labels at that width.
             self.resize(target_width, self.height())
@@ -203,7 +223,8 @@ if (
             scroll_chrome = max(self.controls_scroll.height() - viewport.height(), horizontal.sizeHint().height())
             desired_height = (content_height + scroll_chrome + margins.top() + margins.bottom()
                               + action_height + spacing + feedback_height + 12)
-            self.resize(target_width, min(desired_height, bounds.height() - 80))
+            self._opening_height = max(self._opening_height, desired_height)
+            self.resize(target_width, min(self._opening_height, bounds.height() - 80))
             frame = self.frameGeometry()
             self.move(max(bounds.left(), min(frame.left(), bounds.right() - frame.width() + 1)),
                       max(bounds.top(), min(frame.top(), bounds.bottom() - frame.height() + 1)))
@@ -230,8 +251,25 @@ if (
                     selected_row = row
             self.ui.formatList.setCurrentRow(selected_row)
 
+        def _remember_format_settings(self) -> None:
+            exporter = self.currentExporter
+            if type(exporter) not in _SAFE_PYQTGRAPH_FILE_EXPORTERS:
+                return
+            options = {p.name(): p.value() for p in exporter.params.children()}
+            if type(exporter) is CSVExporter:
+                selected = exporter._qplot_csv_measurements.get(options["measurements"])
+                if selected is not None:
+                    options["measurements"] = weakref.ref(selected.item)
+                if options["values"] == CSV_HEATMAP_VALUES:
+                    options["values"] = getattr(exporter, "_qplot_csv_line_values", CSV_UNDERLYING_VALUES)
+                    options["columnMode"] = getattr(exporter, "_qplot_csv_columns", "(x,y) per plot")
+            else:
+                options.pop("height" if self.controls.size_axis == "width" else "width")
+            self._format_settings[type(exporter)] = options
+
         def exportFormatChanged(self, item: Any, previous: Any) -> None:
             """Instantiate only an exact allowlisted exporter class."""
+            self._remember_format_settings()
             exporter_class = getattr(item, "expClass", None)
             scope = getattr(self, "csv_scope", None)
             if scope is not None:
@@ -258,18 +296,32 @@ if (
             self.currentExporter = exporter_class(item=target)
             self.ui.paramTree.setParameters(self.currentExporter.parameters())
             exporter_type = type(self.currentExporter)
+            saved = self._format_settings.get(exporter_type, {})
+            params = self.currentExporter.parameters()
             if isinstance(self.currentExporter, CSVExporter):
                 # Numeric exports always retain the original precision. The
                 # upstream decimal-place control is unused by both our writers.
-                params = self.currentExporter.parameters()
                 params.setOpts(title="CSV options")
                 params.child("separator").setOpts(title="Separator")
                 params.child("columnMode").setOpts(title="Columns")
                 params.removeChild(params.child("precision"))
-                configure_csv_measurements(owner, self.currentExporter)
+                choice = saved.get("measurements")
+                if isinstance(choice, weakref.ReferenceType):
+                    choice = choice()
+                configure_csv_measurements(owner, self.currentExporter, previous=choice)
+                if "columnMode" in saved:
+                    params["columnMode"] = saved["columnMode"]
+                self.currentExporter._qplot_csv_line_values = saved.get("values", CSV_UNDERLYING_VALUES)
                 self._configure_csv_data_options()
+                if not csv_exports_heatmap(owner, self.currentExporter):
+                    params["values"] = self.currentExporter._qplot_csv_line_values
+                if "separator" in saved:
+                    params["separator"] = saved["separator"]
                 params.child("measurements").sigValueChanged.connect(self._csv_measurement_changed)
                 self._update_csv_scope()
+            else:
+                for name, value in saved.items():
+                    params[name] = value
             parameter_tips = {
                 "width": "Export width in pixels. Changing this also adjusts the height to preserve the aspect ratio.",
                 "height": "Export height in pixels. Changing this also adjusts the width to preserve the aspect ratio.",
@@ -305,7 +357,7 @@ if (
                 "Copy the complete plot using the dimensions, background and options selected in this dialog."
             )
             self.feedback.hide()
-            self.controls.set_exporter(self.currentExporter)
+            self.controls.set_exporter(self.currentExporter, size_axis="height" if "height" in saved else "width")
             if exporter_type is CSVExporter:
                 self._update_csv_scope()
 
@@ -375,7 +427,7 @@ if (
             if csv_exports_heatmap(owner, exporter):
                 layer = selection[0].item if selection else owner
                 grid = np.asarray(layer.__dict__.get("data_grid", layer.__dict__.get("dataGrid", [])))
-                shape = f" ({grid.shape[1]:,} × {grid.shape[0]:,} cells)" if grid.ndim == 2 else ""
+                shape = f" · {grid.shape[1]:,} × {grid.shape[0]:,} cells" if grid.ndim == 2 else ""
                 source = selection[0].source if selection else owner
                 report = getattr(source, "_heatmap_resolution_report", None)
                 processing = "The grid retains applied operations and any spatial averaging."
@@ -384,7 +436,7 @@ if (
                         processing = "Includes spatial averaging into display cells."
                     if report.sampled:
                         processing += " The source rows were sampled."
-                text = f"Selected heatmap grid{shape}. {processing}"
+                text = f"Current heatmap grid{shape}\n{processing}"
             elif exporter.params["values"] == CSV_TRANSFORMED_VALUES:
                 text = "All loaded samples, after operations and plot transforms. Zoom does not limit the export."
             else:
@@ -1106,7 +1158,7 @@ class PlotExportMixin(_PlotExportBase):
                 selected_csv_measurements(self, exporter, validate=True)
             destination = choose_export_path_with_suffixes(
                 self,
-                caption="Export Plot",
+                caption="Export figure or plot data",
                 suggested_path=suggested_path,
                 name_filter=name_filter,
                 allowed_suffixes=suffixes,

@@ -66,7 +66,7 @@ _STYLESHEET_TEMPLATE = Template(
     QGroupBox:disabled, QGroupBox::title:disabled {
         color: $disabled_text;
     }
-    QWidget#aspectRatioLink, QLabel {
+    QLabel {
         color: $text;
     }
     QLabel:disabled {
@@ -76,11 +76,11 @@ _STYLESHEET_TEMPLATE = Template(
         color: $text_strong;
         font-weight: 600;
     }
-    QLabel#mainEmptyStateDetail {
+    QLabel#mainEmptyStateDetail, QLabel#exportAspectRatio {
         color: $muted_text;
     }
-    QLabel#rangeEntrySummary {
-        color: $muted_text;
+    QLabel#rangeEntryError {
+        color: $danger;
         font-size: 9pt;
     }
     QTextEdit, QPlainTextEdit {
@@ -165,6 +165,20 @@ _STYLESHEET_TEMPLATE = Template(
     QToolButton {
         padding: 1px;
     }
+    QToolButton#rangeFieldLock:!checked:!hover:!focus:!pressed {
+        background: transparent;
+        border-color: transparent;
+    }
+    QToolButton#rangeFieldLock:focus {
+        border-color: $accent;
+    }
+    QToolButton#rangeFieldLock {
+        padding: 0;
+    }
+    QToolButton#rangeFieldUseData {
+        border-top-left-radius: 0;
+        border-bottom-left-radius: 0;
+    }
     QPushButton::default {
         border-bottom: 1px solid $accent;
     }
@@ -226,6 +240,11 @@ _STYLESHEET_TEMPLATE = Template(
     QLineEdit#databasePathField {
         background-color: $field_alt_bg;
         color: $muted_text;
+    }
+    QLineEdit#rangeFieldValue {
+        border-top-right-radius: 0;
+        border-bottom-right-radius: 0;
+        border-right-width: 0;
     }
     QSpinBox#traceAppearanceOpacity,
     QSpinBox#heatmapAppearanceOpacity {

@@ -13,7 +13,7 @@ def test_menu_status_reserves_all_menu_titles(qapplication, width):
     window = QtWidgets.QMainWindow()
     menu = window.menuBar()
     menu.setNativeMenuBar(False)
-    for name in ("File", "Edit", "Window", "View", "Settings", "Help"):
+    for name in ("File", "Edit", "View", "Settings", "Window", "Help"):
         menu.addMenu(name)
     status = PlotStatusWidget(window)
     controller = _MenuStatus(window, status)
@@ -22,7 +22,7 @@ def test_menu_status_reserves_all_menu_titles(qapplication, width):
     try:
         for busy in (False, True):
             if busy:
-                status.start_progress()
+                status.show_progress()
             else:
                 status.show_message("Loaded data " * 100)
             qapplication.processEvents()

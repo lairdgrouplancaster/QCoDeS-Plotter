@@ -1804,7 +1804,7 @@ class SnapToTraceTestCase(unittest.TestCase):
                 )
             action_texts = [action.text() for action in view_menu.actions()]
 
-            self.assertIn("Trace Appearance…", action_texts)
+            self.assertIn("Trace appearance…", action_texts)
         finally:
             host.deleteLater()
 
@@ -3144,7 +3144,9 @@ class SnapToTraceTestCase(unittest.TestCase):
         menu = window._new_marquee_context_menu()
         action_texts = [action.text() for action in menu.actions()]
 
-        self.assertEqual(action_texts, ["Zoom", "Zoom X", "Zoom Y", "Stats..."])
+        self.assertEqual(action_texts, [
+            "Zoom to selection", "Zoom X only", "Zoom Y only", "Selection statistics…",
+        ])
 
     def test_1d_marquee_stats_include_axis_ranges(self):
         window = plot1d.__new__(plot1d)

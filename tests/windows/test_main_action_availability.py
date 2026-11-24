@@ -60,6 +60,8 @@ def assert_no_database_actions(window):
 
 def test_empty_window_keeps_one_load_button_and_useful_help(window):
     assert_no_database_actions(window)
+    assert window.refreshAction.text() == "&Refresh runs and live plots"
+    assert [shortcut.toString() for shortcut in window.refreshAction.shortcuts()] == ["F5", "R"]
     assert window.loadDatabaseButton.isEnabled()
     assert window.fileTextbox.isEnabled() and window.fileTextbox.acceptDrops()
     assert window.emptyStateHelpButton.isEnabled() and window.emptyStateHelpButton.isVisible()

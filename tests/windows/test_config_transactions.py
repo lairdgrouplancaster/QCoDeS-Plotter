@@ -555,6 +555,18 @@ def test_recent_database_save_failure_keeps_menu_and_load_usable(typed_run_windo
     assert not notice.details.text()
 
 
+def test_recent_database_menu_disambiguates_only_shared_names(typed_run_window, tmp_path):
+    window, _runs = typed_run_window
+    paths = [tmp_path / "first" / "raw" / "data.db", tmp_path / "next" / "raw" / "data.db",
+             tmp_path / "other" / "data.db", tmp_path / "one.db"]
+    window._session_recent_database_paths = list(map(str, paths))
+    window.refresh_recent_database_menu()
+    actions = window.recentDatabaseMenu.actions()
+    labels = [Path(action.text().split(". ", 1)[1]) for action in actions]
+    assert labels == [Path("first/raw/data.db"), Path("next/raw/data.db"), Path("other/data.db"), Path("one.db")]
+    assert [action.toolTip() for action in actions] == list(map(str, paths))
+
+
 def test_reset_only_discards_session_history_after_successful_save(typed_run_window):
     window, _runs = typed_run_window
     current = window.fileTextbox.text()

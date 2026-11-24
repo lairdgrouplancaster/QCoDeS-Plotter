@@ -17,7 +17,7 @@ SIZES = {
     "qplot-main-window.png": (1120, 760),
     "qplot-line-plot.png": (920, 620),
     "qplot-heatmap.png": (980, 660),
-    "qplot-color-scale-dialog.png": (700, 700),
+    "qplot-color-scale-dialog.png": (700, 360),
 }
 # Conservative scope: all application/native sources and resources, dependency
 # specifications and the capture implementation/environment. Never docs output.
@@ -87,11 +87,10 @@ def validate_images(assets, *, exact_dimensions=False):
         with Image.open(path) as image:
             image.load()  # verify alone does not decode the compressed pixels
             width, height = image.size
-            if exact_dimensions:
-                valid_size = image.size == expected
-            else:
+            valid_size = image.size == expected
+            if not exact_dimensions:
                 # Also accept the previous approved set in ordinary PR checks.
-                valid_size = 600 <= width <= 2400 and 450 <= height <= 1800
+                valid_size = valid_size or (600 <= width <= 2400 and 450 <= height <= 1800)
             if not valid_size:
                 raise ValueError(f"Unexpected dimensions for {name}: {image.size}")
             rgb = image.convert("RGB")

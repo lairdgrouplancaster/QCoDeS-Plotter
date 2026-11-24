@@ -21,7 +21,7 @@ class CommandRegistryTestCase(unittest.TestCase):
         try:
             action = create_action("database.load", window)
 
-            self.assertEqual(action.text(), "&Load Database...")
+            self.assertEqual(action.text(), "&Load database…")
             self.assertEqual(action.shortcut().toString(), "Ctrl+L")
             self.assertEqual(action.statusTip(), "Load a QCoDeS database")
             self.assertEqual(
@@ -41,7 +41,7 @@ class CommandRegistryTestCase(unittest.TestCase):
         resolved_shortcuts = quit_action.resolved_shortcuts()
         fallback = QtGui.QKeySequence("Ctrl+Q")
 
-        self.assertEqual(close_action.text, "&Close Database")
+        self.assertEqual(close_action.text, "&Close database")
         self.assertEqual(close_action.object_name, "closeDatabaseAction")
         self.assertEqual(quit_action.help_row()[0], quit_action.shortcut_display_text())
         self.assertEqual(
@@ -68,7 +68,7 @@ class CommandRegistryTestCase(unittest.TestCase):
     def test_dynamic_measurement_command_uses_expected_number(self):
         spec = plot_measurement_command_spec(2)
 
-        self.assertEqual(spec.text, "Plot Measurement 3 in Selected Run")
+        self.assertEqual(spec.text, "Plot measurement 3 in selected run")
         self.assertEqual(spec.resolved_shortcuts()[0].toString(), "Ctrl+3")
         self.assertEqual(spec.status_tip, "Plot measurement 3 in the selected run")
 
@@ -77,7 +77,8 @@ class CommandRegistryTestCase(unittest.TestCase):
 
         self.assertIsNotNone(spec)
         self.assertEqual(spec.resolved_shortcuts()[0].toString(), "Ctrl+Alt+O")
-        self.assertEqual(spec.status_tip, "Show or hide the data operations panel")
+        self.assertIs(spec, toolbar_toggle_command_spec("Slice operations"))
+        self.assertIn("Slice operations", spec.help_row()[1])
 
     def test_operations_panel_has_one_canonical_shortcut(self):
         self.assertEqual(
@@ -122,7 +123,9 @@ class CommandRegistryTestCase(unittest.TestCase):
 
         for command_id, section in (
             ("database.load", "Main Window"),
+            ("database.refresh", "Main Window"),
             ("copy.selection", "Main Window — Run Details Focused"),
+            ("plot.refresh", "All Plot Windows"),
             ("plot.snap_to_trace", "All Plot Windows"),
             ("toolbar.axis_control", "Cut Windows"),
             ("heatmap.horizontal_cut", "2D Heatmap Windows"),

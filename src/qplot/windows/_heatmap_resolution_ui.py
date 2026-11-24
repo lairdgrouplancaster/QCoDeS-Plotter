@@ -171,11 +171,16 @@ class HeatmapResolutionUi(QtCore.QObject):
         layout.addWidget(button_box)
         dialog.resize(520, dialog.sizeHint().height())
         return dialog
+
     def _open_preferences(self, dialog: qtw.QDialog) -> None:
         """Close the alert, then open the preference that controls this limit."""
+        report = self._report
+        if report is None:
+            return
+        setting = report.limiting_preference
         dialog.accept()
         QtCore.QTimer.singleShot(
             0,
-            lambda: self.window.show_preferences_dialog(initial_tab="Performance"),
+            lambda: self.window.show_preferences_dialog(initial_tab="Performance", focus_setting=setting),
             )
 

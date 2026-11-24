@@ -25,6 +25,7 @@ from ._small_dialogs import (
     dialog_layout,
     resize_dialog,
 )
+from ._window_controls import focus_qplot_window
 
 _OPEN_HELP_DIALOGS: list[qtw.QDialog] = []
 
@@ -58,7 +59,7 @@ QUICK_START_HTML = """
 <h2>Quick start</h2>
 <ol>
   <li><b>Load a database.</b> Drop a QCoDeS .db file onto the database field,
-      or use <b>File -&gt; Load Database...</b>.</li>
+      or use <b>File -&gt; Load database…</b>.</li>
   <li><b>Select a run.</b> Click a row in the run table to see details,
       parameters, preview images, and metadata.</li>
   <li><b>Open a plot.</b> Double-click the measurement preview. You can also
@@ -95,7 +96,7 @@ def add_help_menu(
 
     help_menu.addSeparator()
 
-    copy_log_path_action = QtGui.QAction("Copy Path to &Diagnostic Log", window)
+    copy_log_path_action = QtGui.QAction("Copy path to &diagnostic log", window)
     copy_log_path_action.setObjectName("copyDiagnosticLogPathAction")
     copy_log_path_action.setStatusTip("Copy the qPlot diagnostic log file path")
     copy_log_path_action.triggered.connect(lambda: copy_diagnostic_log_path(window))
@@ -106,7 +107,7 @@ def add_help_menu(
         else "File Explorer" if sys.platform == "win32"
         else "File Manager"
     )
-    show_log_action = QtGui.QAction(f"&Show Diagnostic Log in {file_manager}", window)
+    show_log_action = QtGui.QAction(f"&Show diagnostic log in {file_manager}", window)
     show_log_action.setObjectName("showDiagnosticLogAction")
     show_log_action.setStatusTip("Show the qPlot diagnostic log in your file manager")
     show_log_action.triggered.connect(lambda: show_diagnostic_log(window))
@@ -297,10 +298,13 @@ def show_quick_start(parent: qtw.QWidget | None = None) -> qtw.QDialog:
 
 
 def show_keyboard_shortcuts(parent: qtw.QWidget | None = None) -> qtw.QDialog:
-    """
-    Opens the keyboard-shortcuts help dialog.
-
-    """
+    """Open or raise this window's keyboard and mouse reference."""
+    name = "qplotKeyboardShortcutsDialog"
+    dialogs = _OPEN_HELP_DIALOGS if parent is None else getattr(parent, "_help_dialogs", ())
+    for existing in dialogs:
+        if existing.objectName() == name and existing.isVisible():
+            focus_qplot_window(existing)
+            return existing
     font = QtGui.QFont(parent.font() if parent is not None else qtw.QApplication.font())
     font.setBold(True)
     metrics = QtGui.QFontMetrics(font)
@@ -327,7 +331,7 @@ def show_keyboard_shortcuts(parent: qtw.QWidget | None = None) -> qtw.QDialog:
         parent,
         "qPlot keyboard and mouse controls",
         shortcut_help_html(column_width, sections=ordered),
-        "qplotKeyboardShortcutsDialog",
+        name,
         size=(max(800, column_width + 460), 600),
         )
     search = qtw.QLineEdit(dialog)
@@ -370,7 +374,7 @@ def copy_diagnostic_log_path(parent: Any | None = None) -> str:
 
 
 def show_diagnostic_log(parent: Any | None = None) -> bool:
-    """Reveal the log in Finder, or open its folder in the file manager."""
+    """Show the diagnostic log in the system file manager."""
     from ._file_manager import reveal_file_in_file_manager
 
     path = str(default_log_file())

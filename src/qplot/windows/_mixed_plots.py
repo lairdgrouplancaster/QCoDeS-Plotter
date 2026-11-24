@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING, Any
 
+import pyqtgraph as pg
 from PyQt6 import QtGui
 
 from ._mixed_appearance import PlotAppearanceDialog
@@ -29,19 +30,11 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
     _appearance_preview_hidden: bool = False
 
     def initMenu(self):
-        super().initMenu()
+        self._ensure_colorbar_scale_action()
         self._open_plot_settings_page = self.open_plot_appearance_dialog
-        menu_bar = self.menuBar()
-        for menu_action in menu_bar.actions() if menu_bar is not None else ():
-            if menu_action.text().replace("&", "") == "View":
-                menu = menu_action.menu()
-                if menu is not None:
-                    menu.addSeparator()
-                    action = QtGui.QAction("Plot settings…", self)
-                    action.triggered.connect(lambda _checked: self.open_plot_appearance_dialog())
-                    menu.addAction(action)
-                    self.appearance_action = action
-                break
+        self.appearance_action = QtGui.QAction("Plot settings…", self)
+        self.appearance_action.triggered.connect(lambda _checked: self.open_plot_appearance_dialog())
+        super().initMenu()
 
     def open_plot_appearance_dialog(self, key=None, *, kind=None, page="Datasets"):
         dialog = self.__dict__.get("_plot_appearance_dialog")
@@ -237,6 +230,7 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
     def _sync_heatmap_layer_order(self):
         super()._sync_heatmap_layer_order()
         self._sync_plot_item_order()
+        self._ensure_colorbar_scale_action()
 
     def _set_layer_visibility(self, layer, visible):
         super()._set_layer_visibility(layer, visible)
@@ -343,7 +337,12 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
             self._sync_mixed_axis_labels()
 
     def _apply_trace_style(self, label, line):
+        displayed = isinstance(line, pg.PlotDataItem)
+        current_view = line.getViewBox() if displayed else None
+        visible = line.isVisible() if displayed else False
         super()._apply_trace_style(label, line)
+        if displayed and (current_view is not line.getViewBox() or visible != line.isVisible()):
+            self._refresh_trace_axis_auto_ranges()
         self._sync_plot_item_order()
 
     def _ensure_trace_axis_viewboxes(self, *, top=False, right=False):
@@ -432,17 +431,8 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
             if line_host:
                 self._colorbar_manual_levels = None
                 self._init_colorbar_scale_controls()
-            else:
-                # Source promotion can attach ready overlays before this
-                # heatmap host publishes its first data. They need the shared
-                # scale now, including when the primary load fails or stalls.
-                self.__dict__["_colorbar_pending_primary"] = True
             items = self._heatmap_colorbar_items()
-            self.bar = self.plot.addColorBar(
-                items, colorMap=self._colorbar_colormap(),
-                rounding=self._data_colorbar_rounding(), width=self._configured_colorbar_width(),
-                colorMapMenu=False,
-            )
+            self.bar = self._add_heatmap_colorbar(items, self._data_colorbar_rounding())
             self._heatmap_colorbar_item_ids = tuple(id(item) for item in items)
             self._set_colorbar_tick_formatter()
             if line_host:
@@ -451,16 +441,6 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
             self.config.theme.style_plotItem(self)
             self.apply_axis_major_tick_count_preference()
             rescale = True
-            if line_host:
-                action = QtGui.QAction("Colour scale…", self)
-                action.triggered.connect(self.open_colorbar_scale_dialog)
-                menu_bar = self.menuBar()
-                for menu_action in menu_bar.actions() if menu_bar is not None else ():
-                    if menu_action.text().replace("&", "") == "View":
-                        menu = menu_action.menu()
-                        if menu is not None:
-                            menu.addAction(action)
-                        break
         if line_host:
             bar = self.__dict__.get("bar")
             if bar is not None:

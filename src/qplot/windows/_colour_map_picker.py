@@ -45,7 +45,7 @@ class _GradientDelegate(qtw.QStyledItemDelegate):
 
 
 class ColourMapButton(qtw.QPushButton):
-    """One native button containing the map name, gradient and chooser arrow."""
+    """Show the map name and gradient on the button that opens the chooser."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -77,11 +77,6 @@ class ColourMapButton(qtw.QPushButton):
         if self.isDown():
             rect.translate(style.pixelMetric(qtw.QStyle.PixelMetric.PM_ButtonShiftHorizontal),
                            style.pixelMetric(qtw.QStyle.PixelMetric.PM_ButtonShiftVertical))
-        arrow = qtw.QStyleOption()
-        arrow.initFrom(self)
-        arrow.rect = QtCore.QRect(rect.right() - 10, rect.center().y() - 4, 10, 8)
-        style.drawPrimitive(qtw.QStyle.PrimitiveElement.PE_IndicatorArrowDown, arrow, painter, self)
-        rect.setRight(arrow.rect.left() - 10)
         name_width = min(self.fontMetrics().horizontalAdvance(self.text()), int(rect.width() * 0.4))
         name_rect = QtCore.QRect(rect.left(), rect.top(), name_width, rect.height())
         label = self.fontMetrics().elidedText(self.text(), QtCore.Qt.TextElideMode.ElideRight, name_width)
@@ -119,6 +114,37 @@ class GradientPreview(qtw.QLabel):
             self._rendered = key
 
 
+class CurrentColourMap(qtw.QHBoxLayout):
+    """The selectable name and gradient shared by the scale panel and chooser."""
+
+    def __init__(self, action):
+        super().__init__()
+        self.setSpacing(10)
+        self.name = qtw.QLabel()
+        self.name.setObjectName("colorbarCurrentMapName")
+        self.name.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.name.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+            | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        self.name.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.name.setAccessibleName("Selected colour map name")
+        self.preview = GradientPreview()
+        self.preview.setObjectName("colorbarCurrentMapPreview")
+        self.preview.setAccessibleName("Selected colour map preview")
+        self.addWidget(self.name)
+        self.addWidget(self.preview, 1)
+        self.addWidget(action)
+
+    def set_colormap(self, name):
+        label = _colorbar_colormap_label(name)
+        if self.name.text() != label:
+            self.name.setText(label)
+        self.name.setToolTip(_colorbar_colormap_type_label(name) + "\nSelect the name to copy it.")
+        self.preview.set_colormap(name)
+        self.preview.setToolTip(label)
+
+
 class ColourMapPicker(qtw.QWidget):
     """Browse and select maps, with no ownership of plot scaling or settings."""
 
@@ -130,47 +156,37 @@ class ColourMapPicker(qtw.QWidget):
         self._name = current
         self.table = qtw.QTableWidget()
         self.table.setToolTip("Select a colour map to preview it on the plot.")
-        self.current_name = qtw.QLabel()
-        self.current_name.setObjectName("colorbarCurrentMapName")
-        self.current_name.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-        self.current_name.setTextInteractionFlags(
-            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
-            | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
-        )
-        self.current_name.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
-        self.current_name.setAccessibleName("Current colour map name")
-        self.current_preview = GradientPreview()
-        self.current_preview.setObjectName("colorbarCurrentMapPreview")
-        self.current_preview.setAccessibleName("Current colour map preview")
-        self.no_matches = qtw.QLabel("No colour maps match these filters.")
-        self.no_matches.setObjectName("colorbarNoMatches")
-        self.no_matches.hide()
         filters = self._build_filters()
+        empty_row = qtw.QHBoxLayout(self.table.viewport())
+        empty_row.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        empty_row.setSpacing(8)
+        self.no_matches = qtw.QLabel("No matching colour maps.")
+        self.no_matches.setObjectName("colorbarNoMatches")
+        empty_row.addWidget(self.no_matches)
+        self.clear_filters_button = qtw.QPushButton("Clear filters")
+        self.clear_filters_button.setAutoDefault(False)
+        self.clear_filters_button.clicked.connect(self._clear_filters)
+        empty_row.addWidget(self.clear_filters_button)
         self._build_table()
         self.show_current_button = qtw.QPushButton("Show in list")
         self.show_current_button.setObjectName("colorbarShowCurrentButton")
         self.show_current_button.setAutoDefault(False)
         self.show_current_button.setToolTip(
-            "Reveal the current map in the list. Clear filters if they hide it."
+            "Reveal the selected map in the list. Clear filters if they hide it."
         )
         self.show_current_button.clicked.connect(self.reveal_current)
-        current = qtw.QHBoxLayout()
-        current.setSpacing(10)
-        current.addWidget(self.current_name)
-        current.addWidget(self.current_preview, 1)
-        current.addWidget(self.show_current_button)
-        self.current_heading = self._heading("Colour map", "colorbarCurrentHeading")
-        self.picker_heading = self._heading("Choose colour map", "colorbarPickerHeading")
+        self.current = CurrentColourMap(self.show_current_button)
+        self.current_heading = self._heading("Preview", "colorbarCurrentHeading")
+        self.picker_heading = self._heading("Available colour maps", "colorbarPickerHeading")
         layout = self._content_layout = qtw.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
         layout.addWidget(self.current_heading)
-        layout.addLayout(current)
+        layout.addLayout(self.current)
         layout.addSpacing(8)
         layout.addWidget(self.picker_heading)
         layout.addWidget(filters)
         layout.addWidget(self.table, 1)
-        layout.addWidget(self.no_matches)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.set_current_map(self._name)
 
@@ -183,29 +199,10 @@ class ColourMapPicker(qtw.QWidget):
         heading.setFont(font)
         return heading
 
-    def insert_scaling_controls(self, controls):
-        """Let the full Colour Scale dialog place its controls above the list."""
-        heading = self._heading("Set scaling", "colorbarScalingHeading")
-        self._content_layout.insertWidget(3, heading)
-        self._content_layout.insertWidget(4, controls)
-        self._content_layout.insertSpacing(5, 8)
-        return heading
-
     def set_current_map(self, name):
         self._name = name
-        label = _colorbar_colormap_label(name)
-        if self.current_name.text() != label:
-            self.current_name.setText(label)
-        self.current_name.setToolTip(_colorbar_colormap_type_label(name) + "\nSelect the name to copy it.")
-        self.current_preview.set_colormap(name)
-        self.current_preview.setToolTip(label)
+        self.current.set_colormap(name)
         self.select_map(name)
-
-    def set_maps(self, names, current):
-        self._names = tuple(names)
-        self._name = current
-        self.populate()
-        self.set_current_map(current)
 
     def _build_filters(self):
         """Build a name search and independent source/category selectors."""
@@ -293,7 +290,18 @@ class ColourMapPicker(qtw.QWidget):
                 table.setRowHidden(row, not visible)
                 count += visible
         self.no_matches.setVisible(count == 0)
+        self.clear_filters_button.setVisible(count == 0)
         self.select_map(self._name)
+
+    def _clear_filters(self):
+        if self.clear_filters_button.hasFocus():
+            self.search.setFocus()
+        with (QtCore.QSignalBlocker(self.search), QtCore.QSignalBlocker(self.source_combo),
+              QtCore.QSignalBlocker(self.category_combo)):
+            self.search.clear()
+            self.source_combo.setCurrentIndex(0)
+            self.category_combo.setCurrentIndex(0)
+        self._apply_filters()
 
     def _build_table(self):
         """Build the scrollable colour-map chooser with rendered previews."""
@@ -366,13 +374,6 @@ class ColourMapPicker(qtw.QWidget):
 
         table.resizeColumnToContents(0)
         table.resizeColumnToContents(2)
-        # Reserve a useful minimum gradient width beside the longest name/type.
-        scrollbar = table.verticalScrollBar()
-        assert scrollbar is not None
-        table.setMinimumWidth(
-            table.columnWidth(0) + table.columnWidth(2) + 120 + 12
-            + scrollbar.sizeHint().width() + 2 * table.frameWidth()
-        )
         table.setSortingEnabled(sorting_enabled)
         table.blockSignals(False)
         self._apply_filters()
@@ -431,14 +432,7 @@ class ColourMapPicker(qtw.QWidget):
         if row < 0:
             return
         if table.isRowHidden(row):
-            for widget in (self.search, self.source_combo,
-                           self.category_combo):
-                with QtCore.QSignalBlocker(widget):
-                    if isinstance(widget, qtw.QLineEdit):
-                        widget.clear()
-                    else:
-                        widget.setCurrentIndex(0)
-            self._apply_filters()
+            self._clear_filters()
         # QTableView implements this protected slot, omitted from PyQt's stubs.
         QtCore.QMetaObject.invokeMethod(table, "doItemsLayout")
         table.resizeColumnToContents(0)
@@ -464,10 +458,34 @@ class ColourMapChooser(qtw.QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
+        self.picker.search.installEventFilter(self)
+        self.picker.table.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if isinstance(event, QtGui.QKeyEvent) and event.type() == QtCore.QEvent.Type.KeyPress:
+            table = self.picker.table
+            enter = event.key() in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter)
+            if watched is self.picker.search and (enter or event.key() == QtCore.Qt.Key.Key_Down):
+                rows = [row for row in range(table.rowCount()) if not table.isRowHidden(row)]
+                if rows:
+                    row = table.currentRow() if table.currentRow() in rows else rows[0]
+                    table.setCurrentCell(row, 0)
+                    table.selectRow(row)
+                    if enter and len(rows) == 1:
+                        self.accept()
+                    else:
+                        table.setFocus()
+                return True
+            if watched is table and enter:
+                if table.currentRow() >= 0 and not table.isRowHidden(table.currentRow()):
+                    self.accept()
+                return True
+        return super().eventFilter(watched, event)
 
     def showEvent(self, event):
         super().showEvent(event)
         self.picker.reveal_current()
+        self.picker.search.setFocus()
 
 
 class ColourMapDialog(ColourMapChooser):

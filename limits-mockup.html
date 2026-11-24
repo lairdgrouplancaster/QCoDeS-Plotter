@@ -1,159 +1,847 @@
 <!doctype html>
 <html lang="en-GB">
+<head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>qPlot · Limits mockup</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Axis limits · qPlot</title>
 <style>
-  * { box-sizing:border-box }
-  :root { font:15px/1.45 "Segoe UI",system-ui,sans-serif; color:#1a2c3f; background:#eff3f6; accent-color:#1665a8 }
-  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:28px 18px }
-  main { width:min(880px,100%); background:white; border:1px solid #bdcbd7; border-radius:12px; box-shadow:0 12px 40px #24394715; overflow:hidden }
-  header, footer { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 22px; background:#f6f8fa }
-  header { border-bottom:1px solid #d3dce4 } h1 { margin:0; font-size:17px; font-weight:600 }
-  header span, footer span, figcaption { color:#526476; font-size:13px }
-  section { padding:22px } nav { display:flex; border:1px solid #aebfce; border-radius:6px; overflow:hidden; margin-bottom:20px }
-  button,input { font:inherit } button { cursor:pointer; color:inherit; background:#fff; border:1px solid #b6c5d2; padding:5px 13px; border-radius:5px }
-  button:hover { background:#edf4fa } button:focus-visible, input:focus-visible { outline:2px solid #246fb0; outline-offset:2px }
-  nav button { flex:1; padding:8px; border:0; border-radius:0; border-right:1px solid #bdcbd7 }
-  nav button:last-child { border:0 } nav button[aria-pressed=true] { color:#104e80; background:#e7f1fb; box-shadow:inset 0 -3px #25679f; font-weight:600 }
-  nav button:focus-visible { outline-offset:-3px }
-  .columns { display:grid; grid-template-columns:1.1fr 1fr; gap:26px; align-items:start }
-  h2 { margin:0 0 14px; font-size:19px; font-weight:600 } fieldset { margin:0; border:0; padding:0 }
-  .mode { display:flex; gap:20px; margin-bottom:16px } .mode label { cursor:pointer } input[type=radio] { margin:0 4px 0 0 }
-  .segment { display:inline-flex; margin-bottom:12px } .segment button { font-size:13px; border-radius:0 }
-  .segment button:first-child { border-radius:5px 0 0 5px } .segment button:last-child { border-radius:0 5px 5px 0; margin-left:-1px }
-  .segment [aria-pressed=true] { color:white; background:#215d90; border-color:#215d90 }
-  .pair { display:grid; grid-template-columns:1fr 1fr; gap:12px } .pair label { font-size:13px; color:#425569 }
-  .input { display:flex; border:1px solid #a8bac9; border-radius:5px; align-items:center; margin-top:4px; padding:0 9px; background:#fff }
-  .input:focus-within { outline:2px solid #226fb0; outline-offset:1px } .input:has([aria-invalid=true]) { border-color:#a33120 }
-  .input input { width:100%; min-width:0; outline:none; border:none; padding:7px 0; color:#12283c; font-variant-numeric:tabular-nums }
-  .unit { padding-left:4px; color:#617487 } #summary { font-size:13px; color:#526476; margin:7px 0 14px }
-  #error { color:#a33120; font-size:13px; margin:0 0 10px } #error:empty { display:none }
-  .hint { color:#526476; font-size:13px; margin:10px 0 0 }
-  figure { margin:0; padding:14px; border:1px solid #d4dee7; border-radius:7px; background:#f8fafb }
-  figcaption { margin-bottom:10px; font-weight:600; color:#334b60 } canvas { display:block; width:100%; height:auto; background:#f8fafb }
-  footer { border-top:1px solid #d3dce4; justify-content:flex-end } footer span { margin-right:auto }
-  @media(max-width:650px){ .columns { grid-template-columns:1fr; gap:18px } body { padding:10px } section { padding:14px } }
+  :root {
+    color-scheme: light;
+    font: 13px/1.35 "Segoe UI", system-ui, sans-serif;
+    color: #111827;
+    background: #e5e8ec;
+    accent-color: #087add;
+    /* Native Plot settings client width for the sample heatmap on Windows. */
+    --dialog-width: 688px;
+    --edge: #b8bec7;
+    --background: #f0f0f0;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; min-height: 100vh; padding: 18px; display: grid; place-items: center; }
+  .stage { container-type: inline-size; width: min(100%, var(--dialog-width)); min-width: 0; }
+  main { border: 1px solid #a5aab1; background: var(--background); border-radius: 7px; overflow: hidden; box-shadow: 0 7px 24px #1a233327; }
+  header { display: flex; align-items: center; gap: 8px; padding: 6px 9px; background: #fafafa; border-bottom: 1px solid #d9dbdf; }
+  header img { width: 17px; height: 17px; }
+  h1, h2, h3, p { margin: 0; }
+  h1 { font-size: 13px; font-weight: 400; flex: 1; }
+  h2, h3 { font-size: inherit; font-weight: 650; }
+  button, input, select { font: inherit; color: inherit; }
+  button, select, input[type=number], input[type=search] { border: 1px solid var(--edge); border-radius: 4px; background: #fff; min-height: 23px; }
+  button { cursor: pointer; padding: 2px 9px; background: #f7f8fa; }
+  button:hover:enabled { background: #eef6ff; border-color: #8aa9c7; }
+  button:disabled, select:disabled { color: #969da5; cursor: default; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #126fbe; outline-offset: 1px; }
+  #close { min-width: 27px; min-height: 20px; padding: 0; line-height: 1; font-size: 18px; border-color: transparent; background: transparent; }
+  .dialog-body { padding: 10px; }
+  .page-tabs, .axis-picker { display: flex; }
+  .page-tabs button, .axis-picker button { min-width: 0; flex: 1; border-radius: 0; border-left-width: 0; }
+  .page-tabs button { min-height: 31px; color: #526173; }
+  .page-tabs button:first-child { border-left-width: 1px; border-radius: 6px 0 0 6px; }
+  .page-tabs button:last-child { border-radius: 0 6px 6px 0; }
+  .page-tabs button[aria-pressed=true] { background: #dcecff; border: 1px solid #075eb8; color: #111827; }
+  .page-tabs button:disabled { color: #93989f; }
+  .page-content { min-width: 0; max-height: max(205px, calc(100dvh - 154px)); overflow-y: auto; scrollbar-width: thin; scrollbar-gutter: stable; padding: 8px 10px; border: 1px solid var(--edge); border-radius: 5px; background: #eceef1; }
+  .settings { min-width: 0; border: 1px solid var(--edge); background: var(--background); }
+  .axis-picker button { color: #526173; border-top: 2px solid transparent; border-bottom: 1px solid var(--edge); border-right: 1px solid #d4d9e2; background: #eceef1; min-height: 26px; }
+  .axis-picker button:last-child { border-right: none; }
+  .axis-picker button[aria-pressed=true] { border-top-color: #0a84ff; border-bottom-color: var(--background); background: var(--background); font-weight: 650; color: black; }
+  .axis-picker button:disabled { color: #a0a0a0; }
+  .details { padding: 8px 10px; }
+  #quantity { margin-bottom: 8px; }
+  .axis-form { display: grid; grid-template-columns: 7em minmax(0,1fr); gap: 6px 12px; align-items: center; }
+  .behaviour-form { margin-top: 6px; }
+  .form-label { grid-column: 1; }
+  .mode-row, .fields-group, .axis-checks, #link-range { grid-column: 2; min-width: 0; }
+  .mode-row { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+  fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+  .mode-row fieldset, .axis-checks { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 15px; }
+  label.check, .mode-row label, .axis-checks label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+  input[type=radio], input[type=checkbox] { width: 14px; height: 14px; margin: 0; }
+  .action { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+  #fit { white-space: nowrap; }
+  .icon { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+  .limits { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 6px 8px; }
+  .field label { display: block; margin-bottom: 2px; }
+  .entry { display: flex; align-items: stretch; border: 1px solid var(--edge); background: white; border-radius: 4px; min-width: 0; height: 25px; }
+  .entry:has(input:focus-visible) { outline: 2px solid #126fbe; outline-offset: 1px; }
+  .entry:has(input[aria-invalid=true]) { border-color: #b13e21; }
+  .entry input { flex: 1; min-width: 0; width: 0; outline: 0; background: transparent; padding: 2px 6px; border: 0; font-variant-numeric: tabular-nums; }
+  .entry input:focus-visible { outline: 0; }
+  .data-action { display: none; flex: 0 0 24px; place-items: center; padding: 0; border: 0; border-left: 1px solid #d4d9e2; border-radius: 0; background: transparent; color: #355d80; }
+  .entry:hover .data-action, .entry:focus-within .data-action, .entry.menu-open .data-action { display: grid; }
+  @media (hover: none), (pointer: coarse) { .entry .data-action { display: grid; } }
+  .lock { display: grid; place-items: center; width: 26px; padding: 0; border: 0; border-left: 1px solid #d4d9e2; border-radius: 0 3px 3px 0; color: #4f5d6c; background: transparent; }
+  .lock[aria-pressed=true] { color: white; background: #126cba; }
+  .lock[aria-pressed=true]:hover { background: #0b5d9e; }
+  .entry:has(.lock[aria-pressed=true]) { border-color: #126cba; }
+  .options { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 5px 10px; margin-top: 8px; }
+  .option { display: inline-flex; align-items: center; gap: 5px; }
+  .percentage { display: inline-flex; align-items: center; gap: 2px; }
+  #percent { width: 4em; padding-left: 4px; }
+  #notice, #error { margin-top: 5px; color: #994113; font-size: 12px; }
+  #notice:empty, #error:empty { display: none; }
+  #field-menu { position: fixed; z-index: 5; max-width: 100vw; padding: 3px; border: 1px solid var(--edge); border-radius: 5px; background: white; box-shadow: 0 3px 12px #1a23332a; }
+  #use-data-action { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 28px; padding: 3px 8px; border: 0; background: #eef6ff; text-align: left; }
+  #use-data-action:focus-visible { outline-offset: -2px; }
+  #menu-value { color: #526173; margin-left: 8px; font-variant-numeric: tabular-nums; }
+  .axis-checks label:has(:disabled) { color: #85898d; }
+  #link-range { width: 100%; padding: 2px 4px; }
+  .footer { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+  .footer button { width: 100px; }
+  .simulation { min-height: 29px; margin-top: 8px; display: flex; align-items: center; justify-content: flex-end; gap: 10px; color: #526173; font-size: 12px; }
+  .simulation button { font-size: 12px; }
+  @media (max-width: 560px) { body { padding: 6px; } }
+  @container (max-width: 465px) {
+    .axis-form { grid-template-columns: 76px minmax(0,1fr); column-gap: 7px; }
+    .mode-row fieldset, .axis-checks { column-gap: 8px; }
+    .axis-picker button, .page-tabs button { padding-inline: 4px; }
+  }
+  @container (max-width: 420px) {
+    .dialog-body { padding: 7px; }
+    .page-content { padding: 6px; }
+    .details { padding: 7px; }
+    .axis-form { grid-template-columns: auto minmax(0,1fr); }
+    .fields-group, .axis-checks { grid-column: 1 / -1; }
+    .mode-row { justify-content: flex-end; flex-wrap: wrap; }
+    .axis-checks { margin-bottom: 3px; }
+  }
+  @container (max-width: 365px) {
+    .mode-row { gap: 4px; }
+    #fit { padding-inline: 4px; }
+  }
+.map-section { min-width: 0; margin-top: 12px; }
+.map-section h3 { margin: 0 0 7px; }
+.map-current, .map-filters, .map-filters label { display: flex; align-items: center; gap: 7px; }
+.map-current { gap: 10px; }
+.map-ramp { display: block; height: 14px; border: 1px solid #82909b; }
+.map-current .map-ramp, .map-filters input { flex: 1 1 75px; min-width: 32px; }
+.map-filters { flex-wrap: wrap; gap: 5px 7px; margin-bottom: 7px; }
+.map-filters label { gap: 4px; }
+.map-filters input, .map-filters select { min-height: 24px; }
+.map-list { height: 151px; overflow: auto; background: white; border: 1px solid #b8bec7; }
+.map-list table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.map-list th, .map-list td { padding: 1px 6px; text-align: left; height: 21px; white-space: nowrap; }
+.map-list th { position: sticky; top: 0; color: #111827; background: #eef0f3; }
+.map-list th:nth-child(2) { width: 100%; }
+.map-list tbody tr:nth-child(even) { background: #f3f5f7; }
+.map-list tbody tr { cursor: pointer; }
+.map-list tbody tr[aria-current=true] { color: white; background: #0a74d9; }
+.map-list td button { display: block; padding: 0; min-height: 0; color: inherit; font: inherit; background: none; border: 0; cursor: pointer; }
+.map-list td button:hover { color: inherit; background: none; }
+.map-list td .map-ramp { min-width: 24px; }
+#map-empty { padding: 6px; margin: 0; }
 </style>
-<main>
-  <header><h1>Plot settings · Limits</h1><span>Interactive mockup</span></header>
-  <section>
-    <nav aria-label="Edit limits for"><button data-target="x">X axis</button><button data-target="y">Y axis</button><button data-target="z">Colour scale</button></nav>
-    <div class="columns">
-      <div>
-        <h2 id="quantity"></h2>
-        <fieldset class="mode" aria-label="Limit mode">
-          <label><input type="radio" name="mode" id="auto">Automatic</label>
-          <label><input type="radio" name="mode" id="manual">Manual</label>
-        </fieldset>
-        <div class="segment" role="group" aria-label="Limit format"><button id="ends">Min / Max</button><button id="centre">Centre / Span</button></div>
-        <div class="pair">
-          <label><span id="label0"></span><span class="input"><input id="field0" aria-describedby="error"><span class="unit"></span></span></label>
-          <label><span id="label1"></span><span class="input"><input id="field1" aria-describedby="error"><span class="unit"></span></span></label>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="open-lock" viewBox="0 0 24 24"><rect x="4.5" y="10" width="15" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 7.8-1.4M12 15v2"/></symbol>
+    <symbol id="closed-lock" viewBox="0 0 24 24"><rect x="4.5" y="10" width="15" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 15v2"/></symbol>
+    <symbol id="fit-icon" viewBox="0 0 24 24"><path d="M2 6v12M22 6v12M5 12h14M9 8l-4 4 4 4M15 8l4 4-4 4"/></symbol>
+  </defs>
+</svg>
+<div class="stage">
+<main id="dialog" aria-labelledby="title">
+  <header>
+    <img src="src/qplot/assets/qplot-small.svg" alt=""><h1 id="title">Signal — Plot settings</h1>
+    <button id="close" aria-label="Close and discard changes" title="Close and discard changes">×</button>
+  </header>
+  <div class="dialog-body">
+    <nav class="page-tabs" aria-label="Plot settings pages">
+      <button disabled title="This mock-up covers Axis scales and Colour scale">Datasets</button>
+      <button id="axes-page" aria-pressed="true">Axis scales</button>
+      <button data-axis="z" aria-pressed="false">Colour scale</button>
+    </nav>
+    <div class="page-content">
+      <section class="settings" aria-labelledby="quantity">
+        <div class="axis-picker axis-only" role="group" aria-label="Edit axis">
+          <button data-axis="x" aria-pressed="true">Bottom</button>
+          <button data-axis="y" aria-pressed="false">Left</button>
+          <button disabled title="No dataset uses the top axis">Top</button>
+          <button disabled title="No dataset uses the right axis">Right</button>
         </div>
-        <p id="summary"></p><p id="error" role="alert"></p>
-        <button id="fit" title="Copy the data limits and hold them in Manual">Fit once to data</button>
-        <p class="hint" id="hint"></p>
-      </div>
-      <figure><figcaption>Plot preview</figcaption><canvas width="560" height="355" aria-label="Heatmap showing the selected axis and colour limits"></canvas></figure>
+        <div class="details">
+          <h2 id="quantity">Gate voltage (V)</h2>
+          <section class="axis-form" aria-labelledby="range-title">
+            <h3 class="form-label" id="range-title">Range</h3>
+            <div class="mode-row">
+              <fieldset aria-label="Limit mode">
+                <label><input type="radio" name="mode" id="auto" checked>Automatic</label>
+                <label><input type="radio" name="mode" id="manual">Manual</label>
+              </fieldset>
+              <button id="fit" class="action" title="Fit once to the data and stay in Manual">
+                <svg class="icon" aria-hidden="true"><use href="#fit-icon"/></svg>Fit once to data
+              </button>
+            </div>
+            <div class="fields-group">
+              <div class="limits" id="limits"></div>
+              <div class="options">
+                <label class="check" id="visible-label"><input type="checkbox" id="visible">Autoscale from visible data</label>
+                <div class="option" id="colour-option" hidden>
+                  <label for="percent" title="Exclude equal percentages of the lowest and highest signal values">Data range</label>
+                  <span class="percentage"><input id="percent" type="number" min="1" max="100" step="1" value="100"><span aria-hidden="true">%</span></span>
+                </div>
+              </div>
+              <p id="error" role="alert"></p><p id="notice" role="status"></p>
+            </div>
+          </section>
+          <div class="axis-form behaviour-form axis-only">
+            <h3 class="form-label">Axis behaviour</h3>
+            <div class="axis-checks">
+              <label title="Log scaling is unavailable for this heatmap"><input type="checkbox" disabled>Log scale</label>
+              <label><input type="checkbox" id="reverse">Reverse axis</label>
+              <label><input type="checkbox" id="zoom" checked>Allow zoom/pan</label>
+            </div>
+            <label class="form-label" for="link-range">Link range to</label>
+            <select id="link-range"><option>None</option></select>
+          </div>
+          <section class="colour-only map-section" hidden aria-labelledby="map-current-title">
+            <h3 id="map-current-title">Colour map</h3>
+            <div class="map-current"><span id="map-name" aria-live="polite">Viridis</span>
+              <span id="map-ramp" class="map-ramp" aria-hidden="true"></span>
+              <button type="button" id="map-reveal">Show in list</button>
+            </div>
+          </section>
+          <section class="colour-only map-section" hidden aria-labelledby="map-picker-title">
+            <h3 id="map-picker-title">Choose colour map</h3>
+            <div class="map-filters">
+              <input id="map-search" type="search" placeholder="Search names…" aria-label="Search colour maps">
+              <label>Source <select id="map-source"><option>All</option><option>Matplotlib</option><option>Custom</option></select></label>
+              <label>Category <select id="map-category"><option>All</option><option>Perceptual</option><option>Sequential</option><option>Custom</option></select></label>
+            </div>
+            <div class="map-list"><table aria-label="Colour maps">
+              <thead><tr><th scope="col">Name</th><th scope="col">Preview</th><th scope="col">Type</th></tr></thead>
+              <tbody id="map-rows"></tbody>
+            </table><p id="map-empty" hidden>No colour maps match these filters.</p></div>
+          </section>
+        </div>
+      </section>
     </div>
-  </section>
-  <footer><span id="frame"></span><button id="next">Next data frame</button></footer>
+    <footer class="footer"><button id="keep">Keep changes</button><button id="cancel">Cancel</button></footer>
+  </div>
 </main>
+<div class="simulation" aria-label="Mock-up controls">
+  <button id="reopen" hidden>Open plot settings</button>
+  <span id="frame" aria-live="polite"></span><button id="next">Next data frame</button>
+</div>
+</div>
+<div id="field-menu" role="menu" aria-label="Range field actions" hidden>
+  <button id="use-data-action" type="button" role="menuitem">
+    <svg class="icon" aria-hidden="true"><use href="#fit-icon"/></svg>
+    <span id="menu-label"></span><span id="menu-value"></span>
+  </button>
+</div>
 <script>
 "use strict";
-const byId = id => document.getElementById(id);
-const targets = {x:{name:"Gate voltage",unit:"V"}, y:{name:"Frequency",unit:"MHz"}, z:{name:"Signal",unit:"mV"}};
-const frames = [
-  {x:[-2,2], y:[4,8], z:[-1,3]}, {x:[-2,3], y:[3,9], z:[-3,5]}, {x:[-1,2], y:[5,8], z:[0,2]}
-];
-let selected = "x", frame = 0, dirty = false;
-for (const [key,t] of Object.entries(targets)) Object.assign(t,{auto:true,centre:false,range:[...frames[0][key]]});
-const inputs = [byId("field0"),byId("field1")];
-const labels = [byId("label0"),byId("label1")];
-const short = n => Number(n.toPrecision(6)).toString();
-function values(range,centre) {
-  const [lo,hi] = range;
-  return centre ? [lo+(hi-lo)/2, hi-lo] : [lo,hi];
-}
-function refreshMode() {
-  const t = targets[selected];
-  byId("auto").checked=t.auto; byId("manual").checked=!t.auto;
-  byId("hint").textContent=t.auto ? "Limits follow the data. Edit either value to switch to Manual."
-                                  : "Limits stay fixed as new data arrives. Enter applies an edit. Esc discards it.";
-}
-function render() {
-  const t=targets[selected], numbers=values(t.range,t.centre), other=values(t.range,!t.centre);
-  document.querySelectorAll("[data-target]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.target===selected));
-  byId("quantity").textContent=t.name+" ("+t.unit+")"; refreshMode();
-  byId("ends").setAttribute("aria-pressed",!t.centre); byId("centre").setAttribute("aria-pressed",t.centre);
-  inputs.forEach((input,i)=>{
-    labels[i].textContent=(t.centre?["Centre","Span"]:["Minimum","Maximum"])[i];
-    input.value=String(numbers[i]); input.removeAttribute("aria-invalid");
-  });
-  document.querySelectorAll(".unit").forEach(el=>el.textContent=t.unit);
-  byId("summary").textContent=(t.centre?"Minimum ":"Centre ")+short(other[0])+" "+t.unit+"   ·   "+(t.centre?"Maximum ":"Span ")+short(other[1])+" "+t.unit;
-  byId("frame").textContent="Sample data · Frame "+(frame+1)+" of "+frames.length;
-  byId("error").textContent=""; dirty=false; draw();
-}
-function commit() {
-  if (!dirty) return true;
-  const t=targets[selected], [a,b]=inputs.map(el=>el.value.trim()!==""?Number(el.value):NaN);
-  const range=t.centre?[a-b/2,a+b/2]:[a,b];
-  if (!range.every(Number.isFinite) || !Number.isFinite(range[1]-range[0]) || range[1]<=range[0]) {
-    byId("error").textContent=!Number.isFinite(a)||!Number.isFinite(b)?"Enter a finite number in both fields."
-      :t.centre?"Enter a positive span with two distinct, finite limits.":"Maximum must exceed minimum and give a finite span.";
-    inputs.forEach(el=>el.setAttribute("aria-invalid","true")); return false;
-  }
-  t.range=range; render(); return true;
-}
-inputs.forEach(el=>{
-  el.oninput=()=>{dirty=true; targets[selected].auto=false; refreshMode();};
-  el.onblur=commit;
-  el.onkeydown=e=>{if (e.key==="Enter") {e.preventDefault(); if(commit()) el.select();}
-                    if(e.key==="Escape") {render(); el.select();}};
-});
-document.querySelectorAll("[data-target]").forEach(b=>b.onclick=()=>{if(commit()){selected=b.dataset.target;render();}});
-for(const [id,isCentre] of [["ends",false],["centre",true]]) byId(id).onclick=()=>{if(commit()){targets[selected].centre=isCentre;render();}};
-byId("auto").onchange=()=>{targets[selected].auto=true;targets[selected].range=[...frames[frame][selected]];render();};
-byId("manual").onchange=()=>{targets[selected].auto=false;render();};
-byId("fit").onclick=()=>{targets[selected].auto=false;targets[selected].range=[...frames[frame][selected]];render();};
-byId("next").onclick=()=>{if(!commit())return;frame=(frame+1)%frames.length;
-  for(const [key,t] of Object.entries(targets)) if(t.auto)t.range=[...frames[frame][key]];render();};
+const rangeFields = ["min", "max", "centre", "span"];
 
-const canvas=document.querySelector("canvas"), ctx=canvas.getContext("2d");
-const ramp=[[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
-function colour(f) {
-  const p=Math.min(1,Math.max(0,f))*4,i=Math.min(3,Math.floor(p));
-  return ramp[i].map((c,j)=>Math.round(c+(ramp[i+1][j]-c)*(p-i)));
+function makeAxis(range) {
+  return {range: [...range], auto: true, lock: null, history: [], visibleOnly: false, percent: 100, reverse: false, zoom: true};
 }
-function draw() {
-  const w=365,h=224,left=82,top=22,img=ctx.createImageData(w,h), data=frames[frame];
-  const {x:{range:x},y:{range:y},z:{range:z}}=targets;
-  const palette=Array.from({length:256},(_,i)=>colour(i/255));
-  for(let j=0;j<h;j++)for(let i=0;i<w;i++){
-    const xv=x[0]+(i+.5)/w*(x[1]-x[0]),yv=y[1]-(j+.5)/h*(y[1]-y[0]);
-    let rgb=[230,235,239];
-    if(xv>=data.x[0]&&xv<=data.x[1]&&yv>=data.y[0]&&yv<=data.y[1]){
-      const f=(1+Math.cos(3*xv+.52*yv+frame+.9*Math.sin(yv)))/2;
-      const signal=data.z[0]+f*(data.z[1]-data.z[0]);
-      const index=Math.round(255*Math.min(1,Math.max(0,(signal-z[0])/(z[1]-z[0]))));
-      rgb=palette[index];
-    }
-    const offset=4*(j*w+i);img.data[offset]=rgb[0];img.data[offset+1]=rgb[1];img.data[offset+2]=rgb[2];img.data[offset+3]=255;
+
+function rangeValues([min, max]) {
+  const span = max - min;
+  return {min, max, centre: min + span / 2, span};
+}
+
+function keptField(axis, field) {
+  if (axis.lock && axis.lock !== field) return axis.lock;
+  const naturalPartner = {min: "max", max: "min", centre: "span", span: "centre"};
+  return axis.history.find(previous => previous !== field) || naturalPartner[field];
+}
+
+function validRange(range) {
+  return range && range.every(Number.isFinite) && range[1] > range[0]
+    && Number.isFinite(range[1] - range[0]);
+}
+
+function rangeFromPair(field, value, partner, held) {
+  const pair = {[field]: value, [partner]: held};
+  if ("min" in pair) {
+    if ("max" in pair) return [pair.min, pair.max];
+    if ("span" in pair) return [pair.min, pair.min + pair.span];
+    return [pair.min, pair.centre + (pair.centre - pair.min)];
   }
-  ctx.clearRect(0,0,canvas.width,canvas.height);ctx.putImageData(img,left,top);
-  ctx.font='19px "Segoe UI",sans-serif';ctx.fillStyle="#36495b";ctx.textAlign="center";
-  ctx.fillText(short(x[0]),left,top+h+23);ctx.fillText(short(x[1]),left+w,top+h+23);
-  ctx.fillText("Gate voltage (V)",left+w/2,top+h+52);ctx.textAlign="right";
-  ctx.fillText(short(y[0]),left-8,top+h);ctx.fillText(short(y[1]),left-8,top+12);
-  ctx.save();ctx.translate(25,top+h/2);ctx.rotate(-Math.PI/2);ctx.textAlign="center";ctx.fillText("Frequency (MHz)",0,0);ctx.restore();
-  const grad=ctx.createLinearGradient(0,top+h,0,top);
-  ramp.forEach((c,i)=>grad.addColorStop(i/4,"rgb("+c.join(",")+")"));
-  ctx.fillStyle=grad;ctx.fillRect(left+w+18,top,14,h);ctx.textAlign="left";ctx.fillStyle="#36495b";
-  ctx.fillText(short(z[1]),left+w+39,top+13);ctx.fillText(short(z[0]),left+w+39,top+h);
-  ctx.textAlign="center";ctx.fillText("Colour: signal (mV)",left+w/2,top+h+88);
+  if ("max" in pair) {
+    if ("span" in pair) return [pair.max - pair.span, pair.max];
+    return [pair.centre - (pair.max - pair.centre), pair.max];
+  }
+  return [pair.centre - pair.span / 2, pair.centre + pair.span / 2];
 }
+
+function constrainedFit(target, lock, held) {
+  if (!target) return {error: "There are no eligible samples to fit."};
+  if (!target.every(Number.isFinite) || target[1] < target[0]) {
+    return {error: "The data range is outside the supported limits."};
+  }
+  const [low, high] = target;
+  const centre = low + (high - low) / 2;
+  // Give a single measured value a visible, non-zero range.
+  const pointMargin = Math.max(0.5, Math.abs(low) * 0.01);
+  let range;
+  switch (lock) {
+    case "min":
+      if (high <= held) return {error: "The held minimum prevents a positive-width fit."};
+      range = [held, high];
+      break;
+    case "max":
+      if (low >= held) return {error: "The held maximum prevents a positive-width fit."};
+      range = [low, held];
+      break;
+    case "centre": {
+      const distance = Math.max(Math.abs(held - low), Math.abs(high - held)) || pointMargin;
+      range = [held - distance, held + distance];
+      break;
+    }
+    case "span":
+      range = [centre - held / 2, centre + held / 2];
+      break;
+    default:
+      range = low === high ? [low - pointMargin, high + pointMargin] : [...target];
+  }
+  if (!validRange(range)) return {error: "The fitted range exceeds the supported limits."};
+  return {range};
+}
+
+function fitRange(axis, targetRange) {
+  const held = rangeValues(axis.range)[axis.lock];
+  const result = constrainedFit(targetRange, axis.lock, held);
+  if (result.error) return result.error;
+  axis.range = result.range;
+  return "";
+}
+
+function tracksData(axis, editedField) {
+  return axis.auto && (editedField === null || editedField === axis.lock);
+}
+
+function editField(axis, field, value, targetRange) {
+  if (!Number.isFinite(value)) return {error: "Enter a finite number."};
+  if (field === "span" && value <= 0) return {error: "Span must be greater than zero."};
+  const current = rangeValues(axis.range);
+  const automatic = tracksData(axis, field);
+  if (value === current[field]) {
+    axis.auto = automatic;
+    return {};
+  }
+  let range;
+  if (automatic) {
+    const fitted = constrainedFit(targetRange, field, value);
+    if (fitted.error) return {error: fitted.error};
+    range = fitted.range;
+  } else {
+    const partner = keptField(axis, field);
+    range = rangeFromPair(field, value, partner, current[partner]);
+    if (!validRange(range)) {
+      return {error: "This pair must give finite limits with Maximum greater than Minimum."};
+    }
+  }
+  axis.auto = automatic;
+  axis.range = range;
+  axis.history = [field, ...axis.history.filter(previous => previous !== field)];
+  return {};
+}
+
+const scanColumns = 181;
+const scanRows = 129;
+
+function makeScan(x, y, phase, amplitude) {
+  const signal = new Float64Array(scanColumns * scanRows);
+  const xValues = Array.from({length: scanColumns}, (_, i) => x[0] + (x[1] - x[0]) * i / (scanColumns - 1));
+  const yValues = Array.from({length: scanRows}, (_, i) => y[0] + (y[1] - y[0]) * i / (scanRows - 1));
+  for (let row = 0; row < scanRows; row++) {
+    const v = row / (scanRows - 1);
+    for (let column = 0; column < scanColumns; column++) {
+      const u = column / (scanColumns - 1);
+      const index = row * scanColumns + column;
+      if (u + v * 0.8 < 0.075 || u + v * 0.8 > 1.73) {
+        signal[index] = NaN;
+        continue;
+      }
+      const gate = xValues[column];
+      const frequency = yValues[row];
+      const detuning = gate * 0.77 + phase * 0.2;
+      const separation = Math.hypot(detuning, 0.28);
+      const mid = 6 + 0.09 * gate + 0.13 * Math.sin(1.5 * gate + phase);
+      const upper = (frequency - mid - separation) / 0.12;
+      const lower = (frequency - mid + separation) / 0.15;
+      const satellite = (frequency - mid - separation - 0.32) / 0.07;
+      const texture = 0.08 * Math.sin(2.5 * gate - frequency + phase)
+        + 0.012 * Math.cos(58 * gate + 76 * frequency);
+      signal[index] = amplitude * (1.8 / (1 + upper * upper) + 1.26 / (1 + lower * lower)
+        + 0.32 / (1 + satellite * satellite) + texture - 0.24);
+    }
+  }
+  signal[Math.floor(scanRows * 0.77) * scanColumns + Math.floor(scanColumns * 0.8)] = 2.3 * amplitude;
+  return {x, y, xValues, yValues, signal};
+}
+
+const demoFrames = [
+  makeScan([-2, 2], [4, 8], 0, 1),
+  makeScan([-2, 3], [3.5, 8.5], 1.4, 1.25),
+  makeScan([-1.3, 2.3], [4.4, 7.7], 2.7, 0.8)
+];
+
+function getDataRange(key, frameIndex, axes, viewRanges) {
+  const frame = demoFrames[frameIndex];
+  const axis = axes[key];
+  if (!axis.visibleOnly && key !== "z") return frame[key].slice();
+
+  const within = (value, range) => value >= range[0] && value <= range[1];
+  const colours = key === "z" && axis.percent < 100 ? [] : null;
+  const restrictX = axis.visibleOnly && key !== "x";
+  const restrictY = axis.visibleOnly && key !== "y";
+  let low = Infinity;
+  let high = -Infinity;
+  for (let row = 0; row < scanRows; row++) {
+    const y = frame.yValues[row];
+    if (restrictY && !within(y, viewRanges.y)) continue;
+    for (let column = 0; column < scanColumns; column++) {
+      const x = frame.xValues[column];
+      const signal = frame.signal[row * scanColumns + column];
+      if (!Number.isFinite(signal) || (restrictX && !within(x, viewRanges.x))) continue;
+      const value = key === "x" ? x : key === "y" ? y : signal;
+      low = Math.min(low, value);
+      high = Math.max(high, value);
+      if (colours) colours.push(value);
+    }
+  }
+  if (low > high) return null;
+  if (colours) {
+    colours.sort((a, b) => a - b);
+    const quantile = p => {
+      const i = p * (colours.length - 1);
+      const floor = Math.floor(i);
+      return colours[floor] + (colours[Math.ceil(i)] - colours[floor]) * (i - floor);
+    };
+    const tail = (100 - axis.percent) / 200;
+    low = quantile(tail);
+    high = quantile(1 - tail);
+  }
+  return [low, high];
+}
+
+function getFitTarget(key, frameIndex, axes, viewRanges) {
+  const data = getDataRange(key, frameIndex, axes, viewRanges);
+  if (!data || data[0] !== data[1]) return data;
+  // A whole-range fit needs a drawable interval even for one sample.
+  const point = data[0], frame = demoFrames[frameIndex];
+  const margin = key === "x" ? (frame.x[1] - frame.x[0]) / (2 * (scanColumns - 1))
+    : key === "y" ? (frame.y[1] - frame.y[0]) / (2 * (scanRows - 1))
+    : Math.max(0.001, Math.abs(point) * 0.01);
+  return [point - margin, point + margin];
+}
+
+const byId = id => document.getElementById(id);
+const names = {min: "Minimum", max: "Maximum", centre: "Centre", span: "Span"};
+const quantities = {
+  x: {name: "Gate voltage", unit: "V"},
+  y: {name: "Frequency", unit: "MHz"},
+  z: {name: "Signal", unit: "mV"}
+};
+let selected = "x";
+let frame = 0;
+let draftField = null;
+const axes = {x: makeAxis(demoFrames[0].x), y: makeAxis(demoFrames[0].y), z: makeAxis([0, 1])};
+const entries = new Map();
+let lastSpatialAxis = "x";
+let savedSettings;
+
+const demoMapRows = [
+  ["Viridis", "Matplotlib", "Perceptual", "#440154,#3b528b,#21918c,#5ec962,#fde725"],
+  ["Plasma", "Matplotlib", "Perceptual", "#0d0887,#7e03a8,#cc4778,#f89540,#f0f921"],
+  ["Inferno", "Matplotlib", "Perceptual", "#000004,#57106e,#bc3754,#f98e09,#fcffa4"],
+  ["Magma", "Matplotlib", "Perceptual", "#000004,#51127c,#b73779,#fc8961,#fcfdbf"],
+  ["Cividis", "Matplotlib", "Perceptual", "#00224e,#434e6c,#7d7c78,#bcae6c,#fee838"],
+  ["Greys", "Custom", "Custom", "#fff,#d9d9d9,#969696,#525252,#000"],
+  ["YlGnBu", "Matplotlib", "Sequential", "#ffffd9,#c7e9b4,#41b6c4,#225ea8,#081d58"]
+];
+function getDemoMap() {
+  return byId("map-name").textContent;
+}
+function setDemoMap(name) {
+  const chosen = demoMapRows.find(row => row[0] === name);
+  if (!chosen) return;
+  byId("map-name").textContent = name;
+  byId("map-ramp").style.background = "linear-gradient(to right," + chosen[3] + ")";
+  for (const row of byId("map-rows").rows) row.setAttribute("aria-current", String(row.dataset.name === name));
+}
+function filterDemoMaps() {
+  const query = byId("map-search").value.trim().toLowerCase();
+  const source = byId("map-source").value;
+  const category = byId("map-category").value;
+  let visible = 0;
+  for (const row of byId("map-rows").rows) {
+    row.hidden = !row.dataset.name.toLowerCase().includes(query) ||
+      (source !== "All" && source !== row.dataset.source) || (category !== "All" && category !== row.dataset.category);
+    if (!row.hidden) visible++;
+  }
+  byId("map-empty").hidden = visible !== 0;
+}
+for (const [name, source, category, colours] of demoMapRows) {
+  const row = byId("map-rows").insertRow();
+  Object.assign(row.dataset, {name, source, category});
+  const choose = document.createElement("button");
+  choose.type = "button";
+  choose.textContent = name;
+  row.insertCell().append(choose);
+  const ramp = document.createElement("span");
+  ramp.className = "map-ramp";
+  ramp.style.background = "linear-gradient(to right," + colours + ")";
+  row.insertCell().append(ramp);
+  row.insertCell().textContent = source === "Custom" ? "QCoDeS Plotter - Custom" : source + " - " + category;
+  row.addEventListener("click", () => setDemoMap(name));
+}
+byId("map-search").addEventListener("input", filterDemoMaps);
+byId("map-category").addEventListener("change", filterDemoMaps);
+byId("map-source").addEventListener("change", () => {
+  const category = byId("map-category"), source = byId("map-source").value;
+  for (const option of category.options) {
+    option.hidden = option.value !== "All" && !demoMapRows.some(row => row[2] === option.value && (source === "All" || row[1] === source));
+  }
+  if (category.selectedOptions[0].hidden) category.value = "All";
+  filterDemoMaps();
+});
+byId("map-reveal").addEventListener("click", () => {
+  const selected = byId("map-rows").querySelector("[aria-current=true]");
+  if (selected.hidden) {
+    byId("map-search").value = "";
+    byId("map-source").value = "All";
+    byId("map-category").value = "All";
+    byId("map-source").dispatchEvent(new Event("change"));
+  }
+  selected.querySelector("button").focus();
+});
+setDemoMap("Viridis");
+
+function formatNumber(value) {
+  return String(Number(value.toPrecision(7)));
+}
+
+function viewRanges() {
+  return {x: axes.x.range, y: axes.y.range, z: axes.z.range};
+}
+
+function fitAxis(key, ranges = viewRanges()) {
+  axes[key].notice = fitRange(axes[key], getFitTarget(key, frame, axes, ranges));
+}
+
+function updateDependentFits(changed) {
+  if (changed === "z") return;
+  const other = changed === "x" ? "y" : "x";
+  if (axes[other].auto && axes[other].visibleOnly) fitAxis(other);
+  if (axes.z.auto && axes.z.visibleOnly) fitAxis("z");
+}
+
+function fitNewFrame() {
+  for (const key of ["x", "y"]) {
+    if (axes[key].auto && !axes[key].visibleOnly) fitAxis(key);
+  }
+  // Fit mutually dependent axes from the same view, then fit colour to the result.
+  const ranges = viewRanges();
+  for (const key of ["x", "y"]) {
+    if (axes[key].auto && axes[key].visibleOnly) fitAxis(key, ranges);
+  }
+  if (axes.z.auto) fitAxis("z");
+}
+
+function showMode() {
+  const automatic = tracksData(axes[selected], draftField);
+  byId("auto").checked = automatic;
+  byId("manual").checked = !automatic;
+  byId("fit").disabled = automatic;
+}
+
+function render() {
+  draftField = null;
+  const axis = axes[selected];
+  const values = rangeValues(axis.range);
+  const quantity = quantities[selected];
+  document.querySelectorAll("[data-axis]").forEach(button => {
+    button.setAttribute("aria-pressed", String(button.dataset.axis === selected));
+  });
+  const colour = selected === "z";
+  byId("axes-page").setAttribute("aria-pressed", String(!colour));
+  document.querySelectorAll(".axis-only").forEach(element => element.hidden = colour);
+  document.querySelectorAll(".colour-only").forEach(element => element.hidden = !colour);
+  byId("quantity").textContent = quantity.name + " (" + quantity.unit + ")";
+  byId("reverse").checked = axis.reverse;
+  byId("zoom").checked = axis.zoom;
+  showMode();
+  byId("visible").checked = axis.visibleOnly;
+  byId("visible-label").title = selected === "z" ? "Use samples inside the current horizontal and vertical limits."
+    : "Use samples inside the current " + (selected === "x" ? "vertical" : "horizontal") + " limits.";
+  byId("colour-option").hidden = selected !== "z";
+  byId("percent").value = axis.percent;
+  for (const [field, {input, lock, icon}] of entries) {
+    const held = axis.lock === field;
+    const partner = keptField(axis, field);
+    input.title = held && axis.auto ? "Editing " + names[field] + " keeps Automatic on and refits the range."
+      : "Changing " + names[field] + " keeps " + names[partner] + " at " + formatNumber(values[partner]) + " " + quantity.unit + "."
+        + (axis.auto ? " Editing switches to Manual." : "");
+    input.value = input === document.activeElement ? String(values[field]) : formatNumber(values[field]);
+    input.removeAttribute("aria-invalid");
+    lock.setAttribute("aria-pressed", String(held));
+    lock.setAttribute("aria-label", "Hold " + names[field]);
+    lock.title = held ? "Release " + names[field] : "Hold " + names[field] + " when the range changes";
+    icon.setAttribute("href", held ? "#closed-lock" : "#open-lock");
+  }
+  byId("frame").textContent = "Sample frame " + (frame + 1) + " of " + demoFrames.length;
+  byId("error").textContent = "";
+  byId("notice").textContent = axis.notice || "";
+}
+
+function applyFieldValue(field, value) {
+  const axis = axes[selected];
+  const target = tracksData(axis, field) ? getFitTarget(selected, frame, axes, viewRanges()) : null;
+  const result = editField(axis, field, value, target);
+  if (result.error) {
+    byId("error").textContent = result.error;
+    byId("notice").textContent = "";
+    return false;
+  }
+  axis.notice = "";
+  updateDependentFits(selected);
+  render();
+  return true;
+}
+
+function commit(field) {
+  if (draftField !== field) return true;
+  const input = entries.get(field).input;
+  const raw = input.value.trim();
+  const value = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(raw) ? Number(raw) : NaN;
+  if (applyFieldValue(field, value)) return true;
+  input.setAttribute("aria-invalid", "true");
+  return false;
+}
+
+function useDataValue(field) {
+  const data = getDataRange(selected, frame, axes, viewRanges());
+  if (data) {
+    applyFieldValue(field, rangeValues(data)[field]);
+  } else {
+    byId("error").textContent = "";
+    byId("notice").textContent = "There are no eligible samples to fit.";
+  }
+}
+
+const fieldMenu = byId("field-menu");
+function closeFieldMenu(returnFocus = false) {
+  if (fieldMenu.hidden) return;
+  const {input} = entries.get(fieldMenu.dataset.field);
+  fieldMenu.hidden = true;
+  input.parentElement.classList.remove("menu-open");
+  if (returnFocus) input.focus({preventScroll: true});
+}
+
+function openFieldMenu(field, x, y) {
+  closeFieldMenu();
+  const {input, use} = entries.get(field);
+  fieldMenu.dataset.field = field;
+  input.parentElement.classList.add("menu-open");
+  byId("menu-label").textContent = use.title;
+  const data = getDataRange(selected, frame, axes, viewRanges());
+  byId("menu-value").textContent = data ? formatNumber(rangeValues(data)[field]) + " " + quantities[selected].unit : "";
+  fieldMenu.hidden = false;
+  fieldMenu.style.left = Math.max(0, Math.min(x, document.documentElement.clientWidth - fieldMenu.offsetWidth)) + "px";
+  fieldMenu.style.top = Math.max(0, Math.min(y, window.innerHeight - fieldMenu.offsetHeight)) + "px";
+  byId("use-data-action").focus({preventScroll: true});
+}
+
+byId("use-data-action").addEventListener("click", () => {
+  const field = fieldMenu.dataset.field;
+  closeFieldMenu(true);
+  useDataValue(field);
+});
+fieldMenu.addEventListener("keydown", event => {
+  if (event.key === "Escape" || event.key === "Tab") {
+    if (event.key === "Escape") event.preventDefault();
+    closeFieldMenu(true);
+  }
+});
+document.addEventListener("pointerdown", event => {
+  if (!fieldMenu.contains(event.target)) closeFieldMenu();
+});
+window.addEventListener("resize", () => closeFieldMenu());
+window.addEventListener("scroll", () => closeFieldMenu(), true);
+
+for (const field of rangeFields) {
+  const group = document.createElement("div");
+  group.className = "field";
+  group.innerHTML = `
+    <label for="value-${field}">${names[field]}</label>
+    <div class="entry">
+      <input id="value-${field}" data-field="${field}" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" aria-describedby="error notice" aria-keyshortcuts="Shift+F10">
+      <button type="button" class="data-action" data-use="${field}" aria-label="Use data ${names[field].toLowerCase()}" title="Use data ${names[field].toLowerCase()}">
+        <svg class="icon" aria-hidden="true"><use href="#fit-icon"/></svg>
+      </button>
+      <button class="lock" data-lock="${field}">
+        <svg class="icon" aria-hidden="true"><use href="#open-lock"></use></svg>
+      </button>
+    </div>`;
+  byId("limits").appendChild(group);
+  const input = group.querySelector("input");
+  const lock = group.querySelector(".lock");
+  const use = group.querySelector(".data-action");
+  entries.set(field, {input, use, lock, icon: lock.querySelector("use")});
+  use.addEventListener("click", () => useDataValue(field));
+  group.addEventListener("contextmenu", event => {
+    // Keep Shift + right-click available for the browser's text-editing menu.
+    if (event.shiftKey && event.button === 2) return;
+    event.preventDefault();
+    openFieldMenu(field, event.clientX, event.clientY);
+  });
+  group.addEventListener("keydown", event => {
+    if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+      event.preventDefault();
+      const rect = use.getBoundingClientRect();
+      openFieldMenu(field, rect.left, rect.bottom);
+    }
+  });
+  input.addEventListener("focus", () => {
+    input.value = String(rangeValues(axes[selected].range)[field]);
+    input.select();
+  });
+  input.addEventListener("input", () => {
+    draftField = field;
+    showMode();
+    input.removeAttribute("aria-invalid");
+    byId("error").textContent = "";
+  });
+  input.addEventListener("blur", () => {
+    if (!commit(field)) {
+      // Keep the last valid plot and explain the rejected edit as focus moves.
+      const message = byId("error").textContent;
+      render();
+      byId("error").textContent = message;
+    }
+    input.value = formatNumber(rangeValues(axes[selected].range)[field]);
+  });
+  input.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (commit(field)) input.select();
+    } else if (event.key === "Escape") {
+      render();
+      input.select();
+    }
+  });
+  lock.addEventListener("click", () => {
+    const axis = axes[selected];
+    axis.lock = axis.lock === field ? null : field;
+    axis.notice = "";
+    if (axis.auto) {
+      fitAxis(selected);
+      updateDependentFits(selected);
+    }
+    render();
+  });
+}
+
+document.querySelectorAll("[data-axis]").forEach(button => {
+  button.addEventListener("click", () => {
+    selected = button.dataset.axis;
+    if (selected !== "z") lastSpatialAxis = selected;
+    document.querySelector(".page-content").scrollTop = 0;
+    render();
+  });
+});
+
+byId("axes-page").addEventListener("click", () => {
+  selected = lastSpatialAxis;
+  document.querySelector(".page-content").scrollTop = 0;
+  render();
+});
+
+for (const setting of ["reverse", "zoom"]) {
+  byId(setting).addEventListener("change", event => axes[selected][setting] = event.target.checked);
+}
+
+for (const mode of ["auto", "manual"]) {
+  byId(mode).addEventListener("change", () => {
+    const axis = axes[selected];
+    axis.auto = mode === "auto";
+    axis.notice = "";
+    if (axis.auto) {
+      fitAxis(selected);
+      updateDependentFits(selected);
+    }
+    render();
+  });
+}
+
+byId("fit").addEventListener("click", () => {
+  fitAxis(selected);
+  updateDependentFits(selected);
+  render();
+});
+
+function fitOptionsChanged() {
+  axes[selected].notice = "";
+  if (axes[selected].auto) {
+    fitAxis(selected);
+    updateDependentFits(selected);
+  }
+  render();
+}
+
+byId("visible").addEventListener("change", event => {
+  axes[selected].visibleOnly = event.target.checked;
+  fitOptionsChanged();
+});
+byId("percent").addEventListener("change", event => {
+  const percent = event.target.valueAsNumber;
+  if (!Number.isInteger(percent) || percent < 1 || percent > 100) {
+    render();
+    byId("error").textContent = "Enter a whole percentage from 1 to 100.";
+    return;
+  }
+  axes.z.percent = percent;
+  fitOptionsChanged();
+});
+byId("percent").addEventListener("keydown", event => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    event.currentTarget.blur();
+  }
+});
+byId("next").addEventListener("click", () => {
+  frame = (frame + 1) % demoFrames.length;
+  fitNewFrame();
+  render();
+});
+
+function rememberSettings() {
+  savedSettings = {axes: structuredClone(axes), map: getDemoMap()};
+}
+function closeDialog(keep) {
+  if (keep) {
+    rememberSettings();
+  } else {
+    Object.assign(axes, structuredClone(savedSettings.axes));
+    setDemoMap(savedSettings.map);
+    fitNewFrame();
+  }
+  byId("dialog").hidden = true;
+  byId("reopen").hidden = false;
+  byId("reopen").focus();
+}
+byId("keep").addEventListener("click", () => closeDialog(true));
+for (const id of ["close", "cancel"]) {
+  byId(id).addEventListener("click", () => closeDialog(false));
+}
+byId("reopen").addEventListener("click", () => {
+  rememberSettings();
+  byId("dialog").hidden = false;
+  byId("reopen").hidden = true;
+  render();
+  byId(selected === "z" ? "auto" : "axes-page").focus();
+});
+fitNewFrame();
+rememberSettings();
 render();
 </script>
+</body>
 </html>

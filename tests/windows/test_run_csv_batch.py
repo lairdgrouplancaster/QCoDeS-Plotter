@@ -306,6 +306,86 @@ def test_filename_review_rechecks_replacement_and_exports_only_confirmed_rows(
     assert "signal.signal" in existing.read_text(encoding="utf-8").splitlines()[0]
 
 
+def test_long_source_keeps_filename_readable_and_existing_file_focuses_action(tmp_path, qapplication):
+    (tmp_path / "signal.csv").touch()
+    source = "Run 202 · " + "measurement_" * 7
+    dialog = batch.CsvFilenameReview(None, tmp_path, [(source, "signal.csv")])
+    try:
+        dialog.show()
+        qapplication.processEvents()
+        assert dialog.table.columnWidth(1) > dialog.table.columnWidth(0)
+        assert dialog.table.item(0, 0).toolTip() == source
+        dialog.next_issue.click()
+        assert dialog.focusWidget() is dialog.rows[0].action
+    finally:
+        dialog.close()
+
+
+def test_review_resolves_only_filename_conflicts(tmp_path, qapplication):
+    existing = tmp_path / "signal.csv"
+    existing.write_text("original")
+    (tmp_path / "signal (2).csv").touch()
+    names = ["signal.csv", "signal (3).csv", "signal.csv", "signal.csv", "signal.csv",
+             "same.csv", "SAME.csv", "../invalid.csv"]
+    dialog = batch.CsvFilenameReview(None, tmp_path, [(str(i), name) for i, name in enumerate(names)])
+    try:
+        dialog.show()
+        dialog.rows[2].action.setCurrentText("Replace")
+        dialog.rows[3].action.setCurrentText("Skip")
+        assert dialog.summary.text() == "1 ready · 6 need attention · 1 skipped"
+        dialog.table.setCurrentCell(0, 0)
+        dialog.next_issue.click()
+        assert dialog.table.currentRow() == 0 and dialog.table.currentColumn() == 1
+        dialog.next_issue.click()
+        assert dialog.table.currentRow() == 2 and dialog.table.currentColumn() == 1
+        dialog.next_issue.click()
+        assert dialog.table.currentRow() == 4
+        dialog.unique_names.click()
+        assert [row.filename.text() for row in dialog.rows] == [
+            "signal (4).csv", "signal (3).csv", "signal.csv", "signal.csv", "signal (5).csv",
+            "same.csv", "SAME (2).csv", "../invalid.csv",
+        ]
+        assert dialog.rows[2].action.currentText() == "Replace"
+        assert dialog.rows[3].action.currentText() == "Skip"
+        assert dialog.summary.text() == "6 ready · 1 needs attention · 1 skipped"
+        assert not dialog.export_button.isEnabled() and not dialog.unique_names.isEnabled()
+        dialog.next_issue.click()
+        assert dialog.table.currentRow() == 7
+        dialog.rows[7].action.setCurrentText("Skip")
+        assert dialog.summary.text() == "6 ready · 0 need attention · 2 skipped"
+        assert not dialog.next_issue.isEnabled()
+        dialog.accept()
+        assert len(dialog.approved) == 6
+        assert [i for i, target in dialog.approved if target.replacement_confirmed] == [2]
+        assert existing.read_text() == "original"
+        assert len(list(tmp_path.iterdir())) == 2
+    finally:
+        dialog.close()
+
+
+def test_changing_folder_keeps_edits_and_requires_fresh_replacement_approval(tmp_path, monkeypatch):
+    other = tmp_path / "other"
+    other.mkdir()
+    for folder in (tmp_path, other):
+        (folder / "edited.csv").write_text("existing")
+    dialog = batch.CsvFilenameReview(None, tmp_path, [("Run 1", "first.csv"), ("Run 2", "second.csv")])
+    try:
+        first, second = dialog.rows
+        first.filename.setText("edited.csv")
+        first.action.setCurrentText("Replace")
+        second.action.setCurrentText("Skip")
+        monkeypatch.setattr(qtw.QFileDialog, "getExistingDirectory", lambda *_args: str(other))
+        next(b for b in dialog.findChildren(qtw.QPushButton) if b.text() == "Change folder…").click()
+        assert first.filename.text() == "edited.csv" and second.action.currentText() == "Skip"
+        assert first.action.currentText() == "Review" and not dialog.export_button.isEnabled()
+        first.action.setCurrentText("Replace")
+        dialog.accept()
+        [(index, target)] = dialog.approved
+        assert index == 0 and target.filename == str(other / "edited.csv") and target.replacement_confirmed
+    finally:
+        dialog.close()
+
+
 def test_review_rejects_unsafe_names_and_resets_approval_on_rename(tmp_path):
     existing = tmp_path / "old.csv"
     existing.write_text("keep")

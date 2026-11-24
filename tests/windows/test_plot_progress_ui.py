@@ -54,7 +54,7 @@ def test_plot_status_reserves_visible_right_padding(qapplication):
     try:
         for progress in (False, True):
             if progress:
-                status.start_progress()
+                status.show_progress()
             else:
                 status.show_message("Loaded points.")
             qapplication.processEvents()
@@ -123,9 +123,12 @@ def test_stage_progress_unknown_work_and_stale_completion(qapplication, monkeypa
         overlay._poll_progress()
         assert overlay.elapsed_label.text() == '1m 05s'
         overlay.track(second)
-        assert overlay.elapsed_label.text() == '0s'
         overlay.finish(first)
         assert overlay._worker is second
+        assert overlay.feedback.stack.currentWidget() is overlay.feedback.status_label
+        clock[0] += 0.201
+        overlay._poll_progress()
+        assert overlay.elapsed_label.text() == '0s'
         assert overlay.feedback.stack.currentWidget() is overlay.feedback.progress_panel
         assert overlay.detail_label.text() == 'Stage 2/2: Processing plot data'
         assert overlay.progress_bar.maximum() == 0
@@ -275,7 +278,10 @@ def test_real_plot_keeps_progress_until_display_commit(tmp_path, monkeypatch, di
         close_main_window(window)
 
 
-def test_header_messages_persist_and_fit_narrow_windows(qapplication):
+def test_header_messages_persist_and_fit_narrow_windows(qapplication, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr('qplot.windows._plot_state.perf_counter', lambda: clock[0])
+
     class Window(PlotWindowFeedbackMixin, QtWidgets.QMainWindow):
         visible = True
         monitorIntervalChanged = lambda *args: None
@@ -305,7 +311,13 @@ def test_header_messages_persist_and_fit_narrow_windows(qapplication):
         current = worker(PlotProgress('Reading coordinates', 1, 10))
         overlay.show('Loading measurement', kind='loading')
         overlay.track(current)
-        assert feedback.message == ''  # Do not resurrect the previous load's message.
+        assert feedback.stack.currentWidget() is feedback.status_label
+        assert feedback.status_label.text() == message
+        clock[0] = 0.199
+        overlay._poll_progress()
+        assert feedback.stack.currentWidget() is feedback.status_label
+        clock[0] = 0.200
+        overlay._poll_progress()
         assert feedback.stack.currentWidget() is feedback.progress_panel
         window.show_status('A new message', timeout=1)
         assert feedback.stack.currentWidget() is feedback.status_label
@@ -320,3 +332,33 @@ def test_header_messages_persist_and_fit_narrow_windows(qapplication):
     finally:
         overlay.hide()
         window.close()
+
+
+def test_replaced_load_cannot_reveal_progress_for_new_slice(qapplication, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr('qplot.windows._plot_state.perf_counter', lambda: clock[0])
+    widget = QtWidgets.QWidget()
+    feedback = PlotStatusWidget(widget)
+    overlay = PlotStateOverlay(widget, feedback)
+    first = worker(PlotProgress('Reading first slice'))
+    second = worker(PlotProgress('Reading second slice'))
+    try:
+        feedback.show_message('Previous slice loaded')
+        overlay.track(first)
+        clock[0] = 0.150
+        overlay.track(second)
+        clock[0] = 0.250
+        overlay.rendering(first)
+        overlay.finish(first)
+        overlay.rendering(second)
+        assert feedback.stack.currentWidget() is feedback.status_label
+        assert feedback.status_label.text() == 'Previous slice loaded'
+        clock[0] = 0.351
+        overlay._poll_progress()
+        assert feedback.stack.currentWidget() is feedback.progress_panel
+        assert 'Rendering plot' in feedback.progress_panel.toolTip()
+        assert feedback.progress_bar.maximum() == 0
+        overlay.finish(second)
+        assert feedback.message == 'Plot load complete.'
+    finally:
+        widget.close()

@@ -289,7 +289,7 @@ class subplot1d(NativePlotDataItem):
         if self.side == side:
             return
         
-        # Use the same registration-preserving path as Trace Appearance.
+        # Use the same registration-preserving path as Trace appearance.
         parent._set_trace_y_axis(parent._window_trace_key(self.from_win), side)
             
         parent.vb.enableAutoRange()

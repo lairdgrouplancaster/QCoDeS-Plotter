@@ -111,7 +111,7 @@ def test_visible_recorded_float_statistics_keep_original_precision(measured_plot
     assert f"Average: {host.formatNum(mean)}" in text
     assert f"Standard deviation: {host.formatNum(deviation)}" in text
     menu = host._new_marquee_context_menu()
-    next(action for action in menu.actions() if action.text() == "Stats...").trigger()
+    next(action for action in menu.actions() if action.text() == "Selection statistics…").trigger()
     assert host._marquee_stats_dialog.isVisible()
     host._marquee_stats_dialog.close()
 

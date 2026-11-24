@@ -112,7 +112,7 @@ def check_csv(cut, target, guid, coordinates, projected, monkeypatch):
     (("complex128", "complex128"), False),
     (None, False),
 ], ids=["64-128", "128-64", "64-64", "128-128", "scalar"])
-@pytest.mark.parametrize(("mode", "cut_action"), [("imag", "Horizontal Cut"), ("real", "Vertical Cut")])
+@pytest.mark.parametrize(("mode", "cut_action"), [("imag", "Horizontal cut"), ("real", "Vertical cut")])
 def test_complex_volume_projection_cursor_and_export(main, tmp_path, monkeypatch, precisions, reverse, mode, cut_action):
     path = tmp_path / "acquisition.db"
     guid, expected = write_volume(path, precisions, reverse)
@@ -137,7 +137,7 @@ def test_complex_volume_projection_cursor_and_export(main, tmp_path, monkeypatch
     next(action for action in plot.vbMenu.actions() if action.text() == cut_action).trigger()
     wait_for(lambda: len(window.windows) == 2 and window.windows[-1]._qplot_display_synchronized)
     cut = window.windows[-1]
-    horizontal = cut_action == "Horizontal Cut"
+    horizontal = cut_action == "Horizontal cut"
     coordinates = DELAYS if horizontal else BIASES
     values = [expected[field, bias, x] if horizontal else expected[field, x, delay] for x in coordinates]
     projected = getattr(np.asarray(values), mode)

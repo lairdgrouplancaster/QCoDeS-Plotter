@@ -18,6 +18,7 @@ from ._plot2d_layers import _HeatmapAppearanceControls
 from ._plot_appearance import CenteredPreviewDelegate, reordered_rows
 from ._plot_drop_axes import dataset_axis_warnings
 from ._plot_lifetime import close_superseded_plot
+from ._range_controls import RangeControls
 from ._small_dialogs import DialogTabs, confirm_action
 from ._window_controls import pending_plot_export_message
 
@@ -131,7 +132,6 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         self.add_item_combo.setSizeAdjustPolicy(
             qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
-        self.add_item_combo.setToolTip("Choose a 1D, 2D or 3D dataset to add.")
         self.add_item_button = qtw.QPushButton("Add", self)
         self.add_item_button.setToolTip("Add the selected dataset to this plot.")
         self.remove_item_button = qtw.QPushButton("Remove", self)
@@ -178,19 +178,19 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         self.pages.addTab(dataset_page, "Datasets")
         self.axes_page = qtw.QScrollArea()
         self.colour_page = qtw.QScrollArea()
-        for page, name in ((self.axes_page, "Axes"), (self.colour_page, "Colour scale")):
+        for page, name in ((self.axes_page, "Axis scales"), (self.colour_page, "Colour scale")):
             page.setWidgetResizable(True)
             page.setFrameShape(qtw.QFrame.Shape.NoFrame)
             self.pages.addTab(page, name)
         layout.insertWidget(0, self.pages, 1)
         self.pages.currentChanged.connect(self._activate_settings_page)
         self.heatmap_controls.color_scale_button.clicked.disconnect()
-        self.heatmap_controls.color_scale_button.clicked.connect(lambda: self.show_page("Colour scale"))
+        self.heatmap_controls.color_scale_button.clicked.connect(lambda: self.owner.open_colour_map_chooser(self))
         self._opening_axes = {}
         self._edited_axes = set()
 
     def show_page(self, name):
-        page = {"Datasets": 0, "Axes": 1, "Colour scale": 2}[name]
+        page = {"Datasets": 0, "Axes": 1, "Axis scales": 1, "Colour scale": 2}[name]
         if self.pages.isTabEnabled(page):
             if self.pages.currentIndex() == page:
                 self._activate_settings_page(page)
@@ -217,9 +217,7 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
                 if self.colour_page.widget() is not controls:
                     self.colour_page.setWidget(controls)
                 owner.colorbar_scale_dialog = self
-                owner._populate_colorbar_colormap_table()
                 owner._sync_colorbar_scale_controls()
-                owner._show_current_colorbar_map()
         if self.isVisible() and self._default_size is not None:
             self._fit_default_size()
 
@@ -280,8 +278,11 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
             if self.isVisible():
                 QtCore.QTimer.singleShot(0, self._fit_default_size)
         if "pages" in self.__dict__:
-            self.pages.setTabEnabled(2, not self.global_colour_row.isHidden()
-                                     and self.owner.__dict__.get("colorbar_scale_controls") is not None)
+            available = "heatmap" in kinds and self.owner.__dict__.get("colorbar_scale_controls") is not None
+            self.pages.setTabEnabled(2, available)
+            action = self.owner.__dict__.get("colorbar_scale_action")
+            if action is not None:
+                action.setVisible(available)
         self.sync_swap_axes_control()
 
     def _row_entry(self, row: int) -> tuple[str, Any] | None:
@@ -495,15 +496,34 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
         self.raise_()
 
     def _close_colour_editor(self):
-        picker = self.heatmap_controls.colour_map_dialog
-        if picker is not None and not sip.isdeleted(picker) and picker.isVisible():
-            picker.reject()
         for owner in self._preview_owners:
+            chooser = owner.__dict__.get("colorbar_map_dialog")
+            if chooser is not None:
+                chooser.reject()
             dialog = owner.__dict__.get("colorbar_scale_dialog")
             if dialog is not None and dialog is not self and not sip.isdeleted(dialog):
                 dialog.close()
 
     def accept(self):
+        if self.axes_page.widget() is not None:
+            tabs = self.owner._axis_scale_tabs
+            for index in range(tabs.count()):
+                entry = self.owner._axis_scale_controls[tabs.tabData(index)].rangeEntry
+                if not tabs.isTabEnabled(index):
+                    entry.restore()
+                elif not entry.commit_pending():
+                    self.show_page("Axis scales")
+                    tabs.setCurrentIndex(index)
+                    entry.focus_invalid()
+                    return
+        if self.colour_page.widget() is not None:
+            entry = self.owner.colorbar_range_entry
+            if not self.pages.isTabEnabled(2):
+                entry.restore()
+            elif not entry.commit_pending():
+                self.show_page("Colour scale")
+                entry.focus_invalid()
+                return
         if not self._session_active:
             super().accept()
             return
@@ -544,6 +564,8 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
                 return
             self._session_finishing = True
             self._action_token["cancelled"] = True
+            for entry in self.findChildren(RangeControls):
+                entry.restore()
             for window in self._preview_owners:
                 window._appearance_action_token = None
             self._close_colour_editor()
@@ -752,6 +774,12 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
                 for label, key in provider():
                     if key not in registry:
                         self.add_item_combo.addItem(f"{label} ({kind})", (kind, key, label))
+            available = self.add_item_combo.count() > 1
+            self.add_item_combo.setEnabled(available)
+            self.add_item_combo.setToolTip("Choose a 1D, 2D or 3D dataset to add." if available
+                                           else "All available measurements are already on the plot.")
+            if not available:
+                self.add_item_combo.setItemText(0, "No measurements to add")
             self.add_item_combo.setCurrentIndex(max(0, self.add_item_combo.findData(previous)))
         finally:
             self.add_item_combo.blockSignals(blocked)

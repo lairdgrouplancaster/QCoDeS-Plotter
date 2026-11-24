@@ -100,7 +100,6 @@ def test_rejected_auto_click_restores_manual_controls_and_view(
     assert _axis_ranges(plot, target=True) == ranges_before
     assert viewbox.getState()["autoRange"] == before["autoRange"]
     assert (controls.minText.text(), controls.maxText.text()) == fields
-    assert any(window is plot and "supported plot range" in message
-               for window, message in axis_messages)
+    assert "supported plot range" in controls.rangeEntry.error_label.text()
     for values, recorded in zip(line.getOriginalDataset(), original, strict=True):
         np.testing.assert_array_equal(values, recorded)

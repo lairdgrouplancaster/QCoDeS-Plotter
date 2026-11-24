@@ -60,6 +60,10 @@ class plot2d(
         
     """
     operation_kind = "plot2d"
+    _cut_commands: tuple[tuple[str, str], ...] = (
+        ("heatmap.horizontal_cut", "h"),
+        ("heatmap.vertical_cut", "v"),
+    )
     _uses_heatmap_viewport = True
     _initial_load_message = "Heatmap ready; loading data..."
     get_mergables = QtCore.pyqtSignal()
@@ -332,10 +336,6 @@ class plot2d(
         super().closeEvent(event)
       
 
-    def initRefresh(self, refrate: float) -> None:
-        super().initRefresh(refrate)
-        self._init_colorbar_refresh_control()
-
     def initContextMenu(self) -> None:
         super().initContextMenu()
         # Opening a popup clears the transient hover readout. Keep the cut
@@ -357,29 +357,23 @@ class plot2d(
 
         autoColor = create_action("heatmap.autoscale_color", self)
         self.register_shortcut(autoColor, command_spec("heatmap.autoscale_color"))
-        autoColor.triggered.connect(self.scaleColorbar)
+        autoColor.triggered.connect(self.autoscale_color)
         self.vbMenu.insertAction(self.autoscaleSep, autoColor)
 
-        actions = self.vbMenu.actions()
-        
-        sep = self.vbMenu.insertSeparator(actions[3])
-        
-        ### Sweep control
-        h_sweep = create_action("heatmap.horizontal_cut", self)
-        self.register_shortcut(h_sweep, command_spec("heatmap.horizontal_cut"))
-        h_sweep.triggered.connect(lambda _: self.openSweep("h"))
-        self.vbMenu.insertAction(sep, h_sweep)
-        
-        v_sweep = create_action("heatmap.vertical_cut", self)
-        self.register_shortcut(v_sweep, command_spec("heatmap.vertical_cut"))
-        v_sweep.triggered.connect(lambda _: self.openSweep("v"))
-        self.vbMenu.insertAction(sep, v_sweep)
-        
-        self.vbMenu.insertSeparator(h_sweep)
+        after_cuts = self.vbMenu.insertSeparator(self.savePlotPdfAction)
+        for command, side in self._cut_commands:
+            cut = create_action(command, self)
+            self.register_shortcut(cut, command_spec(command))
+            cut.triggered.connect(lambda _checked, side=side: self.openSweep(side))
+            self.vbMenu.insertAction(after_cuts, cut)
 
         self._init_colorbar_scale_controls()
 
         self._init_cut_keyboard_shortcuts()
+
+    def autoscale_color(self, event: bool = False) -> None:
+        """Apply an explicit colour autoscale request from the plot menu."""
+        self.scaleColorbar(event)
         
         
     def initLabels(self) -> None:
@@ -521,25 +515,9 @@ class plot2d(
                         self._mark_display_synchronized(plot_worker)
                     return
 
-                autoLevels = self.relevel_refresh.isChecked() and self._colorbar_manual_levels is None
-                operation_apply_generation = int(
-                    getattr(plot_worker, "_qplot_operation_apply_generation", 0)
-                    )
-                operation_auto_levels = bool(
-                    operation_apply_generation
-                    > self.__dict__.get("_colorbar_operation_apply_generation", 0)
-                    and self._colorbar_manual_levels is None
-                    )
-                initial_primary_levels = bool(
-                    self.__dict__.get("_colorbar_pending_primary", False)
-                    and self._colorbar_manual_levels is None
-                    )
                 color_levels = self._colorbar_manual_levels
                 if color_levels is None:
-                    if not hasattr(self, "bar") or autoLevels or operation_auto_levels or initial_primary_levels:
-                        color_levels = self._data_colorbar_levels()
-                    else:
-                        color_levels = self.bar.levels()
+                    color_levels = self._data_colorbar_levels()
                 if color_levels is not None and not np.isfinite(float(color_levels[1]) - float(color_levels[0])):
                     self._reject_heatmap_color_range()
                     self._emit_heatmap_trace_updated()
@@ -573,12 +551,9 @@ class plot2d(
                 # Produce color bar on first run
                 if not hasattr(self, "bar"):
                     colorbar_items = self._heatmap_colorbar_items()
-                    self.bar = self.plot.addColorBar(
+                    self.bar = self._add_heatmap_colorbar(
                         colorbar_items,
-                        colorMap=self._colorbar_colormap(),
-                        rounding=self._data_colorbar_rounding(),
-                        width=self._configured_colorbar_width(),
-                        colorMapMenu=False,
+                        self._colorbar_rounding_for_levels(*color_levels) if color_levels else 1e-5,
                         )
                     self._heatmap_colorbar_item_ids = tuple(
                         id(item) for item in colorbar_items
@@ -588,25 +563,12 @@ class plot2d(
                     # been applied, so style its axes immediately as well.
                     self.config.theme.style_plotItem(self)
                     self.apply_axis_major_tick_count_preference()
-                    if self._colorbar_manual_levels is None:
-                        self.scaleColorbar()
-                    else:
-                        minimum, maximum = self._colorbar_manual_levels
-                        self._set_colorbar_levels(minimum, maximum)
-
                 self.bar.show()
+                if color_levels is not None:
+                    self._set_colorbar_levels(*color_levels)
+                else:
+                    self._sync_colorbar_axis_scaling()
 
-                # The dependent-variable label may have changed when an operation
-                # such as differentiation was added or removed.
-                self._sync_colorbar_axis_scaling()
-                if autoLevels or operation_auto_levels or initial_primary_levels:
-                    self.__dict__["_colorbar_manual_levels"] = None
-                    self.scaleColorbar()
-                elif self._colorbar_manual_levels is not None:
-                    minimum, maximum = self._colorbar_manual_levels
-                    self._set_colorbar_levels(minimum, maximum)
-                self.__dict__.pop("_colorbar_pending_primary", None)
-            
                 self._restore_heatmap_interactions()
                 if not self._refresh_publication_source_is_current(
                         plot_worker,
@@ -619,10 +581,6 @@ class plot2d(
                         clear_display=clear_display,
                         ):
                     return
-                self.__dict__["_colorbar_operation_apply_generation"] = max(
-                    operation_apply_generation,
-                    self.__dict__.get("_colorbar_operation_apply_generation", 0),
-                    )
                 self._mark_display_synchronized(plot_worker)
                 if getattr(plot_worker, "_qplot_source_rejected", False):
                     clear_display()
@@ -1171,12 +1129,12 @@ class plot2d(
     def _add_marquee_color_context_action(self, menu: qtw.QMenu) -> QtGui.QAction:
         action = self._add_marquee_context_action(
             menu,
-            "Zoom colour",
+            "Fit colour range to selection",
             self.zoom_marquee_color,
             )
         if self._marquee_color_levels() is None:
             action.setEnabled(False)
-            action.setToolTip("No finite data range inside the marquee.")
+            action.setToolTip("Select cells containing at least two distinct finite values.")
         return action
 
 
@@ -1204,7 +1162,9 @@ class plot2d(
         rect = self._snap_marquee_rect(self.marquee.normalized())
         return self._format_marquee_stats_text(
             f"Selected grid: {cols} × {rows}", values, rect, heatmap=True,
-            contribution=f"{values.size} finite cells of {selected.size} selected in the displayed primary heatmap",
+            contribution=f"{values.size} of {selected.size} selected "
+                         f"{'cells' if selected.size != 1 else 'cell'} contributed "
+                         "finite values from the displayed primary heatmap.",
         )
 
 

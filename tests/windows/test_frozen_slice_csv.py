@@ -59,7 +59,7 @@ def slices(main, tmp_path):
     assert window.load_file(str(path))
     wait_for(lambda: not window._database_load_active and window._selected_run_guid == guid)
     live = next_plot(window, window.plotRunButton.click)
-    frozen = next_plot(window, menu_action(live, "Freeze Slice as 2D Plot").trigger)
+    frozen = next_plot(window, menu_action(live, "Freeze slice as 2D plot").trigger)
     yield window, live, frozen, guid
     assert not errors
 
@@ -122,7 +122,7 @@ def test_equal_frozen_cuts_export_both_fixed_coordinates(slices, tmp_path, monke
     exports = []
     for parent in (live, frozen):
         horizontal = parent is frozen and swapped
-        action = menu_action(parent, "Horizontal Cut" if horizontal else "Vertical Cut")
+        action = menu_action(parent, "Horizontal cut" if horizontal else "Vertical cut")
         for index in (0, 2):
             pixel = (1, index) if horizontal else (index, 1)
             parent.show_hover_pixel_outline(*pixel)
@@ -144,7 +144,7 @@ def test_equal_frozen_cuts_export_both_fixed_coordinates(slices, tmp_path, monke
 def test_combined_csv_does_not_label_other_samples_with_frozen_cut_coordinates(slices, tmp_path, monkeypatch):
     window, _live, frozen, _guid = slices
     frozen.show_hover_pixel_outline(0, 1)
-    cut = next_plot(window, menu_action(frozen, "Vertical Cut").trigger)
+    cut = next_plot(window, menu_action(frozen, "Vertical cut").trigger)
     reference = cut.plot.plot(BIASES, [30., 35., 50.], name="reference")
     monkeypatch.setitem(cut.lines, TraceKey(cut._dataset_key, "reference"), reference)
 

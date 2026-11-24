@@ -66,10 +66,13 @@ def test_csv_dialog_names_values_and_scope(real_plot):
     assert "precision" not in params.names
     if dimensions == 2:
         assert mode.value() == CSV_HEATMAP_VALUES
-        assert "Selected heatmap" in dialog.csv_scope.text()
+        assert "Current heatmap grid" in dialog.csv_scope.text()
+        assert "×" in dialog.csv_scope.text()
+        assert "values" not in dialog.controls.fields
         assert "spatial averaging" in dialog.csv_scope.text()
         assert "columnMode" not in params.names
     else:
+        assert "values" in dialog.controls.fields
         assert mode.value() == CSV_UNDERLYING_VALUES
         assert "before plot transforms" in dialog.csv_scope.text()
         assert "before native FFT" in dialog.csv_scope.toolTip()
@@ -77,6 +80,7 @@ def test_csv_dialog_names_values_and_scope(real_plot):
         assert "after operations and plot transforms" in dialog.csv_scope.text()
         assert "physical coordinates" in dialog.csv_scope.toolTip()
         assert "rendering downsampling" in dialog.csv_scope.toolTip()
+    assert "measurements" not in dialog.controls.fields
 
 
 def test_plot_csv_worker_can_cancel_without_publishing(real_plot, tmp_path, monkeypatch):

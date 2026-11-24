@@ -2,6 +2,7 @@
 
 import sys
 from copy import deepcopy
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -52,18 +53,14 @@ def _axis_controls(fft_plots, axis):
     return plot, plot._axis_scale_controls[axis], plot._axis_scale_viewbox(axis)
 
 
-def _accept_limits(controls, lower, upper, *, pending=False):
-    if not pending:
-        controls.manualRadio.click()
-        assert controls.minText.isVisible()
-        controls.minText.setFocus()
-    controls.minText.setText(repr(lower))
-    controls.maxText.setText(repr(upper))
-    if pending:
-        # A commit delivered after a mode change must still validate its limits.
-        controls.minText.editingFinished.emit()
-    else:
-        QtTest.QTest.keyClick(controls.minText, QtCore.Qt.Key.Key_Return)
+def _accept_limits(controls, lower, upper):
+    controls.manualRadio.click()
+    entries = [(controls.minText, lower), (controls.maxText, upper)]
+    if lower >= controls.rangeEntry.state.limits[1]:
+        entries.reverse()
+    for field, value in entries:
+        field.setText(repr(value))
+        QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
 
 
 def _paint_native_axes(plot):
@@ -126,15 +123,13 @@ def test_manual_snapshot_completes_native_tick_layout(
     np.testing.assert_array_equal(viewbox.viewRange(), before_view)
     assert viewbox.getState()["targetRange"] == before["targetRange"]
     assert viewbox.getState()["autoRange"] == before["autoRange"]
-    statuses = []
-    monkeypatch.setattr(plot, "show_status", lambda message, *_args: statuses.append(message))
     QtTest.QTest.mouseClick(controls.autoRadio, QtCore.Qt.MouseButton.LeftButton,
                           pos=QtCore.QPoint(8, controls.autoRadio.height() // 2))
     qapplication.processEvents()
     assert controls.manualRadio.isChecked()
     assert viewbox.getState()["targetRange"] == before["targetRange"]
     assert viewbox.getState()["autoRange"] == before["autoRange"]
-    assert "supported plot range" in statuses[-1]
+    assert "supported plot range" in controls.rangeEntry.error_label.text()
 
 
 @pytest.mark.parametrize("fft_plots", [{"x": np.array([1.0, 2.0, 3.0])}], indirect=True)
@@ -179,8 +174,6 @@ def test_unsupported_accepted_limits_leave_range_and_mode_unchanged(
     fft_plots, no_callback_errors, qapplication, axis, automatic, monkeypatch,
 ):
     plot, controls, viewbox = _axis_controls(fft_plots, axis)
-    statuses = []
-    monkeypatch.setattr(plot, "show_status", lambda message, *_args: statuses.append(message))
     axis_number = plot._axis_scale_axis_number(axis)
     radio = controls.autoRadio if automatic else controls.manualRadio
     QtTest.QTest.mouseClick(radio, QtCore.Qt.MouseButton.LeftButton,
@@ -194,18 +187,19 @@ def test_unsupported_accepted_limits_leave_range_and_mode_unchanged(
         (-1e308, 1e308), (1e308, 1.1e308), (-1.1e308, -1e308),
         (float("nan"), 1.0), (2.0, 1.0),
     ):
-        _accept_limits(controls, lower, upper, pending=automatic)
+        # The shared editor submits one solved pair for each edit. Exercise the
+        # native preflight even for pairs the editor itself would also reject.
+        original = controls.rangeEntry.state
+        with pytest.raises(ValueError, match="supported plot range"):
+            plot._accept_axis_range(axis, replace(original, limits=(lower, upper)))
         qapplication.processEvents()
         np.testing.assert_array_equal(viewbox.viewRange(), before_view)
         assert viewbox.getState()["targetRange"] == before["targetRange"]
         assert viewbox.autoRangeEnabled()[axis_number] == before["autoRange"][axis_number]
         assert controls.autoRadio.isChecked() == automatic
         assert controls.manualRadio.isChecked() != automatic
-        assert float(controls.maxText.text()) == upper
-        assert controls.rangeEntry._error
+        assert controls.rangeEntry.state == original
         assert plot._axis_scale_custom_auto_axes == before_custom_auto
-        expected_status = "finite numbers" if not lower < upper else "supported plot range"
-        assert expected_status in statuses[-1]
 
 
 @pytest.mark.parametrize("fft_plots", [{"x": np.array([1.0, 2.0, 3.0])}], indirect=True)
@@ -256,13 +250,14 @@ def test_rejected_nonpositive_log_edit_preserves_current_mode(
     assert controls.autoRadio.isChecked() == automatic
     before = deepcopy(viewbox.getState())
     for lower in (0.0, -1.0):
-        _accept_limits(controls, lower, 10.0, pending=automatic)
+        controls.minText.setText(repr(lower))
+        QtTest.QTest.keyClick(controls.minText, QtCore.Qt.Key.Key_Return)
         qapplication.processEvents()
         assert viewbox.getState()["targetRange"] == before["targetRange"]
         assert viewbox.getState()["autoRange"] == before["autoRange"]
         assert controls.autoRadio.isChecked() == automatic
         assert float(controls.minText.text()) == lower
-        assert "greater than zero" in controls.rangeEntry.summary.text()
+        assert "greater than zero" in controls.rangeEntry.error_label.text()
 
 
 @pytest.mark.parametrize("fft_plots", [{"x": np.array([1.0, 2.0, 3.0])}], indirect=True)
@@ -285,29 +280,25 @@ def test_partial_axis_input_is_not_applied_before_acceptance(
 
 @pytest.mark.parametrize("fft_plots", [{"x": np.array([1.0, 2.0, 3.0])}], indirect=True)
 @pytest.mark.parametrize("axis", ["x", "y", "x2", "y2"])
-def test_copy_auto_rejects_unsupported_limits_without_changing_auto_state(
+def test_fit_once_rejects_unsupported_limits_without_changing_manual_state(
     fft_plots, no_callback_errors, qapplication, axis, monkeypatch,
 ):
     plot, controls, viewbox = _axis_controls(fft_plots, axis)
-    QtTest.QTest.mouseClick(controls.autoRadio, QtCore.Qt.MouseButton.LeftButton,
-                          pos=QtCore.QPoint(8, controls.autoRadio.height() // 2))
+    controls.manualRadio.click()
     qapplication.processEvents()
     before = deepcopy(viewbox.getState())
     before_fields = (controls.minText.text(), controls.maxText.text())
     before_custom_auto = set(plot._axis_scale_custom_auto_axes)
-    statuses = []
-    monkeypatch.setattr(plot, "show_status", lambda message, *_args: statuses.append(message))
     monkeypatch.setattr(plot, "_axis_scale_auto_limits", lambda _axis: (-1e308, 1e308))
-    plot._update_axis_scale_auto_limits_tooltip(axis)
     assert controls.copyAutoLimitsButton.isEnabled()
-    plot._axis_scale_copy_auto_limits(axis)
+    controls.copyAutoLimitsButton.click()
     qapplication.processEvents()
     assert viewbox.getState()["targetRange"] == before["targetRange"]
     assert viewbox.getState()["autoRange"] == before["autoRange"]
     assert plot._axis_scale_custom_auto_axes == before_custom_auto
     assert (controls.minText.text(), controls.maxText.text()) == before_fields
-    assert controls.autoRadio.isChecked()
-    assert "supported plot range" in statuses[-1]
+    assert controls.manualRadio.isChecked()
+    assert "supported plot range" in controls.rangeEntry.error_label.text()
 
 
 @pytest.mark.parametrize("axis,fft_plots", [
@@ -331,13 +322,12 @@ def test_initial_unsupported_auto_preserves_samples_and_recovers_on_log_refresh(
     np.testing.assert_array_equal(original_y, raw_y)
     other_number = 1 - axis_number
     other_auto = viewbox.autoRangeEnabled()[other_number]
-    statuses = []
-    monkeypatch.setattr(plot, "show_status", lambda message, *_args: statuses.append(message))
-    plot._axis_scale_copy_auto_limits(axis)
+    assert not controls.copyAutoLimitsButton.isEnabled()
+    controls.autoRadio.click()
     qapplication.processEvents()
     np.testing.assert_array_equal(viewbox.viewRange(), before)
     assert controls.autoRadio.isChecked()
-    assert "supported plot range" in statuses[-1]
+    assert "supported plot range" in controls.rangeEntry.error_label.text()
     assert viewbox.autoRangeEnabled()[other_number] == other_auto
 
     # Reject an Auto request from a manual, supported range as well.
@@ -352,7 +342,7 @@ def test_initial_unsupported_auto_preserves_samples_and_recovers_on_log_refresh(
     assert controls.manualRadio.isChecked()
     assert viewbox.getState()["targetRange"] == manual["targetRange"]
     assert viewbox.getState()["autoRange"] == manual["autoRange"]
-    assert "supported plot range" in statuses[-1]
+    assert "supported plot range" in controls.rangeEntry.error_label.text()
 
     QtTest.QTest.mouseClick(controls.logCheck, QtCore.Qt.MouseButton.LeftButton,
                           pos=QtCore.QPoint(8, controls.logCheck.height() // 2))
@@ -386,14 +376,12 @@ def test_constant_extreme_auto_is_explicitly_rejected_without_losing_samples(
     assert controls.autoRadio.isChecked()
     before = deepcopy(viewbox.viewRange())
     assert all(np.isfinite(before).ravel())
-    statuses = []
-    monkeypatch.setattr(plot, "show_status", lambda message, *_args: statuses.append(message))
     assert plot._axis_scale_auto_limits(axis) is not None
     QtTest.QTest.mouseClick(controls.autoRadio, QtCore.Qt.MouseButton.LeftButton,
                           pos=QtCore.QPoint(8, controls.autoRadio.height() // 2))
     qapplication.processEvents()
     np.testing.assert_array_equal(viewbox.viewRange(), before)
-    assert "supported plot range" in statuses[-1]
+    assert "supported plot range" in controls.rangeEntry.error_label.text()
     np.testing.assert_array_equal(plot.line.getOriginalDataset()[0], raw_x)
     np.testing.assert_array_equal(plot.line.getOriginalDataset()[1], raw_y)
 

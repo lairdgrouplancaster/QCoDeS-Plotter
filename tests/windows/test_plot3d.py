@@ -17,6 +17,7 @@ from qcodes.dataset import (
 from qplot.datahandling.volume import VolumeStore
 from qplot.windows._widgets.operations import OperationEntry, OperationsState
 from qplot.windows.plot3d import plot3d
+from tests.support.windows.color_scale_locale import enter_colour_value
 from tests.support.windows.plot3d import (
     build_mixed_volume as build_mixed_volume,
 )
@@ -47,29 +48,47 @@ def test_color_dialog_scope_sync_and_symmetric_lock(tmp_path, main):
     plot = window.windows[0]
     wait_for(lambda: loaded(plot) and plot._range_complete)
     plot.open_colorbar_scale_dialog()
-    assert not plot.slice_panel.isAncestorOf(plot.symmetric_color)
-    plot.colorbar_scope.setCurrentIndex(1)
+    entry = plot.colorbar_range_entry
+    assert not plot.slice_panel.isAncestorOf(entry)
+    assert not entry.percent.isEnabled()
+    assert plot.colour_source_buttons["volume"].isChecked()
+    plot.colour_source_buttons["slice"].click()
     assert plot.color_mode.currentData() == plot._color_mode == "slice"
-    plot.symmetric_color.setChecked(True)
+    assert entry.percent.isEnabled()
+    entry.percent.setValue(80)
+    entry.visible_only.setChecked(True)
+    plot.colour_source_buttons["volume"].click()
+    assert entry.percent.value() == 100 and not entry.percent.isEnabled()
+    assert not entry.visible_only.isChecked() and not entry.visible_only.isEnabled()
+    plot.colour_source_buttons["slice"].click()
+    assert entry.percent.value() == 80 and entry.visible_only.isChecked()
+    entry.visible_only.setChecked(False)
+    entry.locks["centre"].click()
+    enter_colour_value(plot, "centre", 0)
     assert plot.bar.levels()[0] == -plot.bar.levels()[1]
     plot.color_mode.setCurrentIndex(2)
-    assert plot.colorbar_scope.currentData() == "locked"
+    assert plot.color_mode.currentText() == "Manual"
+    assert plot.colour_source_buttons["slice"].isChecked()
+    assert not entry.state.automatic
     levels = tuple(plot.bar.levels())
-    plot.symmetric_color.setChecked(False)
-    plot.symmetric_color.setChecked(True)
+    entry.locks["centre"].click()
+    entry.locks["centre"].click()
     assert plot._color_mode == "locked"
     assert tuple(plot.bar.levels()) == levels
     plot.select_slice(1)
     wait_for(lambda: loaded(plot) and plot.slice_frame.index == 1)
     assert tuple(plot.bar.levels()) == levels
-    plot.colorbar_max_text.setText("10")
-    plot.colorbar_max_text.editingFinished.emit()
+    enter_colour_value(plot, "max", 10)
     assert plot.bar.levels() == (-10., 10.)
     plot.colorbar_auto_radio.click()
-    assert plot.colorbar_scope.currentData() == plot.color_mode.currentData() == "slice"
+    assert plot.colour_source_buttons["slice"].isChecked()
+    assert plot.color_mode.currentData() == "slice"
     plot.color_mode.setCurrentIndex(0)
     wait_for(lambda: plot._range_complete)
-    assert plot.colorbar_scope.currentData() == "volume"
+    assert plot.colour_source_buttons["volume"].isChecked()
+    plot._context_menu_action("Autoscale colour range").trigger()
+    assert not plot._range_complete
+    wait_for(lambda: plot._range_complete)
     assert plot.bar.levels()[0] == -plot.bar.levels()[1]
     assert not errors
 
@@ -88,6 +107,37 @@ def test_compact_depth_display_retains_distinct_planes():
         np.testing.assert_array_equal(volume.axes["depth"], depths)
     finally:
         volume.directory.cleanup()
+
+
+def test_slice_operations_menus_share_the_panel_shortcut(tmp_path, main, qapplication):
+    window, errors = main
+    path = tmp_path / "operations.db"
+    guid = build_volume(path)
+    assert window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(guid)
+    wait_for(lambda: window.windows and loaded(window.windows[0]))
+    plot = window.windows[0]
+    view = next(action.menu() for action in plot.menuBar().actions() if action.text() == "&View")
+    panels = next(action.menu() for action in view.actions() if action.text() == "Panels and toolbars")
+    toggle = plot.oper_dock.toggleViewAction()
+    assert toggle.text() == "Slice operations"
+    assert plot._context_menu_action("Slice operations") is toggle
+    assert toggle in panels.actions() and toggle.isCheckable()
+    assert toggle.shortcut().toString() == "Ctrl+Alt+O"
+    assert not toggle.isChecked()
+
+    toggle.trigger()
+    assert plot.oper_dock.isVisible() and toggle.isChecked()
+    plot.activateWindow()
+    plot.widget.setFocus()
+    qapplication.processEvents()
+    QtTest.QTest.keySequence(plot.widget, toggle.shortcut())
+    assert plot.oper_dock.isHidden() and not toggle.isChecked()
+
+    plot.close()
+    assert not toggle.isEnabled()
+    assert not errors
 
 
 def test_cursor_includes_depth_in_readout_tooltip_and_copy(tmp_path, main):
@@ -173,7 +223,7 @@ def test_cursor_fields_stay_left_aligned_and_stationary_across_index_digits(tmp_
     assert not errors
 
 
-def test_keyboard_coordinate_and_mouse_navigation(tmp_path, main):
+def test_keyboard_coordinate_and_mouse_navigation(tmp_path, main, monkeypatch):
     window, errors = main
     path = tmp_path / "navigation.db"
     guid = build_volume(path)
@@ -215,6 +265,13 @@ def test_keyboard_coordinate_and_mouse_navigation(tmp_path, main):
     handle = slider.style().subControlRect(
         qtw.QStyle.ComplexControl.CC_Slider, option,
         qtw.QStyle.SubControl.SC_SliderHandle, slider)
+    # Exercise a 20 ms slice load regardless of the speed of the test machine.
+    monkeypatch.setattr('qplot.windows._plot_state.perf_counter', lambda: plot.worker.started_at + 0.020)
+    feedback = plot.plot_status
+    previous_message = feedback.status_label.text()
+    status_at_selection = []
+    slider.valueChanged.connect(lambda: status_at_selection.append(feedback.status_label.text()))
+    header_changes = QtTest.QSignalSpy(feedback.stack.currentChanged)
     QtTest.QTest.mousePress(slider, QtCore.Qt.MouseButton.LeftButton, pos=handle.center())
     try:
         assert slider.cursor().shape() == QtCore.Qt.CursorShape.ClosedHandCursor
@@ -223,6 +280,9 @@ def test_keyboard_coordinate_and_mouse_navigation(tmp_path, main):
         wait_for(lambda: loaded(plot) and plot.slice_frame.depth == 4.)
         assert slider.isSliderDown()
         np.testing.assert_array_equal(plot.dataGrid, [[404, 400, 425], [434, 430, 455]])
+        assert status_at_selection == [previous_message]
+        assert len(header_changes) == 0
+        assert feedback.status_label.text().startswith("Loaded 6 points in ")
     finally:
         QtTest.QTest.mouseRelease(slider, QtCore.Qt.MouseButton.LeftButton)
     assert slider.cursor().shape() == QtCore.Qt.CursorShape.OpenHandCursor
@@ -476,7 +536,7 @@ def test_cuts_follow_pin_processed_depth_and_csv(tmp_path, main):
     plot = window.windows[0]
     wait_for(lambda: loaded(plot))
     plot._selected_coordinates.update(gate=0., bias=3.)
-    plot.openSweep("d")
+    plot._context_menu_action("Depth cut").trigger()
     wait_for(lambda: len(window.windows) == 2 or bool(errors))
     assert not errors
     depth = window.windows[1]
@@ -633,7 +693,20 @@ def test_freeze_is_independent_and_supports_operations_and_cuts(tmp_path, main):
     source = window.windows[0]
     wait_for(lambda: loaded(source) or bool(errors))
     assert not errors
-    source.freeze_slice()
+    actions = source.vbMenu.actions()
+    groups = [[]]
+    for action in actions:
+        if action.isSeparator():
+            groups.append([])
+        else:
+            groups[-1].append(action.text())
+    cuts_group = groups.index(["Horizontal cut", "Vertical cut", "Depth cut"])
+    assert groups[cuts_group + 1] == [
+        "Previous slice", "Next slice", "First slice", "Last slice", "Freeze slice as 2D plot",
+    ]
+    freeze = source.freeze_slice_action
+    assert freeze.isEnabled()
+    freeze.trigger()
     wait_for(lambda: len(window.windows) == 2 or bool(errors))
     assert not errors
     frozen = window.windows[1]
@@ -644,7 +717,11 @@ def test_freeze_is_independent_and_supports_operations_and_cuts(tmp_path, main):
         assert plot.heatmap_downsample_button.isHidden()
     original = frozen.dataGrid.copy()
     source.select_slice(2)
+    assert not freeze.isEnabled()
+    freeze.trigger()
     wait_for(lambda: loaded(source) and source._depth_value == 4.)
+    assert freeze.isEnabled()
+    assert len(window.windows) == 2
     np.testing.assert_array_equal(frozen.dataGrid, original)
     capture = frozen._capture_heatmap_csv(layer=frozen)
     np.testing.assert_array_equal(capture.grid, original)

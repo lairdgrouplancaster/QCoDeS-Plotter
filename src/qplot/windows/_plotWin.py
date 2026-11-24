@@ -90,22 +90,22 @@ _POWERPOINT_WIDESCREEN_PLOT_AREA_SIZE = QtCore.QSize(1280, 720)
 _SQUARE_PLOT_AREA_SIZE = QtCore.QSize(850, 850)
 _PLOT_AREA_RESIZE_PRESETS = (
     (
-        "A4 Landscape",
+        "A4 landscape",
         "resizePlotAreaA4LandscapeAction",
         _A4_LANDSCAPE_PLOT_AREA_SIZE,
         ),
     (
-        "A4 Portrait",
+        "A4 portrait",
         "resizePlotAreaA4PortraitAction",
         _A4_PORTRAIT_PLOT_AREA_SIZE,
         ),
     (
-        "PowerPoint Standard",
+        "PowerPoint standard",
         "resizePlotAreaPowerPointStandardAction",
         _POWERPOINT_STANDARD_PLOT_AREA_SIZE,
         ),
     (
-        "PowerPoint Widescreen",
+        "PowerPoint widescreen",
         "resizePlotAreaPowerPointWidescreenAction",
         _POWERPOINT_WIDESCREEN_PLOT_AREA_SIZE,
         ),
@@ -909,8 +909,8 @@ class plotWidget(
         self.mouseModeAction = self._context_menu_action("Mouse Mode")
         self._remove_scene_export_context_menu()
         if getattr(self.plot, "ctrlMenu", None) is not None:
-            self.plot.ctrlMenu.setTitle("Options")
-            self.plot.ctrlMenu.menuAction().setText("Options")
+            self.plot.ctrlMenu.setTitle("Plot options")
+            self.plot.ctrlMenu.menuAction().setText("Plot options")
 
         self.exportPlotAction = create_action("plot.export", self)
         self.register_shortcut(
@@ -919,7 +919,7 @@ class plotWidget(
             )
         self.exportPlotAction.triggered.connect(self.open_export_dialog)
 
-        self.savePlotPdfAction = QtGui.QAction("Save Plot as &PDF...", self)
+        self.savePlotPdfAction = QtGui.QAction("&Save plot as PDF…", self)
         self.savePlotPdfAction.setObjectName("savePlotPdfAction")
         self.savePlotPdfAction.setStatusTip("Save the visible plot area as a PDF")
         self.savePlotPdfAction.triggered.connect(self.save_plot_pdf)
@@ -955,21 +955,16 @@ class plotWidget(
             )
         contextAction.triggered.connect(self.open_context_menu)
         
-        actions = self.vbMenu.actions()
-        for action in actions:
-            if action.text() == "View All":
-                self.register_shortcut(action, command_spec("plot.autoscale"))
-                action.setText(command_spec("plot.autoscale").text)
-                # Line owners install a validated full-view handler before
-                # native autoRange mutates the range. Their context callback
-                # already applies this guard once; heatmaps retain this hook.
-                if getattr(self, "operation_kind", None) not in ("plot1d", "sweeper"):
-                    action.triggered.connect(
-                        lambda _checked=False: self.force_all_axes_autoscale()
-                    )
-                break
-        
-        x_action = actions[1]
+        autoscale = self.vbMenu.viewAll
+        spec = command_spec("plot.autoscale")
+        self.register_shortcut(autoscale, spec)
+        autoscale.setText(spec.text)
+        # Line owners already apply their validated full-view handler through
+        # native autoRange. Heatmaps also need to restore automatic axes.
+        if getattr(self, "operation_kind", None) not in ("plot1d", "sweeper"):
+            autoscale.triggered.connect(lambda _checked=False: self.force_all_axes_autoscale())
+
+        x_action = self.vbMenu.actions()[1]
         
         self.autoscaleSep = self.vbMenu.insertSeparator(x_action)
 
@@ -979,16 +974,13 @@ class plotWidget(
         self.vbMenu.insertAction(x_action, self.copyCoordinatesAction)
         self.vbMenu.insertSeparator(x_action)
         
-        # Create visibility
-        toggleAction = create_action(
-            "plot.toggle_operations",
-            self,
-            checkable=True,
-            )
-        self.register_shortcut(toggleAction, command_spec("plot.toggle_operations"))
-        toggleAction.triggered.connect(self.oper_dock.setVisible)
-        self.oper_dock.visibilityChanged.connect(toggleAction.setChecked)
-        self.vbMenu.insertAction(x_action, toggleAction)
+        operations_action = getattr(self, "_slice_operations_action", None)
+        if operations_action is None:
+            operations_action = create_action("plot.toggle_operations", self, checkable=True)
+            self.register_shortcut(operations_action, command_spec("plot.toggle_operations"))
+            operations_action.triggered.connect(self.oper_dock.setVisible)
+            self.oper_dock.visibilityChanged.connect(operations_action.setChecked)
+        self.vbMenu.insertAction(x_action, operations_action)
         self.vbMenu.insertSeparator(x_action)
 
         self._init_axis_scale_dialogs()
@@ -1041,6 +1033,10 @@ class plotWidget(
 
         """
         if not _window_is_retired(self):
+            options = self.plot.getContextMenus(None)
+            if options is not None and options.menuAction() not in self.vbMenu.actions():
+                self.vbMenu.addSeparator()
+                self.vbMenu.addMenu(options)
             self.vbMenu.exec(self.widget.mapToGlobal(self.widget.rect().center()))
 
 
@@ -1049,7 +1045,7 @@ class plotWidget(
         Adds fixed plot-area resize actions to the Window menu.
 
         """
-        resize_menu = qtw.QMenu("&Resize Plot Canvas", self)
+        resize_menu = qtw.QMenu("&Resize plot canvas", self)
         resize_menu.setObjectName("plotAreaResizeMenu")
 
         for label, object_name, size in _PLOT_AREA_RESIZE_PRESETS:
@@ -1071,7 +1067,7 @@ class plotWidget(
             resize_menu.addAction(action)
 
         resize_menu.addSeparator()
-        custom_action = QtGui.QAction("&Custom...", self)
+        custom_action = QtGui.QAction("&Custom…", self)
         custom_action.setObjectName("resizePlotAreaCustomAction")
         custom_action.setStatusTip("Resize the copied plot area to a custom pixel size")
         custom_action.triggered.connect(self.open_custom_plot_area_size_dialog)
@@ -1319,6 +1315,15 @@ class plotWidget(
             edit_menu.addAction(copy_plot_image_action)
             edit_menu.addAction(self.copyCoordinatesAction)
 
+        close_action = create_action(
+            "window.close",
+            self,
+            text="&Close this plot",
+            status_tip="Close this plot window",
+            )
+        close_action.triggered.connect(self.close)
+        file_menu.addAction(close_action)
+
         close_all_plots_action = create_action(
             "plots.close_all",
             self,
@@ -1326,14 +1331,7 @@ class plotWidget(
             )
         close_all_plots_action.triggered.connect(self.request_close_all_plots)
         file_menu.addAction(close_all_plots_action)
-
-        closeAction = create_action(
-            "window.close",
-            self,
-            status_tip="Close this plot window",
-            )
-        closeAction.triggered.connect(self.close)
-        file_menu.addAction(closeAction)
+        file_menu.addSeparator()
 
         add_application_quit_action(
             self,
@@ -1341,26 +1339,34 @@ class plotWidget(
             self.request_application_quit,
             )
 
-        window_menu = add_standard_window_controls(self)
-        self._add_plot_area_resize_menu(window_menu)
-
         main_menu = menu.addMenu("&View")
-        
-        refreshAction = create_action("window.refresh", self)
+
+        plot_settings = getattr(self, "appearance_action", None)
+        if plot_settings is not None:
+            main_menu.addAction(plot_settings)
+        axis_scales = main_menu.addAction("Axis scales…")
+        axis_scales.triggered.connect(lambda: self.open_axis_scale_dialog("x"))
+        self.vbMenu.addAction(axis_scales)
+        colour_scale = getattr(self, "colorbar_scale_action", None)
+        if colour_scale is not None:
+            main_menu.addAction(colour_scale)
+        main_menu.addSeparator()
+
+        snap_to_trace = getattr(self, "snap_to_trace_action", None)
+        if snap_to_trace is not None:
+            main_menu.addAction(snap_to_trace)
+            main_menu.addSeparator()
+
+        refreshAction = create_action("plot.refresh", self)
         refreshAction.triggered.connect(self.refresh_plot_data)
         if hasattr(self, "get_mergables"): # Force refresh 1d line options
             refreshAction.triggered.connect(lambda: self.get_mergables.emit())
         main_menu.addAction(refreshAction)
         
         toolbar_menu = self.createPopupMenu()
-        toolbar_menu.setTitle("Panels and Toolbars")
+        toolbar_menu.setTitle("Panels and toolbars")
         main_menu.addMenu(toolbar_menu)
-        axis_scaling = main_menu.addAction("Axis Scaling…")
-        axis_scaling.triggered.connect(lambda: self.open_axis_scale_dialog("x"))
-        self.vbMenu.addAction(axis_scaling)
-        colour_scaling = getattr(self, "colorbar_scale_action", None)
-        if colour_scaling is not None:
-            main_menu.addAction(colour_scaling)
+        main_menu.addAction(self.vbMenu.viewAll)
         mouse_mode_action = getattr(self, "mouseModeAction", None)
         if mouse_mode_action is not None:
             self.vbMenu.removeAction(mouse_mode_action)
@@ -1369,6 +1375,8 @@ class plotWidget(
         settings_menu.addAction(
             create_preferences_action(self, self.show_preferences_dialog)
             )
+        window_menu = add_standard_window_controls(self)
+        self._add_plot_area_resize_menu(window_menu)
         add_help_menu(self)
     
 ###############################################################################
@@ -1570,7 +1578,7 @@ class plotWidget(
             viewport().update()
 
 
-    def show_preferences_dialog(self, initial_tab: str | None = None):
+    def show_preferences_dialog(self, initial_tab: str | None = None, *, focus_setting: str | None = None):
         """
         Opens the shared preferences dialog from a plot window.
 
@@ -1584,17 +1592,7 @@ class plotWidget(
 
         dialog = PreferencesDialog(config, self)
         if initial_tab is not None:
-            tab_widget = dialog.findChild(qtw.QTabWidget)
-            if tab_widget is not None:
-                for index in range(tab_widget.count()):
-                    if tab_widget.tabText(index) == initial_tab:
-                        tab_widget.setCurrentIndex(index)
-                        break
-        if initial_tab == "Performance":
-            QtCore.QTimer.singleShot(
-                0,
-                dialog.maxFullHeatmapPointsSpin.setFocus,
-                )
+            dialog.select_page(initial_tab, focus_setting)
         if hasattr(owner, "apply_current_settings"):
             dialog.preferencesApplied.connect(owner.apply_current_settings)
         else:

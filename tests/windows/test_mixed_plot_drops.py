@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
-from PyQt6 import QtCore, QtTest, sip
+from PyQt6 import QtCore, QtGui, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 from pyqtgraph.exporters import CSVExporter
 
@@ -44,10 +44,105 @@ def _commit_removal(dialog):
         replacement.open_plot_appearance_dialog()
 
 
+def _view_menu(plot):
+    return next(action.menu() for action in plot.menuBar().actions() if action.text() == "&View")
+
+
+def test_view_menu_starts_with_the_available_plot_settings_pages(mixed_plot):
+    _main, plot, _runs = mixed_plot
+    view = _view_menu(plot)
+    actions = [action for action in view.actions() if action.isVisible()]
+    destinations = [("Plot settings…", "Datasets"), ("Axis scales…", "Axis scales")]
+    if plot.operation_kind == "plot2d":
+        destinations.append(("Colour scale…", "Colour scale"))
+    assert [action.text().replace("&", "") for action in actions[:len(destinations)]] == [
+        label for label, _page in destinations
+    ]
+
+    for action, (_label, page) in zip(actions[:len(destinations)], destinations, strict=True):
+        action.trigger()
+        dialog = plot._plot_appearance_dialog
+        assert dialog.isVisible()
+        assert dialog.pages.tabText(dialog.pages.currentIndex()) == page
+        dialog.accept()
+
+
+@pytest.mark.parametrize("mixed_plot", ["line"], indirect=True)
+def test_colour_scale_menus_follow_the_last_heatmap(mixed_plot):
+    _main, plot, runs = mixed_plot
+    view = _view_menu(plot)
+
+    def check_colour_scale(available):
+        for menu in (view, plot.vbMenu):
+            entries = [action for action in menu.actions() if action.isVisible()
+                       and action.text().replace("&", "") == "Colour scale…"]
+            assert len(entries) == int(available)
+            if available:
+                assert entries[0].isEnabled()
+        if available:
+            visible = [action.text().replace("&", "") for action in view.actions() if action.isVisible()]
+            assert visible[:3] == ["Plot settings…", "Axis scales…", "Colour scale…"]
+
+    check_colour_scale(False)
+    _drop(plot, runs["heatmap"])
+    layer = _added(plot, runs["heatmap"])
+    check_colour_scale(True)
+
+    # Hiding a dataset keeps its settings available. Removing it in the
+    # modeless editor previews the change immediately, and Cancel restores it.
+    dialog = plot.open_plot_appearance_dialog()
+    key = layer.from_win._trace_key
+    assert dialog.select_heatmap(key)
+    dialog.heatmap_controls.visible.setChecked(False)
+    check_colour_scale(True)
+    dialog.remove_item_button.click()
+    check_colour_scale(False)
+    dialog.reject()
+    check_colour_scale(True)
+
+    plot.open_plot_appearance_dialog()
+    assert dialog.select_heatmap(key)
+    _commit_removal(dialog)
+    check_colour_scale(False)
+    _drop(plot, runs["heatmap"])
+    _added(plot, runs["heatmap"])
+    check_colour_scale(True)
+    plot._context_menu_action("Colour scale…").trigger()
+    assert dialog.isVisible()
+    assert dialog.pages.tabText(dialog.pages.currentIndex()) == "Colour scale"
+    dialog.accept()
+
+
+@pytest.mark.parametrize("mixed_plot", ["line"], indirect=True)
+def test_colour_scale_stays_hidden_after_failed_heatmap_add(mixed_plot, monkeypatch):
+    main, plot, runs = mixed_plot
+    _drop(plot, runs["heatmap"])
+    layer = _added(plot, runs["heatmap"])
+    assert plot.remove_heatmap(trace_key=layer.from_win._trace_key)
+    action = plot.colorbar_scale_action
+    assert not action.isVisible()
+
+    sync_order = plot._sync_heatmap_layer_order
+
+    def fail_after_adding_layer():
+        sync_order()
+        if plot.heatmaps:
+            raise RuntimeError("Could not finish adding the heatmap")
+
+    errors = []
+    monkeypatch.setattr(main, "show_error", lambda *args: errors.append(args))
+    monkeypatch.setattr(plot, "_sync_heatmap_layer_order", fail_after_adding_layer)
+    _drop(plot, runs["heatmap"])
+    _wait_for(lambda: errors)
+    assert errors[0][-1] == "Could not finish adding the heatmap"
+    assert not plot.heatmaps
+    assert not action.isVisible()
+
+
 def test_snap_defaults_and_heatmap_trace_readout(mixed_plot):
     _main, target, runs = mixed_plot
     assert target.snap_to_trace_action.isChecked()
-    assert target.snap_to_trace_action in target._menu_by_title("&View").actions()
+    assert target.snap_to_trace_action in _view_menu(target).actions()
     target.resize(max(1200, target.toolbarCo_ord.sizeHint().width() + 64), 700)
     target.show()
     qtw.QApplication.processEvents()
@@ -80,6 +175,63 @@ def test_snap_defaults_and_heatmap_trace_readout(mixed_plot):
         target.mouseMoved(point)
         assert not target.pos_labels["z"].isHidden()
         assert float(target.pos_labels["z"].text()) == 11
+
+
+def test_colour_handles_follow_strip_hover_and_stay_visible_during_drag(mixed_plot, qapplication):
+    _main, plot, runs = mixed_plot
+    if plot.operation_kind == "plot1d":
+        _drop(plot, runs["heatmap"])
+        _added(plot, runs["heatmap"])
+    plot.resize(850, 600)
+    plot.show()
+    qapplication.processEvents()
+    bar = plot.bar
+    viewport = plot.widget.viewport()
+    button = QtCore.Qt.MouseButton
+    lines = bar.region.lines
+
+    def strip_point(y):
+        return plot.widget.mapFromScene(bar.getViewBox().mapViewToScene(QtCore.QPointF(0.5, y)))
+
+    def move(point, buttons=button.NoButton):
+        event = QtGui.QMouseEvent(
+            QtCore.QEvent.Type.MouseMove, QtCore.QPointF(point),
+            QtCore.QPointF(viewport.mapToGlobal(point)), button.NoButton, buttons,
+            QtCore.Qt.KeyboardModifier.NoModifier,
+        )
+        qapplication.sendEvent(viewport, event)
+
+    def handle_alphas():
+        return [line.currentPen.color().alpha() for line in lines]
+
+    outside = strip_point(128) + QtCore.QPoint(35, 0)
+    move(outside)
+    assert handle_alphas() == [0, 0]
+    for y in (24, 128, 232):
+        move(strip_point(y))
+        assert handle_alphas() == [255, 255]
+    move(outside)
+    assert handle_alphas() == [0, 0]
+
+    start = strip_point(lines[1].value())
+    end = start + QtCore.QPoint(-45, -25)
+    QtTest.QTest.qWait(30)  # Let pyqtgraph pick the handle for the next drag.
+    move(start)
+    original_limits = bar.levels()
+    QtTest.QTest.mousePress(viewport, button.LeftButton, pos=start)
+    QtTest.QTest.qWait(30)
+    move(end, button.LeftButton)
+    assert handle_alphas() == [255, 255]
+    QtTest.QTest.mouseRelease(viewport, button.LeftButton, pos=end)
+    assert handle_alphas() == [0, 0]
+    assert bar.levels()[0] == pytest.approx(original_limits[0], abs=bar.rounding)
+    assert bar.levels()[1] > original_limits[1] + bar.rounding
+    centre = strip_point(128)
+    move(centre)
+    QtTest.QTest.mouseClick(viewport, button.LeftButton, pos=centre)
+    assert handle_alphas() == [255, 255]
+    qapplication.sendEvent(viewport, QtCore.QEvent(QtCore.QEvent.Type.Leave))
+    assert handle_alphas() == [0, 0]
 
 
 def test_double_click_selects_highlighted_trace_over_heatmap(mixed_plot, qapplication):
@@ -727,8 +879,8 @@ def test_shared_appearance_list_adds_removes_and_reorders_both_types(mixed_plot,
 def test_removing_source_promotes_bottom_remaining_dataset(
         mixed_plot, monkeypatch, tmp_path, bottom_kind, remove_other):
     window, target, runs = mixed_plot
-    original_title = target.windowTitle()
-    assert original_title == f"Plot {target._plot_window_number}"
+    title_prefix = f"Plot {target._plot_window_number} — "
+    assert target.windowTitle().startswith(title_prefix + "Run ")
     errors = []
     monkeypatch.setattr(qtw.QMessageBox, "exec", lambda box: qtw.QMessageBox.StandardButton.Ok)
     monkeypatch.setattr(qtw.QMessageBox, "critical", lambda *args: errors.append(args))
@@ -740,6 +892,7 @@ def test_removing_source_promotes_bottom_remaining_dataset(
     for name in ("other_line", "other_heatmap"):
         _drop(target, runs[name])
         sources[name] = _added(target, runs[name]).from_win
+    assert target.windowTitle() == title_prefix + "3 measurements from 3 runs"
     target.open_plot_appearance_dialog()
     dialog = target._plot_appearance_dialog
     bottom_name = "other_line" if bottom_kind == "trace" else "other_heatmap"
@@ -795,7 +948,7 @@ def test_removing_source_promotes_bottom_remaining_dataset(
     replacement = next(win for win in window.windows if win.visible)
     _wait_for(lambda: not replacement.worker.running and not getattr(replacement, "_refresh_pending", False))
     assert replacement is not target
-    assert replacement.windowTitle() == original_title
+    assert replacement.windowTitle().startswith(title_prefix)
     assert replacement._dataset_key == sources[bottom_name]._dataset_key
     assert replacement._trace_key == bottom_key
     assert replacement.param.name == runs[bottom_name].name
@@ -860,7 +1013,7 @@ def test_removing_source_promotes_bottom_remaining_dataset(
         _commit_removal(new_dialog)
         assert errors == []
         final = next(win for win in window.windows if win.visible)
-        assert final.windowTitle() == original_title
+        assert final.windowTitle().startswith(title_prefix + "Run ")
         _wait_for(lambda: not final.worker.running)
         assert final._dataset_key != current_source_key
         assert window.dataset_holder[current_source_key].users == 0

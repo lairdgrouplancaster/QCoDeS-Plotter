@@ -14,6 +14,7 @@ from qcodes.dataset.sqlite.database import connect
 from qplot.testdata import enable_generation_provenance_for_writer
 from qplot.windows.main import MainWindow
 from tests._window_lifecycle import close_main_window
+from tests.support.windows.color_scale_locale import enter_colour_value
 from tests.support.windows.complex_line_data import database_state
 from tests.support.windows.differentiation_integration import (
     apply_operations,
@@ -199,9 +200,8 @@ def test_live_color_rejection_keeps_polling_and_manual_span_recovers_on_completi
             np.testing.assert_array_equal(plot.dataGrid, grid)
             with finite_live_publication():
                 plot.open_colorbar_scale_dialog()
-                plot.colorbar_min_text.setText("-1e307")
-                plot.colorbar_max_text.setText("1e307")
-                plot.colorbar_max_text.editingFinished.emit()
+                enter_colour_value(plot, "min", "-1e307")
+                enter_colour_value(plot, "max", "1e307")
                 wait_for(lambda: not plot.worker.running and plot.image.isVisible())
             assert plot.ds.running
             assert plot.monitor.isActive()
@@ -262,13 +262,12 @@ def test_refresh_unrepresentable_color_span_hides_previous_display_and_recovers(
 @pytest.mark.parametrize("color_plot", [np.array([0., 1., 2.])], indirect=True)
 def test_manual_unrepresentable_color_span_keeps_previous_display(color_plot):
     plot, grid = color_plot
-    previous = plot.bar.levels()
     plot.open_colorbar_scale_dialog()
-    plot.colorbar_min_text.setText("-1e308")
-    plot.colorbar_max_text.setText("1e308")
-    plot.colorbar_max_text.editingFinished.emit()
+    enter_colour_value(plot, "min", "-1e308")
+    previous = plot.bar.levels()
+    enter_colour_value(plot, "max", "1e308")
     assert plot.bar.levels() == previous
-    assert plot._colorbar_manual_levels is None
+    assert plot._colorbar_manual_levels == previous
     assert plot.image.isVisible()
     assert plot.bar.isVisible()
     np.testing.assert_array_equal(plot.dataGrid, grid)
@@ -279,9 +278,8 @@ def test_manual_finite_span_recovers_initial_rejection(color_plot):
     plot, grid = color_plot
     assert_color_error(plot)
     plot.open_colorbar_scale_dialog()
-    plot.colorbar_min_text.setText("-1e307")
-    plot.colorbar_max_text.setText("1e307")
-    plot.colorbar_max_text.editingFinished.emit()
+    enter_colour_value(plot, "min", "-1e307")
+    enter_colour_value(plot, "max", "1e307")
     wait_for(lambda: not plot.worker.running and plot.image.isVisible())
     plot.monitor.stop()
     assert plot.bar.isVisible()
@@ -295,9 +293,8 @@ def test_manual_finite_span_recovers_initial_rejection(color_plot):
 def test_manual_finite_span_is_installed_before_extreme_refresh(color_plot):
     plot, _grid = color_plot
     plot.open_colorbar_scale_dialog()
-    plot.colorbar_min_text.setText("-1e307")
-    plot.colorbar_max_text.setText("1e307")
-    plot.colorbar_max_text.editingFinished.emit()
+    enter_colour_value(plot, "min", "-1e307")
+    enter_colour_value(plot, "max", "1e307")
     operation_option(plot, "dz/dx").input.setChecked(True)
     apply_operations(plot)
     assert plot.image.isVisible()
@@ -312,9 +309,8 @@ def test_manual_finite_span_is_installed_before_extreme_refresh(color_plot):
 def test_layer_visibility_preserves_current_manual_color_levels(color_plot):
     plot, _grid = color_plot
     plot.open_colorbar_scale_dialog()
-    plot.colorbar_min_text.setText("0.25")
-    plot.colorbar_max_text.setText("1.25")
-    plot.colorbar_max_text.editingFinished.emit()
+    enter_colour_value(plot, "min", "0.25")
+    enter_colour_value(plot, "max", "1.25")
     assert tuple(plot.image.getLevels()) == (0.25, 1.25)
     plot.open_heatmap_appearance_dialog(plot._primary_heatmap_key)
     dialog = plot._heatmap_appearance_dialog.heatmap_controls

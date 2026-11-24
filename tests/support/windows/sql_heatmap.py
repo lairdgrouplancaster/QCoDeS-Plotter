@@ -2,6 +2,7 @@
 
 import sys
 from contextlib import contextmanager
+from dataclasses import replace
 
 import numpy as np
 
@@ -65,8 +66,8 @@ def subset(full, low, high):
 def view(plot, ranges):
     # Choose Manual through the same handlers as the axis controls. A raw
     # ViewBox.setRange alone leaves qPlot's filtered Auto mode enabled.
-    plot._axis_scale_manual_clicked("x")
-    plot._axis_scale_manual_clicked("y")
+    for axis in ("x", "y"):
+        plot._accept_axis_range(axis, replace(plot._axis_range_state(axis), automatic=False))
     plot._primary_heatmap_viewbox().setRange(xRange=ranges.x, yRange=ranges.y, padding=0)
 
 

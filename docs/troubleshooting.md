@@ -135,8 +135,8 @@ expect, activate the right environment and reinstall qPlot.
 
 ## The App Opens but No Database Is Loaded
 
-Load a database with `File -> Load Database...`, use `File -> Load Recent
-Database`, or drag a QCoDeS `.db` file onto the database path field.
+Load a database with `File -> Load database…`, use `File -> Recent databases`,
+or drag a QCoDeS `.db` file onto the database path field.
 
 qPlot tries the newest path in its recent-database list at startup. If that file
 has been moved or deleted, qPlot tries QCoDeS' configured database and otherwise
@@ -414,9 +414,9 @@ The log records startup, database loads, refresh failures, CSV export failures,
 plot-opening failures, preview-generation failures, and background worker
 errors.
 
-Inside qPlot, use **Help → Copy Path to Diagnostic Log** to copy this path to the
-clipboard. Use `Help -> Show Diagnostic Log in Finder` to reveal the file on
-macOS, or `Help -> Show Diagnostic Log in File Explorer` to open its folder on
+Inside qPlot, use **Help → Copy path to diagnostic log** to copy this path to the
+clipboard. Use `Help -> Show diagnostic log in Finder` to reveal the file on
+macOS, or `Help -> Show diagnostic log in File Explorer` to select it on
 Windows. These commands are available in main and plot windows.
 
 ## Theme or Preference Changes Do Not Look Right

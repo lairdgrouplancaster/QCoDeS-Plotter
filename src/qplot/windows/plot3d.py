@@ -2,6 +2,7 @@
 
 from contextlib import nullcontext
 from dataclasses import replace
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -23,6 +24,7 @@ class plot3d(plot2d):
     """One volume and one independently selectable, processed viewing plane."""
 
     cursor_has_depth = True
+    _cut_commands = (*plot2d._cut_commands, ("slice.depth_cut", "d"))
     # Slice workers read full-resolution planes from their private index.
     _uses_heatmap_viewport = False
     plane_changed = QtCore.pyqtSignal()
@@ -65,6 +67,10 @@ class plot3d(plot2d):
     def initOperations(self):
         super().initOperations()
         self.oper_dock.setWindowTitle("Slice operations")
+        action = self.oper_dock.toggleViewAction()
+        assert action is not None
+        self._slice_operations_action = action
+        self.closed.connect(lambda _plot: action.setEnabled(False))
         self.oper_widget.main_layout.itemAt(0).widget().setText("Slice operations")
         self.oper_widget.setToolTip("Applied to each full 2D plane, independently of zoom and selection.")
         self._update_operation_labels()
@@ -127,9 +133,10 @@ class plot3d(plot2d):
         self.color_mode.setMinimumWidth(85)
         self.color_mode.setSizeAdjustPolicy(
             qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        for label, mode in (("Whole volume", "volume"), ("Current slice", "slice"), ("Locked", "locked")):
+        for label, mode in (("Whole volume", "volume"), ("Current slice", "slice"), ("Manual", "locked")):
             self.color_mode.addItem(label, mode)
-        self.color_mode.setToolTip("Scope of automatic colour limits; whole-volume limits include slice operations.")
+        self.color_mode.setToolTip("Use the whole volume or current slice for automatic colour limits. "
+                                   "Manual keeps the chosen limits.")
         self.color_mode.currentIndexChanged.connect(self._color_mode_changed)
         color_row = qtw.QHBoxLayout()
         color_row.setSpacing(6)
@@ -262,15 +269,17 @@ class plot3d(plot2d):
 
     def initContextMenu(self):
         super().initContextMenu()
-        auto_color = self._context_menu_action("Autoscale Colour")
-        auto_color.triggered.disconnect(self.scaleColorbar)
-        auto_color.triggered.connect(self.autoscale_color)
-        self._slice_action("slice.depth_cut", lambda: self.openSweep("d"))
         self._slice_action("slice.previous", lambda: self.step_slice(-1))
         self._slice_action("slice.next", lambda: self.step_slice(1))
         self._slice_action("slice.first", lambda: self.select_slice(0))
         self._slice_action("slice.last", lambda: self.select_slice(self.slice_index.maximum()))
-        self.vbMenu.addAction("Freeze Slice as 2D Plot", self.freeze_slice)
+        self.freeze_slice_action = QtGui.QAction("Freeze slice as 2D plot", self)
+        self.freeze_slice_action.setEnabled(False)
+        self.freeze_slice_action.triggered.connect(self.freeze_slice)
+        self.vbMenu.insertAction(self.savePlotPdfAction, self.freeze_slice_action)
+        self.vbMenu.insertSeparator(self.savePlotPdfAction)
+        self.end_wait.connect(self._sync_freeze_slice_action)
+        self.vbMenu.aboutToShow.connect(self._sync_freeze_slice_action)
 
     def _slice_action(self, name, callback):
         action = create_action(name, self)
@@ -280,8 +289,7 @@ class plot3d(plot2d):
                 return
             callback()
         action.triggered.connect(invoke)
-        self.vbMenu.addAction(action)
-        return action
+        self.vbMenu.insertAction(self.savePlotPdfAction, action)
 
     def _depth_name(self):
         return next(name for name in self.param.depends_on_ if name not in self.axis_options.values())
@@ -445,7 +453,6 @@ class plot3d(plot2d):
                     self.color_mode.setCurrentIndex(0)
             if self._color_mode != "locked":
                 self._colorbar_manual_levels = None
-                self._colorbar_pending_primary = True
             self._update_navigator()
 
     def _complete_plot_publication(self, worker):
@@ -569,43 +576,77 @@ class plot3d(plot2d):
         if task is None or not task.running:
             self._range_timer.stop()
             self.stop_range.setVisible(False)
-        elif self._color_mode == "volume":
+        elif self._effective_colour_scope() == "volume":
             progress = task.progress
             self._set_range_status(f"Provisional range · {progress.completed}/{progress.total or '?'} slices")
 
-    def _init_colorbar_scope_controls(self, layout):
-        # Volume colour limits follow the selected scope on every publication.
-        # The separate 2D refresh option does not govern that behaviour.
-        self.relevel_refresh.setChecked(False)
-        self.relevel_refresh.hide()
-        self.colorbar_scope = qtw.QComboBox()
-        self.colorbar_scope.setMinimumContentsLength(10)
-        self.colorbar_scope.setSizeAdjustPolicy(
-            qtw.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        for index in range(self.color_mode.count()):
-            self.colorbar_scope.addItem(self.color_mode.itemText(index), self.color_mode.itemData(index))
-        self.colorbar_scope.setToolTip(self.color_mode.toolTip())
-        self.colorbar_scope.setCurrentIndex(self.color_mode.currentIndex())
-        self.colorbar_scope.currentIndexChanged.connect(self.color_mode.setCurrentIndex)
-        layout.addWidget(qtw.QLabel("Colour:"))
-        layout.addWidget(self.colorbar_scope)
+    def _create_colour_source_controls(self) -> qtw.QWidget:
+        row = qtw.QWidget()
+        layout = qtw.QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.colour_source_buttons = {}
+        for scope in ("slice", "volume"):
+            button = qtw.QRadioButton(self.color_mode.itemText(self.color_mode.findData(scope)), row)
+            button.setChecked(scope == self._effective_colour_scope())
+            button.clicked.connect(partial(self._colour_scope_changed, scope))
+            layout.addWidget(button)
+            self.colour_source_buttons[scope] = button
+        layout.addStretch()
+        row.setFocusProxy(self.colour_source_buttons[self._effective_colour_scope()])
+        return row
+
+    def _colour_scope_changed(self, scope):
+        if scope == self._effective_colour_scope():
+            return
+        if self._color_mode == "locked":
+            self._last_auto_mode = scope
+            self._color_mode_changed()
+        else:
+            self.color_mode.setCurrentIndex(self.color_mode.findData(scope))
 
     def _sync_color_mode_controls(self):
-        scope = self.__dict__.get("colorbar_scope")
-        if scope is not None:
-            with QtCore.QSignalBlocker(scope):
-                scope.setCurrentIndex(self.color_mode.currentIndex())
-        manual = self._color_mode == "locked"
-        for name, checked in (("colorbar_manual_radio", manual), ("colorbar_auto_radio", not manual)):
-            widget = self.__dict__.get(name)
-            if widget is not None:
-                with QtCore.QSignalBlocker(widget):
-                    widget.setChecked(checked)
+        entry = self.__dict__.get("colorbar_range_entry")
+        if entry is not None:
+            button = self.colour_source_buttons[self._effective_colour_scope()]
+            button.setChecked(True)
+            self._sync_colour_filter_controls()
+            self._sync_colorbar_scale_mode()
+
+    def _colour_filters_enabled(self) -> bool:
+        return self._effective_colour_scope() == "slice"
+
+    def _effective_colour_scope(self):
+        return self._last_auto_mode if self._color_mode == "locked" else self._color_mode
+
+    def _colour_fit_options(self):
+        if self._effective_colour_scope() == "volume":
+            return False, 100
+        return super()._colour_fit_options()
+
+    def _capture_colour_range_settings(self):
+        return super()._capture_colour_range_settings(), self._color_mode, self._last_auto_mode
+
+    def _restore_colour_range_settings(self, saved):
+        settings, self._color_mode, self._last_auto_mode = saved
+        with QtCore.QSignalBlocker(self.color_mode):
+            self.color_mode.setCurrentIndex(self.color_mode.findData(self._color_mode))
+        self._sync_color_mode_controls()
+        super()._restore_colour_range_settings(settings)
+        self._start_volume_range()
+
+    def _apply_colour_range_state(self, state):
+        if state.automatic and self._color_mode == "locked":
+            self._color_mode = self._last_auto_mode
+            with QtCore.QSignalBlocker(self.color_mode):
+                self.color_mode.setCurrentIndex(self.color_mode.findData(self._color_mode))
+        super()._apply_colour_range_state(state)
+        self._sync_color_mode_controls()
+        self._start_volume_range()
 
     def _color_mode_changed(self):
         mode = self.color_mode.currentData()
         self._color_mode = mode
-        if mode != "volume":
+        if self._effective_colour_scope() != "volume":
             if self._range_task is not None and self._range_task.running:
                 self._range_task.cancel()
                 self._range_key = None
@@ -620,21 +661,17 @@ class plot3d(plot2d):
         else:
             self._last_auto_mode = mode
             self._colorbar_manual_levels = None
+            self._sync_color_mode_controls()
             self.scaleColorbar()
         self._start_volume_range()
         self._sync_color_mode_controls()
 
     def _sync_heatmap_colorbar_items(self, *, rescale=False):
-        # Overlay publications obey the volume's colour scope, rather than
-        # the ordinary heatmap's hidden refresh-autoscale checkbox.
         super()._sync_heatmap_colorbar_items(rescale=rescale or self._color_mode != "locked")
-
-    def _heatmap_union_colorbar_levels(self):
-        return self._data_colorbar_levels()
 
     def _finite_data_colorbar_range(self):
         levels = super()._finite_data_colorbar_range()
-        if self._color_mode != "volume":
+        if self._effective_colour_scope() != "volume" or not self._heatmap_is_visible(self):
             return levels
         if self._shared_levels is None:
             # Keep the provisional volume range independent of overlays so
@@ -690,7 +727,7 @@ class plot3d(plot2d):
         self._color_mode_changed()
 
     def _start_volume_range(self):
-        if self.volume is None or self._closed or self._color_mode != "volume":
+        if self.volume is None or self._closed or self._effective_colour_scope() != "volume":
             return
         key = (self.volume, tuple(self.axis_options.items()), self._applied_operation_state.entries,
                self.worker.complex_mode)
@@ -745,7 +782,7 @@ class plot3d(plot2d):
                 self._range_complete = True
                 if self._color_mode == "volume":
                     self.scaleColorbar()
-                    self._set_range_status("")
+                self._set_range_status("")
             elif levels is not None:
                 self._set_range_status("No finite volume values")
         def failed(error):
@@ -868,8 +905,21 @@ class plot3d(plot2d):
                 ("slice_operations", str(self._applied_operation_state.entries)),
                 *units, ("repeated_coordinate_policy", "finite mean"))
 
+    def _can_freeze_slice(self):
+        frame = self.slice_frame
+        return (not self._closed and frame is not None and frame.values.size > 0
+                and not self._refresh_controller().busy)
+
+    def _refresh_worker_will_start(self, worker):
+        action = self.__dict__.get("freeze_slice_action")
+        if action is not None:
+            action.setEnabled(False)
+
+    def _sync_freeze_slice_action(self):
+        self.freeze_slice_action.setEnabled(self._can_freeze_slice())
+
     def freeze_slice(self):
-        if self.slice_frame is None or self.worker.running:
+        if not self._can_freeze_slice():
             return
         from ._volume_cut import FrozenSlice
         self.open_subplot.emit(FrozenSlice, self._dataset_key, (self.param, self))

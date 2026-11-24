@@ -367,7 +367,7 @@ def test_plot_letters_require_canvas_focus_but_f5_does_not(qapplication):
     window.setCentralWidget(editor)
     window.show()
     try:
-        action = create_action("window.refresh", window)
+        action = create_action("plot.refresh", window)
         focus_filter = _PlotKeyFocusFilter(action)
         editor.setFocus()
         qapplication.processEvents()

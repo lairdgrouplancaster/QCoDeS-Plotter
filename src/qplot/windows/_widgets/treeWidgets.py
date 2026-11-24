@@ -1637,7 +1637,7 @@ class RunList(qtw.QTreeWidget):
         # Create an action for all dependant parameters in the loaded dataset,
         # linking the coresponding parameter to the openPlot.
         for itr, (parameter_name, param) in enumerate(parameter_targets):
-            open_win = QtGui.QAction(f"  - {parameter_name}", menu)
+            open_win = QtGui.QAction("  - " + parameter_name.replace("&", "&&"), menu)
             if itr < 9:
                 self._set_action_shortcut(
                     open_win,

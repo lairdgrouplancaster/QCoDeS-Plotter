@@ -35,6 +35,17 @@ def _assert_no_stage(target):
     assert not list(target.parent.glob(f".{target.name}.*"))
 
 
+def test_separate_single_exports_keep_access_to_history(export_window, tmp_path):
+    window, _errors = export_window
+    for name in ("first.csv", "second.csv"):
+        task = _start(window, tmp_path / name, lambda path, *_: Path(path).write_text("data"))
+        wait_for(lambda task=task: task.done)
+        assert task.manager.tree.isHidden()
+        assert task.manager._selected_task() is task
+    task.manager.history_button.click()
+    assert task.manager.tree.isVisible() and task.manager.tree.topLevelItemCount() == 2
+
+
 def test_empty_progress_offers_only_close(export_window):
     from qplot.windows._export_tasks import export_task_manager
 
@@ -48,23 +59,29 @@ def test_empty_progress_offers_only_close(export_window):
 
 def test_completed_export_opens_exact_file_and_folder(export_window, tmp_path, monkeypatch):
     window, _errors = export_window
-    target = tmp_path / "shared data μ.csv"
+    target = tmp_path / "shared data, μ.csv"
     opened = []
+    revealed = []
     monkeypatch.setattr(QtGui.QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
+    monkeypatch.setattr("qplot.windows._export_tasks.reveal_file_in_file_manager",
+                        lambda name: revealed.append(Path(name)) or True)
     task = _start(window, target, lambda name, *_args: Path(name).write_text("data"))
     wait_for(lambda: task.done)
     manager = task.manager
     assert manager.open_file_button.isEnabled()
     assert manager.open_folder_button.isEnabled()
+    assert manager.open_folder_button.text() == "Show in folder"
     assert not manager.details_button.isEnabled()
     manager.open_file_button.click()
     manager.open_folder_button.click()
     assert all(url.isLocalFile() for url in opened)
-    assert [Path(url.toLocalFile()) for url in opened] == [target, target.parent]
+    assert [Path(url.toLocalFile()) for url in opened] == [target]
+    assert revealed == [target]
     manager.tree.clearSelection()
     assert not manager.open_file_button.isEnabled()
     manager._open_selected_export(folder=False)
-    assert len(opened) == 2
+    manager._open_selected_export(folder=True)
+    assert len(opened) == len(revealed) == 1
 
 
 def test_failed_export_details_open_from_row_and_copy(export_window, tmp_path, monkeypatch):
@@ -143,7 +160,7 @@ def test_pending_cancelled_and_multiple_exports_have_no_file_actions(export_wind
         wait_for(lambda: not manager.tasks)
 
 
-@pytest.mark.parametrize("problem", ["file-missing", "folder-missing", "system-refused"])
+@pytest.mark.parametrize("problem", ["file-missing", "reveal-missing", "folder-missing", "system-refused", "reveal-refused"])
 def test_export_open_failure_has_copyable_location(export_window, tmp_path, monkeypatch, problem):
     window, _errors = export_window
     folder = tmp_path / "outputs"
@@ -154,17 +171,20 @@ def test_export_open_failure_has_copyable_location(export_window, tmp_path, monk
     manager = task.manager
     opened = []
     monkeypatch.setattr(QtGui.QDesktopServices, "openUrl", lambda url: opened.append(url) or False)
-    if problem != "system-refused":
+    monkeypatch.setattr("qplot.windows._export_tasks.reveal_file_in_file_manager",
+                        lambda name: opened.append(name) or False)
+    if problem.endswith("missing"):
         target.unlink()
     if problem == "folder-missing":
         folder.rmdir()
+    if problem in ("reveal-missing", "folder-missing", "reveal-refused"):
         manager.open_folder_button.click()
     else:
         manager.open_file_button.click()
-    assert len(opened) == (1 if problem == "system-refused" else 0)
+    assert len(opened) == (1 if problem.endswith("refused") else 0)
     details = manager.dialog.findChild(ErrorDialog)
     assert details.isVisible()
-    assert str(folder if problem == "folder-missing" else target) in details._copy_text
+    assert str(target) in details._copy_text
     details.close()
 
 

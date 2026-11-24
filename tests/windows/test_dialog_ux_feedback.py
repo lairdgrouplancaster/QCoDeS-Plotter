@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from PyQt6 import QtCore, QtTest
 
 from tests.support.windows.axis_limit_precision import AxisLimitWindow
 from tests.support.windows.plot_dialog_lifecycle import dialog_plot as _dialog_plot
@@ -10,43 +11,39 @@ dialog_plot = _dialog_plot
 
 
 @pytest.mark.parametrize("manual", [False, True])
-@pytest.mark.parametrize("symmetric", [False, True])
-@pytest.mark.parametrize("refresh", [False, True])
-def test_cancel_restores_complete_colour_scale(dialog_plot, manual, symmetric, refresh):
+@pytest.mark.parametrize("held", [None, "span"])
+def test_cancel_restores_complete_colour_scale(dialog_plot, manual, held):
     _window, plot, app, _guids = dialog_plot
-    plot.symmetric_color.setChecked(symmetric)
-    plot.relevel_refresh.setChecked(refresh)
+    entry = plot.colorbar_range_entry
     if manual:
         plot.setColorbarManualRange(-4.0, 4.0)
-    else:
-        plot.setColorbarAuto()
+    if held:
+        entry.locks[held].click()
+    entry.percent.setValue(85)
+    before_state = entry.state
     before_levels = plot._current_colorbar_levels()
     before_map = plot._current_colorbar_colormap_name()
     before_default = plot.config.get("user_preference.bar_colour")
     plot.appearance_action.trigger()
     dialog = plot._plot_appearance_dialog
+    dialog.show_page("Colour scale")
     plot.setColorbarColorMap("plasma")
-    plot.symmetric_color.setChecked(not symmetric)
-    plot.relevel_refresh.setChecked(not refresh)
+    entry.locks["max"].click()
+    entry.visible_only.click()
+    entry.percent.setValue(50)
     if manual:
-        plot.setColorbarAuto()
+        entry.auto_radio.click()
     else:
-        plot.setColorbarManualRange(10.0, 20.0)
-    plot.colorbar_min_text.setText("99")
-    plot.colorbar_max_text.setText("1")
-    plot.colorbar_range_entry.show_error("Invalid draft")
+        entry.manual_radio.click()
+    entry.show_error("Invalid draft")
     dialog.reject()
     app.processEvents()
     assert plot._current_colorbar_colormap_name() == before_map
-    np.testing.assert_array_equal(plot._current_colorbar_levels(), before_levels)
-    assert (plot._colorbar_manual_levels is not None) == manual
-    assert plot.colorbar_manual_radio.isChecked() == manual
-    assert plot.colorbar_auto_radio.isChecked() != manual
-    assert plot._colorbar_symmetric == symmetric
-    assert plot.symmetric_color.isChecked() == symmetric
-    assert plot.relevel_refresh.isChecked() == refresh
-    assert plot.relevel_refresh.isEnabled() != manual
-    assert not plot.colorbar_range_entry._error
+    np.testing.assert_allclose(plot._current_colorbar_levels(), before_levels)
+    assert entry.state == before_state
+    assert entry.percent.value() == 85
+    assert not entry.visible_only.isChecked()
+    assert not entry.error_label.text()
     assert plot.config.get("user_preference.bar_colour") == before_default
 
 
@@ -78,72 +75,27 @@ def test_empty_appearance_selection_is_safe_and_survives_refresh(dialog_plot):
     assert dialog.selection_summary.text() == f"<b>{name}</b> — {kind}"
 
 
-@pytest.mark.parametrize("centre_span", [False, True])
-def test_invalid_draft_blocks_format_switch_and_keeps_selection(qapplication, centre_span):
-    window = AxisLimitWindow()
-    window.plot.plot([1, 2, 3], [1, 2, 3])
-    window.open_axis_scale_dialog("x")
-    ui = window._axis_scale_controls["x"]
-    entry = ui.rangeEntry
-    try:
-        ui.manualRadio.click()
-        if centre_span:
-            entry.center_span_button.click()
-        ui.minText.setText("9")
-        ui.maxText.setText("-2" if centre_span else "2")
-        window._axis_scale_range_text_changed("x")
-        before = list(window.vb.viewRange()[0])
-        target = entry.min_max_button if centre_span else entry.center_span_button
-        target.click()
-        assert entry.center_span == centre_span
-        assert entry.center_span_button.isChecked() == centre_span
-        assert entry.min_max_button.isChecked() != centre_span
-        assert ui.minText.text() == "9"
-        assert ui.maxText.text() == ("-2" if centre_span else "2")
-        assert "before changing input format" in entry.summary.text()
-        assert ("span" in entry.summary.text()) == centre_span
-        np.testing.assert_array_equal(window.vb.viewRange()[0], before)
-        ui.minText.setText("1")
-        ui.maxText.setText("2")
-        ui.minText.editingFinished.emit()
-        target.click()
-        assert entry.center_span != centre_span
-        assert not entry._error
-    finally:
-        window._axis_scale_dialog.close()
-        window.close()
-        window.deleteLater()
-
-
 def test_range_draft_survives_refresh_and_corrects_without_precision_loss(qapplication):
     window = AxisLimitWindow()
     window.plot.plot([1, 2, 3], [1, 2, 3])
+    window.vb.updateAutoRange()
     window.open_axis_scale_dialog("x")
-    ui = window._axis_scale_controls["x"]
-    ui.manualRadio.click()
+    entry = window._axis_scale_controls["x"].rangeEntry
     before = list(window.vb.viewRange()[0])
+    field = entry.fields["min"]
     try:
-        ui.minText.setText("9")
-        ui.maxText.setText("2")
-        window._axis_scale_range_text_changed("x")
+        field.setFocus()
+        field.selectAll()
+        QtTest.QTest.keyClicks(field, "9")
+        QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
         window._sync_axis_scale_controls("x")
-        assert ui.minText.text() == "9"
-        assert ui.rangeEntry._error
+        assert field.text() == "9" and entry.error_label.isVisible()
         np.testing.assert_array_equal(window.vb.viewRange()[0], before)
-        ui.minText.setText(repr(ui.rangeEntry._limits[0]))
-        ui.maxText.setText(repr(ui.rangeEntry._limits[1]))
-        window._axis_scale_range_text_changed("x")
-        assert not ui.rangeEntry._error
-        ui.maxText.setText("2")
-        ui.minText.setText("1.0000000000000002")
-        window._axis_scale_range_text_changed("x")
-        assert not ui.rangeEntry._error
-        np.testing.assert_array_equal(window.vb.viewRange()[0], [1.0000000000000002, 2.0])
-        ui.maxText.setText("0")
-        window._axis_scale_range_text_changed("x")
-        ui.autoRadio.click()
-        assert not ui.rangeEntry._error
-        assert float(ui.minText.text()) < float(ui.maxText.text())
+        field.selectAll()
+        QtTest.QTest.keyClicks(field, "1.0000000000000002")
+        QtTest.QTest.keyClick(field, QtCore.Qt.Key.Key_Return)
+        assert not entry.error_label.isVisible()
+        np.testing.assert_array_equal(window.vb.viewRange()[0], [1.0000000000000002, before[1]])
     finally:
         window._axis_scale_dialog.close()
         window.close()

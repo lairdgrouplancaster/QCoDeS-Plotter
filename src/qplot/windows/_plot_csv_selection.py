@@ -52,7 +52,7 @@ def csv_measurements(owner: Any) -> dict[str, CsvMeasurement]:
     return result
 
 
-def configure_csv_measurements(owner: Any, exporter: Any) -> None:
+def configure_csv_measurements(owner: Any, exporter: Any, *, previous: Any = None) -> None:
     measurements = csv_measurements(owner)
     exporter._qplot_csv_measurements = measurements
     traces = [token for token, entry in measurements.items() if entry.kind == "trace"]
@@ -66,6 +66,12 @@ def configure_csv_measurements(owner: Any, exporter: Any) -> None:
     if getattr(owner, "operation_kind", None) == "plot2d":
         default = next((token for token, entry in measurements.items()
                         if entry.kind == "heatmap" and entry.item is owner), default)
+    # Tokens depend on list order. Restore the plotted item even if its
+    # position changed while the user was editing figure settings.
+    if previous == "all_traces" and len(traces) > 1:
+        default = "all_traces"
+    elif previous is not None:
+        default = next((token for token, entry in measurements.items() if entry.item is previous), default)
     exporter.params.insertChild(0, {
         "name": "measurements", "title": "Data to export", "type": "list",
         "limits": choices, "value": default,

@@ -6,8 +6,23 @@ import weakref
 import pytest
 from PyQt6 import QtWidgets as qtw
 
-from qplot.tools.heatmap_resolution import resolution_details, resolution_summary
+from qplot.tools.heatmap_resolution import (
+    FULL_HEATMAP_POINTS_KEY,
+    HEATMAP_GRID_CELLS_KEY,
+    resolution_details,
+    resolution_summary,
+)
 from tests.support.windows.sql_heatmap import idle, sql_heatmap, subset, view
+
+
+@pytest.mark.parametrize("grid_cells, expected", [(4, HEATMAP_GRID_CELLS_KEY), (1000, FULL_HEATMAP_POINTS_KEY)])
+def test_published_report_identifies_the_adjustable_limit(tmp_path, monkeypatch, grid_cells, expected):
+    with sql_heatmap(tmp_path, monkeypatch, grid_cells=grid_cells) as (_window, plot):
+        report = plot._heatmap_resolution_report
+        assert report.limiting_preference == expected
+        reason = ("display grid is limited to 4 cells" if grid_cells == 4
+                  else "full-resolution heatmap limit of 4 points")
+        assert reason in resolution_summary(report)
 
 
 def test_hidden_source_releases_completed_publication_snapshot(tmp_path, monkeypatch):

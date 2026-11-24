@@ -20,6 +20,10 @@ from qplot.datahandling.complex_data import (
     COMPLEX_ND_KEY,
 )
 from qplot.tools.heatmap_geometry import MAX_AGGREGATED_HEATMAP_CELLS
+from qplot.tools.heatmap_resolution import (
+    FULL_HEATMAP_POINTS_KEY,
+    HEATMAP_GRID_CELLS_KEY,
+)
 from qplot.updates import CHECK_ON_LAUNCH_KEY, INCLUDE_PRERELEASES_KEY
 
 from ._colorbar import _colorbar_colormaps
@@ -93,8 +97,8 @@ _PREFERENCE_CONTROLS = (
     (CONFIRM_INCOMPATIBLE_AXES_KEY, "confirmIncompatibleAxesCheck"),
     (CONFIRM_QUIT_KEY, "confirmQuitCheck"),
     ("runtime_settings.max_threads", "maxThreadsSpin"),
-    ("runtime_settings.max_full_heatmap_points", "maxFullHeatmapPointsSpin"),
-    ("runtime_settings.max_heatmap_grid_cells", "maxHeatmapGridCellsSpin"),
+    (FULL_HEATMAP_POINTS_KEY, "maxFullHeatmapPointsSpin"),
+    (HEATMAP_GRID_CELLS_KEY, "maxHeatmapGridCellsSpin"),
     ("runtime_settings.del_grace_period", "delGracePeriodSpin"),
     ("runtime_settings.cloud_sync_timeout", "cloudSyncTimeoutSpin"),
     (CHECK_ON_LAUNCH_KEY, "checkUpdatesOnLaunchCheck"),
@@ -266,7 +270,7 @@ class _PreferencesPage(qtw.QScrollArea):
         super().resizeEvent(event)
         self._reflow_form()
 
-    def _reflow_form(self):
+    def _reflow_form(self, width=None):
         page = self.widget()
         if page is None:
             return
@@ -274,9 +278,11 @@ class _PreferencesPage(qtw.QScrollArea):
         if not isinstance(form, qtw.QFormLayout):
             return
         margins = form.contentsMargins()
-        viewport = self.viewport()
-        assert viewport is not None
-        available = viewport.width() - margins.left() - margins.right()
+        if width is None:
+            viewport = self.viewport()
+            assert viewport is not None
+            width = viewport.width()
+        available = width - margins.left() - margins.right()
         labels = set()
         label_width = field_width = 0
         for row in range(form.rowCount()):
@@ -297,10 +303,20 @@ class _PreferencesPage(qtw.QScrollArea):
         if form.rowWrapPolicy() != policy:
             form.setRowWrapPolicy(policy)
 
+    def content_height_at_width(self, width):
+        self._reflow_form(width)
+        page = self.widget()
+        assert page is not None
+        form = page.layout()
+        assert form is not None
+        return max(form.totalMinimumSize().height(), form.totalHeightForWidth(width))
+
     def sizeHint(self):
         page = self.widget()
         assert page is not None
-        return page.sizeHint().boundedTo(QtCore.QSize(600, 440))
+        hint = page.sizeHint()
+        hint.setWidth(min(600, hint.width()))
+        return hint
 
     def minimumSizeHint(self):
         return QtCore.QSize(160, 80)
@@ -459,6 +475,16 @@ class PreferencesDialog(qtw.QDialog):
         screen = parent.screen() if parent is not None else self.screen()
         return screen.availableGeometry() if screen is not None else QtCore.QRect(0, 0, 1024, 768)
 
+    def select_page(self, title, focus_setting=None):
+        for index in range(self.tabs.count()):
+            if self.tabs.tabText(index) == title:
+                self.tabs.setCurrentIndex(index)
+                target = next((binding.control for binding in self._bindings if binding.key == focus_setting),
+                              self.tabs.tabBar())
+                assert target is not None
+                target.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)
+                return
+
     def _match_action_button_widths(self):
         buttons = [button for standard in (
             qtw.QDialogButtonBox.StandardButton.Ok, qtw.QDialogButtonBox.StandardButton.Cancel,
@@ -487,9 +513,20 @@ class PreferencesDialog(qtw.QDialog):
         assert style is not None
         tabs_width += (margins.left() + margins.right()
                        + 2 * style.pixelMetric(qtw.QStyle.PixelMetric.PM_DefaultFrameWidth))
-        self.resize(min(max(600, hint.width(), tabs_width), available.width() - max(0, frame.width())),
-                    min(max(420, hint.height()), available.height() - max(0, frame.height())))
+        width = min(max(600, hint.width(), tabs_width), available.width() - max(0, frame.width()))
+        max_height = available.height() - max(0, frame.height())
+        self.resize(width, min(max(420, hint.height()), max_height))
         layout.activate()
+        visible_page = self.tabs.currentWidget()
+        assert visible_page is not None
+        # Qt may initially show a scrollbar while laying out a hidden tab.
+        # Allow for any labels that wrap at that narrower width.
+        page_width = visible_page.width() - style.pixelMetric(qtw.QStyle.PixelMetric.PM_ScrollBarExtent)
+        tabs_height = self.tabs.height() - visible_page.height()
+        controls_height = margins.top() + margins.bottom() + layout.spacing() + self.buttonBox.sizeHint().height()
+        page_height = max(page.content_height_at_width(page_width)
+                          for page in self.tabs.findChildren(_PreferencesPage))
+        self.resize(width, min(max_height, max(420, tabs_height + page_height + controls_height)))
         position = self.frameGeometry()
         position.moveCenter(available.center())
         self.move(position.topLeft())
@@ -552,8 +589,6 @@ class PreferencesDialog(qtw.QDialog):
         return tab
 
     def _add_window_grid(self, tab, form):
-        self._add_section(form, "New plot windows")
-
         self.plotTileRowsSpin = qtw.QSpinBox(tab)
         self.plotTileRowsSpin.setObjectName("plotTileRowsPreferenceSpin")
         self.plotTileRowsSpin.setAccessibleName("Window grid rows")
@@ -570,7 +605,8 @@ class PreferencesDialog(qtw.QDialog):
             "Columns in the screen grid; plots fill left to right, then top "
             "to bottom, wrapping after the last cell. Existing plots stay in place."
             )
-        grid_layout = qtw.QHBoxLayout()
+        grid_row = qtw.QWidget(tab)
+        grid_layout = qtw.QHBoxLayout(grid_row)
         grid_layout.setContentsMargins(0, 0, 0, 0)
         grid_layout.setSpacing(6)
         rows_label = qtw.QLabel("&Rows:", tab)
@@ -583,7 +619,8 @@ class PreferencesDialog(qtw.QDialog):
         grid_layout.addWidget(columns_label)
         grid_layout.addWidget(self.plotTileColumnsSpin)
         grid_layout.addStretch(1)
-        form.addRow(grid_layout)
+        grid_row.setFocusProxy(self.plotTileRowsSpin)
+        self._add_row(form, "Window grid:", grid_row)
 
     def _add_refresh_interval(self, tab, form):
         self.refreshRateSpin = qtw.QDoubleSpinBox(tab)
@@ -622,7 +659,7 @@ class PreferencesDialog(qtw.QDialog):
         form.setContentsMargins(8, 8, 8, 8)
         form.setSpacing(8)
 
-        self._add_section(form, "All plots")
+        self._add_section(form, "Plot display")
 
         self.fontSizeSpin = qtw.QSpinBox(tab)
         self.fontSizeSpin.setObjectName("fontSizePreferenceSpin")
@@ -640,8 +677,6 @@ class PreferencesDialog(qtw.QDialog):
             "Show the database, run IDs and parameters above plots, including in exports"
             )
         form.addRow(self.showSourceAnnotationCheck)
-
-        self._add_section(form, "Axes and colour scales")
 
         self.axisTickWidthSpin = qtw.QDoubleSpinBox(tab)
         self.axisTickWidthSpin.setObjectName("axisTickWidthPreferenceSpin")
@@ -677,8 +712,9 @@ class PreferencesDialog(qtw.QDialog):
         self._add_row(form, "Colour scale &width:", self.colorbarWidthSpin)
 
         self._add_plot_interaction(tab, form)
+        self._add_section(form, "New plot defaults")
         self._add_window_grid(tab, form)
-        self._add_section(form, "New traces and heatmaps")
+        self._add_complex_defaults(tab, form)
 
         self.defaultTraceColourCombo = _PreferenceTraceColourCombo()
         self.defaultTraceColourCombo.setObjectName("defaultTraceColourPreferenceCombo")
@@ -714,8 +750,6 @@ class PreferencesDialog(qtw.QDialog):
         return tab
 
     def _add_plot_interaction(self, tab, form):
-        self._add_section(form, "Navigation and readout")
-
         self.cursorSignificantFiguresSpin = qtw.QSpinBox(tab)
         self.cursorSignificantFiguresSpin.setObjectName("cursorSignificantFiguresPreferenceSpin")
         self.cursorSignificantFiguresSpin.setAccessibleName("Cursor precision (significant figures)")
@@ -725,8 +759,17 @@ class PreferencesDialog(qtw.QDialog):
             )
         self._add_row(form, "Cursor &precision (significant figures):", self.cursorSignificantFiguresSpin)
 
-        self._add_section(form, "New complex plots")
+        self.confirmIncompatibleAxesCheck = _PreferencesCheckBox(
+            "Warn before adding data with incompatible axes", tab,
+        )
+        self.confirmIncompatibleAxesCheck.setObjectName("confirmIncompatibleAxesPreferenceCheck")
+        self.confirmIncompatibleAxesCheck.setToolTip("Warn when added data has coordinate names or units that differ from the current plot.")
+        self.confirmIncompatibleAxesCheck.setAccessibleName(
+            "Warn before adding data with incompatible axes"
+        )
+        form.addRow(self.confirmIncompatibleAxesCheck)
 
+    def _add_complex_defaults(self, tab, form):
         for attribute, label, options in (
             ("complex1dCombo", "1D complex plots:", COMPLEX_1D_OPTIONS),
             ("complexNdCombo", "Higher-dimensional complex plots:", COMPLEX_COMPONENT_OPTIONS),
@@ -742,18 +785,6 @@ class PreferencesDialog(qtw.QDialog):
                 combo.addItem(text, value)
             setattr(self, attribute, combo)
             self._add_row(form, label, combo)
-
-        self._add_section(form, "Adding data")
-
-        self.confirmIncompatibleAxesCheck = _PreferencesCheckBox(
-            "Warn before adding data with incompatible axes", tab,
-        )
-        self.confirmIncompatibleAxesCheck.setObjectName("confirmIncompatibleAxesPreferenceCheck")
-        self.confirmIncompatibleAxesCheck.setToolTip("Warn when added data has coordinate names or units that differ from the current plot.")
-        self.confirmIncompatibleAxesCheck.setAccessibleName(
-            "Warn before adding data with incompatible axes"
-        )
-        form.addRow(self.confirmIncompatibleAxesCheck)
 
     def _files_tab(self):
         tab = qtw.QWidget(self)
@@ -844,13 +875,7 @@ class PreferencesDialog(qtw.QDialog):
         form.setContentsMargins(8, 8, 8, 8)
         form.setSpacing(8)
 
-        self.maxThreadsSpin = qtw.QSpinBox(tab)
-        self.maxThreadsSpin.setObjectName("maxThreadsPreferenceSpin")
-        self.maxThreadsSpin.setToolTip("Maximum number of background worker threads used to load and process data.")
-        self.maxThreadsSpin.setAccessibleName("Maximum worker threads")
-        self.maxThreadsSpin.setRange(1, 999)
-        self._add_row(form, "&Maximum worker threads:", self.maxThreadsSpin)
-
+        self._add_section(form, "Heatmap resolution")
         self.maxFullHeatmapPointsSpin = qtw.QSpinBox(tab)
         self.maxFullHeatmapPointsSpin.setObjectName(
             "maxFullHeatmapPointsPreferenceSpin"
@@ -897,6 +922,14 @@ class PreferencesDialog(qtw.QDialog):
                           "The grid cell limit counts all rows × columns.", tab)
         hint.setWordWrap(True)
         form.addRow(hint)
+
+        self._add_section(form, "Workers and memory")
+        self.maxThreadsSpin = qtw.QSpinBox(tab)
+        self.maxThreadsSpin.setObjectName("maxThreadsPreferenceSpin")
+        self.maxThreadsSpin.setToolTip("Maximum number of background worker threads used to load and process data.")
+        self.maxThreadsSpin.setAccessibleName("Maximum worker threads")
+        self.maxThreadsSpin.setRange(1, 999)
+        self._add_row(form, "&Maximum worker threads:", self.maxThreadsSpin)
 
         self.delGracePeriodSpin = qtw.QDoubleSpinBox(tab)
         self.delGracePeriodSpin.setObjectName("deleteGracePreferenceSpin")

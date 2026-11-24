@@ -147,7 +147,8 @@ class plot1d(Plot1DSnapMixin, MixedPlotMixin, plotWidget):
         return self._format_marquee_stats_text(
             f"{values.size} points",
             values,
-            contribution="Finite samples of the primary trace inside the marquee",
+            contribution=f"{values.size} finite {'sample' if values.size == 1 else 'samples'} "
+                         "from the primary trace inside the marquee",
             x_axis=self._axis_scale_axis_for_line(line, "x"),
             y_axis=self._axis_scale_axis_for_line(line, "y"),
         )
