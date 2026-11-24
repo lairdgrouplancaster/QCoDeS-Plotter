@@ -37,7 +37,7 @@ def test_real_large_selection_menu_avoids_per_cell_fractions(
         monkeypatch.setattr(sample_statistics, "sample_fraction", fraction)
         menu = plot._new_marquee_context_menu()
         assert calls <= 1
-        assert any(action.text() == "Stats..." and action.isEnabled() for action in menu.actions())
+        assert any(action.text() == "Selection statistics…" and action.isEnabled() for action in menu.actions())
         selected = plot._marquee_line_values()
         assert selected.size == values.size
         expected = original_y.astype(float)

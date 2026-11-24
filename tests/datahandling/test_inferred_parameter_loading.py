@@ -199,7 +199,7 @@ def test_inferred_live_refreshes_keep_sibling_cursors_independent(
                 # Queue each independent tree before processing any callbacks.
                 for name in ("sibling", "signal", "converted"):
                     action = next(action for action in plots[name].findChildren(QtGui.QAction)
-                                  if action.text() == "&Refresh")
+                                  if action.text() == "&Refresh plot")
                     action.trigger()
                 wait_for(lambda: all(not plot.worker.running for plot in plots.values()))
                 assert errors == []

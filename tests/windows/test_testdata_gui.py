@@ -931,11 +931,11 @@ def test_open_bundled_csv_folder_uses_installed_resource_directory(csv_folder_ha
     assert all((expected / name).is_file() for name in INSTRUCTION_FILE_NAMES)
     assert harness.config.get("file.last_testdata_csv_directory") == ""
     if opened:
-        assert "Opened bundled CSV folder" in harness.status_messages[-1][0]
+        assert "Opened template folder" in harness.status_messages[-1][0]
         assert harness.errors == []
     else:
-        assert harness.errors[-1][0] == "Open Bundled CSV Folder Failed"
-        assert "Export CSV Collection" in harness.errors[-1][1]
+        assert harness.errors[-1][0] == "Could not open template folder"
+        assert "Save bundled CSV templates…" in harness.errors[-1][1]
 
 
 @pytest.mark.parametrize("action", ["select", "example", "collection"])

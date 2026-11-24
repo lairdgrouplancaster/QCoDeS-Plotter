@@ -41,7 +41,7 @@ class CommandRegistryTestCase(unittest.TestCase):
         resolved_shortcuts = quit_action.resolved_shortcuts()
         fallback = QtGui.QKeySequence("Ctrl+Q")
 
-        self.assertEqual(close_action.text, "&Close Database")
+        self.assertEqual(close_action.text, "&Close database")
         self.assertEqual(close_action.object_name, "closeDatabaseAction")
         self.assertEqual(quit_action.help_row()[0], quit_action.shortcut_display_text())
         self.assertEqual(
@@ -77,7 +77,8 @@ class CommandRegistryTestCase(unittest.TestCase):
 
         self.assertIsNotNone(spec)
         self.assertEqual(spec.resolved_shortcuts()[0].toString(), "Ctrl+Alt+O")
-        self.assertEqual(spec.status_tip, "Show or hide the data operations panel")
+        self.assertIs(spec, toolbar_toggle_command_spec("Slice operations"))
+        self.assertIn("Slice operations", spec.help_row()[1])
 
     def test_operations_panel_has_one_canonical_shortcut(self):
         self.assertEqual(
@@ -122,7 +123,9 @@ class CommandRegistryTestCase(unittest.TestCase):
 
         for command_id, section in (
             ("database.load", "Main Window"),
+            ("database.refresh", "Main Window"),
             ("copy.selection", "Main Window — Run Details Focused"),
+            ("plot.refresh", "All Plot Windows"),
             ("plot.snap_to_trace", "All Plot Windows"),
             ("toolbar.axis_control", "Cut Windows"),
             ("heatmap.horizontal_cut", "2D Heatmap Windows"),

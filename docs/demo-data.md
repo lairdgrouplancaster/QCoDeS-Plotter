@@ -6,15 +6,7 @@ the repository root.
 
 ## Generate a Test Database
 
-Use `File -> Generate Test Data from Template -> Open Bundled CSV Folder` to inspect the CSVs
-installed with qPlot in Finder or File Explorer. Use `Export CSV Collection...`
-to copy them to an editable location; installation files may be replaced during
-upgrades. CSV selection, example creation, and collection export remember their
-last folder across launches. If that folder is unavailable, their dialogs fall
-back to the current database-open directory. This history is separate from the
-default database folder and requires no preference control.
-
-Choose **File → Generate Test Data from Template → Generate database…**.
+Choose **File → Test data → Generate test database…**.
 Choose **Bundled template** and select one of the installed CSVs, or choose
 **My specification CSV** and browse to your own file. Review the run and point
 counts and the estimated size for a bundled template. Browse for an **Output
@@ -23,13 +15,18 @@ review its path before choosing **Replace file**. The progress window shows
 the current run and offers **Cancel generation**.
 After completion, use **Open database** or **Show in folder**.
 
-To write your own specification, use **File → Generate Test Data from Template
-→ Create Example CSV…** to save a starting file. qPlot reveals the new file
+To inspect the installed CSVs in your file manager, choose **File → Test data →
+Open template folder**. To write your own specification, use **Save example
+CSV template…** in the same submenu. qPlot reveals the new file
 in Finder on macOS or opens its containing folder in the platform file manager.
+The template dialogs remember the last folder across launches, independently
+of the default database folder. If that folder is unavailable, they open in
+the current database-open directory.
 
-For performance and scaling tests, use
-`File -> Generate Test Data from Template -> Export CSV Collection...`. The ten installed
-instruction files form a cumulative series: every file contains all the runs
+For editable copies of the performance and scaling templates, choose
+**File → Test data → Save bundled CSV templates…**. Saving your copies
+elsewhere preserves edits when qPlot upgrades its installed templates. The ten installed
+instruction files form a cumulative series. Every file contains all the runs
 from its predecessor, followed by three larger 2D runs. Each file starts with
 five 1D traces (current, conductance, resistance, transconductance, and current
 again) with the same `V_SD` range and sampling, so trace addition, removal,

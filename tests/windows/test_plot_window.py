@@ -1366,6 +1366,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
         host = Host()
         host.vbMenu = qtw.QMenu(host)
+        host.vbMenu.viewAll = host.vbMenu.addAction("Autoscale axes")
         host.mouseModeAction = QtGui.QAction("Mouse Mode", host)
         host.vbMenu.addAction(host.mouseModeAction)
 
@@ -1390,10 +1391,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
                 preferences_action.menuRole(),
                 QtGui.QAction.MenuRole.PreferencesRole,
                 )
-            self.assertIn(
-                "Axis Scaling…",
-                [action.text().replace("&", "") for action in menus["View"].actions()],
-                )
+            self.assertEqual(menus["View"].actions()[0].text(), "Axis scales…")
             self.assertNotIn("Confirm Before Closing All Plot Windows", option_texts)
             self.assertNotIn("Confirm Before Quit", option_texts)
         finally:
@@ -1961,6 +1959,12 @@ class RunListParentLookupTestCase(unittest.TestCase):
             self.assertNotIn("Copy Plot Image at Size...", context_actions)
             self.assertIn(host.savePlotPdfAction, menus["File"].actions())
             self.assertIn(host.printPlotAction, menus["File"].actions())
+            file_actions = menus["File"].actions()
+            self.assertEqual(
+                [a.text().replace("&", "") for a in file_actions[-4:]],
+                ["Close this plot", "Close all plot windows", "", "Quit qPlot"],
+            )
+            self.assertTrue(file_actions[-2].isSeparator())
             self.assertIn(host.copyPlotImageAction, menus["Edit"].actions())
             self.assertIn(host.copyCoordinatesAction, menus["Edit"].actions())
             self.assertIn("Copy Coordinates", context_actions)
@@ -2031,6 +2035,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
 
         host = Host()
         host.vbMenu = qtw.QMenu(host)
+        host.vbMenu.viewAll = host.vbMenu.addAction("Autoscale axes")
 
         try:
             host.initMenu()
@@ -3493,7 +3498,7 @@ class RunListParentLookupTestCase(unittest.TestCase):
             host._init_colorbar_scale_controls()
             action_texts = [action.text().replace("&", "") for action in host.vbMenu.actions()]
 
-            self.assertIn("Colour Scale...", action_texts)
+            self.assertIn("Colour scale…", action_texts)
             self.assertEqual(host.colorbar_range_entry.labels["min"].text(), "Minimum")
             self.assertEqual(host.colorbar_range_entry.labels["max"].text(), "Maximum")
             self.assertIs(host.colorbar_range_entry.labels["min"].buddy(), host.colorbar_min_text)

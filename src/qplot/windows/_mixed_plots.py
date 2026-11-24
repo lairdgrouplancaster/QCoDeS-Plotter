@@ -30,19 +30,11 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
     _appearance_preview_hidden: bool = False
 
     def initMenu(self):
-        super().initMenu()
+        self._ensure_colorbar_scale_action()
         self._open_plot_settings_page = self.open_plot_appearance_dialog
-        menu_bar = self.menuBar()
-        for menu_action in menu_bar.actions() if menu_bar is not None else ():
-            if menu_action.text().replace("&", "") == "View":
-                menu = menu_action.menu()
-                if menu is not None:
-                    menu.addSeparator()
-                    action = QtGui.QAction("Plot settings…", self)
-                    action.triggered.connect(lambda _checked: self.open_plot_appearance_dialog())
-                    menu.addAction(action)
-                    self.appearance_action = action
-                break
+        self.appearance_action = QtGui.QAction("Plot settings…", self)
+        self.appearance_action.triggered.connect(lambda _checked: self.open_plot_appearance_dialog())
+        super().initMenu()
 
     def open_plot_appearance_dialog(self, key=None, *, kind=None, page="Datasets"):
         dialog = self.__dict__.get("_plot_appearance_dialog")
@@ -238,6 +230,7 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
     def _sync_heatmap_layer_order(self):
         super()._sync_heatmap_layer_order()
         self._sync_plot_item_order()
+        self._ensure_colorbar_scale_action()
 
     def _set_layer_visibility(self, layer, visible):
         super()._set_layer_visibility(layer, visible)
@@ -448,16 +441,6 @@ class MixedPlotMixin(Plot1DTraceMixin, Plot2DLayerMixin, Plot2DColorbarMixin, _M
             self.config.theme.style_plotItem(self)
             self.apply_axis_major_tick_count_preference()
             rescale = True
-            if line_host:
-                action = QtGui.QAction("Colour scale…", self)
-                action.triggered.connect(self.open_colorbar_scale_dialog)
-                menu_bar = self.menuBar()
-                for menu_action in menu_bar.actions() if menu_bar is not None else ():
-                    if menu_action.text().replace("&", "") == "View":
-                        menu = menu_action.menu()
-                        if menu is not None:
-                            menu.addAction(action)
-                        break
         if line_host:
             bar = self.__dict__.get("bar")
             if bar is not None:

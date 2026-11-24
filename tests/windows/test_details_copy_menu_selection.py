@@ -1,12 +1,18 @@
 """Opening a copy menu must preserve an existing table selection."""
 
+import json
 import traceback
 
 import pytest
 from PyQt6 import QtCore, QtTest, sip
 from PyQt6 import QtWidgets as qtw
 
-from qplot.windows._widgets.details_tables import CopyableTableWidget
+from qplot.datahandling.trusted_presentation import (
+    build_selected_run_presentation,
+    normalize_presentation_tree,
+)
+from qplot.datahandling.trusted_snapshot import normalize_trusted_snapshot
+from qplot.windows._widgets.details_tables import CopyableTableWidget, infoTree
 from tests.support.windows.details_copy_menu_refresh import (
     details_window as details_window,
 )
@@ -142,3 +148,52 @@ def test_copy_menu_preserves_multicell_tsv_and_exact_unicode(qapplication):
         qapplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
     assert sip.isdeleted(table)
     assert all(sip.isdeleted(menu) for menu in owned)
+
+
+@pytest.mark.parametrize("source", ["metadata", "metadata_without_full_values", "snapshot", "plain"])
+def test_tree_copy_menu_names_shortened_values(qapplication, monkeypatch, source):
+    tree = infoTree(truncate_values=True)
+    # The second row has a shortened key in the bounded views, but an exact
+    # value ending in punctuation that resembles a preview.
+    values = {"note": "long value " * 200, "k" * 500: "complete..."}
+    if source == "snapshot":
+        tree.setBoundedView(normalize_trusted_snapshot(json.dumps(values)))
+    elif source == "metadata":
+        tree.setBoundedView(build_selected_run_presentation(
+            run_fields={}, metadata_fields=values, parameters=(), snapshot_summary={},
+            setpoint_summaries=(), unavailable_fields=(),
+        ).metadata)
+    elif source == "metadata_without_full_values":
+        tree.setBoundedView(normalize_presentation_tree(values))
+    else:
+        tree.setInfo(values)
+
+    labels = []
+
+    def copy_from_menu(menu, _position):
+        assert tree.copy_value_action in menu.actions()
+        labels.append(tree.copy_value_action.text())
+        assert (tree.view_full_value_action in menu.actions()) == (
+            source in ("metadata", "snapshot")
+        )
+        tree.copy_value_action.trigger()
+
+    monkeypatch.setattr(qtw.QMenu, "exec", copy_from_menu)
+    tree.show()
+    qapplication.processEvents()
+    try:
+        for index, exact in enumerate(values.values()):
+            item = tree.topLevelItem(index)
+            displayed = item.text(1)
+            assert (displayed != exact) == (index == 0)
+            tree.scrollToItem(item)
+            position = QtCore.QPoint(4, max(tree.visualItemRect(item).top(), 0) + 2)
+            assert tree.itemAt(position) is item
+
+            tree.openCopyMenu(position)
+            assert qapplication.clipboard().text() == displayed
+        assert labels == ["Copy displayed value", "Copy Value"]
+    finally:
+        tree.close()
+        tree.deleteLater()
+        qapplication.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)

@@ -1784,22 +1784,22 @@ class OptionsMenuTestCase(unittest.TestCase):
             test_data_menu = next(
                 action.menu()
                 for action in file_menu.actions()
-                if action.text().replace("&", "") == "Generate Test Data from Template"
+                if action.text().replace("&", "") == "Test data"
             )
-            actions = {
-                action.objectName(): action.text().replace("&", "")
+            actions = [
+                None if action.isSeparator() else (action.objectName(), action.text().replace("&", ""))
                 for action in test_data_menu.actions()
-                if not action.isSeparator()
-            }
+            ]
 
             self.assertEqual(
                 actions,
-                {
-                    "openBundledTestdataFolderAction": "Open Bundled CSV Folder",
-                    "createTestDatabaseCsvAction": "Create Example CSV...",
-                    "exportTestDatabaseCsvCollectionAction": "Export CSV Collection...",
-                    "generateTestDatabaseAction": "Generate database…",
-                },
+                [
+                    ("generateTestDatabaseAction", "Generate test database…"),
+                    None,
+                    ("openBundledTestdataFolderAction", "Open template folder"),
+                    ("createTestDatabaseCsvAction", "Save example CSV template…"),
+                    ("exportTestDatabaseCsvCollectionAction", "Save bundled CSV templates…"),
+                ],
             )
         finally:
             window.deleteLater()
@@ -1820,11 +1820,17 @@ class OptionsMenuTestCase(unittest.TestCase):
                 if not action.isSeparator()
             }
 
-            actions["Close Database"].trigger()
+            close_shortcuts = command_spec("window.close").resolved_shortcuts()
+            close_action = next(a for a in window.actions() if a.shortcuts() == close_shortcuts)
+            self.assertNotIn(close_action, file_menu.actions())
+            self.assertNotIn("Close Window", actions)
+
+            actions["Close database"].trigger()
             actions["Quit qPlot"].trigger()
+            close_action.trigger()
 
             self.assertEqual(window.close_database_commands, 1)
-            self.assertEqual(window.quit_commands, 1)
+            self.assertEqual(window.quit_commands, 2)
             self.assertEqual(
                 actions["Quit qPlot"].shortcuts(),
                 command_spec("app.quit").resolved_shortcuts(),

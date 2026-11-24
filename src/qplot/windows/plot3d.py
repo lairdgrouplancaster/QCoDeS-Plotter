@@ -24,6 +24,7 @@ class plot3d(plot2d):
     """One volume and one independently selectable, processed viewing plane."""
 
     cursor_has_depth = True
+    _cut_commands = (*plot2d._cut_commands, ("slice.depth_cut", "d"))
     # Slice workers read full-resolution planes from their private index.
     _uses_heatmap_viewport = False
     plane_changed = QtCore.pyqtSignal()
@@ -66,6 +67,10 @@ class plot3d(plot2d):
     def initOperations(self):
         super().initOperations()
         self.oper_dock.setWindowTitle("Slice operations")
+        action = self.oper_dock.toggleViewAction()
+        assert action is not None
+        self._slice_operations_action = action
+        self.closed.connect(lambda _plot: action.setEnabled(False))
         self.oper_widget.main_layout.itemAt(0).widget().setText("Slice operations")
         self.oper_widget.setToolTip("Applied to each full 2D plane, independently of zoom and selection.")
         self._update_operation_labels()
@@ -264,15 +269,17 @@ class plot3d(plot2d):
 
     def initContextMenu(self):
         super().initContextMenu()
-        auto_color = self._context_menu_action("Autoscale Colour")
-        auto_color.triggered.disconnect(self.scaleColorbar)
-        auto_color.triggered.connect(self.autoscale_color)
-        self._slice_action("slice.depth_cut", lambda: self.openSweep("d"))
         self._slice_action("slice.previous", lambda: self.step_slice(-1))
         self._slice_action("slice.next", lambda: self.step_slice(1))
         self._slice_action("slice.first", lambda: self.select_slice(0))
         self._slice_action("slice.last", lambda: self.select_slice(self.slice_index.maximum()))
-        self.vbMenu.addAction("Freeze Slice as 2D Plot", self.freeze_slice)
+        self.freeze_slice_action = QtGui.QAction("Freeze slice as 2D plot", self)
+        self.freeze_slice_action.setEnabled(False)
+        self.freeze_slice_action.triggered.connect(self.freeze_slice)
+        self.vbMenu.insertAction(self.savePlotPdfAction, self.freeze_slice_action)
+        self.vbMenu.insertSeparator(self.savePlotPdfAction)
+        self.end_wait.connect(self._sync_freeze_slice_action)
+        self.vbMenu.aboutToShow.connect(self._sync_freeze_slice_action)
 
     def _slice_action(self, name, callback):
         action = create_action(name, self)
@@ -282,8 +289,7 @@ class plot3d(plot2d):
                 return
             callback()
         action.triggered.connect(invoke)
-        self.vbMenu.addAction(action)
-        return action
+        self.vbMenu.insertAction(self.savePlotPdfAction, action)
 
     def _depth_name(self):
         return next(name for name in self.param.depends_on_ if name not in self.axis_options.values())
@@ -899,8 +905,21 @@ class plot3d(plot2d):
                 ("slice_operations", str(self._applied_operation_state.entries)),
                 *units, ("repeated_coordinate_policy", "finite mean"))
 
+    def _can_freeze_slice(self):
+        frame = self.slice_frame
+        return (not self._closed and frame is not None and frame.values.size > 0
+                and not self._refresh_controller().busy)
+
+    def _refresh_worker_will_start(self, worker):
+        action = self.__dict__.get("freeze_slice_action")
+        if action is not None:
+            action.setEnabled(False)
+
+    def _sync_freeze_slice_action(self):
+        self.freeze_slice_action.setEnabled(self._can_freeze_slice())
+
     def freeze_slice(self):
-        if self.slice_frame is None or self.worker.running:
+        if not self._can_freeze_slice():
             return
         from ._volume_cut import FrozenSlice
         self.open_subplot.emit(FrozenSlice, self._dataset_key, (self.param, self))

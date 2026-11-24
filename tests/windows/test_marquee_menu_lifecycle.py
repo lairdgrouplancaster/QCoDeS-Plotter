@@ -115,7 +115,7 @@ def test_closing_plot_dismisses_live_marquee_popup(menu_plot, close_all):
         (main.closeAllPlotsButton.click if close_all else plot.close)()
         state["visible_after_close"] = menu.isVisible()
         if menu.isVisible():
-            _choose(menu, "Zoom X")
+            _choose(menu, "Zoom X only")
 
     state = _marquee_popup(plot, close)
     assert plot._closed and plot not in main.windows
@@ -125,7 +125,7 @@ def test_closing_plot_dismisses_live_marquee_popup(menu_plot, close_all):
 
 
 @pytest.mark.parametrize("keyboard", [False, True], ids=["mouse", "keyboard"])
-@pytest.mark.parametrize("action", ["Stats...", "Zoom X", "dismiss"])
+@pytest.mark.parametrize("action", ["Selection statistics…", "Zoom X only", "dismiss"])
 def test_live_menu_accept_and_dismiss_retire_popup(menu_plot, keyboard, action):
     _main, plot = menu_plot
     before = tuple(values.copy() for values in plot.line.getOriginalDataset())
@@ -140,10 +140,11 @@ def test_live_menu_accept_and_dismiss_retire_popup(menu_plot, keyboard, action):
     assert not plot._closed and plot.isVisible()
     for actual, expected in zip(plot.line.getOriginalDataset(), before, strict=True):
         np.testing.assert_array_equal(actual, expected)
-    if action == "Stats...":
+    if action == "Selection statistics…":
         assert plot._marquee_stats_dialog.isVisible()
+        assert plot._marquee_stats_dialog.windowTitle() == "Selection statistics"
         plot._marquee_stats_dialog.close()
-    elif action == "Zoom X":
+    elif action == "Zoom X only":
         assert plot._marquee_zoom_viewbox("x").viewRange()[0] == pytest.approx(
             [state["rect"].left(), state["rect"].right()])
     assert (plot.marquee is not None) == (action == "dismiss")
@@ -155,7 +156,7 @@ def test_queued_marquee_action_cannot_open_dialog_after_close(menu_plot):
     plot.set_marquee_rect(QtCore.QRectF(-1000., -1000., 2000., 2000.))
     menu = plot._new_marquee_context_menu()
     try:
-        action = next(action for action in menu.actions() if action.text() == "Stats...")
+        action = next(action for action in menu.actions() if action.text() == "Selection statistics…")
         plot.close()
         action.trigger()
         assert getattr(plot, "_marquee_stats_dialog", None) is None
@@ -200,7 +201,7 @@ def test_automatic_replacement_closes_marquee_popup(color_cut, tmp_path):
             state["replaced"] = True
         elif heatmap._closed:
             state["visible_after_close"] = menu.isVisible()
-            _choose(menu, "Stats...", keyboard=True)
+            _choose(menu, "Selection statistics…", keyboard=True)
 
     state = _marquee_popup(heatmap, replace)
     wait_for(lambda: not main.windows and not main._database_load_active)
@@ -242,7 +243,7 @@ def test_cancelled_close_all_keeps_plot_and_later_menu_usable(menu_plot):
         main.config.config["user_preference"]["confirm_close_all"] = False
     assert answered == ["Close 1 plot window?"]
     assert state["still_live"]
-    next_state = _marquee_popup(plot, lambda menu, _state: _choose(menu, "Stats...", True))
+    next_state = _marquee_popup(plot, lambda menu, _state: _choose(menu, "Selection statistics…", True))
     assert plot._marquee_stats_dialog.isVisible()
     plot._marquee_stats_dialog.close()
     assert _retired(state["menu"])

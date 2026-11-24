@@ -44,10 +44,105 @@ def _commit_removal(dialog):
         replacement.open_plot_appearance_dialog()
 
 
+def _view_menu(plot):
+    return next(action.menu() for action in plot.menuBar().actions() if action.text() == "&View")
+
+
+def test_view_menu_starts_with_the_available_plot_settings_pages(mixed_plot):
+    _main, plot, _runs = mixed_plot
+    view = _view_menu(plot)
+    actions = [action for action in view.actions() if action.isVisible()]
+    destinations = [("Plot settings…", "Datasets"), ("Axis scales…", "Axis scales")]
+    if plot.operation_kind == "plot2d":
+        destinations.append(("Colour scale…", "Colour scale"))
+    assert [action.text().replace("&", "") for action in actions[:len(destinations)]] == [
+        label for label, _page in destinations
+    ]
+
+    for action, (_label, page) in zip(actions[:len(destinations)], destinations, strict=True):
+        action.trigger()
+        dialog = plot._plot_appearance_dialog
+        assert dialog.isVisible()
+        assert dialog.pages.tabText(dialog.pages.currentIndex()) == page
+        dialog.accept()
+
+
+@pytest.mark.parametrize("mixed_plot", ["line"], indirect=True)
+def test_colour_scale_menus_follow_the_last_heatmap(mixed_plot):
+    _main, plot, runs = mixed_plot
+    view = _view_menu(plot)
+
+    def check_colour_scale(available):
+        for menu in (view, plot.vbMenu):
+            entries = [action for action in menu.actions() if action.isVisible()
+                       and action.text().replace("&", "") == "Colour scale…"]
+            assert len(entries) == int(available)
+            if available:
+                assert entries[0].isEnabled()
+        if available:
+            visible = [action.text().replace("&", "") for action in view.actions() if action.isVisible()]
+            assert visible[:3] == ["Plot settings…", "Axis scales…", "Colour scale…"]
+
+    check_colour_scale(False)
+    _drop(plot, runs["heatmap"])
+    layer = _added(plot, runs["heatmap"])
+    check_colour_scale(True)
+
+    # Hiding a dataset keeps its settings available. Removing it in the
+    # modeless editor previews the change immediately, and Cancel restores it.
+    dialog = plot.open_plot_appearance_dialog()
+    key = layer.from_win._trace_key
+    assert dialog.select_heatmap(key)
+    dialog.heatmap_controls.visible.setChecked(False)
+    check_colour_scale(True)
+    dialog.remove_item_button.click()
+    check_colour_scale(False)
+    dialog.reject()
+    check_colour_scale(True)
+
+    plot.open_plot_appearance_dialog()
+    assert dialog.select_heatmap(key)
+    _commit_removal(dialog)
+    check_colour_scale(False)
+    _drop(plot, runs["heatmap"])
+    _added(plot, runs["heatmap"])
+    check_colour_scale(True)
+    plot._context_menu_action("Colour scale…").trigger()
+    assert dialog.isVisible()
+    assert dialog.pages.tabText(dialog.pages.currentIndex()) == "Colour scale"
+    dialog.accept()
+
+
+@pytest.mark.parametrize("mixed_plot", ["line"], indirect=True)
+def test_colour_scale_stays_hidden_after_failed_heatmap_add(mixed_plot, monkeypatch):
+    main, plot, runs = mixed_plot
+    _drop(plot, runs["heatmap"])
+    layer = _added(plot, runs["heatmap"])
+    assert plot.remove_heatmap(trace_key=layer.from_win._trace_key)
+    action = plot.colorbar_scale_action
+    assert not action.isVisible()
+
+    sync_order = plot._sync_heatmap_layer_order
+
+    def fail_after_adding_layer():
+        sync_order()
+        if plot.heatmaps:
+            raise RuntimeError("Could not finish adding the heatmap")
+
+    errors = []
+    monkeypatch.setattr(main, "show_error", lambda *args: errors.append(args))
+    monkeypatch.setattr(plot, "_sync_heatmap_layer_order", fail_after_adding_layer)
+    _drop(plot, runs["heatmap"])
+    _wait_for(lambda: errors)
+    assert errors[0][-1] == "Could not finish adding the heatmap"
+    assert not plot.heatmaps
+    assert not action.isVisible()
+
+
 def test_snap_defaults_and_heatmap_trace_readout(mixed_plot):
     _main, target, runs = mixed_plot
     assert target.snap_to_trace_action.isChecked()
-    assert target.snap_to_trace_action in target._menu_by_title("&View").actions()
+    assert target.snap_to_trace_action in _view_menu(target).actions()
     target.resize(max(1200, target.toolbarCo_ord.sizeHint().width() + 64), 700)
     target.show()
     qtw.QApplication.processEvents()

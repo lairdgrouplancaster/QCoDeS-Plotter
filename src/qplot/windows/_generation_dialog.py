@@ -17,7 +17,7 @@ from ._small_dialogs import confirm_action, dialog_layout
 class GenerationReview(qtw.QDialog):
     def __init__(self, parent):
         super().__init__(parent)
-        self.setWindowTitle("Generate synthetic database")
+        self.setWindowTitle("Generate test database")
         self.directory = parent.test_database_csv_directory()
         self.remember_directory = parent._remember_test_database_csv_directory
         self.custom_path = ""

@@ -332,17 +332,17 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
 
         self._add_marquee_context_action(
             menu,
-            "Zoom",
+            "Zoom to selection",
             lambda: self.zoom_marquee("xy"),
             )
         self._add_marquee_context_action(
             menu,
-            "Zoom X",
+            "Zoom X only",
             lambda: self.zoom_marquee("x"),
             )
         self._add_marquee_context_action(
             menu,
-            "Zoom Y",
+            "Zoom Y only",
             lambda: self.zoom_marquee("y"),
             )
         self._add_marquee_color_context_action(menu)
@@ -379,15 +379,15 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
 
         action = self._add_marquee_context_action(
             menu,
-            "Stats...",
+            "Selection statistics…",
             open_stats_dialog,
             )
         if stats_text is None:
             action.setEnabled(False)
-            action.setToolTip("No data points inside the marquee.")
+            action.setToolTip("No data points inside the selection.")
         else:
-            action.setToolTip("Show statistics for the marquee selection.")
-            action.setStatusTip("Show statistics for the marquee selection.")
+            action.setToolTip("Show statistics for samples inside the selected rectangle.")
+            action.setStatusTip(action.toolTip())
         return action
 
     def _execute_marquee_action(self, callback: _MarqueeAction) -> None:
@@ -433,7 +433,7 @@ class PlotMarqueeMixin(_PlotMarqueeBase):
         return True
 
     def _new_marquee_stats_dialog(self, stats_text: str) -> qtw.QDialog:
-        return new_statistics_dialog(self, stats_text, "Marquee statistics", show_contribution=True)
+        return new_statistics_dialog(self, stats_text, "Selection statistics", show_contribution=True)
 
     @staticmethod
     def _new_marquee_stats_table(results: list[tuple[str, str]], details: list[tuple[str, str]]) -> CopyableTableWidget:

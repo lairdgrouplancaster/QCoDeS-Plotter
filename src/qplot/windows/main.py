@@ -348,7 +348,7 @@ class MainWindow(
         fileMenu.addAction(self.closeDatabaseAction)
         
         # Force update check on database
-        refreshAction = create_action("window.refresh", self)
+        refreshAction = create_action("database.refresh", self)
         refreshAction.triggered.connect(self.refresh_all)
         fileMenu.addAction(refreshAction)
         self.refreshAction = refreshAction
@@ -380,11 +380,19 @@ class MainWindow(
         fileMenu.addAction(exports_progress)
         fileMenu.addSeparator()
 
-        test_data_menu = cast(qtw.QMenu, fileMenu.addMenu("Generate &Test Data from Template"))
+        test_data_menu = cast(qtw.QMenu, fileMenu.addMenu("&Test data"))
+        self.generateTestDatabaseAction = create_action(
+            "testdata.generate_database",
+            self,
+        )
+        self.generateTestDatabaseAction.triggered.connect(
+            self.generate_test_database_from_csv
+        )
+        test_data_menu.addAction(self.generateTestDatabaseAction)
+        test_data_menu.addSeparator()
         bundled_csv_action = create_action("testdata.open_bundled_folder", self)
         bundled_csv_action.triggered.connect(self.open_bundled_test_database_csv_folder)
         test_data_menu.addAction(bundled_csv_action)
-        test_data_menu.addSeparator()
         create_csv_action = create_action("testdata.create_csv", self)
         create_csv_action.triggered.connect(self.create_test_database_csv)
         test_data_menu.addAction(create_csv_action)
@@ -396,14 +404,6 @@ class MainWindow(
             self.export_test_database_csv_collection
         )
         test_data_menu.addAction(export_collection_action)
-        self.generateTestDatabaseAction = create_action(
-            "testdata.generate_database",
-            self,
-        )
-        self.generateTestDatabaseAction.triggered.connect(
-            self.generate_test_database_from_csv
-        )
-        test_data_menu.addAction(self.generateTestDatabaseAction)
 
         fileMenu.addSeparator()
 
@@ -416,19 +416,17 @@ class MainWindow(
         self.closeAllPlotsAction.setEnabled(False)
         fileMenu.addAction(self.closeAllPlotsAction)
 
-        closeAction = create_action(
+        # Keep the standard window-close shortcut local to the database window.
+        close_action = create_action(
             "window.close",
             self,
-            status_tip="Close the main qPlot window",
+            status_tip="Quit qPlot from the database window",
             )
-        closeAction.triggered.connect(self.close)
-        fileMenu.addAction(closeAction)
+        close_action.triggered.connect(self.quit_application)
+        self.addAction(close_action)
 
         add_application_quit_action(self, fileMenu, self.quit_application)
 
-        add_standard_window_controls(self)
-        
-        # Second dropdown menu
         prefMenu = cast(qtw.QMenu, menu.addMenu("&Settings"))
 
         prefMenu.addAction(
@@ -438,6 +436,7 @@ class MainWindow(
         advanced_settings = prefMenu.addMenu("Advanced")
         if advanced_settings is not None:
             add_restore_defaults_option(self, advanced_settings)
+        add_standard_window_controls(self)
         add_help_menu(self, include_desktop_integration=True)
 
     def initFile(self):

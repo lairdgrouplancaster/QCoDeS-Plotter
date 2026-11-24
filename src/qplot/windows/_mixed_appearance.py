@@ -278,8 +278,11 @@ class PlotAppearanceDialog(_TraceAppearanceDialog):
             if self.isVisible():
                 QtCore.QTimer.singleShot(0, self._fit_default_size)
         if "pages" in self.__dict__:
-            self.pages.setTabEnabled(2, not self.global_colour_row.isHidden()
-                                     and self.owner.__dict__.get("colorbar_scale_controls") is not None)
+            available = "heatmap" in kinds and self.owner.__dict__.get("colorbar_scale_controls") is not None
+            self.pages.setTabEnabled(2, available)
+            action = self.owner.__dict__.get("colorbar_scale_action")
+            if action is not None:
+                action.setVisible(available)
         self.sync_swap_axes_control()
 
     def _row_entry(self, row: int) -> tuple[str, Any] | None:

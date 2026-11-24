@@ -39,7 +39,7 @@ def _select(plot, heatmap, start, count):
 def _open_and_copy(plot, expected, qapplication):
     menu = plot._new_marquee_context_menu()
     try:
-        action = next(action for action in menu.actions() if action.text() == "Stats...")
+        action = next(action for action in menu.actions() if action.text() == "Selection statistics…")
         assert action.isEnabled()
         action.trigger()
         dialog = plot._marquee_stats_dialog

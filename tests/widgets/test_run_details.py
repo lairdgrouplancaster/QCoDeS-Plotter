@@ -2925,8 +2925,8 @@ class RunDetailsTabsTestCase(unittest.TestCase):
         self.assertEqual(
             captured_action_texts,
             [
-                ["Plot", "Export This Measurement as CSV…", "Generate Statistics…"],
-                ["Plot", "Export This Measurement as CSV…", "Generate Statistics…"],
+                ["Plot", "Export This Measurement as CSV…", "Measurement statistics…"],
+                ["Plot", "Export This Measurement as CSV…", "Measurement statistics…"],
             ],
         )
 

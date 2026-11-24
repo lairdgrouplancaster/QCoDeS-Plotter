@@ -53,7 +53,9 @@ def _request(plot, route, qapplication):
         QtTest.QTest.mouseClick(plot.widget.viewport(), QtCore.Qt.MouseButton.LeftButton, pos=position)
     else:
         action = plot._context_menu_action(command_spec("plot.autoscale").text)
-        assert action is not None
+        view_menu = next(a.menu() for a in plot.menuBar().actions() if a.text() == "&View")
+        assert action in view_menu.actions()
+        assert action.text() == "Autoscale axes"
         invoked = []
         action.triggered.connect(lambda *_args: invoked.append(True))
         if route == "context":

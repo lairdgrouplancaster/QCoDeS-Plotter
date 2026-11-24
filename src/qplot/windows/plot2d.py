@@ -60,6 +60,10 @@ class plot2d(
         
     """
     operation_kind = "plot2d"
+    _cut_commands: tuple[tuple[str, str], ...] = (
+        ("heatmap.horizontal_cut", "h"),
+        ("heatmap.vertical_cut", "v"),
+    )
     _uses_heatmap_viewport = True
     _initial_load_message = "Heatmap ready; loading data..."
     get_mergables = QtCore.pyqtSignal()
@@ -353,29 +357,23 @@ class plot2d(
 
         autoColor = create_action("heatmap.autoscale_color", self)
         self.register_shortcut(autoColor, command_spec("heatmap.autoscale_color"))
-        autoColor.triggered.connect(self.scaleColorbar)
+        autoColor.triggered.connect(self.autoscale_color)
         self.vbMenu.insertAction(self.autoscaleSep, autoColor)
 
-        actions = self.vbMenu.actions()
-        
-        sep = self.vbMenu.insertSeparator(actions[3])
-        
-        ### Sweep control
-        h_sweep = create_action("heatmap.horizontal_cut", self)
-        self.register_shortcut(h_sweep, command_spec("heatmap.horizontal_cut"))
-        h_sweep.triggered.connect(lambda _: self.openSweep("h"))
-        self.vbMenu.insertAction(sep, h_sweep)
-        
-        v_sweep = create_action("heatmap.vertical_cut", self)
-        self.register_shortcut(v_sweep, command_spec("heatmap.vertical_cut"))
-        v_sweep.triggered.connect(lambda _: self.openSweep("v"))
-        self.vbMenu.insertAction(sep, v_sweep)
-        
-        self.vbMenu.insertSeparator(h_sweep)
+        after_cuts = self.vbMenu.insertSeparator(self.savePlotPdfAction)
+        for command, side in self._cut_commands:
+            cut = create_action(command, self)
+            self.register_shortcut(cut, command_spec(command))
+            cut.triggered.connect(lambda _checked, side=side: self.openSweep(side))
+            self.vbMenu.insertAction(after_cuts, cut)
 
         self._init_colorbar_scale_controls()
 
         self._init_cut_keyboard_shortcuts()
+
+    def autoscale_color(self, event: bool = False) -> None:
+        """Apply an explicit colour autoscale request from the plot menu."""
+        self.scaleColorbar(event)
         
         
     def initLabels(self) -> None:
@@ -1131,12 +1129,12 @@ class plot2d(
     def _add_marquee_color_context_action(self, menu: qtw.QMenu) -> QtGui.QAction:
         action = self._add_marquee_context_action(
             menu,
-            "Zoom colour",
+            "Fit colour range to selection",
             self.zoom_marquee_color,
             )
         if self._marquee_color_levels() is None:
             action.setEnabled(False)
-            action.setToolTip("No finite data range inside the marquee.")
+            action.setToolTip("Select cells containing at least two distinct finite values.")
         return action
 
 

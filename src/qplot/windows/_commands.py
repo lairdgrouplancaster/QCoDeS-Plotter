@@ -116,16 +116,16 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "database.close": CommandSpec(
         "database.close",
-        "&Close Database",
+        "&Close database",
         "Close the current database and its plot windows",
         object_name="closeDatabaseAction",
     ),
-    "window.refresh": CommandSpec(
-        "window.refresh",
-        "&Refresh",
-        "Refresh the current window",
+    "database.refresh": CommandSpec(
+        "database.refresh",
+        "&Refresh runs and live plots",
+        "Refresh the run list and all live plots",
         ["F5", "R"],
-        help_section="Main and All Plot Windows",
+        help_section="Main Window",
     ),
     "window.close": CommandSpec(
         "window.close",
@@ -133,6 +133,7 @@ COMMANDS: dict[str, CommandSpec] = {
         "Close the current qPlot window",
         _standard_shortcuts(QKeySequence.StandardKey.Close, ["Ctrl+W"]),
         help_section="Main and All Plot Windows",
+        help_text="Close this plot, or quit qPlot from the database window",
     ),
     "app.quit": CommandSpec(
         "app.quit",
@@ -235,25 +236,25 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "testdata.open_bundled_folder": CommandSpec(
         "testdata.open_bundled_folder",
-        "Open &Bundled CSV Folder",
-        "Open the installed folder containing the bundled test-data CSV specifications",
+        "&Open template folder",
+        "Open the folder containing the bundled CSV templates",
         object_name="openBundledTestdataFolderAction",
     ),
     "testdata.create_csv": CommandSpec(
         "testdata.create_csv",
-        "Create Example &CSV...",
-        "Create an example CSV specification for generated test databases",
+        "Save &example CSV template…",
+        "Save an example CSV template for generating a test database",
         object_name="createTestDatabaseCsvAction",
     ),
     "testdata.export_collection": CommandSpec(
         "testdata.export_collection",
-        "Export CSV &Collection...",
-        "Export the cumulative collection of test-database CSV specifications",
+        "Save &bundled CSV templates…",
+        "Save copies of the bundled CSV templates in a folder you choose",
         object_name="exportTestDatabaseCsvCollectionAction",
     ),
     "testdata.generate_database": CommandSpec(
         "testdata.generate_database",
-        "Generate &database…",
+        "&Generate test database…",
         "Review a bundled template or your own CSV and generate a QCoDeS test database",
         object_name="generateTestDatabaseAction",
     ),
@@ -287,15 +288,22 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "plots.close_all": CommandSpec(
         "plots.close_all",
-        "Close All &Plot Windows",
+        "Close all &plot windows",
         "Close all plot windows",
         "Ctrl+Shift+W",
         help_section="Main and All Plot Windows",
     ),
+    "plot.refresh": CommandSpec(
+        "plot.refresh",
+        "&Refresh plot",
+        "Refresh the data shown in this plot",
+        ["F5", "R"],
+        help_section="All Plot Windows",
+    ),
     "plot.autoscale": CommandSpec(
         "plot.autoscale",
-        "Autoscale",
-        "Return all plot axes to autoscale mode",
+        "Autoscale axes",
+        "Return all coordinate axes to automatic scaling",
         "Ctrl+0",
         help_section="All Plot Windows",
     ),
@@ -354,9 +362,10 @@ COMMANDS: dict[str, CommandSpec] = {
     "toolbar.operations": CommandSpec(
         "toolbar.operations",
         "Data operations",
-        "Show or hide the data operations panel",
+        "Show or hide the operations panel",
         "Ctrl+Alt+O",
         help_section="All Plot Windows",
+        help_text="Show or hide Data operations (Slice operations in a 3D plot)",
     ),
     "plot.snap_to_trace": CommandSpec(
         "plot.snap_to_trace",
@@ -367,43 +376,43 @@ COMMANDS: dict[str, CommandSpec] = {
     ),
     "heatmap.autoscale_color": CommandSpec(
         "heatmap.autoscale_color",
-        "Autoscale Colour",
+        "Autoscale colour range",
         "Autoscale the colour range",
         "C",
         help_section="2D Heatmap Windows",
     ),
     "heatmap.horizontal_cut": CommandSpec(
         "heatmap.horizontal_cut",
-        "Horizontal Cut",
+        "Horizontal cut",
         "Open a horizontal cut",
         "H",
         help_section="2D Heatmap Windows",
     ),
     "heatmap.vertical_cut": CommandSpec(
         "heatmap.vertical_cut",
-        "Vertical Cut",
+        "Vertical cut",
         "Open a vertical cut",
         "V",
         help_section="2D Heatmap Windows",
     ),
     "slice.depth_cut": CommandSpec(
-        "slice.depth_cut", "Depth Cut", "Open a cut versus the depth coordinate", "D",
+        "slice.depth_cut", "Depth cut", "Open a cut versus the depth coordinate", "D",
         help_section="3D Slice Windows",
     ),
     "slice.previous": CommandSpec(
-        "slice.previous", "Previous Slice", "Show the previous recorded depth coordinate", "PgUp",
+        "slice.previous", "Previous slice", "Show the previous recorded depth coordinate", "PgUp",
         help_section="3D Slice Windows",
     ),
     "slice.next": CommandSpec(
-        "slice.next", "Next Slice", "Show the next recorded depth coordinate", "PgDown",
+        "slice.next", "Next slice", "Show the next recorded depth coordinate", "PgDown",
         help_section="3D Slice Windows",
     ),
     "slice.first": CommandSpec(
-        "slice.first", "First Slice", "Show the lowest recorded depth coordinate", "Home",
+        "slice.first", "First slice", "Show the lowest recorded depth coordinate", "Home",
         help_section="3D Slice Windows",
     ),
     "slice.last": CommandSpec(
-        "slice.last", "Last Slice", "Show the highest recorded depth coordinate", "End",
+        "slice.last", "Last slice", "Show the highest recorded depth coordinate", "End",
         help_section="3D Slice Windows",
     ),
     "plot.clear_selection": CommandSpec(
@@ -495,6 +504,7 @@ def toolbar_toggle_command_spec(title: str) -> CommandSpec | None:
         "Coordinates": "toolbar.coordinates",
         "Cut controls": "toolbar.axis_control",
         "Data operations": "toolbar.operations",
+        "Slice operations": "toolbar.operations",
     }
     command_id = by_title.get(title)
     if command_id is None:
@@ -618,10 +628,10 @@ MOUSE_AND_SELECTION_HELP = {
          + ("Option" if sys.platform == "darwin" else "Alt")
          + " to resize symmetrically about the centre"),
         ("Right-click", "Open actions for the plot or selection"),
-        ("Double-click an axis", "Open axis scaling controls; also available from View"),
+        ("Double-click an axis", "Edit the clicked axis (View → Axis scales…)"),
     ),
     "2D Heatmap Windows": (
-        ("Double-click colour bar", "Open colour scaling controls; also available from View"),
+        ("Double-click colour bar", "Edit the heatmap colour scale (View → Colour scale…)"),
         ("Click a cut cursor", "Select a cut for arrow-key movement; new cuts are selected automatically"),
         ("Double-click a cut cursor", "Close its cut window and remove the probe"),
         ("Shift+double-click a cut cursor", "Close all cut windows from this heatmap"),

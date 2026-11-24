@@ -45,6 +45,7 @@ SNAPSHOT_FULL_VALUE_ROLE = FULL_VALUE_ID_ROLE + 7
 SNAPSHOT_PAGE_PENDING_ROLE = FULL_VALUE_ID_ROLE + 8
 SNAPSHOT_CONTAINER_LOADED_ROLE = FULL_VALUE_ID_ROLE + 9
 SNAPSHOT_LOAD_MORE_ROLE = FULL_VALUE_ID_ROLE + 10
+VALUE_SHORTENED_ROLE = FULL_VALUE_ID_ROLE + 11
 DEFAULT_EXPANDED_SNAPSHOT_PATH = "/Snapshot/station"
 
 
@@ -91,6 +92,13 @@ def copy_action(label, shortcuts, slot, parent):
         action.setShortcutVisibleInContextMenu(True)
     action.triggered.connect(slot)
     return action
+
+
+def _tree_value_item(key: str, value: str, *, shortened: bool) -> qtw.QTreeWidgetItem:
+    item = qtw.QTreeWidgetItem([key, value])
+    if shortened:
+        item.setData(1, VALUE_SHORTENED_ROLE, True)
+    return item
 
 
 class WrappedValueDelegate(qtw.QStyledItemDelegate):
@@ -403,11 +411,7 @@ class infoTree(qtw.QTreeWidget):
             self.addTopLevelItem(qtw.QTreeWidgetItem(["No data", ""]))
             return
         if not isinstance(info, dict):
-            item = qtw.QTreeWidgetItem(
-                ["Value", format_value(info, 180 if self.truncate_values else None)]
-            )
-            item.setToolTip(1, format_value(info))
-            self.addTopLevelItem(item)
+            self.addTopLevelItems(dictToTree({"Value": info}, truncate_values=self.truncate_values))
             return
 
         items = dictToTree(info, truncate_values=self.truncate_values)
@@ -453,7 +457,7 @@ class infoTree(qtw.QTreeWidget):
             )
             if rendered_bytes > TRUSTED_PRESENTATION_MAX_RENDERED_TEXT_BYTES:
                 break
-            item = qtw.QTreeWidgetItem([node.key, node.value])
+            item = _tree_value_item(node.key, node.value, shortened=node.value_shortened)
             item.setToolTip(1, getattr(node, "tooltip", node.value))
             item.setToolTip(0, getattr(node, "tooltip", node.key))
             path = str(getattr(node, "path", "") or "")
@@ -600,7 +604,9 @@ class infoTree(qtw.QTreeWidget):
             )
             if rendered_bytes > TRUSTED_SNAPSHOT_PAGE_MAX_TEXT_BYTES:
                 break
-            item = qtw.QTreeWidgetItem([node.key, node.value])
+            item = _tree_value_item(
+                node.key, node.value, shortened=getattr(node, "value_shortened", False)
+            )
             tooltip = getattr(node, "tooltip", node.value)
             if isinstance(tooltip, str):
                 item.setToolTip(0, tooltip)
@@ -667,7 +673,7 @@ class infoTree(qtw.QTreeWidget):
             if rendered_bytes > TRUSTED_SNAPSHOT_PAGE_MAX_TEXT_BYTES:
                 return None
 
-            item = qtw.QTreeWidgetItem([key, value])
+            item = _tree_value_item(key, value, shortened=getattr(node, "value_shortened", False))
             tooltip = getattr(node, "tooltip", value)
             if not isinstance(tooltip, str):
                 return None
@@ -1074,6 +1080,10 @@ class infoTree(qtw.QTreeWidget):
         copied_row = row_text(item)
         selected_items = self.selectedItems()
         copied_selection = "\n".join(row_text(selected) for selected in selected_items)
+        previous_copy_label = self.copy_value_action.text()
+        self.copy_value_action.setText(
+            "Copy displayed value" if item.data(1, VALUE_SHORTENED_ROLE) else "Copy Value"
+        )
         menu.addAction(self.copy_value_action)
 
         copy_row = QtGui.QAction("Copy Row", menu)
@@ -1091,6 +1101,8 @@ class infoTree(qtw.QTreeWidget):
                 menu.exec(viewport.mapToGlobal(pos))
         finally:
             self._copy_menu_text = previous_copy_text
+            if not sip.isdeleted(self.copy_value_action):
+                self.copy_value_action.setText(previous_copy_label)
             if not sip.isdeleted(menu):
                 menu.deleteLater()
 
@@ -1195,10 +1207,10 @@ def dictToTree(d: dict, truncate_values=False):
     items = []
     for k, v in d.items():
         if not isinstance(v, dict):
-            item = qtw.QTreeWidgetItem(
-                [str(k), format_value(v, 180 if truncate_values else None)]
-            )
-            item.setToolTip(1, format_value(v))
+            full_text = format_value(v)
+            display = format_value(full_text, 180) if truncate_values else full_text
+            item = _tree_value_item(str(k), display, shortened=display != full_text)
+            item.setToolTip(1, full_text)
         else:
             item = qtw.QTreeWidgetItem([k, ""])
             for child in dictToTree(v, truncate_values=truncate_values):

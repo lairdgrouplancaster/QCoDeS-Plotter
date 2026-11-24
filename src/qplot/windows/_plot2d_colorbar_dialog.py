@@ -90,14 +90,25 @@ class ColorbarScaleDialogMixin(_ColorbarScaleDialogBase):
 
         self.colorbar_scale_controls = controls
 
-        menu = getattr(self, "vbMenu", None)
-        if menu is not None:
-            self.colorbar_scale_action = QtGui.QAction("&Colour Scale...", cast(QtCore.QObject, self))
-            self.colorbar_scale_action.triggered.connect(self.open_colorbar_scale_dialog)
-            before = getattr(self, "autoscaleSep", None)
-            menu.insertAction(before, self.colorbar_scale_action)
-
+        self._ensure_colorbar_scale_action()
         self._sync_colorbar_scale_controls()
+
+    def _ensure_colorbar_scale_action(self) -> None:
+        """Keep one colour settings action for the plot and View menus."""
+        menu = getattr(self, "vbMenu", None)
+        if menu is None:
+            return
+        if "colorbar_scale_action" not in self.__dict__:
+            self.colorbar_scale_action = QtGui.QAction("&Colour scale…", cast(QtCore.QObject, self))
+            self.colorbar_scale_action.triggered.connect(self.open_colorbar_scale_dialog)
+            menu.insertAction(getattr(self, "autoscaleSep", None), self.colorbar_scale_action)
+        dialog = self.__dict__.get("_plot_appearance_dialog")
+        if dialog is not None:
+            # The open editor also knows which datasets are pending removal.
+            dialog._sync_whole_plot_controls()
+        else:
+            has_heatmap = getattr(self, "operation_kind", None) != "plot1d" or bool(self.__dict__.get("heatmaps"))
+            self.colorbar_scale_action.setVisible(has_heatmap and "colorbar_scale_controls" in self.__dict__)
 
     def _create_colour_source_controls(self) -> qtw.QWidget | None:
         return None

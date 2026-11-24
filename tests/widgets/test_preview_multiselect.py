@@ -202,7 +202,7 @@ def test_right_click_unselected_thumbnail_uses_single_action(table, monkeypatch)
     _click(labels[1], QtCore.Qt.KeyboardModifier.ControlModifier)
     captured = []
     _context(labels[4], monkeypatch, lambda menu, *_: captured.extend(action.text() for action in menu.actions()))
-    assert captured == ["&Plot", "Export This &Measurement as CSV…", "Generate &Statistics…"]
+    assert captured == ["&Plot", "Export This &Measurement as CSV…", "Measurement &statistics…"]
     assert selected_preview_targets(table) == (preview_key(labels[4]),)
 
 

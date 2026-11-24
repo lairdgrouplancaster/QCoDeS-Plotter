@@ -86,6 +86,9 @@ def test_color_dialog_scope_sync_and_symmetric_lock(tmp_path, main):
     plot.color_mode.setCurrentIndex(0)
     wait_for(lambda: plot._range_complete)
     assert plot.colour_source_buttons["volume"].isChecked()
+    plot._context_menu_action("Autoscale colour range").trigger()
+    assert not plot._range_complete
+    wait_for(lambda: plot._range_complete)
     assert plot.bar.levels()[0] == -plot.bar.levels()[1]
     assert not errors
 
@@ -104,6 +107,37 @@ def test_compact_depth_display_retains_distinct_planes():
         np.testing.assert_array_equal(volume.axes["depth"], depths)
     finally:
         volume.directory.cleanup()
+
+
+def test_slice_operations_menus_share_the_panel_shortcut(tmp_path, main, qapplication):
+    window, errors = main
+    path = tmp_path / "operations.db"
+    guid = build_volume(path)
+    assert window.load_file(str(path))
+    wait_for(lambda: not window._database_load_active)
+    window.openPlot(guid)
+    wait_for(lambda: window.windows and loaded(window.windows[0]))
+    plot = window.windows[0]
+    view = next(action.menu() for action in plot.menuBar().actions() if action.text() == "&View")
+    panels = next(action.menu() for action in view.actions() if action.text() == "Panels and Toolbars")
+    toggle = plot.oper_dock.toggleViewAction()
+    assert toggle.text() == "Slice operations"
+    assert plot._context_menu_action("Slice operations") is toggle
+    assert toggle in panels.actions() and toggle.isCheckable()
+    assert toggle.shortcut().toString() == "Ctrl+Alt+O"
+    assert not toggle.isChecked()
+
+    toggle.trigger()
+    assert plot.oper_dock.isVisible() and toggle.isChecked()
+    plot.activateWindow()
+    plot.widget.setFocus()
+    qapplication.processEvents()
+    QtTest.QTest.keySequence(plot.widget, toggle.shortcut())
+    assert plot.oper_dock.isHidden() and not toggle.isChecked()
+
+    plot.close()
+    assert not toggle.isEnabled()
+    assert not errors
 
 
 def test_cursor_includes_depth_in_readout_tooltip_and_copy(tmp_path, main):
@@ -502,7 +536,7 @@ def test_cuts_follow_pin_processed_depth_and_csv(tmp_path, main):
     plot = window.windows[0]
     wait_for(lambda: loaded(plot))
     plot._selected_coordinates.update(gate=0., bias=3.)
-    plot.openSweep("d")
+    plot._context_menu_action("Depth cut").trigger()
     wait_for(lambda: len(window.windows) == 2 or bool(errors))
     assert not errors
     depth = window.windows[1]
@@ -659,7 +693,20 @@ def test_freeze_is_independent_and_supports_operations_and_cuts(tmp_path, main):
     source = window.windows[0]
     wait_for(lambda: loaded(source) or bool(errors))
     assert not errors
-    source.freeze_slice()
+    actions = source.vbMenu.actions()
+    groups = [[]]
+    for action in actions:
+        if action.isSeparator():
+            groups.append([])
+        else:
+            groups[-1].append(action.text())
+    cuts_group = groups.index(["Horizontal cut", "Vertical cut", "Depth cut"])
+    assert groups[cuts_group + 1] == [
+        "Previous slice", "Next slice", "First slice", "Last slice", "Freeze slice as 2D plot",
+    ]
+    freeze = source.freeze_slice_action
+    assert freeze.isEnabled()
+    freeze.trigger()
     wait_for(lambda: len(window.windows) == 2 or bool(errors))
     assert not errors
     frozen = window.windows[1]
@@ -670,7 +717,11 @@ def test_freeze_is_independent_and_supports_operations_and_cuts(tmp_path, main):
         assert plot.heatmap_downsample_button.isHidden()
     original = frozen.dataGrid.copy()
     source.select_slice(2)
+    assert not freeze.isEnabled()
+    freeze.trigger()
     wait_for(lambda: loaded(source) and source._depth_value == 4.)
+    assert freeze.isEnabled()
+    assert len(window.windows) == 2
     np.testing.assert_array_equal(frozen.dataGrid, original)
     capture = frozen._capture_heatmap_csv(layer=frozen)
     np.testing.assert_array_equal(capture.grid, original)

@@ -29,8 +29,6 @@ if TYPE_CHECKING:
 
         def initLabels(self) -> None: ...
 
-        def initMenu(self) -> None: ...
-
         def mouseMoved(self, pos: object) -> None: ...
 
 
@@ -288,38 +286,6 @@ class Plot1DSnapMixin(_Plot1DSnapBase):
             )
         self.snap_to_trace_action.toggled.connect(self._snap_to_trace_toggled)
         self.snap_to_trace_action.setChecked(True)
-
-
-    def initMenu(self):
-        """
-        Adds trace snapping to the plot window menu bar.
-
-        """
-        super().initMenu()
-
-        view_menu = self._menu_by_title("&View")
-        if view_menu is None or self.snap_to_trace_action is None:
-            return
-
-        actions = view_menu.actions()
-        before = actions[0] if actions else None
-        view_menu.insertAction(before, self.snap_to_trace_action)
-        view_menu.insertSeparator(before)
-
-
-    def _menu_by_title(self, title):
-        """
-        Returns the menu matching a top-level menu title.
-
-        """
-        menu_bar = self.menuBar()
-        if menu_bar is None:
-            return None
-
-        for action in menu_bar.actions():
-            if action.text() == title:
-                return action.menu()
-        return None
 
 
     @QtCore.pyqtSlot(bool)

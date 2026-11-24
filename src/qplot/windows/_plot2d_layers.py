@@ -964,6 +964,8 @@ class Plot2DLayerMixin(PlotHost):
             )
             if retained:
                 self._emit_remove_dataset(dataset_key)
+            if layer is not None:
+                self._sync_heatmap_layer_order()
             raise
         dialog = self.__dict__.get("_heatmap_appearance_dialog")
         if dialog is not None:

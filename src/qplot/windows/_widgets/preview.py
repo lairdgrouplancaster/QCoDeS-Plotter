@@ -1405,7 +1405,8 @@ class PreviewImageLabel(qtw.QLabel):
         )
         menu.addAction(export_action)
 
-        stats_action = QtGui.QAction("Generate &Statistics…", menu)
+        stats_action = QtGui.QAction("Measurement &statistics…", menu)
+        stats_action.setStatusTip("Show statistics for the whole recorded measurement.")
         stats_action.triggered.connect(
             lambda: self.statsRequested.emit(self.parameter) if is_current() else None,
         )

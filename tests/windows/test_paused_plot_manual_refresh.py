@@ -40,8 +40,8 @@ def _layer_values(layer, heatmap):
 
 def _manual_refresh(plot):
     action = next(action for action in plot.findChildren(QtGui.QAction)
-                  if action.text() == "&Refresh")
-    assert any(shortcut.toString() == "R" for shortcut in action.shortcuts())
+                  if action.text() == "&Refresh plot")
+    assert [shortcut.toString() for shortcut in action.shortcuts()] == ["F5", "R"]
     action.trigger()
 
 

@@ -1,4 +1,4 @@
-"""Selection statistics through real QCoDeS samples and the Stats action."""
+"""Selection statistics through real QCoDeS samples and the selection menu."""
 
 from fractions import Fraction
 
@@ -53,7 +53,7 @@ def test_stats_action_retains_recorded_variation(measured_plots, no_callback_err
     assert f'Average: {host.formatNum(mean)}' in text
     assert f'Standard deviation: {host.formatNum(deviation)}' in text
     menu = host._new_marquee_context_menu()
-    next(action for action in menu.actions() if action.text() == 'Stats...').trigger()
+    next(action for action in menu.actions() if action.text() == 'Selection statistics…').trigger()
     assert host._marquee_stats_dialog.isVisible()
     host._marquee_stats_dialog.close()
 

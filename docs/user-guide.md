@@ -42,8 +42,9 @@ match; changing selection cancels it or makes it harmlessly stale. It is not a
 QCoDeS `DataSet`, a private snapshot, or a retained derived-cache item.
 Long scalar keys and values remain compact in the tree and are marked locally.
 A `[display]` row counts these present-but-shortened cells; it is not a data-loss
-warning. Double-click a marked cell, press Enter on its row, or use **View
-Complete Value...** to open the current run's bounded read-only value viewer.
+warning. For a shortened value, **Copy displayed value** copies the preview shown
+in the tree. To open the full value when available, double-click the marked cell,
+press Enter on its row, or choose **View Complete Value…**.
 The viewer offers **Find next**, **Wrap lines**, **Select all** and **Copy entire
 value**. The copy shortcut in the text area copies the selected text. Traceback summaries retain both their beginning
 and final exception line. A global `[truncated]` row is reserved for actual
@@ -57,7 +58,7 @@ fetches only its first bounded page; deeper
 containers remain lazy. Expand one to fetch its children, and activate `Load
 more…` to reveal each later page without omissions or duplicates. No page
 creates more than 128 children or 32 KiB of displayed text. A shortened
-Snapshot scalar shows a preview and a local **View Full** action for its exact
+Snapshot scalar shows a preview and a **View Complete Value…** action for its exact
 contents. `Load more…` is pagination, not a truncation warning; Snapshot
 `malformed`, `truncated`, or `unavailable` is reserved for an actual source,
 validation, or consistency failure.
@@ -387,26 +388,21 @@ Common actions:
 
 * `File -> Load Database...` loads a QCoDeS database.
 * `File -> Load Recent Database` reopens a recently used database. If qPlot cannot save the list, newly opened databases still appear here for this session. Choose **Details** in the notice to see the settings path and error. Opening a database again retries the save.
-* `File -> Refresh` checks the current database for new runs and refreshes all
+* **File → Refresh runs and live plots** checks the current database for new runs and refreshes all
   live plot windows once.
 * `File -> Open Database Folder` opens the folder containing the loaded
   database.
-* `File -> Close Database` closes its plot windows, cancels background database
+* **File → Close database** closes its plot windows, cancels background database
   work, and releases the current database.
-* `File -> Generate Test Data from Template -> Open Bundled CSV Folder` opens the installed
-  examples in Finder or File Explorer. Use `Export CSV Collection...` to make
-  editable copies elsewhere.
-* `File -> Generate Test Data from Template -> Create Example CSV...` writes a spreadsheet
-  template, reveals it in Finder on macOS, or opens its containing folder in
-  the platform file manager.
-* `File -> Generate Test Data from Template -> Export CSV Collection...` copies ten installed,
-  cumulative instruction files for generating databases from approximately
-  10 MB to 30 GB, then opens their folder.
-* **File → Generate Test Data from Template → Generate database…** shows the
+* **File → Test data → Generate test database…** shows the
   workload for a bundled template or your own specification. Choose an output
   file and select **Generate database**. You can cancel in the progress window
   and open or reveal the completed database. The CSV dialogs remember the last folder used for CSV selection,
   example creation, or collection export across application launches.
+* In **File → Test data**, **Open template folder** opens the installed examples in
+  your file manager. **Save example CSV template…** writes a starting file and
+  shows its location. **Save bundled CSV templates…** copies the ten templates for
+  generating databases from approximately 10 MB to 30 GB, then opens their folder.
 * `Settings -> Preferences...` edits common theme, default
   load location, preview, refresh, confirmation, and runtime settings. On
   macOS this appears as `qPlot -> Preferences...`.
@@ -447,6 +443,8 @@ Common actions:
   `Show Diagnostic Log in File Explorer` selects the log in its folder.
 * `File -> Quit qPlot` closes the database and exits. Its shortcut is `Cmd+Q`
   on macOS and `Ctrl+Q` on Windows and Linux.
+  Closing the database window also quits qPlot. To release the database and
+  keep qPlot open, choose **File → Close database**.
 * **Refresh every** controls the interval for the run table and all live plots.
   Set it to `0.0 s` to disable automatic refresh everywhere.
 * `Auto-plot` opens every newly detected run, including runs already complete,
@@ -533,6 +531,8 @@ the space reserved for the strip.
 
 Windows are titled **Plot 1**, **Plot 2**, and so on. These numbers remain stable
 when other windows close or a plot's primary source changes.
+In a plot's File menu, **Close this plot** closes that window. **Close all plot windows**
+closes every plot and leaves the database window open.
 
 Status appears at the right of the menu bar on Windows, and alongside the
 native window title on macOS, including for completed runs. It shows the latest status message until another
@@ -548,25 +548,27 @@ Common plot controls:
 * Left-drag: select a persistent rectangular region. Hover over the plot canvas
   for a reminder of selection, panning and zoom controls.
 * Middle-drag or Space+left-drag: pan. Hold Shift to constrain movement to one axis.
-* Right-click: open the plot context menu.
+* Choose **Autoscale axes** from the plot's right-click menu or the **View** menu
+  to return the active coordinate axes to automatic scaling.
 * `Alt`/`Option` + left-click drag: draw a marquee selection.
 * Drag marquee handles to resize the selection.
 * Drag inside a selection to move it; drag outside to replace it.
 * Hold Shift while moving a selection to lock movement horizontally or vertically,
   according to the initial drag direction. Release Shift for free movement.
-* Right-click inside a marquee selection for zoom and statistics actions.
-  Statistics use the primary trace or heatmap identified in the report. A
+* Right-click inside a marquee and choose **Zoom to selection** to zoom both
+  coordinate axes. **Zoom X only** and **Zoom Y only** zoom just the named axis.
+  **Selection statistics…** analyses the selected region of the primary trace or heatmap identified in the report. A
   heatmap report gives the grid dimensions and the number of finite cells
   that contributed. The contributing sample count appears beneath the measured
   quantity, units and run, above the average, standard deviation and extrema.
   **Selection and source** contains the coordinate bounds and source details. **Copy full report**
   copies all results and source details. To copy individual rows, select them
   and use **Copy Selection**.
-  For the full recorded measurement, choose statistics from its thumbnail.
+  For the full recorded measurement, right-click its thumbnail and choose **Measurement statistics…**.
   You can continue working or cancel while qPlot calculates.
 * Press `Esc` or double-click the plot to clear a marquee selection.
 * Double-click an axis to open **Plot settings → Axis scales** on that axis, or use
-  **View → Axis Scaling…**. Switch axes with the **Bottom**, **Left**, **Top**
+  **View → Axis scales…**. Switch axes with the **Bottom**, **Left**, **Top**
   and **Right** tabs at the top of the axis settings panel. The heading below
   the tabs shows the plotted quantity and units for the selected side.
   Hover over a shortened quantity name to read it in full. Unused sides are disabled.
@@ -606,9 +608,11 @@ Common plot controls:
   and axis direction. A range link to another plot pauses while its two axes
   have different orientations. **Link range to** shows the paused link and
   reconnects it when the orientations match again. Choose **None** to remove it.
-* Open **View → Plot settings…** to preview edits on the current plot.
-  Choose **Datasets** for its measurements and drawing styles, **Axis scales** for its
-  coordinate ranges, or **Colour scale** when the plot includes a heatmap.
+* **View → Plot settings…** opens the **Datasets** page for measurements and
+  drawing styles. **Axis scales…** opens the coordinate ranges in that dialog.
+  For a plot with a heatmap, **Colour scale…** opens its colour map and limits.
+  Removing the last heatmap from a line plot hides **Colour scale…**
+  in both **View** and the plot's right-click menu.
   Drag the thin divider between the dataset list and the selected-dataset controls
   to resize the panes. Narrow windows stack these panes vertically, and the controls
   scroll when needed. **Whole plot** contains the shared colour-map and axis-swap controls,
@@ -736,14 +740,17 @@ plot remains live while its layer is present, just as it does for an added line
 trace. Large hidden heatmap sources also follow the visible window's viewport
 when qPlot reloads zoomed data.
 
-Cursor readout, marquee statistics, colour zoom, and 1D cut extraction continue
-to use the original heatmap in the window. Heatmaps also add the following
+Cursor readout, selection statistics, fitting the colour range to a selection,
+and 1D cut extraction use the original heatmap in the window. Heatmaps also add the following
 colour-scale and cut controls.
 
 Colour-scale controls:
 
-* Right-click the plot and choose `Autoscale Colour`, or press `C`.
-* Double-click the colour scale bar to open **Plot settings** on the **Colour scale** page, or use **View → Colour Scale…**.
+* Right-click the plot and choose **Autoscale colour range**, or press `C`.
+  To use the finite minimum and maximum within a rectangle, select it,
+  right-click inside it and choose **Fit colour range to selection**. This sets
+  manual colour limits and keeps the current X and Y ranges.
+* Double-click the colour scale bar to open **Plot settings** on the **Colour scale** page, or use **View → Colour scale…**.
   Its **Range** controls work the same way as the coordinate axes.
 * To keep positive and negative limits symmetric about zero, lock **Centre**
   and set its value to zero. In Automatic, the colour limits expand or shrink
@@ -754,8 +761,7 @@ Colour-scale controls:
 
 1D cut extraction:
 
-* Right-click the heatmap and select `Horizontal Cut` or
-  `Vertical Cut`.
+* Right-click the heatmap and select **Horizontal cut** or **Vertical cut**.
 * A cut window opens, with a cursor shown on the heatmap.
 * Close the cut window to remove its probe. In heatmaps and 3D slices, double-click a probe
   line to close its cut, or Shift+double-click a probe line to close all cuts on
@@ -814,18 +820,20 @@ An em dash (`—`) marks an unavailable or nonfinite cursor value.
 * Choose **Whole volume**, **Current slice**, or **Manual** colour limits.
   Whole-volume limits include slice operations and are calculated in the
   background, with an explicitly provisional range and scan progress. Live
-  limits expand without shrinking. Press C to recalculate; dragging the
-  colourbar or using marquee colour zoom locks the limits. In **Plot settings →
+  limits expand without shrinking. Press C to recalculate. Dragging the
+  colourbar or choosing **Fit colour range to selection** sets manual limits. In **Plot settings →
   Colour scale**, **Use data from** selects **Current slice** or **Whole volume**.
   **Current slice** enables **Visible area only** and **Central percentage**.
   **Whole volume** uses the full extent of the data. Switching back to the slice
   restores its filters. Hold **Centre** at zero for matching positive and negative limits.
-* **Slice operations** run independently on each full plane, regardless of
-  zoom or marquee bounds. Swapping X/Y preserves the physical operation.
+* Open **Slice operations** from the plot's right-click menu or **View → Panels
+  and Toolbars**, or press `Ctrl+Alt+O` (`Cmd+Option+O` on macOS). Operations run
+  independently on each full plane, regardless of zoom or marquee bounds. Swapping X/Y preserves the physical operation.
   Changing the depth parameter restores that plane's own operation settings,
   initially empty. Derivative labels and units follow the named parameter.
-* H/V cuts follow the current slice unless **Pin to this slice** is checked.
-  D opens a depth cut at the selected X/Y position. Drag its point marker to
+* The plot's right-click menu groups **Horizontal cut**, **Vertical cut** and
+  **Depth cut** together. Horizontal and vertical cuts follow the current slice
+  unless **Pin to this slice** is checked. `D` opens a depth cut at the selected X/Y position. Drag its point marker to
   move the position, or move the depth marker in the cut window to select a
   slice. Missing coordinates produce gaps, without snapping to another point
   independently in each plane.
@@ -837,8 +845,9 @@ An em dash (`—`) marks an unavailable or nonfinite cursor value.
   finite cells in the same physical rectangle in each plane. **Coverage…** lists
   the run, cut region, depth unit and finite versus selected cells for each
   depth. Ordinary two-column mean-cut CSV exports also include the finite counts.
-* **Freeze Slice as 2D Plot** creates an independent processed snapshot with
-  ordinary appearance, operations, H/V cuts and exports.
+* The slice navigation commands in the right-click menu are followed by
+  **Freeze slice as 2D plot**. Once the slice has loaded, use it to create an
+  independent processed snapshot with ordinary appearance, operations, H/V cuts and exports.
 
 Refresh preserves the selected physical depth, even when new coordinates
 change its index. **Follow latest** instead selects the most recently acquired
@@ -1074,9 +1083,9 @@ qPlot can display running QCoDeS experiments. **Refresh every** in the main
 window sets one interval for checking the run table and updating all live plots.
 New plots and cuts inherit this interval; frozen snapshots remain unchanged.
 
-The main window's refresh button, `File -> Refresh`, or `R` refreshes the run
-table and all live plots once. In a plot window, `R` refreshes just that plot's
-sources. Set the main interval to `0.0 s` for manual refresh only.
+In the database window, the refresh button and **File → Refresh runs and live plots**
+refresh the run table and all live plots once. In a plot window, **View → Refresh plot**
+refreshes that plot's sources. Set the main interval to `0.0 s` for manual refresh only.
 
 ## Keyboard and Mouse Controls
 
@@ -1090,12 +1099,12 @@ General shortcuts:
 | --- | --- |
 | `F1` | Show quick start help |
 | `Ctrl+L` | Load a database |
-| `F5` | Refresh the active window |
-| `R` | Refresh with the plot canvas or run table focused |
+| `F5` | Refresh runs and live plots from the database window, or refresh this plot from a plot window |
+| `R` | Same as `F5` when the run table or plot canvas has focus |
 | `Enter` in the run table | Plot all measurements in the selected run |
 | `Enter` on a preview | Open that measurement as a plot |
 | `Space` on a preview | Toggle its selection |
-| `Ctrl+W` / `Cmd+W` | Close the current qPlot window |
+| `Ctrl+W` / `Cmd+W` | In a plot window, close this plot. In the database window, quit qPlot and close its plots. |
 | `Ctrl+Q` / `Cmd+Q` | Quit qPlot |
 | `Ctrl+,` | Open preferences |
 | `Cmd+M` on macOS / `Alt+Space, N` on Windows | Minimise the current window |
@@ -1121,7 +1130,7 @@ Plot-window shortcuts:
 | `Ctrl+P` / `Cmd+P` | Print the visible plot area |
 | `Ctrl+Alt+C` | Show or hide the coordinates toolbar |
 | `Ctrl+Alt+A` | Show or hide Cut controls in a cut window |
-| `Ctrl+Alt+O` | Show or hide the data operations panel |
+| `Ctrl+Alt+O` | Show or hide Slice operations in a 3D window or Data operations in other plots |
 | `S` | Snap the 1D coordinate readout to the nearest trace point |
 
 Heatmap shortcuts:

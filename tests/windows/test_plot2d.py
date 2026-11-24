@@ -2067,7 +2067,10 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         menu = window._new_marquee_context_menu()
         action_texts = [action.text() for action in menu.actions()]
 
-        self.assertEqual(action_texts, ["Zoom", "Zoom X", "Zoom Y", "Zoom colour", "Stats..."])
+        self.assertEqual(action_texts, [
+            "Zoom to selection", "Zoom X only", "Zoom Y only",
+            "Fit colour range to selection", "Selection statistics…",
+        ])
 
     def test_context_menu_uses_short_cut_labels(self):
         class Host(plot2d):
@@ -2091,8 +2094,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             host.initContextMenu()
             action_texts = [action.text().replace("&", "") for action in host.vbMenu.actions()]
 
-            self.assertIn("Horizontal Cut", action_texts)
-            self.assertIn("Vertical Cut", action_texts)
+            self.assertIn("Horizontal cut", action_texts)
+            self.assertIn("Vertical cut", action_texts)
             self.assertNotIn("Plot Horizontal Cut", action_texts)
             self.assertNotIn("Plot Vertical Cut", action_texts)
         finally:
@@ -2126,7 +2129,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         host.open_subplot.connect(lambda *args: opened.append(args))
         try:
             host.initContextMenu()
-            for label, expected in (("Horizontal Cut", 3.0), ("Vertical Cut", 2.0)):
+            for label, expected in (("Horizontal cut", 3.0), ("Vertical cut", 2.0)):
                 host.z_index = [2, 3]
                 host.vbMenu.popup(QtCore.QPoint(20, 20))
                 host.hide_hover_pixel_outline()
@@ -2145,7 +2148,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             host.deleteLater()
             widget.deleteLater()
 
-    def test_zoom_color_uses_data_inside_marquee(self):
+    def test_fit_colour_range_uses_data_inside_selection(self):
         window = plot2d.__new__(plot2d)
         window.marquee = QtCore.QRectF(1.0, 1.0, 2.0, 2.0)
         self.configure_geometry(
@@ -2157,7 +2160,8 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         window.bar = self.Colorbar()
         window._colorbar_manual_levels = None
 
-        self.assertTrue(window.zoom_marquee_color())
+        menu = window._new_marquee_context_menu()
+        next(action for action in menu.actions() if action.text() == "Fit colour range to selection").trigger()
 
         self.assertEqual(window._colorbar_manual_levels, (5.0, 10.0))
         self.assertEqual(window.bar.values, (5.0, 10.0))
@@ -2177,7 +2181,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
         qtw.QApplication.clipboard().clear()
 
         menu = window._new_marquee_context_menu()
-        stats_action = next(action for action in menu.actions() if action.text() == "Stats...")
+        stats_action = next(action for action in menu.actions() if action.text() == "Selection statistics…")
         stats_action.trigger()
 
         self.assertEqual(len(opened), 1)
@@ -2915,7 +2919,7 @@ class HeatmapHoverOutlineTestCase(unittest.TestCase):
             host.initContextMenu()
             auto_color = next(
                 action for action in host.vbMenu.actions()
-                if action.text().replace("&", "") == "Autoscale Colour"
+                if action.text().replace("&", "") == "Autoscale colour range"
                 )
 
             self.assertEqual(auto_color.shortcut().toString(), "C")

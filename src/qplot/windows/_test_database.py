@@ -205,13 +205,12 @@ class SyntheticDatabaseActionsMixin:
                 "Opening bundled test-data CSV folder failed", error, __name__
             )
             self.show_error(
-                "Open Bundled CSV Folder Failed",
-                "Could not open the bundled CSV folder. Use Export CSV Collection "
-                "to copy the examples to a folder of your choice.",
+                "Could not open template folder",
+                "Use Save bundled CSV templates… to copy the templates to a folder of your choice.",
                 str(error),
             )
             return False
-        self.show_status(f"Opened bundled CSV folder: {directory}", 5000)
+        self.show_status(f"Opened template folder: {directory}", 5000)
         return True
 
     def test_database_csv_directory(self):
@@ -247,7 +246,7 @@ class SyntheticDatabaseActionsMixin:
         try:
             destination = choose_export_path(
                 self,
-                caption="Create Test Database CSV",
+                caption="Save example CSV template",
                 suggested_path=suggested_path,
                 name_filter="CSV Files (*.csv)",
                 required_suffix=".csv",
@@ -291,7 +290,7 @@ class SyntheticDatabaseActionsMixin:
         """Export the installed cumulative CSV collection and open its folder."""
         directory = qtw.QFileDialog.getExistingDirectory(
             self,
-            "Export Test Database CSV Collection",
+            "Save bundled CSV templates",
             self.test_database_csv_directory(),
         )
         if not directory:
