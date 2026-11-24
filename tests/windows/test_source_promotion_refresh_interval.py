@@ -75,7 +75,7 @@ def test_live_source_promotion_preserves_pause_and_manual_refresh(tmp_path, monk
         assert_interval(replacement, 0)
         previous_worker = replacement.worker
         action = next(action for action in replacement.findChildren(QtGui.QAction)
-                      if action.text() == "&Refresh")
+                      if action.text() == "&Refresh plot")
         action.trigger()
         wait_for_plot_load(main, replacement)
         assert replacement.worker is not previous_worker
